@@ -1,0 +1,4 @@
+Incomplete listing fixture
+The service exposes GET /items to enumerate storage entries.
+Observed payload: [{"id":23,"name":"CRATE-D"}]
+No success status, response media type or authentication policy is specified.

@@ -1,0 +1,1 @@
+:import spec file:"sensor.generated.json" as:sensor_demo endpoint:"http://127.0.0.1:8771" target:sensor_demo_local

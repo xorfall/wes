@@ -1,0 +1,10 @@
+types:
+  DemoProduct:
+    base: Record
+    fields:
+      id: Int
+      name: Text
+      category: Text
+      price: Decimal
+      stock: Int
+      active: Bool

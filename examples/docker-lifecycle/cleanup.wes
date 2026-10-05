@@ -1,0 +1,1 @@
+docker container stop container:$created.container | docker container remove container:$created.container > removed

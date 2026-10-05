@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "provider": "lab-sensors",
+  "types": {
+    "Measurement": {
+      "base": "Decimal",
+      "min": 0
+    },
+    "Readings": {
+      "base": "Map<Text,Measurement>"
+    },
+    "StationStatus": {
+      "base": "Record",
+      "fields": {
+        "station": {
+          "type": "Text",
+          "optional": false
+        },
+        "readings": {
+          "type": "Readings",
+          "optional": false
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "status"
+      ],
+      "summary": "Read a synthetic sensor station",
+      "method": "GET",
+      "route": "/status",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "StationStatus"
+      }
+    },
+    {
+      "path": [
+        "readings"
+      ],
+      "summary": "Read synthetic measurements",
+      "method": "GET",
+      "route": "/readings",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Readings"
+      }
+    }
+  ]
+}

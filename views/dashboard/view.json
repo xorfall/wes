@@ -1,0 +1,74 @@
+{
+  "name": "Dashboard",
+  "id": "dashboard",
+  "summary": "Arrange independently bound views without running their sources.",
+  "renderer": "View.tsx",
+  "input": "Dashboard",
+  "outputs": {},
+  "interaction": null,
+  "slots": {
+    "members": {
+      "accepts": [],
+      "protocol": null,
+      "max": 16,
+      "default": true,
+      "coordinates": false
+    }
+  },
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 48,
+        "rows": 6
+      },
+      "preferred": {
+        "columns": 80,
+        "rows": 8
+      },
+      "max": {
+        "columns": 512,
+        "rows": 8
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 60,
+        "rows": 12
+      },
+      "preferred": {
+        "columns": 100,
+        "rows": 14
+      },
+      "max": {
+        "columns": 512,
+        "rows": 40
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 60,
+        "rows": 12
+      },
+      "preferred": {
+        "columns": 120,
+        "rows": 24
+      },
+      "max": {
+        "columns": 512,
+        "rows": 80
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    }
+  }
+}

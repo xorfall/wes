@@ -1,0 +1,10 @@
+{
+  "name": "wes-development",
+  "license": "MIT",
+  "private": true,
+  "workspaces": ["gui", "packages/view-sdk", "tools/view-package"],
+  "scripts": {
+    "build": "npm run build --workspace wes-gui",
+    "typecheck": "npm run typecheck --workspace wes-gui"
+  }
+}

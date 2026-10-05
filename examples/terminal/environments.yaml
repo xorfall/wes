@@ -1,0 +1,23 @@
+version: 1
+package: terminal-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      printf:
+        source: {kind: spec, file: lab-sensors.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765}
+      lab-sensors:
+        source: {kind: spec, file: lab-sensors.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765}
+  alternate:
+    imports:
+      lab-sensors:
+        source: {kind: spec, file: lab-sensors.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8766}
+  private:
+    imports:
+      lab-sensors:
+        source: {kind: spec, file: lab-sensors.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765, output: private}

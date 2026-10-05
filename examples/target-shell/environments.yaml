@@ -1,0 +1,20 @@
+version: 1
+package: target-shell
+targets:
+  remote:
+    kind: ssh
+    host: fixture.invalid
+    user: qa
+    client: /usr/bin/ssh
+    identity_file: /absolute/path/to/identity
+    known_hosts: /absolute/path/to/known_hosts
+    shell: posix
+    inherit: remote
+    cwd: /
+    env: {QA_REMOTE: declared}
+environments:
+  qa:
+    imports:
+      sh:
+        source: {kind: builtin, name: sh}
+        bind: {target: remote, timeout_ms: 10000}

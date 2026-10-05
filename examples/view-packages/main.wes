@@ -1,0 +1,6 @@
+// Build-time packages are discoverable without loading renderer code.
+:list views
+:inspect view:Timeline
+:inspect view:Metric
+// The finite result automatically matches the Metric package in the GUI.
+:calc { return {view: "metric", value: 1250}; } > elapsed

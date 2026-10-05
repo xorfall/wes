@@ -1,0 +1,165 @@
+/*
+ * /env cards: a disclosure before each radio line, a closed card's provider chips grouped by kind,
+ * and the open card's provider table. Everything under the head starts at the name's indent:
+ * head padding, disclosure, row padding, radio and its gap.
+ */
+.wes-terminal .env-card {
+  --env-indent: calc(var(--space-sm) + 20px + var(--space-xs) + 12px + 12px);
+}
+.wes-terminal .env-card-head {
+  display: flex;
+  align-items: flex-start;
+  padding-left: var(--space-sm);
+}
+.wes-terminal .env-card-head .env-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: var(--space-xs);
+}
+.wes-terminal .env-disclosure,
+.wes-terminal .env-row-toggle {
+  flex: 0 0 auto;
+  width: 20px;
+  padding: 0;
+  color: var(--mono-dim);
+  background: none;
+  cursor: pointer;
+}
+.wes-terminal .env-disclosure {
+  margin-top: 10px;
+  line-height: var(--type-mono-leading);
+}
+.wes-terminal .env-disclosure:focus-visible,
+.wes-terminal .env-row-toggle:focus-visible,
+.wes-terminal .env-method-option:focus-visible,
+.wes-terminal .env-chip-more:focus-visible {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+}
+.wes-terminal .env-row-toggle {
+  display: inline-block;
+  width: 2ch;
+}
+.wes-terminal .env-card .env-card-body,
+.wes-terminal .env-card .env-execution-controls,
+.wes-terminal .env-card .env-asking,
+.wes-terminal .env-card .env-setup {
+  margin-left: var(--env-indent);
+  margin-right: var(--space-md);
+}
+.wes-terminal .env-card .env-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-bottom: 10px;
+  margin-top: -6px;
+}
+
+/* A closed card's providers: a kind label, then its chips; a writing chip and a missing one are marked. */
+.wes-terminal .env-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+}
+.wes-terminal .env-chip-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.wes-terminal .env-chip-kind {
+  color: var(--mono-dim);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.wes-terminal .env-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunk);
+  color: var(--mono-ink);
+  white-space: nowrap;
+}
+.wes-terminal .env-chip-more {
+  color: var(--mono-ref);
+  cursor: pointer;
+}
+.wes-terminal .env-chip-mark {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.wes-terminal .env-mark-writes { background: var(--mono-bad); }
+.wes-terminal .env-mark-missing { background: var(--mono-warn); }
+.wes-terminal .env-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin: var(--space-md) 0 0;
+}
+.wes-terminal .env-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The open card's providers: the shared table; an authenticated row's setup fills its detail. */
+.wes-terminal .env-setup .value-table-block { margin: 0; }
+.wes-terminal .env-setup .value-table-detail > .env-provider {
+  /* Contributes no width of its own, so a setup never widens the table's columns. */
+  width: 0;
+  min-width: 100%;
+}
+
+/* The method picker: one compact option per authentication alternative, the chosen one tinted. */
+.wes-terminal .env-method-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+.wes-terminal .env-method-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 160px;
+  padding: 6px var(--space-sm);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--ground);
+  color: var(--mono-ink);
+  text-align: left;
+  cursor: pointer;
+}
+.wes-terminal .env-method-option.on {
+  border-color: var(--mono-ref);
+  background: var(--sel);
+}
+.wes-terminal .env-method-option:disabled { cursor: default; opacity: 0.6; }
+.wes-terminal .env-method-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+}
+.wes-terminal .env-method-dot {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--mono-dim);
+  border-radius: 50%;
+}
+.wes-terminal .env-method-option.on .env-method-dot {
+  border-color: var(--mono-ref);
+  background: var(--mono-ref);
+}
+.wes-terminal .env-method-detail {
+  color: var(--mono-dim);
+  font-family: var(--type-sans-family);
+  font-size: var(--type-sans-small-size);
+}

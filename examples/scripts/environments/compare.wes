@@ -1,0 +1,5 @@
+@env{dev} vars run args:DEMO_STAGE > development
+@env{prod} vars run args:DEMO_STAGE > production
+:calc {
+  return {dev: $development, prod: $production};
+} > comparison

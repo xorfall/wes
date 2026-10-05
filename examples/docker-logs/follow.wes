@@ -1,0 +1,16 @@
+docker logs follow container:CONTAINER_ID tail:200 > live_logs
+:calc {
+  const rows = $live_logs;
+  const total = length(rows);
+  if (total == 0) return {lines: 0, analyzed: 0, errors: 0, clipped: 0, last: 0};
+  let skipCount = total - 20;
+  if (skipCount < 0) skipCount = 0;
+  const recent = iter.items(rows).skip(skipCount).collect();
+  const errors = recent.filter(row => {
+    for (const hit of iter.matches(row.text, "(?i)error|fatal|panic")) return true;
+    return false;
+  });
+  return {lines: total, analyzed: length(recent), errors: length(errors),
+          clipped: length(recent.filter(row => row.line_truncated)),
+          last: rows[total - 1].sequence};
+} > live_summary

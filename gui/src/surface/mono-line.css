@@ -1,0 +1,15 @@
+/*
+ * A mono line. It is one line: it does not wrap, and what does not fit is cut with an ellipsis, so
+ * the column a character sits in never depends on how wide the window happens to be. A cut line
+ * carries its whole text as its hint, so nothing it says becomes unreachable.
+ */
+.wes-terminal .mono-line {
+  margin: 0;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ink);
+}

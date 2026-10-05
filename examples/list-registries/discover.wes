@@ -1,0 +1,3 @@
+:list templates > definitions
+:inspect template:Summary > summary_definition
+:help list > listing_help

@@ -1,0 +1,93 @@
+# Loadable native wes type package. Option is executable; Iter is declaration-only.
+version: 1
+
+types:
+  Category:
+    base: Text
+    enum: [books, games]
+
+  BookCategory:
+    base: Category
+    enum: [books]
+
+  ProductCategory:
+    base: Category
+
+  ProductCode:
+    base: Text
+    minLength: 1
+    maxLength: 32
+    pattern: '^[A-Z][A-Z0-9-]*$'
+
+  Price:
+    base: Decimal
+    min: 0
+
+  Quantity:
+    base: Int
+    min: 1
+
+  SmallQuantity:
+    base: Quantity
+    max: 100
+
+  Order:
+    base: Record
+    fields:
+      category: Category
+      quantity: Quantity
+      unitPrice: Price
+
+  BookOrder:
+    base: Order
+    fields:
+      category: BookCategory
+      quantity: SmallQuantity
+      customerReference: Text
+
+  StoreOrder:
+    base: Record
+    fields:
+      category: Category
+      quantity: Quantity
+      unitPrice: Price
+      storeOrderId: Text
+
+  AnnotatedOrder:
+    base: Order
+    fields:
+      note:
+        type: Text
+        optional: true
+
+  NotedOrder:
+    base: AnnotatedOrder
+    fields:
+      note: Text
+
+  OptionalNote:
+    base: Option<Text>
+
+  OrderBatch:
+    base: List<Order>
+    minItems: 1
+    maxItems: 100
+
+  OrdersByCategory:
+    base: Map<Category, List<Order>>
+
+  OrderFeed:
+    base: Iter<Order>
+
+  OrderStatus:
+    base: Text
+    enum: [pending, fulfilled, cancelled]
+
+  OrderResult:
+    base: Record
+    fields:
+      order: Order
+      status: OrderStatus
+      message:
+        type: Text
+        optional: true

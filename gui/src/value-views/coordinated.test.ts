@@ -1,0 +1,22 @@
+import {expect,it,vi,afterEach} from "vitest";
+import {InteractionController} from "./interaction";
+import {LocalCoordinators} from "./coordinated";
+import {localTimeline} from "./interaction.test-support";
+import {attachSharedState} from "./shared-state";
+const viewport={start:"2031-01-01T00:00:00Z",end:"2031-01-01T00:10:00Z"};
+const controller=()=>new InteractionController(localTimeline.interaction!,{range:viewport});
+afterEach(()=>vi.useRealTimers());
+it("coordinates hover and drag only within one mounted group and never commits ephemeral data",async()=>{
+  vi.useFakeTimers();const local=new LocalCoordinators(),a=controller(),b=controller(),c=controller(),otherMount=controller();
+  const commit=vi.fn(),watch=()=>()=>{};
+  const closes=[local.attach("one",localTimeline,a),local.attach("one",localTimeline,b),local.attach("two",localTimeline,c),new LocalCoordinators().attach("one",localTimeline,otherMount),attachSharedState(localTimeline,a,{watch,commit})];
+  a.emit({kind:"cursor",at:viewport.start});a.emit({kind:"selection-preview",range:viewport});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(b.committed()).toMatchObject({cursor:viewport.start,draft:viewport});
+  for(const independent of [c,otherMount])expect(independent.committed()).toMatchObject({cursor:null,draft:null,selection:null});
+  expect(commit).not.toHaveBeenCalled();
+  a.emit({kind:"cursor",at:null});a.emit({kind:"selection-preview",range:null});
+  await vi.advanceTimersByTimeAsync(100);expect(b.committed()).toMatchObject({cursor:null,draft:null});
+  closes.forEach(close=>close());
+  a.emit({kind:"cursor",at:viewport.end});await vi.advanceTimersByTimeAsync(100);expect(b.committed()).toHaveProperty("cursor",null);
+});

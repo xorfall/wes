@@ -1,0 +1,21 @@
+diagnostics containers project:wes-investigation > containers
+:calc { return $containers.rows[0].id; } > selected_value
+:type check $selected_value as:Text > selected_container
+diagnostics inspect container:$selected_container > inspection
+diagnostics logs container:$selected_container tail:200 > recent_logs
+:calc {
+  const info = $inspection.rows[0];
+  const failures = $recent_logs.rows.filter(row => {
+    return iter.matches(row.text, "allocation failed").count() > 0;
+  });
+  return {
+    name: info.name,
+    exit_code: info.exit_code,
+    oom_killed: info.oom_killed,
+    restarts: info.restarts,
+    lines: length($recent_logs.rows),
+    allocation_failures: length(failures),
+    truncated: $recent_logs.truncated,
+    examples: iter.items(failures).take(2).collect().map(row => row.text)
+  };
+} > diagnosis

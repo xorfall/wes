@@ -1,0 +1,8 @@
+// Synthetic owned stream example. The test fixture installs metrics.watch and the Metric type package.
+// Run from the repository root: cargo test -p wes --test web owned_live_queries
+// The view opens without execution; Apply starts, the final closed view stops the owned stream.
+:def Watch(input: Option<Interval>) as metrics watch range:?input
+:def Draw(input: List<Int>) -> Metric as :calc pure { if (length(input)==0) { return {view:'metric',value:0}; } return {view:'metric',value:input[length(input)-1]}; }
+:view create Timeline > chart
+:view create Metric > detail
+:view query $detail template:Watch from:$chart output:selection mode:live adapter:Draw

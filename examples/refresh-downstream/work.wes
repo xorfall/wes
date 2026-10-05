@@ -1,0 +1,6 @@
+:workspace policy mode:manual
+:calc { return 2; } > source
+:calc { return $source * 3; } > tripled
+:calc { return $tripled + 1; } > total
+:calc { return 99; } > unrelated
+:refresh $source scope:downstream

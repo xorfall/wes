@@ -1,0 +1,110 @@
+//! Imports capture ready descriptor bytes; document interpretation belongs to :describe.
+use super::*;
+use wes_adapters::imports::{SpecDocuments, read_url, validate_spec_url};
+use wes_engine::imports::{ImportError, ImportRecipe};
+
+fn failure(message: &'static str) -> ImportError {
+    ImportError::Input(message)
+}
+
+fn recipe(bytes: &[u8], limit: usize) -> std::result::Result<ImportRecipe, ImportError> {
+    if bytes.len() > limit {
+        return Err(ImportError::Capacity);
+    }
+    let source = String::from_utf8(bytes.to_vec()).map_err(|_| ImportError::InvalidRecipe)?;
+    ImportRecipe::new("spec/json/v1".into(), source)
+}
+
+impl SpecDocuments for ApiLibrary {
+    fn capture(
+        &self,
+        location: &str,
+        limit: usize,
+    ) -> std::result::Result<ImportRecipe, ImportError> {
+        validate_spec_url(location)?;
+        let body = read_url(location, limit.min(max_source()))?;
+        let parsed: Option<Value> = serde_json::from_str(body.trim_start_matches('\u{feff}')).ok();
+        if !parsed.as_ref().is_some_and(|v| v.get("version").is_some()) {
+            return Err(failure(
+                "Import requires a ready wes spec. Convert OpenAPI JSON/YAML with :describe url:\"...\" provider:name, review it in /spec, then import the saved descriptor.",
+            ));
+        }
+        recipe(body.as_bytes(), limit)
+    }
+}
+
+/// Installed resource directory resolved by the native host for its platform bundle layout.
+static BUNDLED_RESOURCES: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// The extractor's file name; Windows runs only executables with their `.exe` suffix.
+fn extractor_name() -> String {
+    format!("wes-extract{}", std::env::consts::EXE_SUFFIX)
+}
+
+/// Record the host's installed resource directory once at startup; later calls are ignored.
+///
+/// # Arguments
+/// * `directory` - The resource directory the native bundle installs `wes-extract` into.
+pub fn use_bundled_resources(directory: PathBuf) {
+    let _ = BUNDLED_RESOURCES.set(directory);
+}
+
+pub(super) fn bundled_extractor() -> Option<PathBuf> {
+    // A command-line binary inside a macOS application bundle has no native host to register.
+    let macos_bundle = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|directory| directory.join("../Resources")));
+    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/describe");
+    locate_extractor(
+        BUNDLED_RESOURCES
+            .get()
+            .cloned()
+            .into_iter()
+            .chain(macos_bundle)
+            .chain([development]),
+    )
+}
+
+fn locate_extractor(directories: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    directories
+        .into_iter()
+        .map(|directory| directory.join(extractor_name()))
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+mod extractor_location_tests {
+    use super::*;
+
+    #[test]
+    fn should_prefer_the_first_directory_holding_the_extractor() {
+        // Arrange
+        let missing = tempfile::tempdir().unwrap();
+        let installed = tempfile::tempdir().unwrap();
+        let development = tempfile::tempdir().unwrap();
+        for directory in [installed.path(), development.path()] {
+            std::fs::write(directory.join(extractor_name()), "").unwrap();
+        }
+
+        // Act
+        let located = locate_extractor([
+            missing.path().into(),
+            installed.path().into(),
+            development.path().into(),
+        ]);
+
+        // Assert
+        assert_eq!(located, Some(installed.path().join(extractor_name())));
+    }
+
+    #[test]
+    fn should_report_no_extractor_when_no_directory_holds_one() {
+        // Arrange
+        let empty = tempfile::tempdir().unwrap();
+
+        // Act
+        let located = locate_extractor([empty.path().into()]);
+
+        // Assert
+        assert_eq!(located, None);
+    }
+}

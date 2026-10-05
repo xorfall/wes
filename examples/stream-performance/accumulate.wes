@@ -1,0 +1,1 @@
+events watch | :stream accumulate limit:64 overflow:drop-oldest | probe take value:input > result

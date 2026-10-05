@@ -1,0 +1,4 @@
+:sandbox {
+  :calc { return [{service: "api", requests: 20}, {service: "worker", requests: 5}]; } > services
+  $services | :calc { return input.reduce((sum, row) => sum + row.requests, 0); } > requests
+} > preview

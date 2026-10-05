@@ -1,0 +1,4989 @@
+[
+  {
+    "type": "Text",
+    "input": "hello",
+    "accepted": true,
+    "canonical": "\"hello\"",
+    "parts": []
+  },
+  {
+    "type": "Text",
+    "input": "",
+    "accepted": true,
+    "canonical": "\"\"",
+    "parts": []
+  },
+  {
+    "type": "Text",
+    "input": "true",
+    "accepted": true,
+    "canonical": "\"true\"",
+    "parts": []
+  },
+  {
+    "type": "Text",
+    "input": "1",
+    "accepted": true,
+    "canonical": "\"1\"",
+    "parts": []
+  },
+  {
+    "type": "Text",
+    "input": "😀",
+    "accepted": true,
+    "canonical": "\"😀\"",
+    "parts": []
+  },
+  {
+    "type": "Text",
+    "input": "line\nline",
+    "accepted": true,
+    "canonical": "\"line\\nline\"",
+    "parts": []
+  },
+  {
+    "type": "Unknown",
+    "input": "1",
+    "accepted": true,
+    "canonical": "\"1\"",
+    "parts": []
+  },
+  {
+    "type": "Unknown",
+    "input": "null",
+    "accepted": true,
+    "canonical": "\"null\"",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "true",
+    "accepted": true,
+    "canonical": "true",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "false",
+    "accepted": true,
+    "canonical": "false",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "TRUE",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "True",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "yes",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "0",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Bool",
+    "input": "",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "0",
+    "accepted": true,
+    "canonical": "0",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "-0",
+    "accepted": true,
+    "canonical": "0",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "+1",
+    "accepted": true,
+    "canonical": "1",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "0001",
+    "accepted": true,
+    "canonical": "1",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "1_000",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "1.0",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "1e2",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": " 1",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "1 ",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "9223372036854775807",
+    "accepted": true,
+    "canonical": "9223372036854775807",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "-9223372036854775808",
+    "accepted": true,
+    "canonical": "-9223372036854775808",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "9223372036854775808",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "１２",
+    "accepted": true,
+    "canonical": "12",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "١٢",
+    "accepted": true,
+    "canonical": "12",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "𝟙",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "0",
+    "accepted": true,
+    "canonical": "0",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "-0",
+    "accepted": true,
+    "canonical": "0",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "0.00",
+    "accepted": true,
+    "canonical": "0.00",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "0E+3",
+    "accepted": true,
+    "canonical": "0E+3",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "+1",
+    "accepted": true,
+    "canonical": "1",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "001.20",
+    "accepted": true,
+    "canonical": "1.20",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": ".5",
+    "accepted": true,
+    "canonical": "0.5",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "5.",
+    "accepted": true,
+    "canonical": "5",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e3",
+    "accepted": true,
+    "canonical": "1E+3",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e-6",
+    "accepted": true,
+    "canonical": "0.000001",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e-7",
+    "accepted": true,
+    "canonical": "1E-7",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "-123.4500",
+    "accepted": true,
+    "canonical": "-123.4500",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1_000",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1.0_0",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e2_0",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "NaN",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "Infinity",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": " 1",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1 ",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e2147483647",
+    "accepted": true,
+    "canonical": "1E+2147483647",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e-2147483647",
+    "accepted": true,
+    "canonical": "1E-2147483647",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e2147483648",
+    "accepted": true,
+    "canonical": "1E+2147483648",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e-2147483648",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "١٢.٣",
+    "accepted": true,
+    "canonical": "12.3",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "１２.３",
+    "accepted": true,
+    "canonical": "12.3",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "1e٢",
+    "accepted": true,
+    "canonical": "1E+2",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "𝟙",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT0S",
+    "accepted": true,
+    "canonical": "\"PT0S\"",
+    "parts": [
+      "0",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "P1D",
+    "accepted": true,
+    "canonical": "\"PT24H\"",
+    "parts": [
+      "86400",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1H",
+    "accepted": true,
+    "canonical": "\"PT1H\"",
+    "parts": [
+      "3600",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1M",
+    "accepted": true,
+    "canonical": "\"PT1M\"",
+    "parts": [
+      "60",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1.5S",
+    "accepted": true,
+    "canonical": "\"PT1.5S\"",
+    "parts": [
+      "1",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT-0.5S",
+    "accepted": true,
+    "canonical": "\"-PT0.5S\"",
+    "parts": [
+      "-1",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "-PT0.5S",
+    "accepted": true,
+    "canonical": "\"-PT0.5S\"",
+    "parts": [
+      "-1",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT-1.5S",
+    "accepted": true,
+    "canonical": "\"-PT1.5S\"",
+    "parts": [
+      "-2",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "-PT-1.5S",
+    "accepted": true,
+    "canonical": "\"PT1.5S\"",
+    "parts": [
+      "1",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "P2DT3H4M5.006S",
+    "accepted": true,
+    "canonical": "\"PT51H4M5.006S\"",
+    "parts": [
+      "183845",
+      "6000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "P-1DT2H",
+    "accepted": true,
+    "canonical": "\"-PT22H\"",
+    "parts": [
+      "-79200",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1,5S",
+    "accepted": true,
+    "canonical": "\"PT1.5S\"",
+    "parts": [
+      "1",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1.S",
+    "accepted": true,
+    "canonical": "\"PT1S\"",
+    "parts": [
+      "1",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1,S",
+    "accepted": true,
+    "canonical": "\"PT1S\"",
+    "parts": [
+      "1",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT.5S",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT+1S",
+    "accepted": true,
+    "canonical": "\"PT1S\"",
+    "parts": [
+      "1",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "pt1s",
+    "accepted": true,
+    "canonical": "\"PT1S\"",
+    "parts": [
+      "1",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "P",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "P1DT",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "P1M",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "P1Y",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "P1W",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT1H1S",
+    "accepted": true,
+    "canonical": "\"PT1H1S\"",
+    "parts": [
+      "3601",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT1M1H",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT1.0000000001S",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT9223372036854775807S",
+    "accepted": true,
+    "canonical": "\"PT2562047788015215H30M7S\"",
+    "parts": [
+      "9223372036854775807",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT-9223372036854775808S",
+    "accepted": true,
+    "canonical": "\"-PT2562047788015215H30M8S\"",
+    "parts": [
+      "-9223372036854775808",
+      "0"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "-PT-9223372036854775808S",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT9223372036854775807.999999999S",
+    "accepted": true,
+    "canonical": "\"PT2562047788015215H30M7.999999999S\"",
+    "parts": [
+      "9223372036854775807",
+      "999999999"
+    ]
+  },
+  {
+    "type": "Duration",
+    "input": "PT-9223372036854775808.1S",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Duration",
+    "input": "PT000000000000000000000001S",
+    "accepted": true,
+    "canonical": "\"PT1S\"",
+    "parts": [
+      "1",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-01-01T00:00:00Z",
+    "accepted": true,
+    "canonical": "\"1970-01-01T00:00:00Z\"",
+    "parts": [
+      "0",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1969-12-31T23:59:59.5Z",
+    "accepted": true,
+    "canonical": "\"1969-12-31T23:59:59.500Z\"",
+    "parts": [
+      "-1",
+      "500000000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-02-29T12:34:56.123456789Z",
+    "accepted": true,
+    "canonical": "\"2024-02-29T12:34:56.123456789Z\"",
+    "parts": [
+      "1709210096",
+      "123456789"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2023-02-29T00:00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01t00:00:00z",
+    "accepted": true,
+    "canonical": "\"2000-01-01T00:00:00Z\"",
+    "parts": [
+      "946684800",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00.0Z",
+    "accepted": true,
+    "canonical": "\"2000-01-01T00:00:00Z\"",
+    "parts": [
+      "946684800",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00.Z",
+    "accepted": true,
+    "canonical": "\"2000-01-01T00:00:00Z\"",
+    "parts": [
+      "946684800",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+03:00",
+    "accepted": true,
+    "canonical": "\"1999-12-31T21:00:00Z\"",
+    "parts": [
+      "946674000",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+03:00:05",
+    "accepted": true,
+    "canonical": "\"1999-12-31T20:59:55Z\"",
+    "parts": [
+      "946673995",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+0300",
+    "accepted": true,
+    "canonical": "\"1999-12-31T21:00:00Z\"",
+    "parts": [
+      "946674000",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+03",
+    "accepted": true,
+    "canonical": "\"1999-12-31T21:00:00Z\"",
+    "parts": [
+      "946674000",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T24:00:00Z",
+    "accepted": true,
+    "canonical": "\"2000-01-02T00:00:00Z\"",
+    "parts": [
+      "946771200",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T24:00:00.1Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2016-12-31T23:59:60Z",
+    "accepted": true,
+    "canonical": "\"2016-12-31T23:59:59Z\"",
+    "parts": [
+      "1483228799",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2016-12-31T12:59:60Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0000-01-01T00:00:00Z",
+    "accepted": true,
+    "canonical": "\"0000-01-01T00:00:00Z\"",
+    "parts": [
+      "-62167219200",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-01-01T00:00:00Z",
+    "accepted": true,
+    "canonical": "\"-0001-01-01T00:00:00Z\"",
+    "parts": [
+      "-62198755200",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-01-01T00:00:00Z",
+    "accepted": true,
+    "canonical": "\"+10000-01-01T00:00:00Z\"",
+    "parts": [
+      "253402300800",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "10000-01-01T00:00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "+0001-01-01T00:00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0000-01-01T00:00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "+00000-01-01T00:00:00Z",
+    "accepted": true,
+    "canonical": "\"0000-01-01T00:00:00Z\"",
+    "parts": [
+      "-62167219200",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-01-01T00:00:00Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-01-01T00:00:00Z\"",
+    "parts": [
+      "-31557014167219200",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-12-31T23:59:59.999999999Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-12-31T23:59:59.999999999Z\"",
+    "parts": [
+      "31556889864403199",
+      "999999999"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000001-01-01T00:00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+18:00",
+    "accepted": true,
+    "canonical": "\"1999-12-31T06:00:00Z\"",
+    "parts": [
+      "946620000",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+18:01",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00-00:00",
+    "accepted": true,
+    "canonical": "\"2000-01-01T00:00:00Z\"",
+    "parts": [
+      "946684800",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-13-01T00:00:00Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014167132801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014164800001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014164713601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014164540801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014164454401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014162121601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014162035201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014161948801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014159616001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014159529601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014159356801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014138188801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014135856001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014135769601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000000-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-1000000000-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014135596801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014135510401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014133177601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014133091201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014132918401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014132832001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014130499201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014130412801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014128080001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014127993601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014127820801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014106652801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014104320001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014104233601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-999999999-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-999999999-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-31557014104060801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377736652801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377734320001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377734233601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-377734060801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377733974401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377731641601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377731555201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377731468801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377729136001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377729049601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-377728876801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377707708801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377705376001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377705289601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-10000-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-10000-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-377705116801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377705030401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377702697601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377702611201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-377702438401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377702352001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377700019201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377699932801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377697600001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377697513601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-377697340801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-377676172801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-377673840001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-377673753601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-9999-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-9999-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-377673580801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-74789913601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-74787580801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-74787494401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-74787321601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-74787235201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-74784902401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-74784816001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-74784729601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-74782396801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-74782310401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-74782137601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-74760969601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-74758636801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-74758550401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0400-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0400-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-74758377601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-65322806401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-65320473601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-65320387201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-65320214401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-65320128001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-65317795201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-65317708801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-65315376001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-65315289601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-65315116801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-65293948801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-65291616001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-65291529601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0100-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0100-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-65291356801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62293363201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62291030401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62290944001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62290771201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62290684801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62288352001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62288265601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62288179201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62285846401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62285760001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62285587201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62264419201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62262086401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62262000001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0004-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0004-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62261827201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62198668801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62196336001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62196249601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62196076801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62195990401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62193657601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62193571201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62191238401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62191152001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62190979201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62169811201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62167478401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62167392001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "-0001-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"-0001-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62167219201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62167132801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62164800001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62164713601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62164540801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62164454401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62162121601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62162035201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0000-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62161948801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62159616001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62159529601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62159356801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62138188801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62135856001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62135769601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0000-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0000-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62135596801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62135510401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62133177601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62133091201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62132918401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62132832001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62130499201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0001-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0001-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62130412801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62128080001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62127993601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62127820801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62106652801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62104320001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62104233601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0001-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0001-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62104060801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62040902401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62038569601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62038483201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62038310401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62038224001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62035891201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62035804801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0004-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62035718401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62033385601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62033299201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62033126401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-62011958401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-62009625601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-62009539201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0004-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0004-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-62009366401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-59011372801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-59009040001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-59008953601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-59008780801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-59008694401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-59006361601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0100-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0100-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-59006275201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-59003942401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-59003856001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-59003683201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-58982515201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-58980182401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-58980096001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0100-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0100-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-58979923201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-49544352001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-49542019201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-49541932801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-49541760001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-49541673601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-49539340801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "-49539254401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "0400-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-49539168001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-49536835201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-49536748801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-49536576001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-49515408001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-49513075201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-49512988801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "0400-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"0400-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-49512816001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-12244003201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-12241670401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-12241584001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-12241411201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-12241324801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-12238992001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "1582-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "1582-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-12238905601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-12236572801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-12236486401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-12236313601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-12215145601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-12212812801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-12212726401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1582-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1582-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-12212553601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "-2208902401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "-2206569601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "-2206483201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "-2206310401",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "-2206224001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "-2203891201",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "1900-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "1900-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "-2203804801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "-2201472001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "-2201385601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "-2201212801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "-2180044801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "-2177712001",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "-2177625601",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1900-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1900-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "-2177452801",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "86399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "2419199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "2505599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "2678399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "2764799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "5097599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "1970-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "1970-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "5183999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "7516799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "7603199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "7775999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "28943999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "31276799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "31363199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "1970-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"1970-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "31535999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "946771199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "949103999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "949190399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "949363199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "949449599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "951782399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "951868799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "951955199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "954287999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "954374399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "954547199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "975715199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "978047999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "978134399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2000-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "978307199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "1704153599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "1706486399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "1706572799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "1706745599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "1706831999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "1709164799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "1709251199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2024-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "1709337599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "1711670399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "1711756799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "1711929599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "1733097599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "1735430399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "1735516799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2024-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"2024-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "1735689599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "253370851199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "253373183999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "253373270399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "253373443199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "253373529599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "253375862399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "9999-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "9999-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "253375948799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "253378281599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "253378367999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "253378540799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "253399708799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "253402041599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "253402127999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "9999-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"9999-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "253402300799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "253402387199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "253404719999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "253404806399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "253404979199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "253405065599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "253407398399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "253407484799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "253407571199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "253409903999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "253409990399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "253410163199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "253431331199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "253433663999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "253433750399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+10000-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+10000-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "253433923199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889801331199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889803663999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889803750399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "31556889803923199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889804009599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889806342399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-02-29T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889806428799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889808761599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889808847999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "31556889809020799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889830188799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889832521599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889832607999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+999999999-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+999999999-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "31556889832780799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-01-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-01-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889832867199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-01-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-01-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889835199999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-01-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-01-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889835286399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-01-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-01-31T23:59:59.000001Z\"",
+    "parts": [
+      "31556889835459199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-02-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-02-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889835545599",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-02-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-02-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889837878399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-02-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-02-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889837964799",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-02-31T23:59:59.000001Z",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-03-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-03-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889838051199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-03-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-03-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889840383999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-03-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-03-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889840470399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-03-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-03-31T23:59:59.000001Z\"",
+    "parts": [
+      "31556889840643199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-12-01T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-12-01T23:59:59.000001Z\"",
+    "parts": [
+      "31556889861811199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-12-28T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-12-28T23:59:59.000001Z\"",
+    "parts": [
+      "31556889864143999",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-12-29T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-12-29T23:59:59.000001Z\"",
+    "parts": [
+      "31556889864230399",
+      "1000"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000000-12-31T23:59:59.000001Z",
+    "accepted": true,
+    "canonical": "\"+1000000000-12-31T23:59:59.000001Z\"",
+    "parts": [
+      "31556889864403199",
+      "1000"
+    ]
+  },
+  {
+    "type": "Int",
+    "input": "٠١٢٣٤٥٦٧٨٩",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "٠١٢٣٤٥٦٧٨٩.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "۰۱۲۳۴۵۶۷۸۹",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "۰۱۲۳۴۵۶۷۸۹.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "߀߁߂߃߄߅߆߇߈߉",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "߀߁߂߃߄߅߆߇߈߉.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "०१२३४५६७८९",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "०१२३४५६७८९.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "০১২৩৪৫৬৭৮৯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "০১২৩৪৫৬৭৮৯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "੦੧੨੩੪੫੬੭੮੯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "੦੧੨੩੪੫੬੭੮੯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "૦૧૨૩૪૫૬૭૮૯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "૦૧૨૩૪૫૬૭૮૯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "୦୧୨୩୪୫୬୭୮୯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "୦୧୨୩୪୫୬୭୮୯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "௦௧௨௩௪௫௬௭௮௯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "௦௧௨௩௪௫௬௭௮௯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "౦౧౨౩౪౫౬౭౮౯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "౦౧౨౩౪౫౬౭౮౯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "೦೧೨೩೪೫೬೭೮೯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "೦೧೨೩೪೫೬೭೮೯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "൦൧൨൩൪൫൬൭൮൯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "൦൧൨൩൪൫൬൭൮൯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "෦෧෨෩෪෫෬෭෮෯",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "෦෧෨෩෪෫෬෭෮෯.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "๐๑๒๓๔๕๖๗๘๙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "๐๑๒๓๔๕๖๗๘๙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "໐໑໒໓໔໕໖໗໘໙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "໐໑໒໓໔໕໖໗໘໙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "༠༡༢༣༤༥༦༧༨༩",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "༠༡༢༣༤༥༦༧༨༩.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "၀၁၂၃၄၅၆၇၈၉",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "၀၁၂၃၄၅၆၇၈၉.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "႐႑႒႓႔႕႖႗႘႙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "႐႑႒႓႔႕႖႗႘႙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "០១២៣៤៥៦៧៨៩",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "០១២៣៤៥៦៧៨៩.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᠐᠑᠒᠓᠔᠕᠖᠗᠘᠙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᠐᠑᠒᠓᠔᠕᠖᠗᠘᠙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᥆᥇᥈᥉᥊᥋᥌᥍᥎᥏",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᥆᥇᥈᥉᥊᥋᥌᥍᥎᥏.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᧐᧑᧒᧓᧔᧕᧖᧗᧘᧙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᧐᧑᧒᧓᧔᧕᧖᧗᧘᧙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᪀᪁᪂᪃᪄᪅᪆᪇᪈᪉",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᪀᪁᪂᪃᪄᪅᪆᪇᪈᪉.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᪐᪑᪒᪓᪔᪕᪖᪗᪘᪙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᪐᪑᪒᪓᪔᪕᪖᪗᪘᪙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᭐᭑᭒᭓᭔᭕᭖᭗᭘᭙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᭐᭑᭒᭓᭔᭕᭖᭗᭘᭙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᮰᮱᮲᮳᮴᮵᮶᮷᮸᮹",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᮰᮱᮲᮳᮴᮵᮶᮷᮸᮹.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᱀᱁᱂᱃᱄᱅᱆᱇᱈᱉",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᱀᱁᱂᱃᱄᱅᱆᱇᱈᱉.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "᱐᱑᱒᱓᱔᱕᱖᱗᱘᱙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "᱐᱑᱒᱓᱔᱕᱖᱗᱘᱙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꘠꘡꘢꘣꘤꘥꘦꘧꘨꘩",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꘠꘡꘢꘣꘤꘥꘦꘧꘨꘩.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꣐꣑꣒꣓꣔꣕꣖꣗꣘꣙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꣐꣑꣒꣓꣔꣕꣖꣗꣘꣙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꤀꤁꤂꤃꤄꤅꤆꤇꤈꤉",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꤀꤁꤂꤃꤄꤅꤆꤇꤈꤉.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꧐꧑꧒꧓꧔꧕꧖꧗꧘꧙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꧐꧑꧒꧓꧔꧕꧖꧗꧘꧙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꧰꧱꧲꧳꧴꧵꧶꧷꧸꧹",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꧰꧱꧲꧳꧴꧵꧶꧷꧸꧹.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꩐꩑꩒꩓꩔꩕꩖꩗꩘꩙",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꩐꩑꩒꩓꩔꩕꩖꩗꩘꩙.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "꯰꯱꯲꯳꯴꯵꯶꯷꯸꯹",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "꯰꯱꯲꯳꯴꯵꯶꯷꯸꯹.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Int",
+    "input": "０１２３４５６７８９",
+    "accepted": true,
+    "canonical": "123456789",
+    "parts": []
+  },
+  {
+    "type": "Decimal",
+    "input": "０１２３４５６７８９.00",
+    "accepted": true,
+    "canonical": "123456789.00",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+03:0005",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+0300:05",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+030005",
+    "accepted": true,
+    "canonical": "\"1999-12-31T20:59:55Z\"",
+    "parts": [
+      "946673995",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+18:00:01",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+1",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00+00:59:59",
+    "accepted": true,
+    "canonical": "\"1999-12-31T23:00:01Z\"",
+    "parts": [
+      "946681201",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "2000-01-01T00:00:00-18:00",
+    "accepted": true,
+    "canonical": "\"2000-01-01T18:00:00Z\"",
+    "parts": [
+      "946749600",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000001-01-01T00:00:00+18:00",
+    "accepted": true,
+    "canonical": "\"+1000000000-12-31T06:00:00Z\"",
+    "parts": [
+      "31556889864338400",
+      "0"
+    ]
+  },
+  {
+    "type": "Instant",
+    "input": "+1000000001-12-31T23:59:59-18:00",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000001-01-01T00:00:00+18:00",
+    "accepted": false,
+    "canonical": "",
+    "parts": []
+  },
+  {
+    "type": "Instant",
+    "input": "-1000000001-12-31T23:59:59-18:00",
+    "accepted": true,
+    "canonical": "\"-1000000000-01-01T17:59:59Z\"",
+    "parts": [
+      "-31557014167154401",
+      "0"
+    ]
+  }
+]

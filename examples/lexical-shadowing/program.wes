@@ -1,0 +1,19 @@
+:calc { return 20; } > duration
+:calc {
+  const duration = 5;
+  const count = 3;
+  function length(value) {
+    return value + count;
+  }
+  const values = iter.items([1, 2]).map(length => length + duration);
+  const call = value => value + 1;
+  return {
+    duration: duration,
+    count: count,
+    helper: length(4),
+    values: values.collect(),
+    method: [1, 2].length(),
+    localCall: call(8),
+    workspace: $duration
+  };
+} > report

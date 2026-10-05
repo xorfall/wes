@@ -1,0 +1,85 @@
+{
+  "sdk": 2,
+  "commands": {
+    "init": "wes-view-package init NEW_SOURCE_DIR",
+    "build": "wes-view-package build SOURCE_DIR OUTPUT.wes-view.json",
+    "check": "wes-view-package check OUTPUT.wes-view.json"
+  },
+  "sourceFiles": {
+    "view.json": "Declarative identity, input, state/event output ports, optional interaction and slots, plus all three layout tiers with min/preferred/max sizes and placement.",
+    "types.yaml": "Wes contracts. Finite scalar, record, list, option and union shapes; explicit adapters for other shapes.",
+    "View.tsx": "Default export: defineView(definition, renderer). Import the generated definition from ./contract.",
+    "view.css": "Optional author styles. Import from the renderer to include them in the artifact.",
+    "contract.ts": "Generated before TypeScript checking. Input, Outputs, State, Event and EventOutputs types come from Wes contracts."
+  },
+  "execution": "Compilation never evaluates source. Views receive inputs, committed state and emit; they never own commands or source streams.",
+  "runtimeLimits": {
+    "inputBytes": 1048576,
+    "drawingsPerSecond": 10,
+    "pendingInputs": 1,
+    "inFlightDrawings": 1,
+    "drawAckSeconds": 5,
+    "messageCharacters": 16384,
+    "eventsPerSecond": 120,
+    "pendingEvents": 16,
+    "executionHost": "opaque-origin iframe, React 18"
+  },
+  "numbers": "Use numericText for exact display and drawingNumber for checked plotting conversion; unsafe drawing conversions return undefined.",
+  "contracts": "Contract validator executable: wes-view-build on PATH, or WES_VIEW_CONTRACT_TOOL.",
+  "diagnostics": "JSON ok:false, diagnostics:[{code,message,file?,line?,column?}]. Failed builds retain the previous artifact.",
+  "version": 1,
+  "workflow": [
+    "Read workspace_context and value_read with typed:true for the public input. Read view_authoring theme and sdk before coding.",
+    "Choose explicit input constraints and output/interaction contracts. Generate contract.ts using the compiler; do not invent or copy a builtin contract.",
+    "Read view_authoring layout. Declare intentional tier sizes and placement; use actual allocation width instead of pane count or fixed screen breakpoints. Test a composed dashboard and a standalone host.",
+    "Use the supplied theme roles for meaning and CSS variables for layout. Do not fix a palette or font.",
+    "Build with the independent compiler, then check the compiled artifact. Verify normal, empty, duplicate identity, invalid and exact-number cases.",
+    "Install a checked artifact with the existing :package load and :view create commands discovered through help. Respect owner/revision checks."
+  ],
+  "prerequisites": {
+    "node": "20 or newer",
+    "compiler": "wes-view-package",
+    "sdk": "@wes/view-sdk",
+    "validator": "wes-view-build on PATH, or WES_VIEW_CONTRACT_TOOL",
+    "provisioning": "Discovery provides guidance and examples. It does not install Node or tools, create files, compile, install a View or execute providers."
+  },
+  "layout": {
+    "tiers": [
+      "preview",
+      "expanded",
+      "window"
+    ],
+    "units": "columns and rows use the mounted host mono advance and line height; they are not CSS pixel ratios.",
+    "bounds": "Each axis: integer 1 <= min <= preferred <= max; max 512 columns and 200 rows. Declare all tiers for new Views. An absent layout uses host defaults.",
+    "placement": {
+      "width": [
+        "fill",
+        "preferred"
+      ],
+      "align": [
+        "start",
+        "center",
+        "end"
+      ],
+      "default": {
+        "width": "fill",
+        "align": "start"
+      },
+      "semantics": "fill uses the slot width up to max; preferred stays near preferred width, can shrink down to min, and leaves spare slot space for alignment. The dashboard may override width and alignment; it owns the slot and weighted layout, the View owns its inner frame."
+    },
+    "height": "Finite content has natural height inside dashboard cards; max.rows bounds the card viewport. Standalone expanded/window use a preferred-row viewport with host resizing and max-row caps. Live dashboard cards reserve preferred-row height: publications must never change it.",
+    "preview": "Render a bounded short summary. The host shows its complete natural height; min/preferred/max rows are summary guidance, not a crop. Never render the full input just because preview can grow.",
+    "allocation": "context.allocation supplies actual iframe CSS-pixel width/height and measured columns/rows; preferred is not a guarantee. The iframe height follows natural content under the tier cap, not the parent dashboard slot height. Do not use allocation.height to set whole-view height: that creates a measurement feedback loop. Use width for responsive geometry and bounded plot heights for content.",
+    "containment": "Reflow chrome, wrap long text, and keep overflow inside the View below min. Do not create sideways page scroll or hide unreachable controls. Nested slots have one parent viewport; avoid another whole-view resize grip.",
+    "authority": "Resize, tier, theme and dashboard placement changes preserve identity/state and never execute or replay sources.",
+    "acceptance": [
+      "preferred width and spare-space alignment",
+      "narrow and below-min host widths",
+      "bounded preview with all controls visible",
+      "expanded/window overflow and manual resize",
+      "dashboard weighted slots and row-to-column reflow",
+      "stable live publication height",
+      "theme/resize preserve selected state and emit no commands"
+    ]
+  }
+}

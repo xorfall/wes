@@ -1,0 +1,7 @@
+.metric { display:grid; gap:var(--space-sm); padding:var(--space-md); min-width:0; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--surface); }
+/* The value keeps its role colour but not the role's status box; :is() outranks the generated role rules. */
+.metric>div>strong:is(.status-ok,.status-warn,.status-bad,.table-value) { padding:0; border:0; border-radius:0; background:none; font-size:2rem; line-height:1.2; font-weight:600; overflow-wrap:anywhere; }
+.metric-unit { margin-inline-start:8px; }
+/* The short status sizes to its text instead of stretching across the grid. */
+.metric>span:not(.screen-label) { justify-self:start; max-width:100%; overflow-wrap:anywhere; }
+.metric>span:is(.status-ok,.status-warn,.status-bad) { padding:0 6px; border-color:color-mix(in srgb,currentColor 35%,var(--line)); font-size:12px; line-height:1.5; }

@@ -1,0 +1,18 @@
+version: 1
+package: builtins-demo
+targets:
+  local:
+    kind: local
+    cwd: /tmp
+environments:
+  demo:
+    imports:
+      sh:
+        source: {kind: builtin, name: sh}
+        bind: {target: local}
+      http:
+        source: {kind: builtin, name: http}
+        bind: {target: local}
+      docker:
+        source: {kind: builtin, name: docker}
+        bind: auto

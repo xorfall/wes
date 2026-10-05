@@ -1,0 +1,981 @@
+{
+  "version": 1,
+  "provider": "inventory",
+  "types": {
+    "ApiType1": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType10": {
+      "base": "Record",
+      "fields": {
+        "enabled": {
+          "optional": false,
+          "type": "Bool"
+        }
+      }
+    },
+    "ApiType12": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType2": {
+      "base": "Int",
+      "max": 10,
+      "min": 1
+    },
+    "ApiType3": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType4": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType5": {
+      "base": "Record",
+      "fields": {
+        "enabled": {
+          "optional": false,
+          "type": "Bool"
+        }
+      }
+    },
+    "ApiType7": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType8": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType9": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "Api_Item_f0885034": {
+      "base": "Record",
+      "fields": {
+        "id": {
+          "optional": false,
+          "type": "ApiType8"
+        },
+        "labels": {
+          "optional": false,
+          "type": "Map\u003cText,Text\u003e"
+        },
+        "name": {
+          "optional": false,
+          "type": "ApiType9"
+        },
+        "nested": {
+          "optional": true,
+          "type": "ApiType10"
+        },
+        "note": {
+          "optional": true,
+          "type": "Option\u003cText\u003e"
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "getItem"
+      ],
+      "summary": "Fetch one item with explicit HTTP arguments",
+      "responseDescriptions": {
+        "200": "Item"
+      },
+      "method": "GET",
+      "route": "/items/{id}",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "X_Request_Id",
+          "wire": "X-Request-Id",
+          "location": "header",
+          "type": "Text",
+          "required": false,
+          "encoding": "scalar"
+        },
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "ApiType1",
+          "required": true,
+          "encoding": "scalar"
+        },
+        {
+          "name": "limit",
+          "wire": "limit",
+          "location": "query",
+          "type": "ApiType2",
+          "required": false,
+          "encoding": "scalar"
+        },
+        {
+          "name": "tag",
+          "wire": "tag",
+          "location": "query",
+          "type": "List\u003cText\u003e",
+          "required": false,
+          "encoding": "repeat"
+        }
+      ],
+      "responses": {
+        "200": "Api_Item_f0885034"
+      },
+      "evidence": "#/paths/~1items~1{id}/get"
+    },
+    {
+      "path": [
+        "putItem"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Updated",
+        "201": "Created"
+      },
+      "method": "PUT",
+      "route": "/items/{id}",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "ApiType7",
+          "required": true,
+          "encoding": "scalar"
+        },
+        {
+          "name": "body",
+          "wire": "body",
+          "location": "body",
+          "type": "Api_Item_f0885034",
+          "required": true,
+          "encoding": "json"
+        }
+      ],
+      "responses": {
+        "200": "Api_Item_f0885034",
+        "201": "Api_Item_f0885034"
+      },
+      "evidence": "#/paths/~1items~1{id}/put"
+    },
+    {
+      "path": [
+        "deleteItem"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "204": "Removed; no content"
+      },
+      "method": "DELETE",
+      "route": "/items/{id}",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "ApiType12",
+          "required": true,
+          "encoding": "scalar"
+        }
+      ],
+      "responses": {
+        "204": null
+      },
+      "evidence": "#/paths/~1items~1{id}/delete"
+    }
+  ],
+  "source": {
+    "sha256": "3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+    "format": "3.1.0",
+    "discovered": 3,
+    "emitted": 3,
+    "skipped": 0,
+    "provenance": {
+      "version": 1,
+      "status": "current",
+      "entries": [
+        {
+          "target": "#/operations/0/authOptions",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/0/method",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/0/parameters/0/encoding",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/2",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/0/parameters/0/location",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/2/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/0/parameters/0/name",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/2/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/0/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/2/required",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/0/parameters/0/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/2/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/parameters/0/wire",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/2/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/1/encoding",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/0/parameters/1/location",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/0/parameters/1/name",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/1/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/0/parameters/1/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/parameters/1/wire",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/2/encoding",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/0/parameters/2/location",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/0/parameters/2/name",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/2/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/required",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/0/parameters/2/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/parameters/2/wire",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/3/encoding",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/0/parameters/3/location",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/0/parameters/3/name",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/3/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0/required",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/0/parameters/3/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0/schema/items/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/parameters/3/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/parameters/3/wire",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/0/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/0/path",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/0/route",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/1/authOptions",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/1/method",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/1/parameters/0/encoding",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/1/parameters/0/location",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/1/parameters/0/name",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/1/parameters/0/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/1/parameters/0/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/parameters/0/wire",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/1/parameters/1/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put/requestBody/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Request body requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/1/parameters/1/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/path",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/1/responses/201",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/responses/201",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put/responses/201",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/1/route",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/put",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/2/authOptions",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/delete/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/2/method",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/delete",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/2/parameters/0/encoding",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/2/parameters/0/location",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/2/parameters/0/name",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/2/parameters/0/required",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/2/parameters/0/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/2/parameters/0/wire",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/2/path",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/delete",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/2/responses/204",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/delete/responses/204",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/2/route",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/delete",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/types/ApiType1/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType1/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType10/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType10/fields/enabled/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/ApiType10/fields/enabled/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/properties/enabled/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType12/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType12/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType2/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType2/max",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/schema/maximum",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType2/min",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/paths/~1items~1{id}/get/parameters/1/schema/minimum",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType3/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/id/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType3/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/id/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType4/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/name/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType4/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/name/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType5/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType5/fields/enabled/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/ApiType5/fields/enabled/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/properties/enabled/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType7/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType7/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/parameters/ItemId/schema/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType8/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/id/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType8/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/id/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType9/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/name/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType9/minLength",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/name/minLength",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/base",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/id/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/id/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/id/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/labels/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/labels/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/labels/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/labels/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/labels/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/name/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/name/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/name/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/nested/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/nested/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/nested/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/note/optional",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Item_f0885034/fields/note/type",
+          "source": "sha256:3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+          "pointer": "#/components/schemas/Item/properties/note/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        }
+      ]
+    }
+  },
+  "servers": [
+    {
+      "at": "#",
+      "declaration": {
+        "description": "Never selected automatically",
+        "url": "https://documentation-only.invalid/v1"
+      }
+    }
+  ],
+  "diagnostics": []
+}

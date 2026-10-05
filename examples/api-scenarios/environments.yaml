@@ -1,0 +1,15 @@
+version: 1
+package: api-scenarios-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      orders:
+        source: {kind: spec, file: orders.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8766}
+  private:
+    imports:
+      orders:
+        source: {kind: spec, file: orders.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8766, output: private}

@@ -1,0 +1,3 @@
+fx rates > rates
+fx quote > result
+:calc { return {bare: $rates.body.TRY, nested: $result.body.rates.TRY, usd: $result.body.rates.USD}; } > report

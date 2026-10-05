@@ -1,0 +1,1 @@
+@trace(http) sensor_demo history sensor:LAB1 > demo_readings

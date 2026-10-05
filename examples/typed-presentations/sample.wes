@@ -1,0 +1,9 @@
+:calc { return [{time: "first", price: 1.25}, {time: "second", price: 2.5}]; } > prices
+:calc { return ["time", "price"]; } > columns
+asTable input:$prices columns:$columns > price_table
+asCsv input:$price_table > price_csv
+:calc { return [0, 1, 2, 3, 4]; } > samples
+asHistogram input:$samples bins:2 > distribution
+summary input:$samples title:Samples > sample_summary
+:calc { return {view: "table", columns: ["message"], rows: [["a,\"b\"\nnext"]]}; } > special_table
+asCsv input:$special_table > escaped_csv

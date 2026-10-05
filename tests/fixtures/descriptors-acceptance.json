@@ -1,0 +1,154 @@
+[
+  {
+    "name": "finite response envelope",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": true,
+    "expected": {
+      "provider": "library",
+      "path": [
+        "items",
+        "list"
+      ],
+      "summary": "",
+      "safe": true,
+      "stream": false,
+      "result": "HttpResponse",
+      "parameters": [],
+      "secrets": []
+    }
+  },
+  {
+    "name": "forward native record contracts",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{\"Page\":{\"base\":\"Record\",\"fields\":{\"items\":\"List<Item>\"}},\"Item\":{\"base\":\"Record\",\"fields\":{\"id\":\"Int\",\"title\":\"Text\"}}},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[{\"name\":\"category\",\"type\":\"Text\",\"wire\":\"category\",\"location\":\"query\",\"encoding\":\"scalar\",\"required\":true}],\"responses\":{\"200\":\"Page\"},\"summary\":\"List items\"}]}",
+    "ok": true,
+    "expected": {
+      "provider": "library",
+      "path": [
+        "items",
+        "list"
+      ],
+      "summary": "List items",
+      "safe": true,
+      "stream": false,
+      "result": "HttpResponse",
+      "parameters": [
+        {
+          "name": "category",
+          "type": "Text",
+          "required": true
+        }
+      ],
+      "secrets": []
+    }
+  },
+  {
+    "name": "typed events",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[{\"secret\":\"token\"}],\"parameters\":[],\"responses\":{\"200\":\"List<List<Text>>\"},\"stream\":true}]}",
+    "ok": true,
+    "expected": {
+      "provider": "library",
+      "path": [
+        "items",
+        "list"
+      ],
+      "summary": "",
+      "safe": true,
+      "stream": true,
+      "result": "List<List<Text>>",
+      "parameters": [],
+      "secrets": [
+        "token"
+      ]
+    }
+  },
+  {
+    "name": "explicit body and combined auth",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"POST\",\"route\":\"/items\",\"auth\":[{\"secret\":\"id\",\"header\":\"X-Id\",\"scheme\":\"\"},{\"secret\":\"key\",\"header\":\"X-Key\",\"scheme\":\"\"}],\"parameters\":[{\"name\":\"input\",\"type\":\"Unknown\",\"wire\":\"body\",\"location\":\"body\",\"encoding\":\"json\",\"required\":false}],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": true,
+    "expected": {
+      "provider": "library",
+      "path": [
+        "items",
+        "list"
+      ],
+      "summary": "",
+      "safe": false,
+      "stream": false,
+      "result": "HttpResponse",
+      "parameters": [
+        {
+          "name": "input",
+          "type": "Unknown",
+          "required": false
+        }
+      ],
+      "secrets": [
+        "id",
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "status response contracts",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"204\":null,\"400\":\"Unknown\"}}]}",
+    "ok": true,
+    "expected": {
+      "provider": "library",
+      "path": [
+        "items",
+        "list"
+      ],
+      "summary": "",
+      "safe": true,
+      "stream": false,
+      "result": "HttpResponse",
+      "parameters": [],
+      "secrets": []
+    }
+  },
+  {
+    "name": "invalid json",
+    "input": "not json",
+    "ok": false
+  },
+  {
+    "name": "retired unversioned document",
+    "input": "{\"provider\":\"library\",\"base\":\"https://example.invalid\",\"capabilities\":[{\"path\":[\"list\"],\"http\":{\"method\":\"GET\",\"path\":\"/\"}}]}",
+    "ok": false
+  },
+  {
+    "name": "singleton operations",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"200\":\"Unknown\"}}}",
+    "ok": false
+  },
+  {
+    "name": "missing version",
+    "input": "{\"version\":null,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": false
+  },
+  {
+    "name": "old type definition",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{\"Item\":{\"id\":\"Int\"}},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": false
+  },
+  {
+    "name": "singleton path",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":\"list\",\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": false
+  },
+  {
+    "name": "implicit parameter",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[{\"name\":\"input\"}],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": false
+  },
+  {
+    "name": "nullable required in executable",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[{\"name\":\"input\",\"type\":\"Unknown\",\"wire\":\"body\",\"location\":\"body\",\"encoding\":\"json\",\"required\":null}],\"responses\":{\"200\":\"Unknown\"}}]}",
+    "ok": false
+  },
+  {
+    "name": "old capability rules",
+    "input": "{\"version\":1,\"provider\":\"library\",\"types\":{},\"operations\":[{\"path\":[\"items\",\"list\"],\"method\":\"GET\",\"route\":\"/items\",\"auth\":[],\"parameters\":[],\"responses\":{\"200\":\"Unknown\"},\"rules\":[]}]}",
+    "ok": false
+  }
+]

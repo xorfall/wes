@@ -1,0 +1,98 @@
+Wes workspace tools
+
+Custom Views: read view_authoring overview, then sdk/theme/layout/examples for the current
+authoring API and supported Wes design roles. Use value_read typed:true for public
+input contracts. Roles inherit the mounted client's theme; do not copy current
+font names or palette values. Discovery does not provision or run the compiler.
+Declare all layout tiers with intentional min/preferred/max and placement.
+Dashboard owns weighted slots and responsive reflow; a View owns its inner frame.
+Use actual allocation width; preview is a bounded summary at natural height.
+Do not use the iframe's content-derived allocation height to grow the whole View.
+Resize, theme and dashboard changes must preserve state and never run sources.
+
+Obtain workspace_context first. Pass its workspace and context token to execute and use the
+next context returned by execution. Workspace state is shared; environment
+selection belongs to your connection. Use help to discover current syntax and
+provider contracts. Its depth option exposes bounded descendant signatures.
+For calculation functions use help {command:"calc",tail:["iter.matches"]};
+replace the tail with another listed operation to read positional arguments,
+return semantics, examples and prerequisites without running anything.
+Validation is optional and checks admission/syntax, not eventual runtime success.
+
+For dependent work use execute sequential:true: each top-level statement waits
+for a finite successful result before the next starts. This supports View
+create/connect workflows. Syntax and assistant admission are checked for the whole
+source; binding, type, permission and revision checks still apply per statement.
+Failure, cancellation or an open stream stops later steps without rollback.
+An interrupted request never resumes automatically after restart. Independent
+requests may run concurrently.
+execute accepts at most 64 declarations/call stages and 64 KiB of source, including
+pipelines and streams. Immediate environment, refresh, cancel and wait commands
+must be submitted separately. Use summary results unless the bodies are needed.
+wait_ms is bounded to 1000 and does not wait for a stream to terminate. A settled
+request can contain failures; examine diagnostics and node states. Information
+and warning diagnostics alone do not mean failure.
+
+Retry safety: after a lost execute reply, keep the same request_id, source,
+workspace, context, reactive and sequential settings. Never retry an uncertain external effect with a new
+request ID. execution_read observes an admitted request without executing it again.
+Cancellation requests do not undo effects already performed by a provider.
+
+Authority: new work is allowed, but another actor's names/definitions are protected.
+Changing, dropping, refreshing or cancelling your own work can also affect others;
+use a new name/branch or an explicit scoped grant when admission reports a conflict.
+A grant does not transfer ownership. Do not bypass a refusal through another tool.
+Global :policy is unavailable; target a node or set reactive for new nodes only.
+Environment plan/apply can add definitions; use/clear changes only your selection.
+Credentials, execution enabling, grants, destructive environment controls,
+workspace save/load and conversations require the user's controls.
+
+Values: $name and $name.field are references. The > operator names a result;
+it does not write a file. For example: :calc { return 6 * 7; } > total
+Use values_list for public materialized values and value_read for existing data.
+value_read.name accepts a binding or node ID, with optional leading $; unnamed
+results are readable by their node ID. Use select for nested fields and cell_read
+for errors. Reading never creates a cell or reruns a producer.
+A full read is bounded to 8 MiB. A JSON Pointer selection, list page or shape-only
+read is bounded to 64 KiB. typed adds the schema and does not combine with paging.
+Use calc filtering/aggregation for reductions and lazy values. Private or unknown
+values, including their metadata, remain withheld. cell_read with source:true
+requires ownership or a source grant; a source grant is not permission to edit.
+
+Streams outlive the agent connection. Cancel work when it is no longer needed.
+A stopped stream read can return status:stopped with source, run and value: that
+value is a last observation, not a current input for a new calculation. Refresh
+withdraws it. Retention through Keep is separate. :accumulate limit:1000 applies
+to a newly opened ordered stream and returns items plus a checkpoint.
+
+API contracts: :describe reads a file or URL and saves an editable draft revision.
+OpenAPI 3.0/3.1 JSON and YAML are converted deterministically. Prose and HTML
+are unsupported; no model configuration or key is needed. Describe results are
+private. An explicit new out path can produce a spec for a later :import, but
+export never overwrites and describe never imports or calls the described service.
+Incomplete drafts remain editable; validation gates executable specs. exportError
+can accompany a successfully saved draft when export is unavailable.
+
+spec_list/read/save operate only on saved drafts explicitly shared by the user.
+This home-wide draft grant is independent of workspace/source/result permissions
+and is cleared by backend restart. Unsaved editor text is not visible. Listing is
+paged (default 50, maximum 100). Read/save source is bounded to 64 KiB; diagnostics
+are paged by diagnostics_offset (100 at a time), and evidence is opt-in. Saving
+requires the exact latest revision and returns a new revision plus validation.
+Invalid drafts may be saved, but never become executable by that fact. After an
+uncertain save reply, list/read before retrying. Do not merge or overwrite a newer
+revision, import the draft, call its API or replace the UI editor implicitly.
+
+Workspace/UI: workspace_open joins or explicitly creates a named workspace in
+this home and returns its context. Use workspace on subsequent targeted calls;
+joining does not redirect later calls, move the terminal or inherit grants.
+execute, cancel and tab_open require an explicit workspace. Reload requires rejoining.
+Request lookup is scoped to the workspace and saved terminal pane. Reopening a
+pane restores lookup, not prior grants; a new pane has a new request scope.
+workspace_snapshot and cell_read inspect cells without re-execution. layout_read
+finds connected panes. tab_open reuses an existing workspace tab without focus
+unless activation is requested. pane_command addresses the originating terminal
+pane; closing its tab revokes the connection, not already admitted work. UI actions
+require acknowledgement within 10 seconds. Read layout/draft after an uncertain
+reply. draft_update requires the exact editor revision and never executes it.
+Discover templates with :list templates and typed contracts through inspect/help.

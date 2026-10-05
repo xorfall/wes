@@ -1,0 +1,555 @@
+[
+  {
+    "type": "Unknown",
+    "json": "\"2024-02-29T12:00:00Z\"",
+    "accepted": true,
+    "data": {
+      "kind": "Text",
+      "value": "2024-02-29T12:00:00Z"
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "7",
+    "accepted": true,
+    "data": {
+      "kind": "Int",
+      "value": "7"
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "12.3400",
+    "accepted": true,
+    "data": {
+      "kind": "Decimal",
+      "value": "12.3400"
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "true",
+    "accepted": true,
+    "data": {
+      "kind": "Bool",
+      "value": true
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "null",
+    "accepted": true,
+    "data": {
+      "kind": "Option",
+      "value": null
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "[1,null,\"x\"]",
+    "accepted": true,
+    "data": {
+      "kind": "Sequence",
+      "value": [
+        {
+          "kind": "Int",
+          "value": "1"
+        },
+        {
+          "kind": "Option",
+          "value": null
+        },
+        {
+          "kind": "Text",
+          "value": "x"
+        }
+      ]
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "{\"id\":null,\"extra\":{\"x\":1}}",
+    "accepted": true,
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "id": {
+          "kind": "Option",
+          "value": null
+        },
+        "extra": {
+          "kind": "Fields",
+          "value": {
+            "x": {
+              "kind": "Int",
+              "value": "1"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "Text",
+    "json": "12.3400",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "1e3",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "0e3",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "-1e-7",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "true",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "\"ordinary\"",
+    "accepted": true,
+    "data": {
+      "kind": "Text",
+      "value": "ordinary"
+    }
+  },
+  {
+    "type": "Text",
+    "json": "null",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "[]",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Text",
+    "json": "{}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "\"42\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "42",
+    "accepted": true,
+    "data": {
+      "kind": "Int",
+      "value": "42"
+    }
+  },
+  {
+    "type": "Int",
+    "json": "42.0",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "\"+٤٢\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "9223372036854775807",
+    "accepted": true,
+    "data": {
+      "kind": "Int",
+      "value": "9223372036854775807"
+    }
+  },
+  {
+    "type": "Int",
+    "json": "\"-9223372036854775808\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "1.1",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "null",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "\"\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "true",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "[]",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "1e3",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "1e19",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Int",
+    "json": "\"0e500\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Decimal",
+    "json": "\"12.3400\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Decimal",
+    "json": "12.3400",
+    "accepted": true,
+    "data": {
+      "kind": "Decimal",
+      "value": "12.3400"
+    }
+  },
+  {
+    "type": "Decimal",
+    "json": "\"1e3\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Decimal",
+    "json": "true",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Decimal",
+    "json": "\"NaN\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bool",
+    "json": "\"true\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bool",
+    "json": "true",
+    "accepted": true,
+    "data": {
+      "kind": "Bool",
+      "value": true
+    }
+  },
+  {
+    "type": "Bool",
+    "json": "\"TRUE\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bool",
+    "json": "1",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bool",
+    "json": "\"false\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bool",
+    "json": "null",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Instant",
+    "json": "\"2024-02-29T12:00:00.123456789Z\"",
+    "accepted": true,
+    "data": {
+      "kind": "Moment",
+      "value": "2024-02-29T12:00:00.123456789Z"
+    }
+  },
+  {
+    "type": "Instant",
+    "json": "\"2024-12-31T24:00:00Z\"",
+    "accepted": true,
+    "data": {
+      "kind": "Moment",
+      "value": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "Instant",
+    "json": "\"1\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Instant",
+    "json": "1",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Duration",
+    "json": "\"PT-0.5S\"",
+    "accepted": true,
+    "data": {
+      "kind": "Length",
+      "value": "-PT0.5S"
+    }
+  },
+  {
+    "type": "Duration",
+    "json": "\"P2D\"",
+    "accepted": true,
+    "data": {
+      "kind": "Length",
+      "value": "PT48H"
+    }
+  },
+  {
+    "type": "Duration",
+    "json": "1",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bytes",
+    "json": "\"YQ==\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bytes",
+    "json": "\"héllo\"",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bytes",
+    "json": "12.30",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bytes",
+    "json": "true",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Bytes",
+    "json": "{}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "List<Int>",
+    "json": "[\"1\",2.0,3]",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "List<Int>",
+    "json": "[1,null]",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "List<Int>",
+    "json": "{}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "List<Int>",
+    "json": "[]",
+    "accepted": true,
+    "data": {
+      "kind": "Sequence",
+      "value": []
+    }
+  },
+  {
+    "type": "Item",
+    "json": "{\"id\":\"3\",\"active\":\"true\",\"extra\":{\"when\":\"2024\",\"missing\":null}}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Item",
+    "json": "{\"id\":null,\"active\":true}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Item",
+    "json": "{\"id\":1,\"active\":false}",
+    "accepted": true,
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "id": {
+          "kind": "Int",
+          "value": "1"
+        },
+        "active": {
+          "kind": "Bool",
+          "value": false
+        }
+      }
+    }
+  },
+  {
+    "type": "Item",
+    "json": "[1,true]",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Envelope",
+    "json": "{\"items\":[{\"id\":\"1\",\"active\":\"true\",\"extra\":5}],\"page\":2}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Envelope",
+    "json": "{\"items\":[{\"id\":1}]}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Escaped",
+    "json": "{\"a/b~\":\"3\"}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Escaped",
+    "json": "{\"a/b~\":\"bad\"}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "WithMetadata",
+    "json": "{\"metadata\":{\"count\":7,\"locale\":\"en\",\"missing\":null}}",
+    "accepted": false,
+    "data": null
+  },
+  {
+    "type": "Unknown",
+    "json": "{\"metadata\":{\"locale\":\"en\",\"number\":1,\"nested\":{\"a\":\"x\"}}}",
+    "accepted": true,
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "metadata": {
+          "kind": "Fields",
+          "value": {
+            "locale": {
+              "kind": "Text",
+              "value": "en"
+            },
+            "number": {
+              "kind": "Int",
+              "value": "1"
+            },
+            "nested": {
+              "kind": "Fields",
+              "value": {
+                "a": {
+                  "kind": "Text",
+                  "value": "x"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "Unknown",
+    "json": "{\"metadata\":\"not facts\"}",
+    "accepted": true,
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "metadata": {
+          "kind": "Text",
+          "value": "not facts"
+        }
+      }
+    }
+  },
+  {
+    "type": "Option<Int>",
+    "json": "null",
+    "accepted": true,
+    "data": {
+      "kind": "Option",
+      "value": null
+    }
+  },
+  {
+    "type": "Option<Int>",
+    "json": "7",
+    "accepted": true,
+    "data": {
+      "kind": "Option",
+      "value": {
+        "kind": "Int",
+        "value": "7"
+      }
+    }
+  }
+]

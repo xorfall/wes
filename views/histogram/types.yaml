@@ -1,0 +1,11 @@
+version: 1
+types:
+  HistogramKind: {base: Text, enum: [histogram]}
+  HistogramCount: {base: Int, min: 0}
+  HistogramBin:
+    base: Record
+    fields: {lower: 'Union<Int, Decimal>', upper: 'Union<Int, Decimal>', count: HistogramCount}
+  HistogramBins: {base: 'List<HistogramBin>', maxItems: 200}
+  Histogram:
+    base: Record
+    fields: {view: HistogramKind, bins: HistogramBins, total: HistogramCount}

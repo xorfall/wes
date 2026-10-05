@@ -1,0 +1,24 @@
+docker logs container:CONTAINER_ID tail:200 > logs
+:calc {
+  const errors = $logs.rows.filter(row => {
+    for (const hit of iter.matches(row.text, "(?i)error|fatal|panic")) {
+      return true;
+    }
+    return false;
+  });
+  return {
+    container: $logs.container,
+    received_at_ns: $logs.received_at_ns,
+    lines: length($logs.rows),
+    errors: length(errors),
+    stderr_lines: length($logs.rows.filter(row => row.stream == "stderr")),
+    partial_lines: length($logs.rows.filter(row => row.partial)),
+    lossy_lines: length($logs.rows.filter(row => row.lossy)),
+    truncated: $logs.truncated,
+    truncation: unwrapOr($logs.truncation, "none"),
+    examples: iter.items(errors).take(2).collect().map(row => ({
+      preview: iter.chars(row.text).take(160).reduce((prefix, ch) => prefix + ch, ""),
+      shortened: iter.chars(row.text).count() > 160
+    }))
+  };
+} > log_summary

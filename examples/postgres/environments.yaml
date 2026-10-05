@@ -1,0 +1,22 @@
+version: 1
+package: postgres-demo
+targets:
+  postgres-demo-container:
+    kind: docker
+    socket: /var/run/docker.sock
+    container: wes-postgres-demo
+    inherit: container
+    cwd: /
+    env:
+      PGHOST: /var/run/postgresql
+      PGUSER: wes_reader
+      PGDATABASE: wes_demo
+environments:
+  pg-demo:
+    imports:
+      pg:
+        source:
+          kind: process
+          bin: /usr/lib/postgresql/17/bin/psql
+        bind:
+          target: postgres-demo-container

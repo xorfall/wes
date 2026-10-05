@@ -1,0 +1,10 @@
+version: 1
+package: timeline-example
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      telemetry:
+        source: {kind: spec, file: telemetry.json}
+        bind: {target: local, endpoint: 'http://127.0.0.1:8786'}

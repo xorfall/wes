@@ -1,0 +1,10 @@
+Observation-only listing fixture
+
+Use GET /items, with operation identifier listItems, to retrieve stored entries.
+The documented success is status 200 with media type application/json.
+No request parameters or body are accepted.
+
+One observed response:
+[{"id":17,"name":"RACK-C"}]
+
+The observation alone establishes neither required fields nor authentication policy.

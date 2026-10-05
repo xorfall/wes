@@ -1,0 +1,38 @@
+{
+  "draftVersion": 1,
+  "provider": "items",
+  "types": {
+    "Item": {
+      "base": "Record",
+      "fields": {
+        "id": {
+          "type": "Int",
+          "optional": true
+        },
+        "name": {
+          "type": "Text",
+          "optional": true
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "listItems"
+      ],
+      "method": "GET",
+      "route": "/items",
+      "auth": [],
+      "parameters": [],
+      "responses": [
+        {
+          "status": null,
+          "mediaType": null,
+          "type": "List<Item>"
+        }
+      ]
+    }
+  ],
+  "problems": []
+}

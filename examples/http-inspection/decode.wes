@@ -1,0 +1,3 @@
+:calc { return parseJson(text($history_response.originalBody)).map(row => ({time: row.time, reading: row.reading})); } > decoded_readings
+:calc pure { return $decoded_readings; } > decoded_table
+:calc pure { return {view: "line", x: "time", y: "reading", points: $decoded_readings.map(row => { return {x: text(row.time), y: decimal(row.reading)}; }), dropped: 0}; } > decoded_chart

@@ -1,0 +1,9 @@
+body { margin: 0; background: var(--ground); color: var(--mono-ink); font: 14px/1.6 ui-monospace, monospace; }
+.view-workbench { padding: 24px; }
+.view-workbench header { display: flex; gap: 24px; margin-bottom: 16px; }
+.view-workbench nav { border: 1px dashed var(--line); padding: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.view-workbench button { font: inherit; color: var(--mono-ref); background: transparent; border: 1px solid var(--line); padding: 4px 10px; cursor: pointer; }
+.view-workbench button[aria-pressed=true] { background: var(--sunk); border-color: var(--mono-ref); }
+.view-workbench-controls { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.view-workbench main { border-top: 1px solid var(--line); padding: 16px; }
+.view-workbench-peek { position: fixed; inset: 24px; overflow: auto; background: var(--ground); border: 1px solid var(--line); box-shadow: 0 8px 48px #0002; z-index: 10; }

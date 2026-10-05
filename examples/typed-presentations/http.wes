@@ -1,0 +1,9 @@
+:def describeStatus(input: Int) -> Record as :calc pure { return httpStatus(input); }
+:def describeError(input: Text) -> Record as :calc pure { return httpError(input); }
+:def analyzeHttp(input: Record) -> Record as :calc pure { return httpAnalysis(input); }
+describeStatus input:404 > status
+describeError input:HTTP007 > error_definition
+:calc pure { return httpCatalogue("statuses"); } > statuses
+:calc pure { return {schema: 1, profile: "http", node: "synthetic", run: "run-1", state: "cancelled", persistence: "memory", dropped: 0, events: []}; } > evidence
+analyzeHttp input:$evidence > analysis
+:inspect template:analyzeHttp > analysis_definition

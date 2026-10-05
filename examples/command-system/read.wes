@@ -1,0 +1,2 @@
+:read $sample select:rows offset:1 limit:2 > page
+:inspect value:$sample > metadata

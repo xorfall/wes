@@ -1,0 +1,3 @@
+echo run args:"literal ; $(touch SHOULD_NOT_EXIST) $HOME 'quote'" > literal
+vars run args:WES_EXAMPLE > variable
+pwd run > directory

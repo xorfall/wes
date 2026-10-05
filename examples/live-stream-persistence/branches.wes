@@ -1,0 +1,1 @@
+events watch | :fork { { :calc { return 1 / input; } > broken } { :stream accumulate limit:3 overflow:drop-oldest > collected } }

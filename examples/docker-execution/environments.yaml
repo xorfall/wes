@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "package": "docker-execution-example",
+  "targets": {
+    "api": {
+      "kind": "docker",
+      "socket": "/var/run/docker.sock",
+      "compose": {"project": "shop", "service": "api"},
+      "inherit": "container",
+      "shell": "/bin/sh",
+      "cwd": "/work",
+      "env": {"EXAMPLE_MODE": "literal '$HOME; value"}
+    },
+    "api_replica": {
+      "kind": "docker",
+      "socket": "/var/run/docker.sock",
+      "compose": {"project": "shop", "service": "api", "replica": 2},
+      "inherit": "container"
+    },
+    "fixed": {
+      "kind": "docker",
+      "socket": "/var/run/docker.sock",
+      "container": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "inherit": "container"
+    }
+  },
+  "environments": {
+    "compose_demo": {
+      "targets": ["api", "api_replica", "fixed"],
+      "imports": {
+        "echo": {"source": {"kind": "process", "bin": "/bin/echo"}, "bind": {"target": "api"}}
+      }
+    }
+  }
+}

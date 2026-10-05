@@ -1,0 +1,4 @@
+# Multiline editor content: ĞğİıŞşÇçÖöÜü
+version: 1
+types:
+  EditorGreeting: {base: Text, minLength: 1}

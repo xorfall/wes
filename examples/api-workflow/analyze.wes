@@ -1,0 +1,4 @@
+:calc pure { return $demo_readings.body; } > demo_table
+:calc pure { return {view: "line", x: "time", y: "reading", points: $demo_readings.body.map(row => { return {x: text(row.time), y: decimal(row.reading)}; }), dropped: 0}; } > demo_chart
+:read trace:$demo_readings > demo_trace
+:calc pure { return {trace: $demo_trace}; } > demo_http

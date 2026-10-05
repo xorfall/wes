@@ -1,0 +1,51 @@
+/*
+ * The draft workbench inside /spec's single result card: outline on the left, then source,
+ * the selected problem's strip, Problems, evidence and the action row. Mono throughout, because
+ * it is data; the role colours are the session's own (bad blocks, warn advises, faint is stale).
+ */
+.wes-terminal .draft-workbench { display:flex; flex-direction:column; gap:var(--space-sm); min-width:0; }
+.wes-terminal .draft-workbench p { margin:0; min-width:0; overflow-wrap:anywhere; }
+.wes-terminal .draft-layout { display:grid; grid-template-columns:minmax(180px,280px) minmax(0,1fr); gap:16px; min-width:0; }
+.wes-terminal .draft-main { display:flex; flex-direction:column; gap:12px; min-width:0; }
+.wes-terminal .draft-main[hidden] { display:none; }
+/* Save, check and import: the draft's actions, at the right above its status line. */
+.wes-terminal .draft-actions { justify-content:flex-end; }
+.wes-terminal .draft-actions .screen-chip { font-size:12px; }
+.wes-terminal .draft-heading { margin-right:var(--space-sm); }
+.wes-terminal .draft-outline { display:flex; flex-direction:column; gap:2px; min-width:0; padding-right:12px; border-right:var(--stroke-thin) solid var(--line); }
+.wes-terminal .draft-outline p { margin-top:10px; }
+.wes-terminal .draft-outline-row,.wes-terminal .draft-problem { font:inherit; color:inherit; background:none; border:var(--stroke-thin) solid transparent; padding:2px 6px; text-align:left; cursor:pointer; min-width:0; }
+/* Outline rows are a navigator, so a long name may clip; a problem is a message and always wraps whole. */
+.wes-terminal .draft-outline-row { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wes-terminal .draft-outline-row:focus-visible,.wes-terminal .draft-problem:focus-visible { outline:var(--stroke-thin) solid var(--mono-ref); }
+.wes-terminal .draft-chosen { background:var(--sel); border-color:var(--mono-ref); }
+.wes-terminal .draft-legend { margin-top:12px; white-space:normal; }
+.wes-terminal .draft-problem-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+.wes-terminal .draft-problem { display:flex; flex-wrap:wrap; column-gap:14px; row-gap:2px; width:100%; white-space:normal; overflow-wrap:anywhere; }
+.wes-terminal .draft-problem-group { display:flex; flex-direction:column; gap:4px; padding:12px 0; border-top:var(--stroke-thin) solid var(--line); }
+.wes-terminal .draft-problem-group>p { white-space:pre-wrap; }
+.wes-terminal .draft-problem-group>summary { cursor:pointer; }
+.wes-terminal .draft-problem-fix { padding-left:var(--space-sm); }
+.wes-terminal .draft-stale { opacity:.72; }
+.wes-terminal .draft-strip { padding:var(--space-sm); border:var(--stroke-thin) solid var(--line); display:flex; flex-direction:column; gap:var(--space-xs); }
+.wes-terminal .draft-strip p { white-space:pre-wrap; }
+.wes-terminal .draft-evidence-manual { border-left:var(--stroke-thin) solid var(--mono-ref); padding-left:var(--space-sm); }
+/* One thin status box: the text carries the state's colour; only a blocked draft also colours the border. */
+.wes-terminal .draft-readiness { display:flex; flex-direction:column; align-items:flex-start; gap:var(--space-xs); padding:4px 10px; border:var(--stroke-thin) solid var(--line); border-radius:var(--radius-sm); font-family:var(--type-sans-family); font-size:var(--type-sans-small-size); }
+.wes-terminal .draft-readiness-bad { border-color:var(--mono-bad); }
+.wes-terminal .draft-readiness p { white-space:pre-wrap; }
+.wes-terminal .draft-review { display:flex; flex-direction:column; gap:4px; padding-bottom:12px; border-bottom:var(--stroke-thin) solid var(--line); }
+.wes-terminal .draft-source-editor { min-height:260px; }
+/* Backend marks: solid while they describe this text, hollow and faint from the first edit after. */
+.wes-terminal .draft-mark-error { text-decoration:underline wavy var(--mono-bad); text-underline-offset:3px; }
+.wes-terminal .draft-mark-warning { text-decoration:underline wavy var(--mono-warn); text-underline-offset:3px; }
+.wes-terminal .draft-line-error { box-shadow:inset 2px 0 0 var(--mono-bad); }
+.wes-terminal .draft-line-warning { box-shadow:inset 2px 0 0 var(--mono-warn); }
+.wes-terminal .draft-mark-stale { opacity:.55; text-decoration-style:dotted; }
+.wes-terminal .draft-line-error.draft-mark-stale,.wes-terminal .draft-line-warning.draft-mark-stale { box-shadow:inset 2px 0 0 var(--mono-faint); }
+.wes-terminal .draft-severity-gutter { width:14px; }
+.wes-terminal .draft-gutter-error { color:var(--mono-bad); }
+.wes-terminal .draft-gutter-warning { color:var(--mono-warn); }
+.wes-terminal .draft-gutter.draft-mark-stale { color:var(--mono-faint); }
+.wes-terminal .spec-library-drafts { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding-bottom:12px; }
+@media(max-width:900px) { .wes-terminal .draft-layout { grid-template-columns:minmax(0,1fr); } .wes-terminal .draft-outline { border-right:0; padding-right:0; } }

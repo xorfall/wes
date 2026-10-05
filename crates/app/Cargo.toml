@@ -1,0 +1,51 @@
+[package]
+name = "wes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+wes-budgets.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+wes-core.workspace = true
+wes-views.workspace = true
+wes-language.workspace = true
+wes-engine.workspace = true
+wes-adapters.workspace = true
+tokio = { workspace = true, features = ["signal", "net"] }
+hyper.workspace = true
+hyper-util.workspace = true
+cap-std.workspace = true
+cap-fs-ext.workspace = true
+axum.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+base64.workspace = true
+tempfile.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite = "0.29.0"
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "=3.7.0"
+
+[lints]
+workspace = true

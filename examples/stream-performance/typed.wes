@@ -1,0 +1,2 @@
+:def increment(input: Int) -> Int as :calc pure { return input + 1; }
+events watch | :stream map field:seq | increment | probe take value:input > result

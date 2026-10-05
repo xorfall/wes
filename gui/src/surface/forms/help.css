@@ -1,0 +1,14 @@
+.wes-terminal .help-document {
+  max-height: 32rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  padding: .35rem .65rem .5rem 0;
+}
+.wes-terminal .help-document dl { margin: 0; }
+.wes-terminal .help-document .help-row { margin: 0 0 .65rem; }
+.wes-terminal .help-document dt { font-weight: 600; }
+.wes-terminal .help-document dd { margin: 0; white-space: pre-wrap; }
+.wes-terminal .help-document code { font-family: inherit; font-size: inherit; }
+.wes-terminal .help-document :is(dt, code) { color: var(--ink); }
+.wes-terminal .help-document p { margin: .5rem 0; }

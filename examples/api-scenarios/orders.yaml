@@ -1,0 +1,28 @@
+version: 1
+name: Order lifecycle and expected HTTP errors
+timeout_seconds: 30
+steps:
+  - name: Prepare input
+    run: ':calc { return {total: 42}; } > payload'
+  - name: Create order
+    run: 'orders create body:$payload > created'
+    expect:
+      - {name: Created state, condition: '$created.body.status == "created"'}
+      - {name: Correct total, condition: '$created.body.total == 42'}
+  - name: Fetch using returned ID
+    run: 'orders get id:$created.body.id > fetched'
+    expect:
+      - {name: Same order, condition: '$fetched.body.id == $created.body.id && $fetched.body.total == $created.body.total'}
+  - name: Missing order is expected
+    run: 'orders get id:999999 > missing'
+    expect:
+      - {name: Error is structured, condition: '$missing.status == 404'}
+  - name: Invalid request is expected
+    run: orders invalid > invalid
+    expect:
+      - {name: Validation response received, condition: '$invalid.status == 422'}
+cleanup:
+  - name: Delete only the created order
+    run: 'orders delete id:$created.body.id > deleted'
+    expect:
+      - {name: Deleted, condition: '$deleted.body.deleted == true'}

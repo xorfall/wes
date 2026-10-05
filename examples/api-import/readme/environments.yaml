@@ -1,0 +1,12 @@
+version: 1
+package: readme-import-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      catalogue:
+        source: {kind: spec, file: catalogue.json}
+        bind:
+          target: local
+          endpoint: http://127.0.0.1:8765

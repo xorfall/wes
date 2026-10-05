@@ -1,0 +1,5 @@
+types:
+  DurationCardKind: {base: Text, enum: [duration-card]}
+  DurationCard:
+    base: Record
+    fields: {view: DurationCardKind, milliseconds: Int}

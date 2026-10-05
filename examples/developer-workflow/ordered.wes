@@ -1,0 +1,1 @@
+events watch | effects first value:input | :calc { return input + 1; } | effects second value:input

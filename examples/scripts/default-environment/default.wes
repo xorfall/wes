@@ -1,0 +1,2 @@
+:import process bin:/bin/echo as:echo
+echo run args:import-ok

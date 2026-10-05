@@ -1,0 +1,28 @@
+version: 1
+package: environment-demo
+targets:
+  development:
+    kind: local
+    cwd: /
+    env: {DEMO_STAGE: DEV}
+  production:
+    kind: local
+    cwd: /
+    env: {DEMO_STAGE: PROD}
+environments:
+  base:
+    abstract: true
+    imports:
+      vars:
+        source: {kind: process, bin: /usr/bin/printenv}
+        bind: {target: development}
+  dev:
+    extends: {env: base, track: latest}
+  prod:
+    protected: true
+    extends: {env: base, track: latest}
+    overrides:
+      imports:
+        vars:
+          source: {kind: process, bin: /usr/bin/printenv}
+          bind: {target: production}

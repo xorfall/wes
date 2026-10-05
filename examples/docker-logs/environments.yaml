@@ -1,0 +1,10 @@
+version: 1
+package: docker-logs-qa
+targets:
+  observer: {kind: local}
+environments:
+  observe:
+    imports:
+      docker:
+        source: {kind: docker, socket: SOCKET_PATH}
+        bind: {target: observer}

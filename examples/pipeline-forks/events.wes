@@ -1,0 +1,6 @@
+:def even(input: Int) -> Bool as :calc pure { return input == 0 || input == 2 || input == 4 || input == 6; }
+events watch | :fork {
+    { :calc { return 1 / 0; } > broken }
+    when even { :stream accumulate limit:10 > evens }
+    { effects first value:input | effects second value:input }
+}

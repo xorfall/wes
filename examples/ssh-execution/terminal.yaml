@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "targets": {
+    "remote": {
+      "kind": "ssh",
+      "client": "/usr/bin/ssh",
+      "host": "127.0.0.1",
+      "port": 2222,
+      "user": "example",
+      "identity_file": "/absolute/path/to/identity",
+      "known_hosts": "/absolute/path/to/known_hosts",
+      "shell": "posix",
+      "inherit": "remote",
+      "cwd": "/tmp",
+      "env": {
+        "WES_EXAMPLE": "literal '$HOME; value"
+      }
+    }
+  },
+  "environments": {
+    "ssh_demo": {
+      "targets": [
+        "remote"
+      ]
+    }
+  }
+}

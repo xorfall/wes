@@ -1,0 +1,2 @@
+:import spec url:"http://127.0.0.1:8765/catalog.provider.json" as:catalog endpoint:"https://example.invalid/api"
+:inspect catalog get

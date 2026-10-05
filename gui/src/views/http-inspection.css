@@ -1,0 +1,10 @@
+.live-http-inspection { margin: 0.6rem; border: 1px solid var(--border, #7775); border-radius: 6px; padding: 0.6rem; }
+.live-http-inspection > summary { cursor: pointer; font-weight: 600; }
+.http-inspection { max-height: 34rem; overflow: auto; padding: 0.5rem; }
+.http-inspection > dl { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.http-inspection dt { opacity: .65; font-size: .8rem; }
+.http-inspection dd { margin: 0; overflow-wrap: anywhere; }
+.http-inspection > ol { list-style: none; padding: 0; }
+.http-inspection > ol > li { border-left: 2px solid var(--border, #7775); padding: 0 0 0.6rem 0.8rem; margin: 0.6rem 0; }
+.http-inspection li > header { display: flex; gap: 1rem; align-items: baseline; }
+.http-inspection li > header > span { opacity: .65; font-variant-numeric: tabular-nums; }

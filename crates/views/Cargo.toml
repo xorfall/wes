@@ -1,0 +1,25 @@
+[package]
+name = "wes-views"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Declarative view packages and their shared Wes type contracts"
+
+[dependencies]
+wes-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+indexmap.workspace = true
+
+[build-dependencies]
+wes-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+indexmap.workspace = true
+
+[lints]
+workspace = true

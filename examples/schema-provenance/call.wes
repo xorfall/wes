@@ -1,0 +1,2 @@
+sample listItems > items
+:calc { return $items; } > report

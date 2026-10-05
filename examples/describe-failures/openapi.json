@@ -1,0 +1,10 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Synthetic failure", "version": "1"},
+  "paths": {"/items": {"get": {
+    "operationId": "items", "security": [],
+    "responses": {"200": {"description": "Unsupported union", "content": {
+      "application/json": {"schema": {"oneOf": [{"type":"string"},{"type":"integer"}]}}
+    }}}
+  }}}
+}

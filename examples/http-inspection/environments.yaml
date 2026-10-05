@@ -1,0 +1,15 @@
+version: 1
+package: http-inspection-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      sensor:
+        source: {kind: spec, file: sensor.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765}
+  private:
+    imports:
+      sensor:
+        source: {kind: spec, file: sensor.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765, output: private}

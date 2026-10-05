@@ -1,0 +1,46 @@
+[package]
+name = "wes-adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+wes-budgets.workspace = true
+portable-pty = "=0.9.0"
+filedescriptor = "=0.8.3"
+tracing.workspace = true
+wes-core.workspace = true
+wes-engine.workspace = true
+wes-views.workspace = true
+wes-language.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+yaml-rust2.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror.workspace = true
+base64.workspace = true
+csv.workspace = true
+html5ever = "=0.38.0"
+cap-std.workspace = true
+cap-fs-ext.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+url.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+
+[dev-dependencies]
+rcgen.workspace = true
+tokio-rustls.workspace = true
+h2.workspace = true
+http.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "test-util"] }
+
+[lints]
+workspace = true

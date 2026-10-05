@@ -1,0 +1,2 @@
+:import spec file:"inventory.generated.json" as:inventory endpoint:"http://127.0.0.1:8765/v1"
+:list providers

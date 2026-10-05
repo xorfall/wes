@@ -1,0 +1,5 @@
+# Definitions only; loading this text grants no provider execution authority.
+version: 1
+package: editor-example
+environments:
+  editor_demo: {}

@@ -1,0 +1,4 @@
+// Run this first and wait for $layout; view binding captures a completed result.
+:calc { return {view: "timeline-group", title: "Synthetic request monitor",
+  range: interval(instant("2030-01-01T00:00:00Z"), instant("2030-01-01T00:01:00Z"))}; } > layout
+:calc { return {view: "dashboard", title: "Live service monitor"}; } > dashboardLayout

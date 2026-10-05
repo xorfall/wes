@@ -1,0 +1,1180 @@
+{
+  "": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "",
+      "summary": "Choose a command family or provider. :list providers discovers the selected catalogue. :help arguments explains literals and nested references; :help errors explains diagnostic codes and typical fixes.",
+      "children": [
+        {
+          "name": "view",
+          "summary": ""
+        },
+        {
+          "name": "workspace",
+          "summary": "Save, open, configure or plan deletion of a workspace."
+        },
+        {
+          "name": "sandbox",
+          "summary": "Retain an isolated program; only definitions persist. Providers act on real targets, not simulated machines. Use :list sandboxes, :read/:inspect $name, :cancel/:refresh $name, or :remove $name scope:downstream (joined stop and definition removal). Example: :sandbox { :calc { return 1; } > value } > preview"
+        },
+        {
+          "name": "info",
+          "summary": "Show retained provider constraints and evidence. Example: :info catalog"
+        },
+        {
+          "name": "describe",
+          "summary": "Read OpenAPI JSON/YAML into an editable API draft; no API call."
+        },
+        {
+          "name": "stream",
+          "summary": "Apply a fixed native operator to pipeline events."
+        },
+        {
+          "name": "fork",
+          "summary": "Branch one input into ordered pipelines with isolated failure."
+        },
+        {
+          "name": "accumulate",
+          "summary": "Accumulate each ordered event with a bounded, atomic checkpoint."
+        },
+        {
+          "name": "help",
+          "summary": "Explain a command family, provider group or operation."
+        },
+        {
+          "name": "inspect",
+          "summary": "Describe one object's definition and current state."
+        },
+        {
+          "name": "list",
+          "summary": "List the entries of a declared registry."
+        },
+        {
+          "name": "read",
+          "summary": "Read selected output or retained trace content."
+        },
+        {
+          "name": "node",
+          "summary": "Refresh, change, cancel or configure existing work."
+        },
+        {
+          "name": "name",
+          "summary": "Manage result-name bindings."
+        },
+        {
+          "name": "package",
+          "summary": "Load type, view and iterator definitions."
+        },
+        {
+          "name": "type",
+          "summary": "Validate values against type contracts."
+        },
+        {
+          "name": "env",
+          "summary": "Plan, manage and select environment definitions."
+        },
+        {
+          "name": "calc",
+          "summary": "Evaluate a bounded calculation; pure asserts no external operations."
+        },
+        {
+          "name": "def",
+          "summary": "Declare a parameterized command template."
+        },
+        {
+          "name": "import",
+          "summary": "Import provider metadata into a catalogue."
+        },
+        {
+          "name": "wait",
+          "summary": "Wait for selected outputs to become available."
+        }
+      ]
+    }
+  },
+  "inspect": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "inspect",
+      "summary": "Describe one object's definition and current state.",
+      "invocation": {
+        "command": ":inspect",
+        "usage": ":inspect [$result | provider path] [command:<Text>] [provider:<Text>] [capability:<Text>] [env:<Text>] [workspace:<Text>] [home:<Text>] [run:<Text>] [name:<Text>] [cell:<Text>] [type:<Text>] [view:<Text>] [importer:<Text>] [template:<Text>] [node:<Unknown>] [value:<Unknown>]",
+        "summary": "Describe one object's definition and current state.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [
+          {
+            "name": "command",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "provider",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "capability",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "env",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "workspace",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "home",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "run",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "name",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "cell",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "type",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "view",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "importer",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "template",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "node",
+            "type": "Unknown",
+            "required": false
+          },
+          {
+            "name": "value",
+            "type": "Unknown",
+            "required": false
+          }
+        ],
+        "otherArguments": false,
+        "producesValue": true,
+        "operands": {
+          "min": 0,
+          "max": 1
+        },
+        "examples": [
+          ":inspect $result",
+          ":inspect sensor history",
+          ":inspect type:Customer",
+          ":inspect view:Timeline",
+          ":inspect type:\"List<Customer>\"",
+          ":inspect type:List"
+        ],
+        "views": "Use :list views and :inspect view:Name for package contracts. :view create/bind references the current committed work output; visible readers do not start source commands. Finite versus window delivery follows the source. :view pin $chart > pinned keeps exactly the displayed projected input as a Protected result, then revision-checks the unchanged view binding after storage and history acknowledgement. Pin requires durable workspace recording; constants and query inputs may also be pinned. Linked input fields require capture first. A kept input survives a failed concurrent view bind; no automatic retry occurs. Pinned inputs refer to the exact retained node/run/handle, never a same-named replacement or a matching digest. Rebind pinned views before releasing their result. :view start/stop controls observation without running or cancelling source commands. Shared state outputs connect with :view link. Event ports preserve committed order in a volatile 32-event/16 KiB window; :view output reads List<T> and links target List<T> fields. Older-event omissions are reported. Event delivery is bounded, never automatically replayed after uncertainty, and does not run providers. :view query $target template:Name from:$source output:selection trigger:manual|commit configures a typed calc query without running it. :view apply explicitly runs SAFE-only work; commit mode follows changed selections until Stop or last close. For an owned stream use mode:live adapter:Draw: a provider template supplies its bounded List<T> window to a typed calc adapter. The source and all adapter operations must be SAFE; Stop or last close joins the owned stream. Stream window omissions remain visible. Query bindings capture their environment name and revision; another window cannot change the destination. Changed environments require explicit rebinding. Query jobs share operation and stream capacity, replace older jobs only after cancellation joins, and keep transient result data outside definition storage. Workspace save and normal shutdown checkpoint view definitions and committed selections; reopening waits for Start (observations) or Apply (queries). Source payloads use existing retention: missing saved values are unavailable, never rerun automatically. Unsaved interaction changes can be lost on a crash. :view output reads a committed port as a normal typed result (selection is Option<Interval>). :view capture $dashboard freezes native inputs, linked fields, outputs, membership and source/run metadata in a finite evidence result (8 MiB logical limit). Missing inputs, omissions and running queries remain explicit; inputs may represent different source instants. Capture does not run providers or guarantee durable retention. Check the result retention status and use Keep/Pin; existing JSON export includes the evidence data.",
+        "selection": "Choose exactly one target. type: is a literal type selector, never a value reference.",
+        "types": "Use :list types for workspace-wide contracts and generic constructors. Inspection captures effective constraints and optional fields at execution entry; it does not validate data or invoke providers."
+      },
+      "children": []
+    }
+  },
+  "node": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "node",
+      "summary": "Refresh, change, cancel or configure existing work.",
+      "invocation": {
+        "kind": "none"
+      },
+      "children": [
+        {
+          "name": "cancel",
+          "summary": "Cancel the node's active run."
+        },
+        {
+          "name": "change",
+          "summary": "Change a provider node's arguments."
+        },
+        {
+          "name": "policy",
+          "summary": "Set an explicit node execution policy."
+        },
+        {
+          "name": "refresh",
+          "summary": "Start a new run of the same node definition."
+        },
+        {
+          "name": "remove",
+          "summary": "Remove a node and its downstream dependents."
+        },
+        {
+          "name": "timeout",
+          "summary": "Set the node's execution budget."
+        }
+      ]
+    }
+  },
+  "workspace": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "workspace",
+      "summary": "Save, open, configure or plan deletion of a workspace.",
+      "invocation": {
+        "kind": "none"
+      },
+      "children": [
+        {
+          "name": "delete",
+          "summary": "Apply a WorkspaceDeletePlan: :workspace delete $plan [stop:true] [protected:true]."
+        },
+        {
+          "name": "load",
+          "summary": "Open a saved workspace without executing its work."
+        },
+        {
+          "name": "plan",
+          "summary": "Plan deletion: :workspace plan delete [workspace:\"name\"] [> plan]. Defaults to the issuing workspace; returns WorkspaceDeletePlan."
+        },
+        {
+          "name": "policy",
+          "summary": "Set the policy inherited by nodes without an override."
+        },
+        {
+          "name": "save",
+          "summary": "Save a workspace snapshot."
+        }
+      ]
+    }
+  },
+  "env": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "env",
+      "summary": "Plan, manage and select environment definitions.",
+      "invocation": {
+        "kind": "none"
+      },
+      "children": [
+        {
+          "name": "apply",
+          "summary": "Apply this client’s reviewed plan; consumes the plan and updates environment definitions."
+        },
+        {
+          "name": "clear",
+          "summary": "Clear this client’s environment selection; pure calculations remain available."
+        },
+        {
+          "name": "delete",
+          "summary": "Delete a retired, unreferenced environment; never cascades or erases history."
+        },
+        {
+          "name": "disable",
+          "summary": "Disable dispatch and revoke grants for this live session only; saved definitions are unchanged."
+        },
+        {
+          "name": "discard",
+          "summary": "Release this client’s unused environment plan."
+        },
+        {
+          "name": "enable",
+          "summary": "Enable dispatch for this live session; reopening saved definitions still requires explicit activation. Credentials and grants are separate."
+        },
+        {
+          "name": "export",
+          "summary": "Write the environment lock to a file without secret values."
+        },
+        {
+          "name": "plan",
+          "summary": "Validate and capture a reviewable environment plan without calling providers. Relative SSH client/key/known-hosts paths use the package directory, or explicit absolute base for source: text; never invocation CWD."
+        },
+        {
+          "name": "rename",
+          "summary": "Rename an environment while preserving its identity and existing bindings; marks drift."
+        },
+        {
+          "name": "retire",
+          "summary": "Prevent new selection, imports and bindings; preserve existing-node refresh."
+        },
+        {
+          "name": "use",
+          "summary": "Select a named environment and optional revision for this client only."
+        }
+      ]
+    }
+  },
+  "calc": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "calc",
+      "summary": "Evaluate a bounded calculation; pure asserts no external operations.",
+      "invocation": {
+        "command": ":calc",
+        "usage": ":calc [pure] { return <expression>; }",
+        "summary": "Evaluate a bounded calculation; pure asserts no external operations.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [],
+        "otherArguments": false,
+        "producesValue": true,
+        "operands": {
+          "min": 0,
+          "max": 0
+        },
+        "examples": [
+          ":calc { return 1 + 2; } > total",
+          "// comment\n:calc { return $total; }",
+          ":calc { return [1,2,3].map(x => x*2); } > result *> problem",
+          ":calc { return around(instant('2025-01-01T12:00:00Z'),duration('PT5M')); } > window",
+          ":calc { return $window.end - $window.start; }"
+        ],
+        "syntax": "Binding names contain only letters, digits and underscores. // starts a comment outside quoted or argument text; comments preserve source lines. Ordered comparisons require matching Int, Decimal, Text, Instant or Duration operands; convert explicitly when mixing numbers.",
+        "functionHelp": ":help calc <operation>; for example :help calc iter.matches. Function help includes positional parameters, return semantics, examples and prerequisites.",
+        "names": "Local variables, named functions, parameters and loop bindings may shadow operation names. The nearest lexical binding wins; otherwise the registered operation is used. A local scalar called as a function fails rather than falling back to the builtin. Receiver methods such as list.map() or iterator.count() are independent of bare local names; record callable fields keep precedence. Declarations must be initialized before use, including their own initializer; no hoisting. Keywords, true/false/none and the special iter namespace remain reserved. Workspace references ($name) are separate from local names.",
+        "operations": [
+          "instant",
+          "duration",
+          "interval",
+          "around",
+          "fromEpochSeconds",
+          "fromEpochMillis",
+          "fromEpochNanos",
+          "toEpochSeconds",
+          "toEpochMillis",
+          "toEpochNanos",
+          "durationSeconds",
+          "durationMillis",
+          "durationNanos",
+          "toSeconds",
+          "toMillis",
+          "toNanos",
+          "utcParts",
+          "some",
+          "isSome",
+          "unwrapOr",
+          "has",
+          "length",
+          "keys",
+          "map",
+          "filter",
+          "reduce",
+          "join",
+          "withFields",
+          "slice",
+          "concat",
+          "sortBy",
+          "range",
+          "decimal",
+          "int",
+          "text",
+          "div",
+          "rem",
+          "roundDiv",
+          "httpStatus",
+          "httpError",
+          "httpCatalogue",
+          "httpAnalysis",
+          "parseJson",
+          "check",
+          "call",
+          "iter.items",
+          "iter.lines",
+          "iter.chars",
+          "iter.words",
+          "iter.split",
+          "iter.regexSplit",
+          "iter.captures",
+          "iter.matches",
+          "iter.keys",
+          "iter.values",
+          "iter.entries",
+          "iter.jsonLines",
+          "iter.use",
+          "iter.checked",
+          "take",
+          "skip",
+          "collect",
+          "count",
+          "field"
+        ],
+        "time": "instant(ISO text), duration(ISO duration), interval(start,end), around(center,positive radius). Interval is finite [start,end); equal endpoints are empty. Read .start/.end; subtract endpoints for Duration. Instant +/- Duration, Instant - Instant, Duration +/- Duration, Duration * Int/Decimal (either order), Duration / Int/Decimal and Duration / Duration (exact Decimal ratio); matching Instant/Duration comparisons. fromEpochSeconds/Millis/Nanos accept Int or Decimal with exact nanoseconds; toEpochSeconds/Millis/Nanos return exact Decimal. Int/Decimal display, JSON inspection and copying preserve exact values, including large epoch nanoseconds; text(toEpochNanos(t)) explicitly creates Text. Graphs require accurately representable finite drawing numbers; explicitly scale large values before plotting. durationSeconds/Millis/Nanos(Int|Decimal) and toSeconds/Millis/Nanos(Duration) convert explicit units. Scaling and conversions require exact whole nanoseconds; division by zero, nonterminating ratios and overflow fail. utcParts(Instant) returns UTC year/month/day/hour/minute/second/nanosecond/weekday (Monday=1). No clock reads, implicit units or rounding. API end parameters may be inclusive: explicitly adapt/filter returned endpoints to local [start,end) semantics; during is not implemented.",
+        "finite lists": "concat(left,right) or left.concat(right) preserves input order and duplicates; element types must be structurally compatible, with no numeric coercion. Empty inputs are allowed. sortBy(list,selector) or list.sortBy(row => row.at) is ascending and stable for equal keys. Each pure selector runs once per item; captured mutable bindings and provider calls are forbidden. Keys must be matching Int, Decimal, Text, Instant or Duration; explicitly filter missing/Option keys and convert mixed numeric types. Sorting yields between bounded steps and obeys cancellation, work and memory budgets. Open-ended Iter/Stream inputs must first be bounded and collected. Example: concat([{at:2,label:'b'}],[{at:1,label:'a'}]).sortBy(row => row.at).",
+        "diagnostics and callbacks": "CAL010: unresolved/reserved/duplicate names; CAL011: immutable binding assignment; CAL012: function/operation arity; CAL013: initialization or return/control-flow error; CAL014: duplicate record field; CAL015: bounds; CAL016: parsing; CAL017: contract validation (inspect issues). :help errors lists causes and fixes. Known same-scope reads before initialization and definite missing returns are rejected before execution; no function hoisting. Conditional/loop-dependent completion retains runtime checks. Eager List callbacks may use local mutable state. Lazy Iter callbacks and sortBy selectors must be verified pure, including helpers, and cannot capture mutable outer bindings; use for-of for effects. No provider/safety or workspace authority checks are bypassed.",
+        "text and records": "join(List<Text>,separator) or list.join(separator) joins without adding a trailing separator; empty lists return empty Text. No implicit numeric/Bytes conversion. withFields(record,patch) or record.withFields(patch) creates a fresh shallow structural Record: patch fields replace/add, original values stay unchanged; nominal contracts must be checked again. slice(Text|List,start[,end]) or value.slice(start[,end]) selects [start,end), default end is length. Indices are nonnegative Int, within length; Text indices count Unicode scalar characters, not bytes or grapheme clusters. Examples: join(['a','b'],','); withFields({status:200},{status:503}); slice('a😀b',1,2). All operations obey calculation work/memory limits and yield between bounded steps.",
+        "capture groups": "iter.captures(Text,regex) lazily yields {match:Text,groups:List<Option<Text>>}. match is the complete match; groups[0] is regex group 1. Unmatched optional groups are none; an empty matched group is some(''). Named groups also occupy their numbered position. Independent cursors, take/skip/map/filter/collect, strict Text input and existing regex/work/memory limits apply. Example: iter.captures('code=503','code=([0-9]+)').map(row=>unwrapOr(row.groups[0],'')).collect(). Bytes require explicit text(bytes). JSONL remains strict about blank lines.",
+        "timeline views": "Timeline is a compiled SDK View for typed UTC samples and events. Its input has view:timeline, id/title, range/coverage Interval, omitted Int, sourceError Text, series:[{id,label,unit,samples:[{id,at:Instant,value:Union<Int,Decimal>,gap:Bool}]}], events:[{id,at:Instant,label,detail}]. Records must be sorted by Instant with unique IDs; gap:true breaks the line. TimelineGroup input is {view:timeline-group,title,range}; create independent Timeline instances and connect them to its members slot for shared viewport, selection and picked-item outputs. At most 8 members, 8 series and 20,000 records per Timeline; each renderer input is bounded to 1 MiB. Details show at most 200 records. Finite [start,end), UTC navigation never runs commands or refetches. Source retention and owner/revision checks still apply. Runnable synthetic adaptation: examples/timeline/main.wes and check.py.",
+        "iterators": "iter.lines(text).take(20).collect(); iter.use('Recipe',source); each consumer starts fresh; lazy map/filter callbacks are pure; use for-of for effects; Keep retains recipe and source snapshot",
+        "calls": "call('provider', ['capability','path'], {argument:value}); finite, sequential, admitted calls",
+        "limits": "1,000,000 work units; 64 MiB cumulative allocation; 128 frames; 1,000 calls"
+      },
+      "children": []
+    }
+  },
+  "list templates": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "list templates",
+      "summary": "Declared command-template names.",
+      "invocation": {
+        "command": ":list templates",
+        "usage": ":list templates",
+        "summary": "Declared command-template names.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [],
+        "otherArguments": false,
+        "producesValue": true,
+        "operands": {
+          "min": 0,
+          "max": 0
+        },
+        "listing": {
+          "rule": "List a declared registry at execution entry. Scope is registry metadata. Catalogue means the captured selected environment, or the workspace catalogue when unmanaged; no selected environment means an empty catalogue. Filters preserve order; no matches return []. Unsupported arguments fail. Size/work limits fail without partial results. Listing does not invoke providers or read result bodies; normal execution still records a cell/node.",
+          "registries": [
+            {
+              "name": "templates",
+              "scope": "workspace",
+              "summary": "Declared command-template names.",
+              "filters": []
+            }
+          ]
+        }
+      },
+      "children": []
+    }
+  },
+  "env delete": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "env delete",
+      "summary": "Delete a retired, unreferenced environment; never cascades or erases history.",
+      "invocation": {
+        "command": ":env delete",
+        "usage": ":env delete \"environment name\"",
+        "summary": "Delete a retired, unreferenced environment; never cascades or erases history.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [],
+        "otherArguments": false,
+        "producesValue": false,
+        "operands": {
+          "min": 1,
+          "max": 1
+        }
+      },
+      "children": []
+    }
+  },
+  "http request": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "provider",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "provider": "http",
+      "path": "request",
+      "invocation": {
+        "provider": "http",
+        "capability": "request",
+        "summary": "Sends one HTTP(S) request; every HTTP status is returned as data",
+        "safety": "UNSAFE",
+        "result": {
+          "kind": "record",
+          "name": "HttpResponse",
+          "fields": [
+            {
+              "name": "status",
+              "type": {
+                "kind": "primitive",
+                "name": "INT"
+              }
+            },
+            {
+              "name": "version",
+              "type": {
+                "kind": "primitive",
+                "name": "TEXT"
+              }
+            },
+            {
+              "name": "headers",
+              "type": {
+                "kind": "list",
+                "element": {
+                  "kind": "record",
+                  "name": "HttpHeader",
+                  "fields": [
+                    {
+                      "name": "name",
+                      "type": {
+                        "kind": "primitive",
+                        "name": "TEXT"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "type": {
+                        "kind": "primitive",
+                        "name": "TEXT"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "body",
+              "type": {
+                "kind": "unknown"
+              }
+            },
+            {
+              "name": "bodyKind",
+              "type": {
+                "kind": "primitive",
+                "name": "TEXT"
+              }
+            },
+            {
+              "name": "originalBody",
+              "type": {
+                "kind": "primitive",
+                "name": "BYTES"
+              }
+            },
+            {
+              "name": "validation",
+              "type": {
+                "kind": "record",
+                "name": "HttpResponseValidation",
+                "fields": [
+                  {
+                    "name": "state",
+                    "type": {
+                      "kind": "primitive",
+                      "name": "TEXT"
+                    }
+                  },
+                  {
+                    "name": "issues",
+                    "type": {
+                      "kind": "list",
+                      "element": {
+                        "kind": "record",
+                        "name": "HttpResponseIssue",
+                        "fields": [
+                          {
+                            "name": "path",
+                            "type": {
+                              "kind": "primitive",
+                              "name": "TEXT"
+                            }
+                          },
+                          {
+                            "name": "code",
+                            "type": {
+                              "kind": "primitive",
+                              "name": "TEXT"
+                            }
+                          },
+                          {
+                            "name": "message",
+                            "type": {
+                              "kind": "primitive",
+                              "name": "TEXT"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "streaming": false,
+        "parameters": [
+          {
+            "name": "method",
+            "type": {
+              "kind": "primitive",
+              "name": "TEXT"
+            },
+            "required": false,
+            "constraints": []
+          },
+          {
+            "name": "url",
+            "type": {
+              "kind": "primitive",
+              "name": "TEXT"
+            },
+            "required": true,
+            "constraints": []
+          },
+          {
+            "name": "headers",
+            "type": {
+              "kind": "unknown"
+            },
+            "required": false,
+            "constraints": []
+          },
+          {
+            "name": "body",
+            "type": {
+              "kind": "unknown"
+            },
+            "required": false,
+            "constraints": []
+          }
+        ],
+        "rules": []
+      },
+      "children": []
+    }
+  },
+  "stream": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "stream",
+      "summary": "Apply a fixed native operator to pipeline events.",
+      "invocation": {
+        "command": ":stream",
+        "usage": ":stream [field:<Text>] [equals:<Unknown>] [condition:<Bool>] [limit:<Int>] [skip:<Int>] [overflow:<Text>]",
+        "summary": "Apply a fixed native operator to pipeline events.",
+        "implemented": true,
+        "takes": [
+          "filter",
+          "map",
+          "accumulate"
+        ],
+        "parameters": [
+          {
+            "name": "field",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "equals",
+            "type": "Unknown",
+            "required": false
+          },
+          {
+            "name": "condition",
+            "type": "Bool",
+            "required": false
+          },
+          {
+            "name": "limit",
+            "type": "Int",
+            "required": false
+          },
+          {
+            "name": "skip",
+            "type": "Int",
+            "required": false
+          },
+          {
+            "name": "overflow",
+            "type": "Text",
+            "required": false
+          }
+        ],
+        "otherArguments": false,
+        "producesValue": true,
+        "operands": {
+          "min": 0,
+          "max": 0
+        }
+      },
+      "children": []
+    }
+  },
+  "fork": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "fork",
+      "summary": "Branch one input into ordered pipelines with isolated failure.",
+      "invocation": {
+        "command": ":fork",
+        "usage": ":fork",
+        "summary": "Branch one input into ordered pipelines with isolated failure.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [],
+        "otherArguments": false,
+        "producesValue": false,
+        "operands": {
+          "min": 0,
+          "max": 0
+        }
+      },
+      "children": []
+    }
+  },
+  "calc iter.matches": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "calc iter.matches",
+      "summary": "Return full matched text, not capture groups, for non-overlapping regex matches.",
+      "invocation": {
+        "usage": "iter.matches(text: Text, pattern: Text) -> Iter<Text>",
+        "summary": "Return full matched text, not capture groups, for non-overlapping regex matches.",
+        "parameters": [
+          {
+            "name": "text",
+            "type": "Text",
+            "required": true
+          },
+          {
+            "name": "pattern",
+            "type": "Text",
+            "required": true
+          }
+        ],
+        "returns": "Iter<Text>",
+        "behavior": "Iter is a lazy traversal of bounded materialized data, not Stream. Consume explicitly with collect/count/reduce or for-of. Result item types depend on the input/contract; inference can remain Unknown until consumption.",
+        "examples": [
+          ":calc { return collect(iter.matches('code=503 ok=200','[0-9]+')); }"
+        ],
+        "prerequisites": ""
+      },
+      "children": []
+    }
+  },
+  "calc iter.captures": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "calc iter.captures",
+      "summary": "Return a full match and its capture groups for each non-overlapping regex match.",
+      "invocation": {
+        "usage": "iter.captures(text: Text, pattern: Text) -> Iter<Record {match:Text, groups:List<Option<Text>>}>",
+        "summary": "Return a full match and its capture groups for each non-overlapping regex match.",
+        "parameters": [
+          {
+            "name": "text",
+            "type": "Text",
+            "required": true
+          },
+          {
+            "name": "pattern",
+            "type": "Text",
+            "required": true
+          }
+        ],
+        "returns": "Iter<Record {match:Text, groups:List<Option<Text>>}>",
+        "behavior": "Each item is {match:Text,groups:List<Option<Text>>}. match is the full matched text. The full match is excluded from groups; groups[0] is the first capture group, followed by pattern order (including named groups). Unmatched optional groups are none; present groups are some(Text). Use unwrapOr(item.groups[0],'') explicitly to obtain Text.",
+        "examples": [
+          ":calc { return collect(iter.captures('a=12 b=7','([a-z])=([0-9]+)')); }"
+        ],
+        "prerequisites": ""
+      },
+      "children": []
+    }
+  }
+}

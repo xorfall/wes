@@ -1,0 +1,7 @@
+# Deliberately invalid: no client draws a "sankey". Copying it shows the tail notice
+# "presentation unknown-kind.yaml: unknown kind: sankey" on cells of this type, and the
+# value is shown the ordinary way.
+version: 1
+type: DockerLogTail
+present:
+  kind: sankey

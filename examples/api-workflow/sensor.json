@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "provider": "sensor_demo",
+  "types": {
+    "Api_Reading_e0549db3": {
+      "base": "Record",
+      "fields": {
+        "reading": {
+          "optional": false,
+          "type": "Decimal"
+        },
+        "time": {
+          "optional": false,
+          "type": "Text"
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "history"
+      ],
+      "summary": "Get three synthetic reading points for LAB1",
+      "responseDescriptions": {
+        "200": "Ordered reading history"
+      },
+      "method": "GET",
+      "route": "/history",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "sensor",
+          "description": "Use LAB1; an unknown sensor returns 404",
+          "wire": "sensor",
+          "location": "query",
+          "type": "Text",
+          "required": true,
+          "encoding": "scalar"
+        }
+      ],
+      "responses": {
+        "200": "List\u003cApi_Reading_e0549db3\u003e"
+      },
+      "evidence": "#/paths/~1history/get",
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ]
+    }
+  ],
+  "source": {
+    "sha256": "9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+    "format": "3.1.0",
+    "discovered": 1,
+    "emitted": 1,
+    "skipped": 0,
+    "provenance": {
+      "version": 1,
+      "status": "current",
+      "entries": [
+        {
+          "target": "#/operations/0/authOptions",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/0/method",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/0/parameters/0/encoding",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/parameters/0",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Encoding selected from the parameter location, style, explode and schema."
+        },
+        {
+          "target": "#/operations/0/parameters/0/location",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/parameters/0/in",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter transport location."
+        },
+        {
+          "target": "#/operations/0/parameters/0/name",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/parameters/0/name",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Argument identifier normalized from the wire name."
+        },
+        {
+          "target": "#/operations/0/parameters/0/required",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/parameters/0/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter requiredness; absent flags use OpenAPI optional semantics."
+        },
+        {
+          "target": "#/operations/0/parameters/0/type",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/parameters/0/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/parameters/0/wire",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/parameters/0/name",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Parameter wire name."
+        },
+        {
+          "target": "#/operations/0/path",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/components/schemas/Reading/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get/responses/200/content/application~1json/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/route",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/paths/~1history/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/types/Api_Reading_e0549db3/base",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/components/schemas/Reading/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Reading_e0549db3/fields/reading/optional",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/components/schemas/Reading/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Reading_e0549db3/fields/reading/type",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/components/schemas/Reading/properties/reading/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Reading_e0549db3/fields/time/optional",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/components/schemas/Reading/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Reading_e0549db3/fields/time/type",
+          "source": "sha256:9dcf0a4e118d60d39eb71813762987d80b0820f62354e1d5498d005e1ecd6c87",
+          "pointer": "#/components/schemas/Reading/properties/time/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        }
+      ]
+    }
+  },
+  "servers": [
+    {
+      "at": "#",
+      "declaration": {
+        "description": "Execution endpoint is supplied explicitly in wes",
+        "url": "https://documentation-only.invalid"
+      }
+    }
+  ],
+  "diagnostics": []
+}

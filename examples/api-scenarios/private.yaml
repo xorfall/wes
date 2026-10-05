@@ -1,0 +1,16 @@
+version: 1
+name: Private order checks stay private
+steps:
+  - name: Input
+    run: ':calc { return {total: 42}; } > payload'
+  - name: Create
+    run: 'orders create body:$payload > created'
+    expect:
+      - {name: Correct private total, condition: '$created.body.total == 42'}
+  - name: Fetch
+    run: 'orders get id:$created.body.id > fetched'
+    expect:
+      - {name: Same private order, condition: '$fetched.body.id == $created.body.id'}
+cleanup:
+  - name: Delete
+    run: orders delete id:$created.body.id

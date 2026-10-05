@@ -1,0 +1,392 @@
+{
+  "version": 1,
+  "provider": "fx",
+  "types": {
+    "ApiType1": {
+      "base": "Decimal",
+      "min": 0
+    },
+    "ApiType4": {
+      "base": "Decimal",
+      "min": 0
+    },
+    "ApiType6": {
+      "base": "Decimal",
+      "min": 0
+    },
+    "Api_Quote_ea08a9b7": {
+      "base": "Record",
+      "fields": {
+        "base": {
+          "optional": false,
+          "type": "Text"
+        },
+        "rates": {
+          "optional": false,
+          "type": "Api_Rates_de4b7734"
+        }
+      }
+    },
+    "Api_Rates_de4b7734": {
+      "base": "Map\u003cText,ApiType6\u003e"
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "quote"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Nested rate map"
+      },
+      "method": "GET",
+      "route": "/quote",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "Api_Quote_ea08a9b7"
+      },
+      "evidence": "#/paths/~1quote/get"
+    },
+    {
+      "path": [
+        "rates"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Dynamic rate keys"
+      },
+      "method": "GET",
+      "route": "/rates",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "Api_Rates_de4b7734"
+      },
+      "evidence": "#/paths/~1rates/get"
+    },
+    {
+      "path": [
+        "invalidRates"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Intentionally invalid fixture response"
+      },
+      "method": "GET",
+      "route": "/rates-invalid",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "Api_Rates_de4b7734"
+      },
+      "evidence": "#/paths/~1rates-invalid/get"
+    }
+  ],
+  "source": {
+    "sha256": "1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+    "format": "3.1.0",
+    "discovered": 3,
+    "emitted": 3,
+    "skipped": 0,
+    "provenance": {
+      "version": 1,
+      "status": "current",
+      "entries": [
+        {
+          "target": "#/operations/0/authOptions",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1quote/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/0/method",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1quote/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/0/path",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1quote/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Quote/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1quote/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/0/route",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1quote/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/1/authOptions",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/1/method",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/1/path",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/1/route",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/2/authOptions",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates-invalid/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/2/method",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates-invalid/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/2/path",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates-invalid/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/2/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/2/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/2/responses/200",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates-invalid/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/2/route",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/paths/~1rates-invalid/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/types/ApiType1/base",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType1/min",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/minimum",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType4/base",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType4/min",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/minimum",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/ApiType6/base",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/ApiType6/min",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/minimum",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Explicit schema constraint translated without weakening."
+        },
+        {
+          "target": "#/types/Api_Quote_ea08a9b7/base",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Quote/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Quote_ea08a9b7/fields/base/optional",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Quote/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Quote_ea08a9b7/fields/base/type",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Quote/properties/base/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Quote_ea08a9b7/fields/rates/optional",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Quote/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Quote_ea08a9b7/fields/rates/type",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Quote_ea08a9b7/fields/rates/type",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Rates_de4b7734/base",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/additionalProperties/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Rates_de4b7734/base",
+          "source": "sha256:1670d0d1d059e9eec9033df50c015b006e144a7c9f97049789927a67b1dc3a75",
+          "pointer": "#/components/schemas/Rates/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        }
+      ]
+    }
+  },
+  "servers": [],
+  "diagnostics": []
+}

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "provider": "sensor",
+  "types": {
+    "Sample": {
+      "base": "Record",
+      "fields": {
+        "reading": {
+          "type": "Int",
+          "optional": false
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "sample"
+      ],
+      "method": "GET",
+      "route": "/sample",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Sample"
+      }
+    },
+    {
+      "path": [
+        "missing"
+      ],
+      "method": "GET",
+      "route": "/missing",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Sample"
+      }
+    },
+    {
+      "path": [
+        "invalid"
+      ],
+      "method": "GET",
+      "route": "/invalid",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Sample"
+      }
+    },
+    {
+      "path": [
+        "bad"
+      ],
+      "method": "GET",
+      "route": "/bad-json",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Sample"
+      }
+    }
+  ]
+}

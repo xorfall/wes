@@ -1,0 +1,235 @@
+/*
+ * /settings limits: what the budgets apply to, a toolbar, then one row per budget in its category,
+ * then the unsaved summary and the panel's actions. Labels and prose are sans; values, keys and fields are mono.
+ *
+ * Rows stack by default and take three columns — what it is, what it holds, the field — once the
+ * panel itself is wide enough, so a narrow pane and a 360px window read the same way without
+ * scrolling sideways.
+ */
+.wes-terminal .limits-panel {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+  max-width: 1080px;
+}
+
+/* --- Toolbar --- */
+.wes-terminal .limits-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  min-width: 0;
+}
+.wes-terminal .limits-search,
+.wes-terminal .limits-input,
+.wes-terminal .limits-select {
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  letter-spacing: var(--type-mono-tracking);
+  color: var(--mono-ink);
+  background: var(--sunk);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: 0;
+}
+.wes-terminal .limits-search { flex: 1 1 14rem; max-width: 100%; }
+.wes-terminal .limits-select { flex: 0 1 auto; max-width: 100%; cursor: pointer; }
+.wes-terminal .limits-select:disabled { cursor: default; color: var(--mono-faint); }
+.wes-terminal .limits-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  color: var(--mono-dim);
+  cursor: pointer;
+}
+.wes-terminal .limits-check input { margin: 0; accent-color: var(--mono-ref); }
+.wes-terminal .limits-count {
+  margin-left: auto;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  color: var(--mono-faint);
+  white-space: nowrap;
+}
+
+/* --- Messages: panel-wide notices and per-field notes --- */
+.wes-terminal .limits-message,
+.wes-terminal .limits-field-message {
+  margin: 0;
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  line-height: var(--type-sans-small-leading);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.wes-terminal .limits-message { max-width: 72ch; }
+.wes-terminal .limits-scope { padding-bottom: var(--space-xs); }
+.wes-terminal .limits-restart {
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--mono-ink);
+  border-left: var(--stroke-rail) solid var(--mono-warn);
+  background: var(--well);
+}
+.wes-terminal .limits-quiet { color: var(--mono-dim); }
+.wes-terminal .limits-ok { color: var(--mono-ok); }
+.wes-terminal .limits-warn { color: var(--mono-warn); }
+.wes-terminal .limits-bad { color: var(--mono-bad); }
+
+/* --- Groups and rows --- */
+.wes-terminal .limits-group { display: flex; flex-direction: column; min-width: 0; }
+.wes-terminal .limits-group-name {
+  margin: 0;
+  padding-bottom: var(--space-xs);
+  font-family: var(--type-label-family);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  color: var(--mono-dim);
+  border-bottom: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .limits-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm) 0 var(--space-sm) var(--space-sm);
+  border-bottom: var(--stroke-thin) solid var(--line);
+  border-left: var(--stroke-rail) solid transparent;
+}
+.wes-terminal .limits-row-dirty { border-left-color: var(--mono-ref); background: var(--sel); }
+.wes-terminal .limits-row-invalid { border-left-color: var(--mono-bad); }
+@container (min-width: 760px) {
+  .wes-terminal .limits-row {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: var(--space-sm) var(--space-lg);
+  }
+}
+
+.wes-terminal .limits-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wes-terminal .limits-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-xs) var(--space-sm); }
+.wes-terminal .limits-label {
+  font-family: var(--type-label-family);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  color: var(--mono-ink);
+  overflow-wrap: anywhere;
+}
+.wes-terminal .limits-description,
+.wes-terminal .limits-reason {
+  margin: 0;
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-dim);
+  overflow-wrap: anywhere;
+}
+.wes-terminal .limits-reason { color: var(--mono-ink); }
+
+/* Badges say when a change takes effect; only the fixed one is neutral. */
+.wes-terminal .limits-badge {
+  padding: 0 var(--space-xs);
+  font-family: var(--type-mono-family);
+  font-size: 11px;
+  line-height: 1.5;
+  border: var(--stroke-thin) solid currentColor;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.wes-terminal .limits-badge-now { color: var(--mono-ok); }
+.wes-terminal .limits-badge-restart { color: var(--mono-warn); }
+.wes-terminal .limits-badge-fixed { color: var(--mono-faint); }
+
+.wes-terminal .limits-advanced { font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); }
+.wes-terminal .limits-advanced > summary {
+  width: fit-content;
+  color: var(--mono-faint);
+  cursor: pointer;
+}
+.wes-terminal .limits-advanced > summary:hover { color: var(--mono-ink); }
+
+/* Values: a term and its number, the numbers in mono and aligned. */
+.wes-terminal .limits-values,
+.wes-terminal .limits-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 var(--space-sm);
+  margin: 0;
+  min-width: 0;
+  align-content: start;
+}
+.wes-terminal .limits-values dt,
+.wes-terminal .limits-facts dt {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-faint);
+}
+.wes-terminal .limits-values dd,
+.wes-terminal .limits-facts dd {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.wes-terminal .limits-facts dd { color: var(--mono-dim); }
+.wes-terminal .limits-values .limits-next { color: var(--mono-warn); }
+
+/* The field: number and unit share a line that never runs wider than the row. */
+.wes-terminal .limits-editor { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+.wes-terminal .limits-field-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); min-width: 0; }
+.wes-terminal .limits-input { flex: 1 1 7rem; width: 7rem; max-width: 16rem; font-variant-numeric: tabular-nums; }
+.wes-terminal .limits-input[aria-invalid="true"] { border-color: var(--mono-bad); }
+.wes-terminal .limits-input[readonly] { color: var(--mono-dim); }
+.wes-terminal .limits-unit { flex: 0 0 auto; }
+.wes-terminal .limits-row-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+
+/* --- Footer: summary and actions stay in reach at the bottom of the scrolling screen --- */
+.wes-terminal .limits-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  padding: var(--space-sm) 0;
+  background: var(--terminal);
+  border-top: var(--stroke-thin) solid var(--rule);
+}
+.wes-terminal .limits-summary {
+  flex: 1 1 16rem;
+  margin: 0;
+  min-width: 0;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  color: var(--mono-dim);
+  overflow-wrap: anywhere;
+}
+.wes-terminal .limits-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-sm); }
+.wes-terminal .limits-footer > .limits-message { flex-basis: 100%; }
+
+/* --- Controls: disabled is plain, focus is the surface's violet ring --- */
+.wes-terminal .limits-panel .screen-chip:disabled,
+.wes-terminal .limits-panel .screen-chip[aria-disabled="true"] { cursor: default; opacity: .5; }
+.wes-terminal .limits-search:focus-visible,
+.wes-terminal .limits-input:focus-visible,
+.wes-terminal .limits-select:focus-visible {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: calc(-1 * var(--stroke-thin));
+}
+.wes-terminal .limits-panel .screen-chip:focus-visible,
+.wes-terminal .limits-check input:focus-visible,
+.wes-terminal .limits-advanced > summary:focus-visible {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: 1px;
+}

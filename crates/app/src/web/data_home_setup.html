@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>wes — Open data folder</title>
+<style>:root{color-scheme:light dark;font:16px/1.5 system-ui,sans-serif}body{max-width:44rem;margin:10vh auto;padding:1.5rem}input,button{font:inherit;padding:.65rem}input{box-sizing:border-box;width:100%;margin:.5rem 0 1rem}button{cursor:pointer}p{overflow-wrap:anywhere}[role=status]{min-height:1.5em}</style></head>
+<body><h1>Open a data folder</h1><p id="problem" role="alert"></p><p>Your existing files have been left in place. Choose an empty folder or an existing native wes data folder. The selected folder will be remembered.</p>
+<form><label for="folder">Data folder</label><input id="folder" placeholder="~/.wes" autocomplete="off" spellcheck="false" required><button type="submit">Open data folder</button></form>
+<p role="status" id="status"></p>
+<script>
+const form=document.querySelector('form'),input=document.querySelector('input'),button=document.querySelector('button'),status=document.querySelector('#status');
+fetch('/data-home').then(r=>r.json()).then(s=>{input.value=s.path;document.querySelector('#problem').textContent=s.warning||'The previous data folder could not be opened.'}).catch(()=>{status.textContent='The data folder could not be read. Restart the application to retry.'});
+async function openFolder(request){button.disabled=true;status.textContent='Opening data folder…';try{const r=await fetch('/data-home',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});if(!r.ok){const s=await r.json();throw Error(s.message||'The folder could not be opened.')}status.textContent='Opening the workspace…'}catch(e){status.textContent=e.message;button.disabled=false}}
+form.addEventListener('submit',e=>{e.preventDefault();void openFolder({path:input.value.trim()})});
+</script></body></html>

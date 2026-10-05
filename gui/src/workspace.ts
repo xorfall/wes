@@ -1,0 +1,403 @@
+import type { Event, NodeState } from "./protocol";
+import { appendTranscript } from "./transcripts";
+import { emptyCatalogue, type Catalogue } from "./vocabulary";
+
+/**
+ * What the client knows, built only from what the engine said.
+ *
+ * The engine owns workspace state. This is a projection of the event
+ * stream and nothing more — which is why reconnecting has to replay or refetch rather than patch, and
+ * why nothing here ever guesses at a state it was not told about.
+ */
+
+export interface WorkspaceNode {
+  readonly waiting?:readonly import("./protocol").WaitingInput[];
+  readonly errorNames?:readonly string[];
+  readonly streamOutput?: boolean;
+  /** The engine's statement that this node's own call streams; absent means not stated, never inferred. */
+  readonly streamSource?: boolean;
+  readonly staleReason?: import("./protocol").StaleReason;
+  /** `creation` input edges order one construction; absent until the engine announces the node. */
+  readonly dependencyLifetime?: import("./protocol").DependencyLifetime;
+  /** The engine's statement that a creation-lifetime node finished constructing. */
+  readonly constructionComplete?: boolean;
+  /** The engine's statement that newer committed input waits for this calculation; never inferred. */
+  readonly updatePending?: boolean;
+  readonly stopped?: { readonly source: string; readonly run: string };
+  readonly retention?: import("./protocol").Retention;
+  readonly repeatable?: boolean;
+  readonly publication?: import("./protocol").ResultPublication;
+  readonly traced?: boolean;
+  readonly private?: boolean;
+  readonly environment?: Extract<Event, { event: "node-environment" }>;
+  readonly id: string;
+  readonly startedAt?: string;
+  readonly name?: string;
+  readonly command: string;
+  readonly currentDefinition?: string;
+  readonly dependsOn: readonly string[];
+  readonly state: NodeState;
+  readonly type?: string;
+  readonly handle?: string;
+  readonly bytes?: number;
+  readonly provenance: Record<string, string>;
+  /** What was overridden to produce this. A result nobody can see a warning on is unwarned. */
+  readonly cautions: readonly string[];
+  /** Whether this survives the engine restarting. Undefined until it has a result at all. */
+  readonly kept: boolean;
+  readonly failure?: string;
+  readonly failureRecord?: import("./protocol").ErrorRecord;
+  readonly cancellation?: { readonly code: string; readonly reason: string };
+  /** Whether somebody can type at it while it runs. */
+  readonly interactive?: boolean;
+  /** What it has written so far, for a command that asks before it finishes. */
+  readonly wrote?: string;
+  readonly run?: string;
+  readonly conversationActive?: boolean;
+  readonly outputLost?: boolean;
+  readonly wroteTrimmed?: boolean;
+  /**
+   * A call that was in flight when the engine stopped, if this node was making one.
+   *
+   * Not a failure and not staleness. The node's value is gone, which staleness says; what staleness
+   * cannot say is that asking again might be asking twice.
+   */
+  readonly doubt?: Doubt;
+}
+
+/** What is known about a call nobody can answer for. */
+export interface Doubt {
+  readonly capability: string;
+  readonly safe: boolean;
+  readonly when: string;
+}
+
+/** What this session keeps without being asked, as the engine last said it. */
+export interface Keeping {
+  readonly automatic: boolean;
+  readonly under: number;
+}
+
+export interface Workspace {
+  readonly capacity?: import("./protocol").ExecutionCapacity;
+  readonly identity?: Extract<Event, { event: "workspace-context" }>;
+  readonly displayProblem?: string;
+  readonly logStatus?: import("./protocol").LogStatus;
+  readonly startupWarnings: readonly import("./protocol").StartupWarning[];
+  readonly history: readonly import("./protocol").HistoryEvent[];
+  readonly nodes: readonly WorkspaceNode[];
+  /** What can be said now. Replaced wholesale when the engine says it changed. */
+  readonly catalogue: Catalogue;
+  readonly keeping: Keeping;
+  /** Where the engine keeps things, once it has been asked. Absent until then. */
+  readonly storage?: Extract<Event, { event: "storage" }>;
+  /** Which nodes each attempt produced, so a cell can find what it made. */
+  readonly cells: Readonly<Record<string, readonly string[]>>;
+  readonly repeatedRuns?: Readonly<Record<string, string>>;
+  readonly attemptFailures?: Readonly<Record<string, string>>;
+  /**
+   * Nodes that went stale since anybody last looked.
+   *
+   * Kept separately from the nodes themselves because staleness is two different things at once: a
+   * property of a node, which the node carries, and something that just happened, which nothing else
+   * announces. A cell scrolled off the screen can be marked perfectly and still tell nobody.
+   */
+  readonly wentStale: readonly string[];
+}
+
+export const emptyWorkspace: Workspace = {
+  startupWarnings: [],
+  history: [],
+  nodes: [],
+  catalogue: emptyCatalogue,
+  /** The engine's own default, so the panel is not wrong for the moment before the greeting lands. */
+  keeping: { automatic: true, under: 10 * 1024 * 1024 },
+  cells: {},
+  wentStale: [],
+};
+
+/**
+ * Folds one event into what is known.
+ *
+ * A node is only created by a `created` event. A state change for an unknown node is ignored rather
+ * than inventing a node with no command and no edges — a half-node on screen would be worse than a
+ * missing one, and its absence is a visible symptom if the engine ever stops announcing.
+ */
+export function apply(workspace: Workspace, event: Event): Workspace {
+  switch (event.event) {
+    case "workspace-closed": return emptyWorkspace;
+    case "workspace-context": return { ...workspace, identity: event };
+    case "work-retired": {
+      const gone = new Set(event.cells);
+      return { ...workspace, cells: Object.fromEntries(Object.entries(workspace.cells).filter(([cell]) => !gone.has(cell))) };
+    }
+    case "session":
+      return emptyWorkspace;
+    case "environments":
+    case "storage-warning": return workspace;
+    case "node-environment": return { ...workspace, nodes: workspace.nodes.map(node => node.id === event.node ? { ...node, environment: event } : node) };
+    case "projection-unavailable":
+      return { ...emptyWorkspace, displayProblem: event.message };
+    case "log-delta": {
+      const removed = new Set(event.removed);
+      const entries = new Map(event.entries.map(entry => [entry.record.id, entry]));
+      const history = event.reset ? [] : workspace.history.flatMap(entry => {
+        if (removed.has(entry.record.id)) return [];
+        const replacement = entries.get(entry.record.id);
+        entries.delete(entry.record.id);
+        return [replacement ?? entry];
+      });
+      history.push(...entries.values());
+      return { ...workspace, history };
+    }
+    case "execution-capacity": return { ...workspace, capacity: event };
+    case "log-status":
+      return { ...workspace, logStatus: event };
+    case "log":
+    case "log-notice":
+    case "log-diagnostic":
+      return { ...workspace, history: workspace.history.some(entry => entry.record.id === event.record.id)
+        ? workspace.history.map(entry => entry.record.id === event.record.id ? event : entry)
+        : [...workspace.history, event] };
+    case "startup-warning":
+      return { ...workspace, startupWarnings: [...workspace.startupWarnings.filter(warning => warning.id !== event.id), event] };
+    /*
+     * Nothing to keep. A diagnostic belongs to the cell whose command it is about, and that is where it
+     * is drawn. Do not accumulate a second, unbounded copy in the workspace projection.
+     */
+    case "reported":
+      return workspace;
+
+    case "storage":
+      return { ...workspace, storage: event };
+
+    /*
+     * Appended, not replaced. What a command wrote is a transcript — the question, then the answer's
+     * echo, then whatever came next — and a client that kept only the last chunk would show the tail of
+     * a conversation with the question missing.
+     */
+    case "output":
+      return {
+        ...workspace,
+        nodes: appendTranscript(workspace.nodes, event),
+      };
+    case "conversation":
+      return change(workspace, event.node, node => ({ ...node, run: event.run || undefined,
+        conversationActive: event.active,
+        ...(node.run !== (event.run || undefined) ? { wrote: undefined, outputLost: false, wroteTrimmed: false } : {}),
+      }));
+    case "output-gap":
+      return { ...workspace, nodes: workspace.nodes.map(node => node.interactive && node.run
+        ? { ...node, outputLost: true } : node) };
+
+    case "vocabulary":
+      return {
+        ...workspace,
+        catalogue: {
+          commands: event.commands,
+          calculation: event.calculation,
+          annotations: event.annotations,
+          providers: event.providers,
+          templates: event.templates ?? [],
+        },
+      };
+
+    case "created":
+      if (workspace.nodes.some(node => node.id === event.node)) {
+        return change(workspace, event.node, node => ({ ...node, name: event.name || undefined, errorNames:event.errorNames,
+          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, dependencyLifetime: event.dependencyLifetime, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
+          repeatable: event.repeatable, startedAt: event.startedAt ?? undefined }));
+      }
+      return {
+        ...workspace,
+        nodes: [
+          ...workspace.nodes,
+          {
+            id: event.node,
+            errorNames:event.errorNames,
+            repeatable: event.repeatable,
+            startedAt: event.startedAt ?? undefined,
+            name: event.name === "" ? undefined : event.name,
+            command: event.command,
+            currentDefinition: event.currentDefinition ?? undefined,
+            run: event.run ?? undefined,
+            streamOutput: event.streamOutput,
+            streamSource: event.streamSource === true,
+            dependsOn: event.dependsOn,
+            dependencyLifetime: event.dependencyLifetime,
+            state: "pending",
+            traced: event.traced, interactive: event.interactive,
+            provenance: {},
+            cautions: [],
+            kept: false,
+          },
+        ],
+      };
+
+    case "node":
+      if (event.state !== "stale") workspace = { ...workspace, wentStale: workspace.wentStale.filter(id => id !== event.node) };
+      if (event.state === "stale" && !workspace.wentStale.includes(event.node)) {
+        workspace = { ...workspace, wentStale: [...workspace.wentStale, event.node] };
+      }
+      return change(workspace, event.node, (node) => ({ ...node, state: event.state, waiting:event.waiting,
+        staleReason: event.state === "stale" ? event.staleReason : undefined,
+        updatePending: event.updatePending === true || undefined,
+        constructionComplete: event.constructionComplete || undefined,
+        ...(node.stopped ? { handle: undefined, bytes: undefined, kept: false } : {}),
+        stopped: undefined,
+        publication: event.publication,
+        failure: undefined, failureRecord: undefined, cancellation: undefined,
+        ...(event.state === "ready" && event.publication?.state !== "available"
+          ? { handle: undefined, bytes: undefined, kept: false } : {}),
+        ...(event.state === "skipped" ? { handle: undefined, bytes: undefined, kept: false } : {}),
+      }));
+
+    case "stopped":
+    case "ready":
+      workspace = { ...workspace, wentStale: workspace.wentStale.filter((id) => id !== event.node) };
+      return change(workspace, event.node, (node) => ({
+        ...node,
+        state: event.event === "stopped" ? event.state : "ready",
+        staleReason: undefined, waiting:undefined, updatePending: undefined,
+        constructionComplete: event.constructionComplete === true || undefined,
+        stopped: event.event === "stopped" ? { source: event.source, run: event.run } : undefined,
+        publication: event.publication,
+        type: event.type,
+        handle: event.handle,
+        bytes: event.bytes,
+        provenance: event.provenance,
+        cautions: event.cautions,
+        kept: event.kept,
+        retention: event.retention,
+        private: event.private,
+        failure: undefined, failureRecord: undefined,
+        cancellation: undefined,
+        doubt: undefined,
+      }));
+
+    case "keeping":
+      return { ...workspace, keeping: { automatic: event.automatic, under: event.under } };
+
+    case "planned":
+      return {
+        ...workspace,
+        cells: { ...workspace.cells, [event.cell]: event.nodes },
+        repeatedRuns: event.repeatedRun ? { ...workspace.repeatedRuns, [event.cell]: event.repeatedRun } : workspace.repeatedRuns,
+        attemptFailures: event.failure ? { ...workspace.attemptFailures, [event.cell]: event.failure } : workspace.attemptFailures,
+      };
+
+    case "interrupted":
+      return change(workspace, event.node, (node) => ({
+        ...node,
+        doubt: { capability: event.capability, safe: event.safe, when: event.when },
+      }));
+
+    case "failed":
+      workspace = { ...workspace, wentStale: workspace.wentStale.filter(id => id !== event.node) };
+      return change(workspace, event.node, (node) => ({
+        ...node,
+        state: "failed",
+        staleReason: undefined, waiting:undefined, updatePending: undefined, constructionComplete: undefined,
+        stopped: undefined,
+        publication: undefined,
+        failure: event.reason,
+        failureRecord: event.error,
+        cancellation: undefined,
+        handle: undefined, bytes: undefined, kept: false,
+      }));
+
+    case "cancelled":
+      workspace = { ...workspace, wentStale: workspace.wentStale.filter(id => id !== event.node) };
+      return change(workspace, event.node, (node) => ({
+        ...node, state: "cancelled", staleReason: undefined, updatePending: undefined, constructionComplete: undefined, failure: undefined, failureRecord: undefined, stopped: undefined,
+        publication: undefined,
+        cancellation: { code: event.code, reason: event.reason },
+        handle: undefined, bytes: undefined, kept: false,
+      }));
+
+    case "dropped": {
+      const gone = new Set(event.nodes);
+      return { ...workspace, nodes: workspace.nodes.filter((node) => !gone.has(node.id)), wentStale: workspace.wentStale.filter(id => !gone.has(id)) };
+    }
+  }
+}
+
+function change(
+  workspace: Workspace,
+  id: string,
+  update: (node: WorkspaceNode) => WorkspaceNode,
+): Workspace {
+  if (!workspace.nodes.some((node) => node.id === id)) {
+    return workspace;
+  }
+  return {
+    ...workspace,
+    nodes: workspace.nodes.map((node) => (node.id === id ? update(node) : node)),
+  };
+}
+
+/** Whether anything about this result was overridden on the way. */
+export function isCautioned(node: WorkspaceNode): boolean {
+  return node.cautions.length > 0;
+}
+
+/**
+ * Every way a result can be referred to.
+ *
+ * Both a result's user-assigned name and its stable node id resolve to that result, so completion
+ * must offer both.
+ */
+export function referables(nodes: readonly WorkspaceNode[]): readonly string[] {
+  const names: string[] = [];
+  nodes.forEach((node) => {
+    if (node.name !== undefined) {
+      names.push(node.name);
+    }
+    names.push(node.id);
+  });
+  return names;
+}
+
+/** What to call a node on screen: the name someone gave it, or the id it always had. */
+export function label(node: WorkspaceNode): string {
+  return node.name ?? node.id;
+}
+
+/** Says the person has seen what went stale, so the announcement stops and the marks stay. */
+export function seen(workspace: Workspace): Workspace {
+  return workspace.wentStale.length === 0 ? workspace : { ...workspace, wentStale: [] };
+}
+
+/** Which cell produced a node, for an announcement that can take somebody to it. */
+export function cellOf(workspace: Workspace, node: string): string | undefined {
+  for (const [cell, nodes] of Object.entries(workspace.cells)) {
+    if (nodes.includes(node)) {
+      return cell;
+    }
+  }
+  return undefined;
+}
+
+/** Stale because newer committed input superseded a bounded observation, not because a definition or restore changed. */
+const OBSERVATION_STALE = new Set(["stream_updated", "input_behind"]);
+
+export function observationStale(node: WorkspaceNode): boolean {
+  return node.state === "stale" && OBSERVATION_STALE.has(node.staleReason?.code ?? "");
+}
+
+export const UPDATE_PENDING_STATUS = "Newer input waiting; finishing current calculation";
+
+/** Only the engine's bit; no count, since the engine keeps one pending update, not a backlog. */
+export function updatePendingStatus(node: WorkspaceNode): string | undefined {
+  return node.updatePending ? UPDATE_PENDING_STATUS : undefined;
+}
+
+/** A node whose input edges only ordered its one construction, which has succeeded. */
+export function constructed(node: WorkspaceNode): boolean {
+  return node.dependencyLifetime === "creation" && node.constructionComplete === true;
+}
+
+/** No inference from retry history or private result metadata. */
+export function staleMessage(node: WorkspaceNode): string | undefined {
+  return node.state === "stale" ? node.staleReason?.message ?? "The reason this result became stale was not recorded." : undefined;
+}

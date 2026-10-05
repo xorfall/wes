@@ -1,0 +1,6 @@
+version: 1
+package: sensor-walkthrough
+targets:
+  sensor_demo_local: {kind: local}
+environments:
+  sensor_demo: {}

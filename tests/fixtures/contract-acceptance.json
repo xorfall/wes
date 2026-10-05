@@ -1,0 +1,1330 @@
+[
+  {
+    "input": "types: {}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "version: 1\ntypes: {}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "version: 2\ntypes: {}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: B}, B: {base: Text}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "B",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: A}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: B}, B: {base: A}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Missing}}",
+    "code": "TYP003",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {Text: {base: Int}}",
+    "code": "TYP004",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, base: Int}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, enum: []}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Record, fields: {x: {type: Text, optional: true}}}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Record, fields: {x: {type: Text, optional: True}}}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Record, fields: {x: {type: Text, optional: FALSE}}}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Record, fields: {x: {type: Text, optional: yes}}}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, minLength: 1, enum: [a]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 2}, B: {base: A, min: 1}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: List<Int>, maxItems: 2}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Map<Text,Int>}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types:\n A: {base: 'Map<Text, Int>'}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Option<Int>}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Iter<Int>}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: &a {base: Text}, B: *a}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: !custom {base: Text}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: null}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: NULL}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {}\n---\ntypes: {}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [true]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [True]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [TRUE]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [false]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [False]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [FALSE]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [yes]}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [no]}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [on]}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [off]}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [!!bool true]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [!!bool false]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [!!bool TRUE]}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: [!!bool maybe]}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Bool, enum: ['true']}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 1}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: +1}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: -1}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 01}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 0x10}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 0o10}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 1_000}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 9223372036854775807}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Int, min: 9223372036854775808}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: 0.123456789012345678901234567890}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: 1e2}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: 1E-3}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: .5}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: 5.}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: .inf}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: .nan}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: NaN}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: '1.0'}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Decimal, min: 1_000.0}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: 'book'}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: '(?=a)'}}",
+    "code": "TYP002",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: '(a)\\\\1'}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: '(?i)book'}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: '\\\\d+'}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: '(?U)a+'}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  },
+  {
+    "input": "types: {A: {base: Text, pattern: '(?m)^x$'}}",
+    "code": "",
+    "names": [
+      "Text",
+      "Int",
+      "Decimal",
+      "Bool",
+      "Instant",
+      "Duration",
+      "Interval",
+      "Bytes",
+      "Unknown",
+      "Record",
+      "ValidationIssue",
+      "Error",
+      "Cancellation",
+      "A"
+    ]
+  }
+]

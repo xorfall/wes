@@ -1,0 +1,225 @@
+/*
+ * The panes' geometry: the surface's own grid, 12 apart, with the prompt and its keys beneath them
+ * all. Which pane is where comes from `grid-template-areas`, so the three arrangements are three
+ * strings rather than three layouts.
+ */
+.wes-terminal .split {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--ground);
+  outline: none;
+}
+
+.wes-terminal .split-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) 24px;
+  border-width: 0 0 var(--stroke-thin) 0;
+}
+.wes-terminal .split-top-line {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Quiet header glyphs share ink on hover and the rail’s ring on focus. */
+.wes-terminal .split-top-action {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--mono-dim);
+  cursor: pointer;
+}
+.wes-terminal .split-top-action:hover { color: var(--mono-ink); background-color: var(--sel); }
+.wes-terminal .split-top-action:focus-visible {
+  color: var(--mono-ink);
+  background-color: var(--sel);
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: 0;
+}
+.wes-terminal .split-top-glyph { display: block; }
+
+.wes-terminal .split-panes {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+  padding: 12px 24px;
+}
+.wes-terminal .split-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /*
+   * A pane draws its hairline and nothing else inside it (spacing rule): the window gutter is the
+   * grid's, and the session inside sets its own page gutter to zero. Vertical rhythm stays.
+   */
+  padding: var(--space-sm) 0;
+  /* `surface-terminal` paints a ground and no edge, so an unfocused pane needs the hairline here. */
+  border-width: var(--stroke-thin);
+  border-color: var(--line);
+  outline: none;
+}
+.wes-terminal .split-pane-title {
+  flex: 0 0 auto;
+  /* Aligned with the cells' own 8 px padding, not a second pane inset. */
+  padding: 0 8px var(--space-sm);
+}
+/* Expanded panes keep their siblings mounted, outside layout and keyboard navigation. */
+.wes-terminal .split-pane[hidden] { display: none; }
+.wes-terminal .split-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.wes-terminal .split-pane-body > * {
+  flex: 0 0 auto;
+}
+
+.wes-terminal .split-prompt {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 24px var(--space-md);
+}
+
+/* Sessions and emulators fill their track; scrollback scrolls within it. */
+.wes-terminal .split-pane-body > .session,
+.wes-terminal .split-pane-body > .shell-surface { flex: 1 1 0; min-height: 0; }
+.wes-terminal .surface-workspace { flex: 1 1 0; min-height: 0; height: 100%; }
+.wes-terminal .surface-workspace[hidden] { display: none; }
+
+.wes-terminal .pane-command { flex: 0 0 auto; padding-top: var(--space-sm); }
+.wes-terminal .pane-command input {
+  box-sizing: border-box; width: 100%; font: inherit; color: var(--mono-ink);
+  background: transparent; border: 0; border-top: 1px solid var(--line); padding: 6px 0;
+}
+
+.wes-terminal.surface-app > .screen { flex: 1 1 0; min-height: 0; }
+
+/* xterm owns scrollback. Its screen may briefly retain the old pixel size while fitting;
+   that must neither add an outer scrollbar nor alter the host's intrinsic flex size. */
+.wes-terminal .split-pane[data-terminal="true"] > .workspace-tab-view > .split-pane-body { overflow: hidden; }
+.wes-terminal .split-pane[data-terminal="true"] .terminal-emulator { contain: size; min-width: 0; }
+
+/* Sessions and shells are the content itself, without an additional pane card. */
+.wes-terminal .split-pane-plain {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.wes-terminal .split-pane-plain .shell-surface { padding: 0; }
+.wes-terminal .split-pane-plain .terminal-emulator {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Only divided workspaces need pane boundaries, independent of screen chrome/theme. */
+.wes-terminal .split-panes[data-panes="1"] > .split-pane { border: 0; box-shadow: none; }
+.wes-terminal .split-panes:not([data-panes="1"]) > .split-pane {
+  border: var(--stroke-thin) solid var(--line);
+  padding: var(--space-sm) 12px;
+  box-shadow: none;
+}
+.wes-terminal .split-panes:not([data-panes="1"]) > .split-pane[aria-current="true"] {
+  border-color: var(--active);
+}
+
+/* Bound workspace views keep the same finite flex track as the default session. */
+.wes-terminal .split-pane-body > .workspace-pane-content,
+.wes-terminal .workspace-pane-view { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.wes-terminal .workspace-pane-view[hidden] { display: none; }
+.wes-terminal .workspace-pane-view > .session,
+.wes-terminal .workspace-pane-view > .shell-surface,
+.wes-terminal .workspace-pane-content > .screen { flex: 1 1 0; min-height: 0; }
+.wes-terminal .workspace-tab-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+.wes-terminal .workspace-tab-view[hidden] { display: none; }
+/*
+ * Workspace tabs.
+ * The row is one mono line in the pane's own voice: names in mono-dim, the selected one in mono-ink,
+ * `·` (mono-faint) between them, and `×` (mono-faint) for a tab that can be closed. The selected tab
+ * sits on the pane's rail (rail-focus, 2px) over an output hairline (rail-output, 1px); a pane the
+ * caret is not in keeps ink for the name and a faint rail, so only one violet rail is on screen.
+ * No chips, no fills at rest. Focus is the cell's own: the selection wash and a 1px violet edge.
+ */
+.wes-terminal .workspace-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  margin-bottom: var(--space-sm);
+  /* The output hairline is the row's floor; the selected tab's rail is drawn over it. */
+  box-shadow: inset 0 calc(-1 * var(--stroke-thin)) 0 var(--rail);
+}
+.wes-terminal .workspace-tab-label { display: flex; flex: 0 0 auto; align-items: stretch; min-width: 0; }
+.wes-terminal .workspace-tab-label + .workspace-tab-label::before {
+  content: "·";
+  content: "·" / "";
+  align-self: center;
+  padding: 0 var(--space-sm);
+  font: var(--type-mono-weight) var(--type-mono-size) / var(--type-mono-leading) var(--type-mono-family);
+  color: var(--mono-faint);
+}
+.wes-terminal .workspace-tab,
+.wes-terminal .workspace-tab-close {
+  appearance: none;
+  padding: var(--space-xs) 0;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  line-height: var(--type-mono-leading);
+  letter-spacing: var(--type-mono-tracking);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  outline: none;
+}
+.wes-terminal .workspace-tab {
+  /* A long name is cut with an ellipsis (the whole name is its title), never wrapped. */
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-inline: var(--space-xs);
+  color: var(--mono-dim);
+  border-bottom: var(--stroke-rail) solid transparent;
+}
+.wes-terminal .workspace-tab:hover { color: var(--mono-ink); }
+.wes-terminal .workspace-tab[aria-selected="true"] { color: var(--mono-ink); border-bottom-color: var(--mono-faint); }
+.wes-terminal .split-pane[aria-current="true"] .workspace-tab[aria-selected="true"] { border-bottom-color: var(--mono-ref); }
+.wes-terminal .workspace-tab-close {
+  padding-inline: var(--space-xs);
+  color: var(--mono-faint);
+}
+.wes-terminal .workspace-tab-close:hover { color: var(--mono-ink); }
+.wes-terminal .workspace-tab:focus-visible,
+.wes-terminal .workspace-tab-close:focus-visible {
+  background-color: var(--sel);
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: calc(-1 * var(--stroke-thin));
+}
+
+/* Terminal canvas and chrome have their own surfaces, independent of page ground. */
+.wes-terminal .split-pane[data-terminal="true"] { background:var(--terminal); }
+.wes-terminal .split-pane[data-terminal="true"] > .workspace-tabs { background:var(--terminal); margin:-8px -12px var(--space-sm); padding:4px 8px 0; }
+.wes-terminal .split-panes[data-panes="1"] > .split-pane[data-terminal="true"] > .workspace-tabs { margin:0 0 var(--space-sm); }

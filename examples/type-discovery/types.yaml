@@ -1,0 +1,8 @@
+types:
+  Positive: {base: Int, min: 1}
+  Customer:
+    base: Record
+    fields:
+      id: Positive
+      name: Text
+      note: {type: Text, optional: true}

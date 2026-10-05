@@ -1,0 +1,9 @@
+:calc {
+  const rows = range(0, 5000).map(i => {
+    let status = 200;
+    if (rem(i, 10) == 0) status = 503;
+    return {id: i, status: status,
+      payload: "synthetic-unused-payload-abcdefghijklmnopqrstuvwxyz-0123456789"};
+  });
+  return {rows: rows, label: "local synthetic fixture"};
+} > dataset

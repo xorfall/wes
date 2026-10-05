@@ -1,0 +1,82 @@
+/*
+ * Gallery geometry for repeatable screenshot comparisons. Component styling stays in
+ * the components' stylesheets; this frame only positions them.
+ */
+.wes-terminal.gallery {
+  min-height: 100vh;
+  padding: 40px;
+  box-sizing: border-box;
+}
+
+/* A whole screen fills the window and brings its own padding; the gallery frame gets out of the way. */
+.wes-terminal.gallery:has(> .session),
+.wes-terminal.gallery:has(> .gallery-screen),
+.wes-terminal.gallery:has(> .screen),
+.wes-terminal.gallery:has(> .split) {
+  height: 100vh;
+  padding: 0;
+}
+
+/* Two columns of 660, 40 apart, rows 24 apart: the surface's gallery screens at 1440 wide. */
+.wes-terminal .gallery-grid {
+  display: grid;
+  /* minmax(0, …) so a preview that would rather be wide is cut to the column instead of pushing it. */
+  grid-template-columns: repeat(2, minmax(0, 660px));
+  column-gap: 40px;
+  row-gap: 24px;
+  align-content: start;
+  justify-content: start;
+}
+.wes-terminal .gallery-grid > * {
+  min-width: 0;
+}
+
+.wes-terminal .gallery-scrollback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 24px 8px;
+}
+
+/* A screen whose cells are the width of the session's, not of a gallery column. */
+.wes-terminal .gallery-full {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+/* A screen that is not the session but is laid out like one: bar, body, prompt, footer. */
+.wes-terminal .gallery-screen {
+  display: flex;
+  flex-direction: column;
+  /* The frame decides the height; a screen fills whatever it is summoned into. */
+  height: 100%;
+  min-height: 0;
+  background-color: var(--ground);
+}
+.wes-terminal .gallery-screen-top {
+  flex: 0 0 auto;
+  padding: var(--space-sm) var(--page-gutter);
+  border-width: 0 0 var(--stroke-thin) 0;
+}
+.wes-terminal .gallery-screen-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-md) var(--page-gutter);
+}
+.wes-terminal .gallery-screen-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--page-gutter) var(--space-sm);
+}
+
+/* Fixed 1440×900 reference frame for visual regression comparisons. */
+.wes-terminal.gallery.gallery-framed {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}

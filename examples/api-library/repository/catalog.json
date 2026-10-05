@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "key": {
+        "service": "inventory",
+        "apiVersion": "v1",
+        "scope": "default"
+      },
+      "revision": "5002e4c16586bdec407adbd1e7ce78300bee05f7bd6190e7664200ab926fbcc1",
+      "manifest": "manifest.json"
+    }
+  ]
+}

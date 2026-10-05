@@ -1,0 +1,20 @@
+// Pure local example: no providers or system clock. Requires the standard calc vocabulary.
+:calc { return interval(instant("2025-01-01T12:00:00Z"), instant("2025-01-01T12:10:00Z")); } > window
+:calc { return $window.end - $window.start; } > elapsed
+// A synthetic API includes both endpoints. Local Interval excludes the end.
+:calc {
+  const rows = [
+    { at: instant("2025-01-01T12:00:00Z"), value: 1 },
+    { at: instant("2025-01-01T12:05:00Z"), value: 2 },
+    { at: instant("2025-01-01T12:10:00Z"), value: 3 }
+  ];
+  return rows.filter(row => row.at >= $window.start && row.at < $window.end);
+} > selected
+:calc { return toEpochNanos(instant("2025-01-01T12:00:00.000000001Z")); } > epoch
+// Expected: elapsed PT10M; selected has 2 rows; exact epoch roundtrip is true.
+:calc { return fromEpochNanos($epoch) == instant("2025-01-01T12:00:00.000000001Z"); } > roundtrip
+// Typed command arguments use the same field-reference path as provider arguments.
+:def secondsAt(at: Instant) -> Decimal as :calc pure { return toEpochSeconds(at); }
+secondsAt at:$window.start > startSeconds
+// The generic browser number reader may round large Decimal values; text preserves every digit.
+:calc { return text($epoch); } > exactEpochDisplay

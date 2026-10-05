@@ -1,0 +1,1 @@
+events watch | probe slow value:input > result

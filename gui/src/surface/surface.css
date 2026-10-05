@@ -1,0 +1,107 @@
+/*
+ * The terminal surface's stylesheet, in the order the cascade wants it: the faces first, then the
+ * tokens the axes switch, then the roles that spend them. Components import this one file.
+ */
+@import "./fonts.css";
+@import "./tokens.css";
+@import "./reset.css";
+@import "./roles.css";
+@import "./mono-line.css";
+@import "./cell.css";
+@import "./forms.css";
+@import "./session.css";
+@import "./editor.css";
+@import "./screens.css";
+@import "./split.css";
+@import "./surface-app.css";
+@import "./inspection.css";
+
+/*
+ * The page gutter: how far every band of the surface sits from the edge of the window.
+ *
+ * One number, because every band shares it — the top bar, the scrollback, the prompt, the footer
+ * and each screen are flush to the same line, which is what makes the surface read as one page
+ * rather than as stacked panels. Page geometry lives here; shared theme values live in `tokens.css`.
+ */
+.wes-terminal {
+  --page-gutter: 24px;
+}
+
+/* Sandbox observations replace their current content; they are never execution scrollback. */
+/* Natural content height, bounded by the viewport; only the body scrolls, so the header stays reachable. */
+.wes-terminal .sandbox-panel { position: fixed; inset: 0; z-index: 100; box-sizing: border-box; display: flex; flex-direction: column; width: min(110ch, calc(100vw - 24px)); height: fit-content; max-height: calc(100dvh - 24px); margin: auto; overflow: hidden; background: var(--ground); color: var(--mono-ink); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 1rem 4rem #0002; }
+.wes-terminal .sandbox-panel > header { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: .25rem 1rem; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.wes-terminal .sandbox-panel > header > strong { min-width: 0; overflow-wrap: anywhere; }
+.wes-terminal .sandbox-panel > header > span { flex: 1 1 24ch; min-width: 0; opacity: .7; overflow-wrap: anywhere; }
+.wes-terminal .sandbox-panel > header > button { flex: none; margin-left: auto; min-height: 28px; }
+.wes-terminal .sandbox-panel-body { container-type: inline-size; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 14px; }
+.wes-terminal .sandbox-panel-body > p { margin: .5rem 0 0; overflow-wrap: anywhere; }
+.wes-terminal .sandbox-members-frame { min-width: 0; overflow-x: auto; }
+.wes-terminal .sandbox-members { width: 100%; border-collapse: collapse; font: var(--type-mono-size)/var(--type-mono-leading) var(--type-mono-family); }
+.wes-terminal .sandbox-members-caption { caption-side: top; text-align: left; padding-bottom: 4px; color: var(--mono-dim); font-size: 12px; }
+.wes-terminal .sandbox-members th, .wes-terminal .sandbox-members td { padding: 4px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.wes-terminal .sandbox-members thead th { color: var(--mono-dim); font-weight: normal; font-size: 12px; white-space: nowrap; }
+/*
+ * Member, Type and State shrink to their content; Value takes the rest. Table cells ignore max-width,
+ * so the bound sits on the name and type themselves: sized to their own text up to a cap, wrapping only
+ * past it. That keeps ordinary names on one line, since `anywhere` alone would let a column collapse
+ * to one character, and a very long name or type grows the row, not the page.
+ */
+.wes-terminal .sandbox-members tbody th { color: var(--mono-ref); font-weight: normal; width: 1%; }
+.wes-terminal .sandbox-members td[data-label=Type] { width: 1%; color: var(--mono-dim); }
+.wes-terminal .sandbox-members tbody th > code, .wes-terminal .sandbox-members td[data-label=Type] > code { display: block; width: max-content; max-width: 32ch; }
+.wes-terminal .sandbox-members tbody th > code { max-width: 40ch; }
+.wes-terminal .sandbox-members td[data-label=State] { width: 1%; white-space: nowrap; }
+.wes-terminal .sandbox-members td[data-label=Value] { min-width: 20ch; }
+.wes-terminal .sandbox-members tr[data-state=withheld] td { color: var(--mono-faint); }
+.wes-terminal .sandbox-member-absent { color: var(--mono-faint); }
+.wes-terminal .sandbox-member-scalar { display: block; max-height: 12lh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .sandbox-member-view { min-width: 0; max-height: min(40dvh, 18lh); overflow: auto; }
+.wes-terminal .sandbox-member-error { margin: 4px 0 0; color: var(--mono-bad); white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .sandbox-member-error-details { margin: 2px 0 0; }
+.wes-terminal .sandbox-member-error-details > summary { cursor: pointer; color: var(--mono-faint, inherit); }
+/* Narrow panes: one stacked card per member, each field labelled. */
+@container (max-width: 560px) {
+  .wes-terminal .sandbox-members, .wes-terminal .sandbox-members tbody, .wes-terminal .sandbox-members tr, .wes-terminal .sandbox-members th, .wes-terminal .sandbox-members td { display: block; width: auto; max-width: none; min-width: 0; }
+  .wes-terminal .sandbox-members thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .wes-terminal .sandbox-members tbody tr { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .wes-terminal .sandbox-members th, .wes-terminal .sandbox-members td { padding: 1px 0; border: 0; white-space: normal; }
+  /* Matches the wide column rules' specificity so their widths and nowrap never reach a card. */
+  .wes-terminal .sandbox-members tbody th, .wes-terminal .sandbox-members td[data-label] { width: auto; min-width: 0; white-space: normal; }
+  .wes-terminal .sandbox-members tbody th > code, .wes-terminal .sandbox-members td[data-label=Type] > code { display: inline; width: auto; max-width: none; }
+  .wes-terminal .sandbox-members td::before { content: attr(data-label) " "; display: inline-block; min-width: 6ch; color: var(--mono-faint); font-size: 12px; }
+  .wes-terminal .sandbox-members td[data-label=Value]::before { display: block; }
+}
+
+.wes-terminal .workspace-delete-panel { position: fixed; z-index: 140; inset: 8% 12%; overflow: auto; padding: 24px; background: var(--ground); color: var(--mono-ink); border: 1px solid var(--line); box-shadow: 0 8px 40px #0003; }
+.wes-terminal .workspace-delete-panel header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.wes-terminal .workspace-delete-panel p, .wes-terminal .workspace-delete-panel li { overflow-wrap: anywhere; }
+
+.wes-terminal .result-observation { position: relative; padding-top: 1.25em; min-width: 0; }
+.wes-terminal .result-observation-inline { padding-top: 0; }
+.wes-terminal .result-observation-status { position: absolute; inset: 0 0 auto auto; max-width: 100%; height: 1.2em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--mono-dim); font-size: .8em; }
+.wes-terminal .result-observation-status { display: flex; align-items: baseline; gap: .5ch; }
+.wes-terminal .result-observation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wes-terminal .result-observation-status > button { flex: 0 0 auto; }
+/* Finite results: a status row in flow, above the value and clear of the header controls. */
+.wes-terminal .result-observation-status-inline { position: static; inset: auto; height: auto; min-height: 1.5em; flex-wrap: wrap; align-items: center; gap: .25em 1ch; white-space: normal; font-size: 12px; }
+.wes-terminal .result-observation-status-inline[aria-hidden=true] { display: none; }
+.wes-terminal .result-observation-status-inline[data-state=stale] { color: var(--mono-warn); }
+.wes-terminal .result-observation-status-inline .result-observation-label { white-space: nowrap; }
+
+/* Live data changes the drawing, never the allocation of space in the workspace. */
+.wes-terminal .live-view { min-width: 0; }
+.wes-terminal .live-view-frame { height: 280px; max-height: 40vh; overflow: auto; contain: layout paint; min-width: 0; }
+
+.wes-terminal .view-instance { min-width: 0; }
+.wes-terminal .view-instance-viewport { min-width: 0; overflow: hidden; }
+.wes-terminal .view-instance-anchor { min-width: 0; }
+.wes-terminal .view-instance-anchor > .view-instance { max-height: none; overflow: visible; }
+.wes-terminal .view-instance-reference { min-width: 0; overflow-wrap: anywhere; }
+.wes-terminal .view-instance-reference > button { margin-left: 1ch; }
+.wes-terminal .dashboard-members { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.wes-terminal .dashboard-members > div { min-width: 0; overflow: auto; }
+
+.wes-terminal .view-observation-controls { display: flex; align-items: center; gap: 0.75em; flex-wrap: wrap; margin-bottom: 0.4em; }
+.wes-terminal .view-reference { margin: 0.4em 0 0; border-top: 1px solid var(--rule); padding-top: 0.4em; }
+.wes-terminal .view-reference-label { min-width: 0; overflow-wrap: anywhere; }

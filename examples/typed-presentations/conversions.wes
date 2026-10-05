@@ -1,0 +1,29 @@
+:def asTable(input: List<Record>, columns: List<Text>) -> Table as :calc pure {
+  return {view: "table", columns: columns, rows: input.map(row => columns.map(key => text(row[key])))};
+}
+:def asCsv(input: Table) -> Text as :calc pure {
+  function quote(value) {
+    return "\"" + iter.chars(value).reduce((output, c) => { if (c == "\"") { return output + "\"\""; } return output + c; }, "") + "\"";
+  }
+  function row(values) {
+    return values.reduce((output, cell) => { if (output == "") { return quote(cell); } return output + "," + quote(cell); }, "") + "\r\n";
+  }
+  return row(input.columns) + input.rows.reduce((output, values) => output + row(values), "");
+}
+:def asHistogram(input: List<Int>, bins: Int) -> Histogram as :calc pure {
+  const size = length(input);
+  if (bins < 1 || bins > 200) { return check("Histogram", none); }
+  if (size == 0) { return {view: "histogram", bins: [], total: 0}; }
+  const low = input.reduce((a, b) => { if (a < b) { return a; } return b; }, input[0]);
+  const high = input.reduce((a, b) => { if (a > b) { return a; } return b; }, input[0]);
+  if (low == high) { return {view: "histogram", bins: [{lower: decimal(low), upper: decimal(high), count: size}], total: size}; }
+  const width = roundDiv(high - low, bins, 12);
+  return {view: "histogram", total: size, bins: range(bins).map(i => {
+    const lower = decimal(low) + decimal(i) * width;
+    const upper = decimal(low) + decimal(i + 1) * width;
+    return {lower: lower, upper: upper, count: length(input.filter(n => (n - low) * bins >= (high - low) * i && ((n - low) * bins < (high - low) * (i + 1) || (i == bins - 1 && n == high))))};
+  })};
+}
+:def summary(input: List<Int>, title: Text) -> Text as :calc pure {
+  return title + ": " + text(length(input)) + " items";
+}

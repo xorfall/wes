@@ -1,0 +1,51 @@
+/* HTTP is a data host: its status and sections share Ledger's typography and bounds. */
+.wes-terminal .http-value-view { min-width:0; color:var(--mono-ink); font:inherit; }
+.wes-terminal .http-value-window { height:auto; overflow:visible; }
+.wes-terminal .http-view-status { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px; min-width:0; }
+.wes-terminal .http-view-status strong { flex:none; max-width:100%; font-weight:500; white-space:normal; overflow-wrap:anywhere; }
+.wes-terminal .http-status-dot { font-size:.75em; }
+.wes-terminal .http-view-meta { flex:1 1 20ch; min-width:0; color:var(--mono-dim); font-size:12px; overflow-wrap:anywhere; }
+.wes-terminal .http-view-version { margin-left:auto; color:var(--mono-dim); font-size:12px; white-space:nowrap; }
+.wes-terminal .http-value-narrow .http-view-meta { flex-basis:100%; order:3; }
+.wes-terminal .http-value-preview .http-view-status { display:block; }
+.wes-terminal .http-value-preview .http-view-meta { display:block; }
+.wes-terminal .http-value-one-line .http-view-status { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .http-view-notice { margin:3px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.wes-terminal .http-value-preview .http-view-notice { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .http-view-notice .cell-action { margin-left:8px; }
+.wes-terminal .http-view-inspector { min-width:0; padding-top:4px; }
+.wes-terminal .http-view-tabs { display:flex; flex-wrap:wrap; gap:10px; border-bottom:1px solid var(--line); margin-bottom:6px; }
+.wes-terminal .http-value-view .cell-action { color:var(--mono-dim); }
+.wes-terminal .http-view-tabs [aria-selected=true] { border-bottom:2px solid var(--mono-meta); color:var(--mono-ink); }
+.wes-terminal .http-view-section { min-width:0; }
+.wes-terminal .http-value-narrow .http-view-section { border-top:1px solid var(--line); }
+.wes-terminal .http-view-section-toggle { display:block; padding:4px 0; width:100%; text-align:left; }
+.wes-terminal .http-view-body { min-width:0; }
+.wes-terminal .http-value-preview .http-view-body { overflow:visible; }
+.wes-terminal .http-view-body .json-tree,.wes-terminal .http-view-body .value-table-scroll { height:auto; min-height:0; max-height:none; resize:none; overflow:visible; }
+.wes-terminal .http-view-body .value-table-scroll { overflow-x:auto; overflow-y:hidden; }
+.wes-terminal .http-view-inspector h3 { margin:8px 0 4px; font:inherit; font-weight:500; }
+.wes-terminal .http-view-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:6px 0; font-size:12px; }
+.wes-terminal .http-view-tools a { color:var(--mono-meta); }
+.wes-terminal .http-view-text { white-space:pre-wrap; overflow-wrap:anywhere; margin:6px 0; font:inherit; }
+.wes-terminal .http-view-headers { width:100%; border-collapse:collapse; table-layout:fixed; }
+.wes-terminal .http-view-headers th { width:min(32%,20ch); text-align:left; color:var(--key); font-weight:400; }
+.wes-terminal .http-view-headers th.http-header-important { font-weight:500; }
+.wes-terminal .http-view-headers th,.wes-terminal .http-view-headers td { vertical-align:top; overflow-wrap:anywhere; white-space:pre-wrap; padding:3px 8px 3px 0; border-bottom:1px solid var(--line); }
+
+.wes-terminal .http-view-body .json-preview-grown { max-height:14lh; overflow:auto; }
+
+/* Raw keeps reconstructed metadata separate from retained evidence. Geometry
+   belongs to the containing host, including its single resize grip. */
+.wes-terminal .http-raw { display:grid; gap:8px; min-width:0; }
+.wes-terminal .http-raw-section { min-width:0; border:1px solid var(--line); border-radius:3px; background:var(--sheet); }
+.wes-terminal .http-raw-section h3 { margin:0; padding:4px 8px; background:var(--well); border-bottom:1px solid var(--line); font-size:12px; }
+.wes-terminal .http-raw-note { margin:0; padding:4px 8px; color:var(--mono-dim); font-size:12px; overflow-wrap:anywhere; }
+.wes-terminal .http-raw .http-view-tools { padding:4px 8px; margin:0; }
+.wes-terminal .http-raw-display-tools { display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:2px 8px 6px; font-size:12px; }
+.wes-terminal .http-raw-display-tools button { padding:2px 6px; border:1px solid var(--line); border-radius:3px; }
+.wes-terminal .http-raw-display-tools [aria-pressed=true] { background:var(--sel); color:var(--mono-ref); border-color:var(--rule); }
+.wes-terminal .http-raw .http-raw-code { min-width:0; max-width:100%; margin:0; padding:6px 8px; background:var(--sunk); font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; tab-size:2; overscroll-behavior:contain; }
+.wes-terminal .http-raw .http-raw-nowrap { white-space:pre; overflow-wrap:normal; }
+.wes-terminal .http-raw-code:focus-visible { outline:1px solid var(--active); outline-offset:-1px; }
+.wes-terminal .http-raw-body>.cell-action { margin:4px 8px; }

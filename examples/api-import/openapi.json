@@ -1,0 +1,52 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Synthetic inventory API", "version": "1"},
+  "servers": [{"url": "https://documentation-only.invalid/v1", "description": "Never selected automatically"}],
+  "components": {
+    "schemas": {
+      "Item": {
+        "type": "object",
+        "required": ["id", "name", "labels"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "note": {"type": ["string", "null"]},
+          "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+          "nested": {"type": "object", "properties": {"enabled": {"type": "boolean"}}, "required": ["enabled"]}
+        }
+      }
+    },
+    "parameters": {
+      "ItemId": {"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}
+    }
+  },
+  "paths": {
+    "/items/{id}": {
+      "parameters": [{"$ref": "#/components/parameters/ItemId"}],
+      "get": {
+        "operationId": "getItem",
+        "summary": "Fetch one item with explicit HTTP arguments",
+        "security": [],
+        "parameters": [
+          {"name": "tag", "in": "query", "schema": {"type": "array", "items": {"type": "string"}}, "style": "form", "explode": true},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 10}},
+          {"name": "X-Request-Id", "in": "header", "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Item", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}}
+      },
+      "put": {
+        "operationId": "putItem",
+        "security": [],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}},
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}}
+        }
+      },
+      "delete": {
+        "operationId": "deleteItem", "security": [],
+        "responses": {"204": {"description": "Removed; no content"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+version: 1
+package: auth-alternatives-demo
+targets:
+  local: {kind: local}
+environments:
+  keypair:
+    secretSlots:
+      key: {required: true}
+      secret: {required: true}
+    secretRefs: {key: demo-key, secret: demo-secret}
+    imports:
+      demo:
+        source: {kind: spec, file: service.json}
+        bind:
+          target: local
+          endpoint: http://127.0.0.1:8765
+          auth: {listItems: [apiKey, apiSecret]}
+          credentials:
+            apiKey: {secret: key}
+            apiSecret: {secret: secret}
+  basic:
+    secretSlots:
+      username: {required: true}
+      password: {required: true}
+    secretRefs: {username: demo-username, password: demo-password}
+    imports:
+      demo:
+        source: {kind: spec, file: service.json}
+        bind:
+          target: local
+          endpoint: http://127.0.0.1:8765
+          auth: {listItems: [basic]}
+          credentials:
+            basic.username: {secret: username}
+            basic.password: {secret: password}
+  undecided:
+    imports:
+      demo:
+        source: {kind: spec, file: service.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765}

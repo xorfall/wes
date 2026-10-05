@@ -1,0 +1,8 @@
+:help node > node_help
+:help node refresh > refresh_help
+:inspect env:demo > environment
+:list environments > environments
+:list cells > cells
+:list runs > runs
+:list homes > homes
+:calc { return {family: $node_help, operation: $refresh_help}; } > help_report

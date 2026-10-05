@@ -1,0 +1,14 @@
+version: 1
+types:
+  ItemBody:
+    base: Record
+    fields:
+      id: Text
+      name: Text
+      labels: Map<Text,Text>
+      note: {type: Option<Text>, optional: true}
+      nested: {type: ItemNested, optional: true}
+  ItemNested:
+    base: Record
+    fields:
+      enabled: Bool

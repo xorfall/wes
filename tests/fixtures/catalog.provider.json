@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "provider": "catalog",
+  "types": {
+    "CatalogItem": {
+      "base": "Record",
+      "fields": {
+        "id": "Int",
+        "title": "Text"
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "get"
+      ],
+      "method": "GET",
+      "route": "/items",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "query",
+          "encoding": "scalar",
+          "type": "Int",
+          "required": true
+        }
+      ],
+      "responses": {
+        "200": "CatalogItem"
+      }
+    }
+  ]
+}

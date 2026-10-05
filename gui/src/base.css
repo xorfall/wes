@@ -1,0 +1,62 @@
+/* Document baseline and shared result/panel primitives. Surface owns the palette. */
+:root { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; line-height: 1.5; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+[hidden] { display: none !important; }
+:root, .wes-terminal {
+  --ink: var(--mono-ink, #1B1D1F);
+  --dim: var(--mono-dim, #7C7368);
+  --panel: var(--sunk, #F2EFE8);
+  --accent: var(--mono-ref, #6A4BA8);
+  --ready: var(--mono-ok, #2C6B3C);
+  --running: var(--mono-meta, #2F5FA8);
+  --stale: var(--mono-warn, #8E6405);
+  --failed: var(--mono-bad, #B23A2E);
+  --caution: var(--mono-warn, #8E6405);
+}
+.cell-quiet { margin: 0; padding: 6px 10px; color: var(--dim); }
+.dim { color: var(--dim); font-size: 12px; }
+.failure { color: var(--failed); }
+button {
+  background: var(--ground); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+.crash { padding: 24px 28px; max-width: 900px; }
+.crash h1 { font-size: 15px; margin: 0 0 10px; color: var(--failed); }
+.crash-message { color: var(--ink); margin: 0 0 12px; }
+.crash-detail {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  padding: 10px; overflow-x: auto; color: var(--dim); white-space: pre-wrap;
+}
+.crash-actions { display: flex; gap: 8px; margin: 14px 0; }
+.shell-surface { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: .5rem; padding: .75rem 1rem; overflow: hidden; }
+.terminal-emulator { flex: 1; min-height: 180px; background: var(--terminal); border: 1px solid var(--line); border-radius: 6px; padding: .5rem; overflow: hidden; }
+.terminal-emulator .xterm-viewport { background: transparent !important; }
+/*
+ * Scrollbars: thin and quiet everywhere, the rail on a transparent track, so a scroll container
+ * gives up as little room as possible and the bar reads as an overlay rather than a gutter. One
+ * rule for every container; xterm draws its own overlay bar and is not affected.
+ */
+* { scrollbar-width: thin; scrollbar-color: var(--rail, #DADADA) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb { background-color: var(--rail, #DADADA); background-clip: padding-box; border: 2px solid transparent; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--mono-dim, #7C7368); }
+button, input, select, summary { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+button:disabled { cursor: not-allowed; opacity: .5; }
+button { transition: background-color 100ms ease, border-color 100ms ease, color 100ms ease; }
+.variable-name-tooltip {
+  position: fixed; z-index: 1000; width: max-content; max-width: min(250px, calc(100vw - 24px));
+  padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); box-shadow: 0 5px 20px #0003;
+  font-size: 12px; line-height: 1.5; white-space: normal;
+}
+.surface-hint { pointer-events: none; }
+.loading-result { color: var(--dim); font-size: 12px; margin: 0 0 10px; }
+.failure { border-left: 2px solid var(--failed); padding: 8px 12px; color: var(--failed); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }

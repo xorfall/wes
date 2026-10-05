@@ -1,0 +1,1 @@
+:describe file:prom.openapi.yaml provider:prom out:prom.json

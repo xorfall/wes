@@ -1,0 +1,67 @@
+version: 1
+name: Finite dashboard connections
+timeout_seconds: 30
+steps:
+  - name: Install the optional summary package
+    run: ":package load path:range-summary.wes-view.json"
+  - name: Prepare a finite sample
+    run: ':calc { return {view: "metric", value: 1250}; } > sample'
+  - name: Prepare dashboard settings
+    run: ':calc { return {view: "dashboard", title: "Service overview"}; } > layout'
+  - name: Create a card
+    run: ':view create Metric input:$sample > latency'
+  - name: Create a dashboard
+    run: ':view create Dashboard input:$layout > dashboard'
+  - name: Connect the card to the default slot
+    run: ':view connect $latency to:$dashboard > connected'
+  - name: Inspect the original dashboard
+    run: ':inspect $dashboard > dashboard_info'
+    expect:
+      - name: One member on the original instance
+        condition: '$dashboard_info.view.revision == "1" && length($dashboard_info.view.members.members) == 1'
+  - name: Prepare a new finite sample
+    run: ':calc { return {view: "metric", value: 2500}; } > next_sample'
+  - name: Rebind the same card
+    run: ':view bind $latency input:$next_sample revision:0 > updated'
+  - name: Inspect the original card
+    run: ':inspect $latency > latency_info'
+    expect:
+      - name: Original card changed
+        condition: '$latency_info.view.revision == "1"'
+  - name: Inspect the edit receipt
+    run: ':inspect $updated > updated_info'
+    expect:
+      - name: Receipt points to the same card
+        condition: '$updated_info.view.id == $latency_info.view.id'
+  - name: Prepare a finite timeline
+    run: >-
+      :calc {
+        const r = interval(instant("2030-06-15T08:00:00Z"), instant("2030-06-15T08:10:00Z"));
+        return {view: "timeline", id: "releases", title: "Release events", range: r, coverage: r,
+          omitted: 0, sourceError: "", series: [], events: [{id: "release-1", at: r.start,
+          label: "Deployment", detail: "Synthetic service deployment"}]};
+      } > timelineData
+  - name: Create a timeline
+    run: ':view create Timeline input:$timelineData > timeline'
+  - name: Prepare selection details
+    run: ':calc { return {view: "range-summary", title: "Selected interval", selection: none}; } > detailData'
+  - name: Create a selection summary
+    run: ':view create RangeSummary input:$detailData > detail'
+  - name: Connect selection to the summary input
+    run: ':view link $timeline output:selection to:$detail field:selection'
+  - name: Add timeline to dashboard
+    run: ':view connect $timeline to:$dashboard'
+  - name: Add summary to dashboard
+    run: ':view connect $detail to:$dashboard'
+  - name: Inspect the input binding
+    run: ':inspect $detail > detailInfo'
+    expect:
+      - name: Selection is a declared input binding
+        condition: '$detailInfo.view.inputBindings.selection.output == "selection"'
+  - name: Capture the current dashboard without starting sources
+    run: ':view capture $dashboard > evidence'
+    expect:
+      - name: Uninitialized linked selection is explicit
+        condition: '$evidence.inputsComplete == false'
+      - name: Normal result retention is used
+        condition: 'length($evidence.retention) > 0'

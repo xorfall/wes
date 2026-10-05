@@ -1,0 +1,71 @@
+:def ServiceHealth(input: MonitorHealth) -> Text as :calc pure {
+  return input.state + " | last " + text(input.count) + " requests | errors " + text(input.errors) + " (" + text(input.errorPercent) + "%) | mean " + text(input.meanMs) + " ms | max " + text(input.maxMs) + " ms";
+}
+:def ServiceMetric(input: MonitorHealth) -> Metric as :calc pure {
+  return {view: "metric", label: "latency", value: input.meanMs, unit: "ms", status: input.state};
+}
+:def RequestTable(input: List<MonitorRequest>) -> Table as :calc pure {
+  return {view: "table", columns: ["Request", "Route", "Duration ms", "Status"], rows: input.map(row => [text(row.seq), row.route, text(row.durationMs), text(row.status)])};
+}
+:def LatencyTimeline(input: List<MonitorRequest>) -> Timeline as :calc pure {
+  let first = 0;
+  let last = 0;
+  if (length(input) > 0) { first = input[0].seq; last = input[length(input) - 1].seq; }
+  const r = interval(fromEpochSeconds(first), fromEpochSeconds(last + 1));
+  return {view: "timeline", id: "latency", title: "Request latency", range: r, coverage: r,
+    omitted: 0, sourceError: "", series: [{id: "latency", label: "Latency", unit: "ms",
+      samples: input.map(row => { return {id: text(row.seq), at: fromEpochSeconds(row.seq), value: decimal(row.durationMs), gap: false}; })}], events: []};
+}
+:def LatencyHistogram(input: List<Int>, bins: Int) -> Histogram as :calc pure {
+  const size = length(input);
+  if (bins < 1 || bins > 200) { return check("Histogram", none); }
+  if (size == 0) { return {view: "histogram", bins: [], total: 0}; }
+  const low = input.reduce((a, b) => { if (a < b) { return a; } return b; }, input[0]);
+  const high = input.reduce((a, b) => { if (a > b) { return a; } return b; }, input[0]);
+  if (low == high) { return {view: "histogram", bins: [{lower: decimal(low), upper: decimal(high), count: size}], total: size}; }
+  const width = roundDiv(high - low, bins, 12);
+  return {view: "histogram", total: size, bins: range(bins).map(i => {
+    const lower = decimal(low) + decimal(i) * width;
+    const upper = decimal(low) + decimal(i + 1) * width;
+    return {lower: lower, upper: upper, count: length(input.filter(n => (n - low) * bins >= (high - low) * i && ((n - low) * bins < (high - low) * (i + 1) || (i == bins - 1 && n == high))))};
+  })};
+}
+telemetry watch feed:demo > requests
+:calc {
+  const rows = $requests;
+  if (length(rows) == 0) return [];
+  const last = rows[length(rows) - 1].seq;
+  return rows.filter(r => r.seq > last - 20);
+} > recent
+:calc {
+  const rows = $recent;
+  const total = length(rows);
+  let sum = 0;
+  let errors = 0;
+  let maxMs = 0;
+  let last = 0;
+  for (const row of rows) {
+    sum = sum + row.durationMs;
+    if (row.status >= 500) errors = errors + 1;
+    if (row.durationMs > maxMs) maxMs = row.durationMs;
+    last = row.seq;
+  }
+  let meanMs = 0.0;
+  let errorPercent = 0.0;
+  let state = "WAITING";
+  if (total > 0) {
+    meanMs = roundDiv(sum, total, 1);
+    errorPercent = roundDiv(errors * 100, total, 1);
+    state = "HEALTHY";
+    if (meanMs > 500.0) state = "SLOW";
+    if (errors > 0) state = "DEGRADED";
+  }
+  return {state: state, count: total, errors: errors, errorPercent: errorPercent,
+          meanMs: meanMs, maxMs: maxMs, last: last};
+} > health
+ServiceHealth input:$health > health_display
+ServiceMetric input:$health > health_metric
+RequestTable input:$recent > request_table
+LatencyTimeline input:$recent > latency_timeline
+:calc { return $recent.map(r => r.durationMs); } > durations
+LatencyHistogram input:$durations bins:8 > latency_histogram

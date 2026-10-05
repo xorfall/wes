@@ -1,0 +1,37 @@
+/*
+ * An open card's providers: a heading, the provider table, and in an authenticated provider's row
+ * its three steps, each a mark, a sans title and its controls. Steps are separated by hairlines.
+ */
+.wes-terminal .env-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0 var(--space-md) 12px calc(var(--space-md) + 24px);
+  padding-top: var(--space-sm);
+  border-top: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .env-setup p { margin: 0; }
+.wes-terminal .env-setup-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.wes-terminal .env-setup-title { font-family: var(--type-sans-family); font-size: var(--type-sans-small-size); color: var(--mono-ink); }
+.wes-terminal .env-provider { display: flex; flex-direction: column; }
+.wes-terminal .env-provider > .env-step:first-child { border-top: 0; }
+.wes-terminal .env-step {
+  display: grid;
+  grid-template-columns: 22px 110px minmax(0, 1fr);
+  column-gap: var(--space-sm);
+  align-items: baseline;
+  padding: var(--space-sm) 0;
+  border-top: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .env-step-waiting .env-step-title { color: var(--mono-faint); }
+.wes-terminal .env-step-body { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+.wes-terminal .env-step-actions,
+.wes-terminal .env-auth-method,
+.wes-terminal .env-auth-credential { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm); }
+.wes-terminal .env-auth-method > span:first-child,
+.wes-terminal .env-auth-credential label > span { min-width: 12ch; }
+.wes-terminal .env-auth-credential label { display: flex; align-items: center; gap: var(--space-sm); }
+.wes-terminal .env-auth-credential input[type="password"] { width: 240px; }
+.wes-terminal .env-auth-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.wes-terminal .env-auth-credential .env-credential-remember { font-family: var(--type-sans-family); font-size: var(--type-sans-small-size); }

@@ -1,0 +1,10 @@
+:package load path:"./types.yaml"
+:calc {
+  const readings = check("Readings", [12, 18, 30]);
+  return readings.filter(value => value >= 18).map(value => value * 2);
+} > selected
+:def ReadingSummary(input: Readings, title: Text) -> Text as :calc pure { return title + ":" + input.reduce((s, n) => s + " " + text(n), ""); }
+ReadingSummary input:$selected title:Selected > summary
+:calc {
+  return {values: $selected, presentation: $summary};
+} > report

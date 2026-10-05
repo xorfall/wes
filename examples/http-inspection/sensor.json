@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "provider": "sensor",
+  "types": {
+    "Sample": {
+      "base": "Record",
+      "fields": {
+        "reading": {
+          "type": "Int",
+          "optional": false
+        }
+      }
+    },
+    "Reading": {
+      "base": "Record",
+      "fields": {
+        "time": {
+          "type": "Text",
+          "optional": false
+        },
+        "reading": {
+          "type": "Decimal",
+          "optional": false
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "sample"
+      ],
+      "method": "GET",
+      "route": "/sample",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Sample"
+      }
+    },
+    {
+      "path": [
+        "history"
+      ],
+      "method": "GET",
+      "route": "/history",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "List<Reading>"
+      }
+    }
+  ]
+}

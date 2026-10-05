@@ -1,0 +1,24 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Synthetic failure lessons", "version": "1"},
+  "components": {"schemas": {"Ready": {
+    "type": "object", "required": ["ready"], "properties": {"ready": {"type": "boolean"}}
+  }}},
+  "paths": {
+    "/limited": {"get": {
+      "operationId": "limited", "security": [],
+      "responses": {
+        "200": {"description": "Ready", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Ready"}}}},
+        "429": {"description": "Synthetic rate limit", "headers": {"Retry-After": {"schema": {"type": "string"}}}}
+      }
+    }},
+    "/invalid-response": {"get": {
+      "operationId": "invalidResponse", "security": [],
+      "responses": {"200": {"description": "Ready", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Ready"}}}}}
+    }},
+    "/wrong-media": {"get": {
+      "operationId": "wrongMedia", "security": [],
+      "responses": {"200": {"description": "Ready", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Ready"}}}}}
+    }}
+  }
+}

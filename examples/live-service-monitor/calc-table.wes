@@ -1,0 +1,4 @@
+:calc {
+  return {view: "table", columns: ["Request", "Route", "Duration ms", "Status"],
+    rows: $recent.map(r => [text(r.seq), r.route, text(r.durationMs), text(r.status)])};
+} > calculated_table

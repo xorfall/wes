@@ -1,0 +1,10 @@
+version: 1
+package: live-service-monitor
+targets:
+  local: {kind: local}
+environments:
+  monitor-demo:
+    imports:
+      telemetry:
+        source: {kind: spec, file: telemetry.json}
+        bind: {target: local, endpoint: 'http://127.0.0.1:8771'}

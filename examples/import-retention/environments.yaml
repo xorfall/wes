@@ -1,0 +1,10 @@
+# Archived exactly as loaded; the journal separately captures resolved definitions.
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  archive_demo:
+    imports:
+      inventory:
+        source: {kind: spec, file: service.json}
+        bind: {target: local, endpoint: 'http://127.0.0.1:1'}

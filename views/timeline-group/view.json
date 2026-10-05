@@ -1,0 +1,106 @@
+{
+  "name": "TimelineGroup",
+  "id": "timeline-group",
+  "summary": "Explore finite timelines with shared time navigation.",
+  "renderer": "View.tsx",
+  "input": "TimelineGroup",
+  "outputs": {
+    "cursor": {
+      "type": "Option<Instant>",
+      "mode": "state",
+      "shared": false
+    },
+    "selection": {
+      "type": "Option<Interval>",
+      "mode": "state",
+      "shared": true
+    },
+    "selectedItem": {
+      "type": "Option<TimelineItem>",
+      "mode": "state",
+      "shared": true
+    },
+    "picked": {
+      "type": "TimelineItem",
+      "mode": "event",
+      "shared": true
+    }
+  },
+  "interaction": {
+    "protocol": "TimeNavigation",
+    "state": "TimeState",
+    "event": "TimeEvent",
+    "sharedFields": [
+      "viewport",
+      "selection",
+      "selectedItem"
+    ]
+  },
+  "slots": {
+    "members": {
+      "accepts": [
+        "Timeline"
+      ],
+      "protocol": "TimeNavigation",
+      "max": 8,
+      "default": true,
+      "coordinates": true
+    }
+  },
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 40,
+        "rows": 5
+      },
+      "preferred": {
+        "columns": 96,
+        "rows": 7
+      },
+      "max": {
+        "columns": 320,
+        "rows": 8
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 40,
+        "rows": 14
+      },
+      "preferred": {
+        "columns": 100,
+        "rows": 30
+      },
+      "max": {
+        "columns": 320,
+        "rows": 60
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 48,
+        "rows": 20
+      },
+      "preferred": {
+        "columns": 140,
+        "rows": 44
+      },
+      "max": {
+        "columns": 512,
+        "rows": 160
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    }
+  }
+}

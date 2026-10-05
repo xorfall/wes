@@ -1,0 +1,1 @@
+events watch | :fork { { probe first value:input > first } { probe second value:input > second } }

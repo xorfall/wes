@@ -1,0 +1,3 @@
+:calc { return [1, 2, 3, 4]; } > testData
+:calc { return $testData; } > report
+:calc { return "keep this unrelated result"; } > unrelated

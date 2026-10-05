@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../../tools/describe/wes-extract": null,
+      "../../tools/describe/wes-extract.exe": "wes-extract.exe"
+    }
+  }
+}

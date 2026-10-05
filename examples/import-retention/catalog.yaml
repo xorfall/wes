@@ -1,0 +1,3 @@
+version: 1
+types:
+  GreetingText: {base: Text, minLength: 1}

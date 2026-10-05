@@ -1,0 +1,12 @@
+version: 1
+types:
+  MetricKind: {base: Text, enum: [metric]}
+  MetricText: {base: Text, maxLength: 256}
+  Metric:
+    base: Record
+    fields:
+      view: MetricKind
+      value: 'Union<Int, Decimal>'
+      label: {type: MetricText, optional: true}
+      unit: {type: MetricText, optional: true}
+      status: {type: MetricText, optional: true}

@@ -1,0 +1,5 @@
+docker image pull reference:"alpine:3.22" > pulled
+:calc { return ["/bin/sh", "-c", "echo wes-fixture; sleep 30"]; } > raw_argv
+:type check $raw_argv as:"List<Text>" > argv
+docker container create image:$pulled.image argv:$argv > created
+docker container start container:$created.container | docker logs container:$created.container tail:10 > started_logs

@@ -1,0 +1,78 @@
+{
+  "name": "Choice",
+  "id": "choice",
+  "summary": "Choose a named source without starting a query.",
+  "renderer": "View.tsx",
+  "input": "Choice",
+  "outputs": {
+    "value": {
+      "type": "ChoiceKey",
+      "mode": "state",
+      "shared": true
+    }
+  },
+  "interaction": {
+    "protocol": "ChoiceSelection",
+    "state": "ChoiceState",
+    "event": "ChoiceState",
+    "sharedFields": [
+      "value"
+    ]
+  },
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 24,
+        "rows": 2
+      },
+      "preferred": {
+        "columns": 40,
+        "rows": 4
+      },
+      "max": {
+        "columns": 64,
+        "rows": 8
+      },
+      "placement": {
+        "width": "preferred",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 24,
+        "rows": 2
+      },
+      "preferred": {
+        "columns": 40,
+        "rows": 4
+      },
+      "max": {
+        "columns": 64,
+        "rows": 8
+      },
+      "placement": {
+        "width": "preferred",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 24,
+        "rows": 2
+      },
+      "preferred": {
+        "columns": 40,
+        "rows": 4
+      },
+      "max": {
+        "columns": 64,
+        "rows": 8
+      },
+      "placement": {
+        "width": "preferred",
+        "align": "start"
+      }
+    }
+  }
+}

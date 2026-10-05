@@ -1,0 +1,14 @@
+/target/
+**/node_modules/
+**/dist/
+**/__pycache__/
+.DS_Store
+.env
+.env.*
+*.log
+/tools/describe/wes-extract
+/crates/desktop/gen/
+/gui/.generated/
+/gui/src/value-views/catalogue.json
+/views/*/contract.ts
+/examples/view-packages/source/*/contract.ts

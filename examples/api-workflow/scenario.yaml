@@ -1,0 +1,30 @@
+version: 1
+name: Sensor history and chart
+timeout_seconds: 30
+steps:
+  - name: Discover the operation
+    run: ':help sensor_demo history > demo_help'
+  - name: Fetch LAB1 readings
+    run: '@trace(http) sensor_demo history sensor:LAB1 > demo_readings'
+    expect:
+      - {name: Three rows, condition: 'length($demo_readings.body) == 3'}
+      - {name: Exact middle reading, condition: '$demo_readings.body[1].reading == 19.5'}
+  - name: Render table
+    run: ':calc pure { return $demo_readings.body; } > demo_table'
+    expect:
+      - {name: Three table rows, condition: 'length($demo_table) == 3'}
+  - name: Render line
+    run: ':calc pure { return {view: "line", x: "time", y: "reading", points: $demo_readings.body.map(row => { return {x: text(row.time), y: decimal(row.reading)}; }), dropped: 0}; } > demo_chart'
+    expect:
+      - {name: All points retained, condition: 'length($demo_chart.points) == 3 && $demo_chart.dropped == 0'}
+      - {name: Correct middle point, condition: '$demo_chart.points[1].x == "09:01" && $demo_chart.points[1].y == 19.5'}
+  - name: Capture HTTP evidence
+    run: ':read trace:$demo_readings > demo_trace'
+  - name: Analyze HTTP evidence
+    run: ':calc pure { return httpAnalysis($demo_trace); } > demo_analysis'
+    expect:
+      - {name: Successful HTTP response, condition: '$demo_analysis.executionState == "completed" && $demo_analysis.statuses[0].code == 200'}
+  - name: Unknown sensor is an expected 404
+    run: 'sensor_demo history sensor:UNKNOWN > demo_missing'
+    expect:
+      - {name: HTTP response remains a value, condition: '$demo_missing.status == 404'}

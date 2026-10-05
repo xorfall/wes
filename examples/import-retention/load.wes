@@ -1,0 +1,4 @@
+:package load path:"catalog.yaml"
+:import spec file:"service.json" endpoint:"http://127.0.0.1:1"
+:calc { return "world"; } > greeting
+:calc pure { return "Hello " + $greeting; }

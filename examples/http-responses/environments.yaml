@@ -1,0 +1,10 @@
+version: 1
+package: http-response-example
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      sample:
+        source: {kind: spec, file: api.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8768}

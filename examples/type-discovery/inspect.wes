@@ -1,0 +1,5 @@
+:package load path:types.yaml
+:list types > available_types
+:inspect type:Customer > customer_type
+:inspect type:"List<Customer>" > customer_list_type
+:inspect type:Map > map_constructor

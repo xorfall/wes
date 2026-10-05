@@ -1,0 +1,1 @@
+events watch | :stream map field:seq | :calc { return input + 1; } | probe take value:input > result

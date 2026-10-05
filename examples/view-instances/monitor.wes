@@ -1,0 +1,23 @@
+// Synthetic logical time: one sequence number is one millisecond after 2030-01-01 UTC.
+// The stream is owned by the view. Opening a view does not start a provider.
+:def WatchRequests(input: Text) as telemetry watch feed:?input
+:def RequestTimeline(input: List<MonitorRequest>) -> Timeline as :calc pure {
+  const base = 1893456000000;
+  const window = interval(fromEpochMillis(base), fromEpochMillis(base + 60000));
+  let last = 0;
+  if (length(input)>0) last = input[length(input)-1].seq;
+  const rows = input.filter(row => row.seq > last - 120);
+  let previous = 0;
+  let missing = 0;
+  const samples = rows.map(row => {
+    const gap = previous > 0 && row.seq > previous + 1;
+    if (gap) missing = missing + row.seq - previous - 1;
+    previous = row.seq;
+    return {id: text(row.seq), at: fromEpochMillis(base + row.seq), value: row.durationMs, gap: gap};
+  });
+  const errors = rows.filter(row => row.status >= 500).map(row => { return {id: text(row.seq), at: fromEpochMillis(base + row.seq), label: text(row.status), detail: row.route}; });
+  let coverage = interval(fromEpochMillis(base), fromEpochMillis(base));
+  if (length(rows)>0) coverage = interval(fromEpochMillis(base + rows[0].seq), fromEpochMillis(base + last + 1));
+  return {view: "timeline", id: "requests", title: "Request duration", range: window, coverage: coverage,
+    omitted: length(input)-length(rows)+missing, sourceError: "", series: [{id: "latency", label: "Duration", unit: "ms", samples: samples}], events: errors};
+}

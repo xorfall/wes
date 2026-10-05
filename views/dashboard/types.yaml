@@ -1,0 +1,6 @@
+types:
+  DashboardMarker: {base: Text, enum: [dashboard]}
+  DashboardTitle: {base: Text, maxLength: 2048}
+  Dashboard:
+    base: Record
+    fields: {view: DashboardMarker, title: DashboardTitle}

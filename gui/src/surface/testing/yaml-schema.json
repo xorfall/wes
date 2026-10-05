@@ -1,0 +1,1143 @@
+{
+  "language": "yaml",
+  "version": 1,
+  "roots": {
+    "env": "env.package",
+    "types": "contract.package"
+  },
+  "definitions": {
+    "text": {
+      "kind": "scalar",
+      "type": "Text"
+    },
+    "int": {
+      "kind": "scalar",
+      "type": "Int"
+    },
+    "decimal": {
+      "kind": "scalar",
+      "type": "Decimal"
+    },
+    "bool": {
+      "kind": "scalar",
+      "type": "Bool",
+      "choices": [
+        "true",
+        "false"
+      ]
+    },
+    "type": {
+      "kind": "scalar",
+      "type": "TypeExpression",
+      "constraints": [
+        "type-resolution"
+      ]
+    },
+    "version": {
+      "kind": "scalar",
+      "type": "Int",
+      "choices": [
+        "1"
+      ]
+    },
+    "identifier": {
+      "kind": "scalar",
+      "type": "Text",
+      "hint": "Text (identifier)",
+      "constraints": [
+        "environment-identifier"
+      ]
+    },
+    "count": {
+      "kind": "scalar",
+      "type": "Int",
+      "hint": "Int (0…2147483647)",
+      "constraints": [
+        "count-range"
+      ]
+    },
+    "numeric": {
+      "kind": "union",
+      "variants": [
+        "int",
+        "decimal"
+      ],
+      "hint": "Int | Decimal (base type)"
+    },
+    "datum": {
+      "kind": "any",
+      "hint": "Scalar | List | Object"
+    },
+    "config.value": {
+      "kind": "union",
+      "variants": [
+        "text",
+        "int",
+        "bool"
+      ]
+    },
+    "text.map": {
+      "kind": "map",
+      "values": "text"
+    },
+    "config.map": {
+      "kind": "map",
+      "values": "config.value"
+    },
+    "env.package": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "schema": "version",
+          "required": true
+        },
+        "package": {
+          "schema": "identifier",
+          "required": false
+        },
+        "targets": {
+          "schema": "env.targets",
+          "required": false
+        },
+        "environments": {
+          "schema": "env.environments",
+          "required": true
+        }
+      }
+    },
+    "env.targets": {
+      "kind": "map",
+      "values": "env.target"
+    },
+    "env.target": {
+      "kind": "discriminated",
+      "field": "kind",
+      "variants": {
+        "local": "env.target.local",
+        "docker": "env.target.docker",
+        "ssh": "env.target.ssh"
+      }
+    },
+    "env.kind.local": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "local"
+      ]
+    },
+    "env.kind.docker": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "docker"
+      ]
+    },
+    "env.inherit": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "container"
+      ]
+    },
+    "env.kind.ssh": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "ssh"
+      ]
+    },
+    "env.ssh.shell": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "posix"
+      ]
+    },
+    "env.ssh.inherit": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "remote"
+      ]
+    },
+    "env.target.ssh": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.ssh",
+          "required": true
+        },
+        "client": {
+          "schema": "text",
+          "required": true
+        },
+        "host": {
+          "schema": "text",
+          "required": true
+        },
+        "user": {
+          "schema": "text",
+          "required": true
+        },
+        "port": {
+          "schema": "int",
+          "required": false
+        },
+        "identity_file": {
+          "schema": "text",
+          "required": true
+        },
+        "known_hosts": {
+          "schema": "text",
+          "required": true
+        },
+        "shell": {
+          "schema": "env.ssh.shell",
+          "required": true
+        },
+        "inherit": {
+          "schema": "env.ssh.inherit",
+          "required": true
+        },
+        "cwd": {
+          "schema": "text",
+          "required": false
+        },
+        "env": {
+          "schema": "text.map",
+          "required": false
+        }
+      }
+    },
+    "env.target.local": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.local",
+          "required": true
+        },
+        "cwd": {
+          "schema": "text",
+          "required": false
+        },
+        "env": {
+          "schema": "text.map",
+          "required": false
+        }
+      }
+    },
+    "env.target.docker": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.docker",
+          "required": true
+        },
+        "socket": {
+          "schema": "text",
+          "required": true
+        },
+        "container": {
+          "schema": "text",
+          "required": false
+        },
+        "compose": {
+          "schema": "env.target.compose",
+          "required": false
+        },
+        "shell": {
+          "schema": "text",
+          "required": false
+        },
+        "image": {
+          "schema": "text",
+          "required": false
+        },
+        "inherit": {
+          "schema": "env.inherit",
+          "required": true
+        },
+        "cwd": {
+          "schema": "text",
+          "required": false
+        },
+        "env": {
+          "schema": "text.map",
+          "required": false
+        }
+      },
+      "constraints": [
+        "docker-target"
+      ]
+    },
+    "env.target.compose": {
+      "kind": "object",
+      "fields": {
+        "project": {
+          "schema": "text",
+          "required": true
+        },
+        "service": {
+          "schema": "text",
+          "required": true
+        },
+        "replica": {
+          "schema": "int",
+          "required": false
+        }
+      }
+    },
+    "env.environments": {
+      "kind": "map",
+      "values": "env.environment"
+    },
+    "env.target.names": {
+      "kind": "list",
+      "items": "identifier"
+    },
+    "env.environment": {
+      "kind": "object",
+      "fields": {
+        "targets": {
+          "schema": "env.target.names",
+          "required": false
+        },
+        "owner": {
+          "schema": "identifier",
+          "required": false
+        },
+        "drift": {
+          "schema": "bool",
+          "required": false
+        },
+        "id": {
+          "schema": "identifier",
+          "required": false
+        },
+        "retired": {
+          "schema": "bool",
+          "required": false
+        },
+        "protected": {
+          "schema": "bool",
+          "required": false
+        },
+        "abstract": {
+          "schema": "bool",
+          "required": false
+        },
+        "extends": {
+          "schema": "env.extends",
+          "required": false
+        },
+        "parameters": {
+          "schema": "env.parameters",
+          "required": false
+        },
+        "config": {
+          "schema": "config.map",
+          "required": false
+        },
+        "secretSlots": {
+          "schema": "env.secretSlots",
+          "required": false
+        },
+        "secretRefs": {
+          "schema": "text.map",
+          "required": false
+        },
+        "imports": {
+          "schema": "env.imports",
+          "required": false
+        },
+        "overrides": {
+          "schema": "env.overrides",
+          "required": false
+        },
+        "hide": {
+          "schema": "env.hide",
+          "required": false
+        }
+      },
+      "constraints": [
+        "environment-resolution"
+      ]
+    },
+    "env.extends": {
+      "kind": "object",
+      "fields": {
+        "env": {
+          "schema": "identifier",
+          "required": true
+        },
+        "track": {
+          "schema": "env.track",
+          "required": false
+        },
+        "revision": {
+          "schema": "text",
+          "required": false
+        }
+      },
+      "exclusive": [
+        {
+          "fields": [
+            "track",
+            "revision"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    "env.track": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "latest"
+      ]
+    },
+    "env.parameters": {
+      "kind": "map",
+      "values": "env.parameter"
+    },
+    "env.parameter": {
+      "kind": "discriminated",
+      "field": "type",
+      "variants": {
+        "Text": "env.parameter.text",
+        "Int": "env.parameter.int",
+        "Bool": "env.parameter.bool"
+      }
+    },
+    "env.type.text": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "Text"
+      ]
+    },
+    "env.default.text": {
+      "kind": "scalar",
+      "type": "Text"
+    },
+    "env.parameter.text": {
+      "kind": "object",
+      "fields": {
+        "type": {
+          "schema": "env.type.text",
+          "required": true
+        },
+        "default": {
+          "schema": "env.default.text",
+          "required": false
+        }
+      }
+    },
+    "env.type.int": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "Int"
+      ]
+    },
+    "env.default.int": {
+      "kind": "scalar",
+      "type": "Int"
+    },
+    "env.parameter.int": {
+      "kind": "object",
+      "fields": {
+        "type": {
+          "schema": "env.type.int",
+          "required": true
+        },
+        "default": {
+          "schema": "env.default.int",
+          "required": false
+        }
+      }
+    },
+    "env.type.bool": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "Bool"
+      ]
+    },
+    "env.default.bool": {
+      "kind": "scalar",
+      "type": "Bool",
+      "choices": [
+        "true",
+        "false"
+      ]
+    },
+    "env.parameter.bool": {
+      "kind": "object",
+      "fields": {
+        "type": {
+          "schema": "env.type.bool",
+          "required": true
+        },
+        "default": {
+          "schema": "env.default.bool",
+          "required": false
+        }
+      }
+    },
+    "env.secretSlots": {
+      "kind": "map",
+      "values": "env.secretSlot"
+    },
+    "env.secretSlot": {
+      "kind": "object",
+      "fields": {
+        "required": {
+          "schema": "bool",
+          "required": true
+        }
+      }
+    },
+    "env.imports": {
+      "kind": "map",
+      "values": "env.import"
+    },
+    "env.import": {
+      "kind": "object",
+      "fields": {
+        "source": {
+          "schema": "env.source",
+          "required": true
+        },
+        "bind": {
+          "schema": "env.bind",
+          "required": false
+        }
+      }
+    },
+    "env.source": {
+      "kind": "discriminated",
+      "field": "kind",
+      "variants": {
+        "spec": "env.source.spec",
+        "process": "env.source.process",
+        "docker": "env.source.docker",
+        "builtin": "env.source.builtin"
+      }
+    },
+    "env.kind.spec": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "spec"
+      ]
+    },
+    "env.kind.process": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "process"
+      ]
+    },
+    "env.kind.builtin": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "builtin"
+      ]
+    },
+    "env.builtin.name": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "sh",
+        "http",
+        "docker"
+      ]
+    },
+    "env.source.builtin": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.builtin",
+          "required": true
+        },
+        "name": {
+          "schema": "env.builtin.name",
+          "required": true
+        }
+      }
+    },
+    "env.source.docker": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.docker",
+          "required": true
+        },
+        "socket": {
+          "schema": "text",
+          "required": true
+        }
+      }
+    },
+    "env.source.spec": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.spec",
+          "required": true
+        },
+        "file": {
+          "schema": "text",
+          "required": false
+        },
+        "url": {
+          "schema": "text",
+          "required": false
+        },
+        "sha256": {
+          "schema": "text",
+          "required": false
+        }
+      },
+      "exclusive": [
+        {
+          "fields": [
+            "file",
+            "url"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "constraints": [
+        "spec-source"
+      ]
+    },
+    "env.source.process": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.process",
+          "required": true
+        },
+        "bin": {
+          "schema": "text",
+          "required": true
+        }
+      }
+    },
+    "env.bind": {
+      "kind": "union",
+      "variants": [
+        "env.bind.explicit",
+        "env.bind.auto"
+      ]
+    },
+    "env.bind.auto": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "auto"
+      ]
+    },
+    "env.transport": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "internal",
+        "curl"
+      ]
+    },
+    "env.bind.explicit": {
+      "kind": "object",
+      "fields": {
+        "target": {
+          "schema": "identifier",
+          "required": true
+        },
+        "endpoint": {
+          "schema": "env.endpoint",
+          "required": false
+        },
+        "timeout_ms": {
+          "schema": "env.timeout",
+          "required": false
+        },
+        "transport": {
+          "schema": "env.transport",
+          "required": false
+        },
+        "credentials": {
+          "schema": "env.credentials",
+          "required": false
+        },
+        "auth": {
+          "schema": "env.auth",
+          "required": false
+        },
+        "output": {
+          "schema": "env.output",
+          "required": false
+        }
+      },
+      "constraints": [
+        "environment-binding"
+      ]
+    },
+    "env.endpoint": {
+      "kind": "union",
+      "variants": [
+        "config.value",
+        "env.setting"
+      ],
+      "hint": "Text | Object {config}"
+    },
+    "env.timeout": {
+      "kind": "union",
+      "variants": [
+        "config.value",
+        "env.setting"
+      ],
+      "hint": "Int > 0 | Object {config}"
+    },
+    "env.setting": {
+      "kind": "object",
+      "fields": {
+        "config": {
+          "schema": "identifier",
+          "required": true
+        }
+      }
+    },
+    "env.auth": {
+      "kind": "map",
+      "values": "env.auth.schemes"
+    },
+    "env.auth.schemes": {
+      "kind": "list",
+      "items": "text"
+    },
+    "env.credentials": {
+      "kind": "map",
+      "values": "env.credential"
+    },
+    "env.credential": {
+      "kind": "object",
+      "fields": {
+        "secret": {
+          "schema": "identifier",
+          "required": true
+        }
+      }
+    },
+    "env.output": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "public",
+        "private"
+      ]
+    },
+    "env.overrides": {
+      "kind": "object",
+      "fields": {
+        "imports": {
+          "schema": "env.imports",
+          "required": true
+        }
+      }
+    },
+    "env.hide": {
+      "kind": "object",
+      "fields": {
+        "imports": {
+          "schema": "env.hidden",
+          "required": true
+        }
+      }
+    },
+    "env.hidden": {
+      "kind": "list",
+      "items": "identifier"
+    },
+    "contract.package": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "schema": "version",
+          "required": false
+        },
+        "types": {
+          "schema": "contract.types",
+          "required": true
+        },
+        "iterators": {
+          "schema": "contract.iterators",
+          "required": false
+        }
+      }
+    },
+    "contract.types": {
+      "kind": "map",
+      "values": "contract.type"
+    },
+    "contract.type": {
+      "kind": "object",
+      "fields": {
+        "base": {
+          "schema": "type",
+          "required": true
+        },
+        "description": {
+          "schema": "text",
+          "required": false
+        },
+        "enum": {
+          "schema": "contract.enum",
+          "required": false
+        },
+        "min": {
+          "schema": "numeric",
+          "required": false
+        },
+        "max": {
+          "schema": "numeric",
+          "required": false
+        },
+        "minLength": {
+          "schema": "count",
+          "required": false
+        },
+        "maxLength": {
+          "schema": "count",
+          "required": false
+        },
+        "minItems": {
+          "schema": "count",
+          "required": false
+        },
+        "maxItems": {
+          "schema": "count",
+          "required": false
+        },
+        "pattern": {
+          "schema": "text",
+          "required": false
+        },
+        "fields": {
+          "schema": "contract.fields",
+          "required": false
+        }
+      },
+      "conditions": [
+        {
+          "field": "base",
+          "values": [
+            "Record"
+          ],
+          "allowed": [
+            "base",
+            "fields",
+            "description"
+          ]
+        },
+        {
+          "field": "base",
+          "values": [
+            "Text"
+          ],
+          "allowed": [
+            "base",
+            "enum",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "description"
+          ]
+        },
+        {
+          "field": "base",
+          "values": [
+            "Int"
+          ],
+          "allowed": [
+            "base",
+            "enum",
+            "min",
+            "max",
+            "description"
+          ]
+        },
+        {
+          "field": "base",
+          "values": [
+            "Decimal"
+          ],
+          "allowed": [
+            "base",
+            "enum",
+            "min",
+            "max",
+            "description"
+          ]
+        },
+        {
+          "field": "base",
+          "values": [
+            "Bool"
+          ],
+          "allowed": [
+            "base",
+            "enum",
+            "description"
+          ]
+        },
+        {
+          "field": "base",
+          "values": [],
+          "allowed": [
+            "base",
+            "description",
+            "minItems",
+            "maxItems"
+          ],
+          "prefix": "List<"
+        }
+      ],
+      "constraints": [
+        "contract-subtype"
+      ]
+    },
+    "contract.enum": {
+      "kind": "list",
+      "items": "config.orDecimal",
+      "hint": "List<Scalar> (base type)"
+    },
+    "config.orDecimal": {
+      "kind": "union",
+      "variants": [
+        "text",
+        "int",
+        "decimal",
+        "bool"
+      ]
+    },
+    "contract.fields": {
+      "kind": "map",
+      "values": "contract.field"
+    },
+    "contract.field": {
+      "kind": "union",
+      "variants": [
+        "type",
+        "contract.field.object"
+      ]
+    },
+    "contract.field.object": {
+      "kind": "object",
+      "fields": {
+        "type": {
+          "schema": "type",
+          "required": true
+        },
+        "optional": {
+          "schema": "bool",
+          "required": false
+        },
+        "description": {
+          "schema": "text",
+          "required": false
+        }
+      }
+    },
+    "contract.iterators": {
+      "kind": "map",
+      "values": "contract.iterator"
+    },
+    "iterator.mode": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "items",
+        "lines",
+        "chars",
+        "words",
+        "split",
+        "regex-split",
+        "matches",
+        "captures",
+        "keys",
+        "values",
+        "entries",
+        "json-lines"
+      ]
+    },
+    "iterator.output": {
+      "kind": "scalar",
+      "type": "TypeExpression",
+      "hint": "Type expression (Iter<T>)",
+      "constraints": [
+        "iterator-output"
+      ]
+    },
+    "contract.iterator": {
+      "kind": "object",
+      "fields": {
+        "input": {
+          "schema": "type",
+          "required": true
+        },
+        "output": {
+          "schema": "iterator.output",
+          "required": true
+        },
+        "mode": {
+          "schema": "iterator.mode",
+          "required": true
+        },
+        "delimiter": {
+          "schema": "text",
+          "required": false
+        },
+        "pattern": {
+          "schema": "text",
+          "required": false
+        }
+      },
+      "conditions": [
+        {
+          "field": "mode",
+          "values": [
+            "split"
+          ],
+          "allowed": [
+            "input",
+            "output",
+            "mode",
+            "delimiter"
+          ],
+          "required": [
+            "delimiter"
+          ]
+        },
+        {
+          "field": "mode",
+          "values": [
+            "regex-split",
+            "matches",
+            "captures"
+          ],
+          "allowed": [
+            "input",
+            "output",
+            "mode",
+            "pattern"
+          ],
+          "required": [
+            "pattern"
+          ]
+        },
+        {
+          "field": "mode",
+          "values": [
+            "items",
+            "lines",
+            "chars",
+            "words",
+            "keys",
+            "values",
+            "entries",
+            "json-lines"
+          ],
+          "allowed": [
+            "input",
+            "output",
+            "mode"
+          ]
+        }
+      ],
+      "constraints": [
+        "iterator-input"
+      ]
+    }
+  },
+  "typeConstructors": [
+    {
+      "name": "Union",
+      "parameters": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "List",
+      "parameters": [
+        "T"
+      ]
+    },
+    {
+      "name": "Map",
+      "parameters": [
+        "Text",
+        "T"
+      ]
+    },
+    {
+      "name": "Option",
+      "parameters": [
+        "T"
+      ]
+    },
+    {
+      "name": "Iter",
+      "parameters": [
+        "T"
+      ]
+    }
+  ],
+  "constraints": {
+    "environment-identifier": {
+      "description": "Environment names follow the core identifier rules.",
+      "validation": "semantic"
+    },
+    "count-range": {
+      "description": "Counts are integers from 0 through 2147483647.",
+      "validation": "semantic"
+    },
+    "type-resolution": {
+      "description": "Type expressions resolve against the workspace registry and constructor arity.",
+      "validation": "semantic"
+    },
+    "docker-target": {
+      "description": "Docker target socket, container and image constraints are checked by the environment parser.",
+      "validation": "semantic"
+    },
+    "environment-resolution": {
+      "description": "Inheritance, configuration, ownership and import conflicts are resolved by the engine.",
+      "validation": "semantic"
+    },
+    "spec-source": {
+      "description": "Spec file/url exclusivity, location scheme and SHA-256 are checked by the environment parser.",
+      "validation": "semantic"
+    },
+    "environment-binding": {
+      "description": "Endpoint requires Text; timeout requires positive Int; references must resolve to compatible slots. Process imports cannot set endpoint.",
+      "validation": "semantic"
+    },
+    "contract-subtype": {
+      "description": "Constraints must match the resolved base kind and cannot weaken inherited limits or fields.",
+      "validation": "semantic"
+    },
+    "iterator-output": {
+      "description": "Iterator output must resolve to Iter<T>.",
+      "validation": "semantic"
+    },
+    "iterator-input": {
+      "description": "Iterator mode must match the resolved input shape; extraction patterns and limits are checked by core.",
+      "validation": "semantic"
+    }
+  }
+}

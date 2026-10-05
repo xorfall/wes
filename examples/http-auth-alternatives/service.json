@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "provider": "demo",
+  "types": {},
+  "operations": [
+    {
+      "path": [
+        "health"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "204": "Healthy"
+      },
+      "method": "GET",
+      "route": "/health",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "204": null
+      },
+      "evidence": "#/paths/~1health/get"
+    },
+    {
+      "path": [
+        "listItems"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Items"
+      },
+      "method": "GET",
+      "route": "/items",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [
+            "apiKey",
+            "apiSecret"
+          ],
+          "auth": [
+            {
+              "header": "X-API-Key",
+              "scheme": "",
+              "secret": "apiKey"
+            },
+            {
+              "header": "X-API-Secret",
+              "scheme": "",
+              "secret": "apiSecret"
+            }
+          ]
+        },
+        {
+          "schemes": [
+            "basic"
+          ],
+          "auth": [
+            {
+              "secret": "basic.password",
+              "userSecret": "basic.username"
+            }
+          ]
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "List\u003cText\u003e"
+      },
+      "evidence": "#/paths/~1items/get"
+    }
+  ],
+  "source": {
+    "sha256": "165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+    "format": "3.1.0",
+    "discovered": 2,
+    "emitted": 2,
+    "skipped": 0,
+    "provenance": {
+      "version": 1,
+      "status": "current",
+      "entries": [
+        {
+          "target": "#/operations/0/authOptions",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1health/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/0/method",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1health/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/0/path",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1health/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/0/responses/204",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1health/get/responses/204",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/0/route",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1health/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/1/authOptions",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Documented authentication mapping; credential values are supplied separately at invocation."
+        },
+        {
+          "target": "#/operations/1/method",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1items/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/1/path",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1items/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1items/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1items/get/responses/200/content/application~1json/schema/items/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1items/get/responses/200/content/application~1json/schema/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/route",
+          "source": "sha256:165f03b088b5dee835a3b6626c7b1ccae4490ac197d07060106bb56b1df6359f",
+          "pointer": "#/paths/~1items/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        }
+      ]
+    }
+  },
+  "servers": [
+    {
+      "at": "#",
+      "declaration": {
+        "url": "https://example.invalid"
+      }
+    }
+  ],
+  "diagnostics": []
+}

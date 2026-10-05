@@ -1,0 +1,7 @@
+:calc {
+  const selected = instant("2030-06-15T08:03:00Z");
+  const window = around(selected, duration("PT30S"));
+  const logs = [{at: instant("2030-06-15T08:02:50Z"), kind: "log", label: "Retry"}, {at: instant("2030-06-15T08:03:40Z"), kind: "log", label: "Outside range"}];
+  const releases = [{at: instant("2030-06-15T08:03:05Z"), kind: "release", label: "Installed"}, {at: instant("2030-06-15T08:02:50Z"), kind: "release", label: "Started"}];
+  return concat(logs, releases).filter(row => row.at >= window.start && row.at < window.end).sortBy(row => row.at);
+} > nearby

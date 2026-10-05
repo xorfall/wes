@@ -1,0 +1,457 @@
+[
+  {
+    "input": "catalog search query:books",
+    "diagnostics": []
+  },
+  {
+    "input": "catalog search",
+    "diagnostics": [
+      {
+        "code": "CHK002",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 14
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books limit:12",
+    "diagnostics": []
+  },
+  {
+    "input": "catalog search query:books limit:bad",
+    "diagnostics": [
+      {
+        "code": "CHK004",
+        "severity": "ERROR",
+        "start": 33,
+        "end": 36
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books extra:1",
+    "diagnostics": [
+      {
+        "code": "CHK001",
+        "severity": "ERROR",
+        "start": 27,
+        "end": 33
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books query:games",
+    "diagnostics": [
+      {
+        "code": "CHK003",
+        "severity": "ERROR",
+        "start": 27,
+        "end": 38
+      }
+    ]
+  },
+  {
+    "input": "catalog search $text query:books",
+    "diagnostics": [
+      {
+        "code": "CHK010",
+        "severity": "ERROR",
+        "start": 15,
+        "end": 20
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books cursor:x page:1",
+    "diagnostics": [
+      {
+        "code": "CHK006",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 42
+      },
+      {
+        "code": "CHK007",
+        "severity": "ERROR",
+        "start": 41,
+        "end": 42
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books page:1",
+    "diagnostics": [
+      {
+        "code": "CHK007",
+        "severity": "ERROR",
+        "start": 32,
+        "end": 33
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:music",
+    "diagnostics": [
+      {
+        "code": "CHK008",
+        "severity": "ERROR",
+        "start": 21,
+        "end": 26
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:$text",
+    "diagnostics": []
+  },
+  {
+    "input": "catalog search query:$number",
+    "diagnostics": [
+      {
+        "code": "CHK004",
+        "severity": "ERROR",
+        "start": 21,
+        "end": 28
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:$missing",
+    "diagnostics": [
+      {
+        "code": "CHK005",
+        "severity": "ERROR",
+        "start": 21,
+        "end": 29
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books data:$good",
+    "diagnostics": []
+  },
+  {
+    "input": "catalog search query:books data:$bad",
+    "diagnostics": [
+      {
+        "code": "CHK009",
+        "severity": "ERROR",
+        "start": 32,
+        "end": 36
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books data:literal",
+    "diagnostics": [
+      {
+        "code": "CHK009",
+        "severity": "ERROR",
+        "start": 32,
+        "end": 39
+      }
+    ]
+  },
+  {
+    "input": "catalog search query:books data:$missing",
+    "diagnostics": [
+      {
+        "code": "CHK005",
+        "severity": "ERROR",
+        "start": 32,
+        "end": 40
+      }
+    ]
+  },
+  {
+    "input": "@unchecked{query} catalog search query:music",
+    "diagnostics": [
+      {
+        "code": "CHK008",
+        "severity": "WARNING",
+        "start": 39,
+        "end": 44
+      }
+    ]
+  },
+  {
+    "input": "@unchecked{limit} catalog search query:books limit:bad",
+    "diagnostics": [
+      {
+        "code": "CHK004",
+        "severity": "ERROR",
+        "start": 51,
+        "end": 54
+      }
+    ]
+  },
+  {
+    "input": "@unchecked{data} catalog search query:books data:$bad",
+    "diagnostics": [
+      {
+        "code": "CHK009",
+        "severity": "WARNING",
+        "start": 49,
+        "end": 53
+      }
+    ]
+  },
+  {
+    "input": "@unchecked{cursor} catalog search query:books cursor:x page:1",
+    "diagnostics": [
+      {
+        "code": "CHK006",
+        "severity": "WARNING",
+        "start": 19,
+        "end": 61
+      },
+      {
+        "code": "CHK007",
+        "severity": "ERROR",
+        "start": 60,
+        "end": 61
+      }
+    ]
+  },
+  {
+    "input": "catalog suggest query:music",
+    "diagnostics": [
+      {
+        "code": "CHK008",
+        "severity": "WARNING",
+        "start": 22,
+        "end": 27
+      }
+    ]
+  },
+  {
+    "input": "@unknown catalog search query:books",
+    "diagnostics": [
+      {
+        "code": "CHK014",
+        "severity": "ERROR",
+        "start": 1,
+        "end": 8
+      }
+    ]
+  },
+  {
+    "input": "@interactive catalog search query:books",
+    "diagnostics": []
+  },
+  {
+    "input": "@interactive :list providers",
+    "diagnostics": [
+      {
+        "code": "CHK016",
+        "severity": "ERROR",
+        "start": 1,
+        "end": 12
+      }
+    ]
+  },
+  {
+    "input": ":list providers",
+    "diagnostics": []
+  },
+  {
+    "input": ":list nonsense",
+    "diagnostics": [
+      {
+        "code": "CHK015",
+        "severity": "ERROR",
+        "start": 6,
+        "end": 14
+      }
+    ]
+  },
+  {
+    "input": ":list",
+    "diagnostics": [
+      {
+        "code": "CHK012",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 5
+      }
+    ]
+  },
+  {
+    "input": ":list providers extra",
+    "diagnostics": [
+      {
+        "code": "CHK012",
+        "severity": "ERROR",
+        "start": 16,
+        "end": 21
+      },
+      {
+        "code": "CHK015",
+        "severity": "ERROR",
+        "start": 16,
+        "end": 21
+      }
+    ]
+  },
+  {
+    "input": ":list providers provider:$text",
+    "diagnostics": [
+      {
+        "code": "CHK001",
+        "severity": "ERROR",
+        "start": 16,
+        "end": 25
+      }
+    ]
+  },
+  {
+    "input": ":import openapi as:$text url:fixture",
+    "diagnostics": [
+      {
+        "code": "CHK017",
+        "severity": "ERROR",
+        "start": 19,
+        "end": 24
+      }
+    ]
+  },
+  {
+    "input": ":workspace policy mode:$text",
+    "diagnostics": [
+      {
+        "code": "CHK017",
+        "severity": "ERROR",
+        "start": 23,
+        "end": 28
+      }
+    ]
+  },
+  {
+    "input": ":workspace policy",
+    "diagnostics": [
+      {
+        "code": "CHK002",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 17
+      }
+    ]
+  },
+  {
+    "input": ":timeout $good after:PT1S",
+    "diagnostics": []
+  },
+  {
+    "input": ":timeout $good after:3",
+    "diagnostics": [
+      {
+        "code": "CHK004",
+        "severity": "ERROR",
+        "start": 21,
+        "end": 22
+      }
+    ]
+  },
+  {
+    "input": ":type check $text as:$text",
+    "diagnostics": [
+      {
+        "code": "CHK017",
+        "severity": "ERROR",
+        "start": 21,
+        "end": 26
+      }
+    ]
+  },
+  {
+    "input": ":type check $text as:Text",
+    "diagnostics": []
+  },
+  {
+    "input": ":inspect",
+    "diagnostics": [
+      {
+        "code": "CMD002",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 8
+      }
+    ]
+  },
+  {
+    "input": ":inspect catalog search",
+    "diagnostics": []
+  },
+  {
+    "input": ":node remove",
+    "diagnostics": [
+      {
+        "code": "CMD001",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 12
+      }
+    ]
+  },
+  {
+    "input": ":wait",
+    "diagnostics": [
+      {
+        "code": "CHK011",
+        "severity": "ERROR",
+        "start": 0,
+        "end": 5
+      }
+    ]
+  },
+  {
+    "input": ":wait $text $number",
+    "diagnostics": []
+  },
+  {
+    "input": ":type check \"1\" as:Int",
+    "diagnostics": []
+  },
+  {
+    "input": ":package load path:types.yaml",
+    "diagnostics": []
+  },
+  {
+    "input": ":type check $good as:\"List<Int>\"",
+    "diagnostics": []
+  },
+  {
+    "input": ":refresh $text extra:1",
+    "diagnostics": [
+      {
+        "code": "CHK001",
+        "severity": "ERROR",
+        "start": 15,
+        "end": 21
+      }
+    ]
+  },
+  {
+    "input": ":help nonsense",
+    "diagnostics": [
+      {
+        "code": "RES004",
+        "severity": "ERROR",
+        "start": 6,
+        "end": 14
+      }
+    ]
+  },
+  {
+    "input": ":cancle $text",
+    "diagnostics": [
+      {
+        "code": "RES002",
+        "severity": "ERROR",
+        "start": 1,
+        "end": 7
+      }
+    ]
+  }
+]

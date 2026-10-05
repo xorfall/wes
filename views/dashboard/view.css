@@ -1,0 +1,3 @@
+.dashboard { min-width:0; padding:calc(var(--space-md) * .75); }
+.dashboard h2 { margin:0 0 16px; font-size:1.1rem; }
+.dashboard-members { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:var(--space-md); }

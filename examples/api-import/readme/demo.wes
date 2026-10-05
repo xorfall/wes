@@ -1,0 +1,2 @@
+catalogue listItems limit:3 > entries
+:calc { return $entries; } > report

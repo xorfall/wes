@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "provider": "inventory",
+  "types": {
+    "ApiType1": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType10": {
+      "base": "Record",
+      "fields": {
+        "enabled": {
+          "optional": false,
+          "type": "Bool"
+        }
+      }
+    },
+    "ApiType12": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType2": {
+      "base": "Int",
+      "max": 10,
+      "min": 1
+    },
+    "ApiType3": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType4": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType5": {
+      "base": "Record",
+      "fields": {
+        "enabled": {
+          "optional": false,
+          "type": "Bool"
+        }
+      }
+    },
+    "ApiType7": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType8": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "ApiType9": {
+      "base": "Text",
+      "minLength": 1
+    },
+    "Api_Item_f0885034": {
+      "base": "Record",
+      "fields": {
+        "id": {
+          "optional": false,
+          "type": "ApiType8"
+        },
+        "labels": {
+          "optional": false,
+          "type": "Map\u003cText,Text\u003e"
+        },
+        "name": {
+          "optional": false,
+          "type": "ApiType9"
+        },
+        "nested": {
+          "optional": true,
+          "type": "ApiType10"
+        },
+        "note": {
+          "optional": true,
+          "type": "Option\u003cText\u003e"
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "getItem"
+      ],
+      "summary": "Fetch one item with explicit HTTP arguments",
+      "method": "GET",
+      "route": "/items/{id}",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "X_Request_Id",
+          "wire": "X-Request-Id",
+          "location": "header",
+          "type": "Text",
+          "required": false,
+          "encoding": "scalar"
+        },
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "ApiType1",
+          "required": true,
+          "encoding": "scalar"
+        },
+        {
+          "name": "limit",
+          "wire": "limit",
+          "location": "query",
+          "type": "ApiType2",
+          "required": false,
+          "encoding": "scalar"
+        },
+        {
+          "name": "tag",
+          "wire": "tag",
+          "location": "query",
+          "type": "List\u003cText\u003e",
+          "required": false,
+          "encoding": "repeat"
+        }
+      ],
+      "responses": {
+        "200": "Api_Item_f0885034"
+      },
+      "evidence": "#/paths/~1items~1{id}/get"
+    },
+    {
+      "path": [
+        "putItem"
+      ],
+      "summary": "",
+      "method": "PUT",
+      "route": "/items/{id}",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "ApiType7",
+          "required": true,
+          "encoding": "scalar"
+        },
+        {
+          "name": "body",
+          "wire": "body",
+          "location": "body",
+          "type": "Api_Item_f0885034",
+          "required": true,
+          "encoding": "json"
+        }
+      ],
+      "responses": {
+        "200": "Api_Item_f0885034",
+        "201": "Api_Item_f0885034"
+      },
+      "evidence": "#/paths/~1items~1{id}/put"
+    },
+    {
+      "path": [
+        "deleteItem"
+      ],
+      "summary": "",
+      "method": "DELETE",
+      "route": "/items/{id}",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "ApiType12",
+          "required": true,
+          "encoding": "scalar"
+        }
+      ],
+      "responses": {
+        "204": null
+      },
+      "evidence": "#/paths/~1items~1{id}/delete"
+    }
+  ],
+  "source": {
+    "sha256": "3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6",
+    "format": "3.1.0",
+    "discovered": 3,
+    "emitted": 3,
+    "skipped": 0
+  },
+  "servers": [
+    {
+      "at": "#",
+      "declaration": {
+        "description": "Never selected automatically",
+        "url": "https://documentation-only.invalid/v1"
+      }
+    }
+  ],
+  "diagnostics": []
+}

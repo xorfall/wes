@@ -1,0 +1,26 @@
+SYN001: Synthetic stream branch failed; the healthy sibling may continue.
+Detail 01: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 02: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 03: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 04: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 05: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 06: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 07: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 08: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 09: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 10: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 11: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 12: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 13: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 14: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 15: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 16: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 17: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 18: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 19: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 20: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 21: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 22: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 23: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Detail 24: synthetic diagnostic context must remain readable after history eviction and reconnect.
+Final detail: retry only after reviewing the original failure.

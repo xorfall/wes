@@ -1,0 +1,10 @@
+sample get kind:"ok" > response
+:calc { return {status: $response.status, title: $response.body.title}; } > summary
+sample get kind:"bad" | :fork {
+  on success { :calc { return {status: input.status, message: input.body.message}; } > received }
+  on failed { :calc { return "unexpected invocation failure"; } > unexpected }
+}
+sample get kind:"mismatch" > mismatch
+:calc { return {state: $mismatch.validation.state, received: $mismatch.body.title}; } > mismatchReport
+sample get kind:"empty" > empty
+:calc { return {status: $empty.status, kind: $empty.bodyKind}; } > emptyReport

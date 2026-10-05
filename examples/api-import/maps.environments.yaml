@@ -1,0 +1,10 @@
+version: 1
+package: map-import-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      fx:
+        source: {kind: spec, file: maps.json}
+        bind: {target: local, endpoint: http://127.0.0.1:8765/v1}

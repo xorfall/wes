@@ -1,0 +1,9 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  pg-demo:
+    imports:
+      pg:
+        source: {kind: process, bin: /bin/echo}
+        bind: {target: local}

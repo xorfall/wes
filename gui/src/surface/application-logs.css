@@ -1,0 +1,20 @@
+.wes-terminal .split-key-row { display: flex; align-items: baseline; gap: 1.5em; flex-wrap: wrap; }
+.wes-terminal .split-key-row .split-keys { flex: 1; }
+.wes-terminal .application-logs { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 1em; min-width: 0; max-width: 100%; }
+.wes-terminal .logs-trigger { flex: none; }
+.wes-terminal .logs-notice { min-width: 0; max-width: min(70vw, 70ch); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mono-bad); }
+.wes-terminal .logs-notice[data-level="warning"] { color: var(--mono-warn); }
+.wes-terminal .application-logs button { font: inherit; color: var(--mono-ref); background: transparent; border: 0; cursor: pointer; }
+.wes-terminal .application-logs button:focus-visible { outline: 1px solid var(--mono-ref); outline-offset: 3px; }
+.wes-terminal .application-logs button:disabled { opacity: .5; cursor: default; }
+.wes-terminal .application-logs dialog { width: min(960px, calc(100vw - 48px)); max-height: calc(100vh - 64px); box-sizing: border-box; padding: 24px; border: 1px solid var(--mono-ref); color: var(--mono-ink); background: var(--ground); font: inherit; }
+.wes-terminal .application-logs dialog[open] { display: flex; flex-direction: column; gap: 16px; }
+.wes-terminal .application-logs dialog::backdrop { background: #0005; }
+.wes-terminal .application-logs header, .wes-terminal .logs-actions { display: flex; gap: 24px; align-items: baseline; flex-wrap: wrap; }
+.wes-terminal .application-logs header { justify-content: space-between; }
+.wes-terminal .application-logs p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .application-logs .logs-help, .wes-terminal .application-logs .logs-context, .wes-terminal .application-logs .logs-meta { color: var(--mono-dim); overflow-wrap: anywhere; }
+.wes-terminal .application-logs .logs-records { overflow: auto; min-height: 0; line-height: var(--type-mono-leading); user-select: text; }
+.wes-terminal .logs-records article { padding: 16px 0; border-top: 1px solid var(--mono-faint); overflow-wrap: anywhere; }
+.wes-terminal .logs-records article[data-level="error"] .logs-meta { color: var(--mono-bad); }
+.wes-terminal .logs-records article p { margin-top: 6px; }

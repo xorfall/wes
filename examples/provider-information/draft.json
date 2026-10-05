@@ -1,0 +1,55 @@
+{
+  "draftVersion": 1,
+  "provider": "example",
+  "types": {
+    "Request": {
+      "base": "Record",
+      "fields": {
+        "budget": {
+          "type": "Int",
+          "optional": false
+        },
+        "limit": {
+          "type": "Int",
+          "optional": false
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "submit"
+      ],
+      "method": "POST",
+      "route": "/jobs",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "body",
+          "wire": "body",
+          "location": "body",
+          "encoding": "json",
+          "type": "Request",
+          "required": true
+        }
+      ],
+      "responses": [
+        {
+          "status": 200,
+          "mediaType": null,
+          "type": "Unknown"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "kind": "constraint",
+      "target": "#/types/Request",
+      "description": "budget must be less than limit.",
+      "enforcement": "not-checked-locally"
+    }
+  ],
+  "problems": []
+}

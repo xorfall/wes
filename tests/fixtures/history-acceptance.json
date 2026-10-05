@@ -1,0 +1,320 @@
+[
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "cell": "",
+      "nodes": [
+        "id1000"
+      ],
+      "record": "command",
+      "replay": "catalog list",
+      "text": "catalog list",
+      "typeSources": {}
+    },
+    "source": "{\"record\":\"command\",\"text\":\"catalog list\",\"nodes\":[\"id1000\"]}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "cell": "cell-a",
+      "nodes": [],
+      "record": "command",
+      "replay": ":type load path:\"types.yaml\"",
+      "text": ":type load path:\"types.yaml\"",
+      "typeSources": {
+        "types.yaml": "types:\n  Name:\n    base: Text\n"
+      }
+    },
+    "source": "{\"record\":\"command\",\"cell\":\"cell-a\",\"text\":\":type load path:\\\"types.yaml\\\"\",\"nodes\":[],\"typeSources\":{\"types.yaml\":\"types:\\n  Name:\\n    base: Text\\n\"},\"replay\":\":type load path:\\\"types.yaml\\\"\"}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "cell": "cell-b",
+      "nodes": [],
+      "record": "command",
+      "replay": ":def search as catalog search q:?q",
+      "text": ":def search as catalog search q:?q",
+      "typeSources": {}
+    },
+    "source": "{\"record\":\"command\",\"cell\":\"cell-b\",\"text\":\":def search as catalog search q:?q\",\"nodes\":[],\"typeSources\":{},\"replay\":\":def search as catalog search q:?q\"}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "handle": "123e4567-e89b-12d3-a456-426614174000",
+      "node": "id1000",
+      "record": "result",
+      "run": ""
+    },
+    "source": "{\"record\":\"result\",\"node\":\"id1000\",\"handle\":\"123e4567-e89b-12d3-a456-426614174000\"}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "handle": "123e4567-e89b-12d3-a456-426614174001",
+      "node": "id1000",
+      "record": "result",
+      "run": "run-2"
+    },
+    "source": "{\"record\":\"result\",\"node\":\"id1000\",\"handle\":\"123e4567-e89b-12d3-a456-426614174001\",\"run\":\"run-2\"}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": [],
+        "id": "observation-PENDING",
+        "node": "id1000",
+        "run": "",
+        "state": "PENDING"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-PENDING\",\"node\":\"id1000\",\"run\":\"\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"PENDING\",\"error\":[]}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": [],
+        "id": "observation-RUNNING",
+        "node": "id1000",
+        "run": "run-2",
+        "state": "RUNNING"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-RUNNING\",\"node\":\"id1000\",\"run\":\"run-2\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"RUNNING\",\"error\":[]}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": [],
+        "id": "observation-READY",
+        "node": "id1000",
+        "run": "run-2",
+        "state": "READY"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-READY\",\"node\":\"id1000\",\"run\":\"run-2\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"READY\",\"error\":[]}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": [],
+        "id": "observation-STALE",
+        "node": "id1000",
+        "run": "run-2",
+        "state": "STALE"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-STALE\",\"node\":\"id1000\",\"run\":\"run-2\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"STALE\",\"error\":[]}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": {
+          "causeId": "cause-old",
+          "code": "FUTURE901",
+          "id": "error-old",
+          "issues": [
+            {
+              "code": "TYP005",
+              "message": "not allowed",
+              "path": "/arguments/name"
+            }
+          ],
+          "message": "bad \"field\"\n"
+        },
+        "id": "observation-FAILED",
+        "node": "id1000",
+        "run": "run-2",
+        "state": "FAILED"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-FAILED\",\"node\":\"id1000\",\"run\":\"run-2\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"FAILED\",\"error\":{\"id\":\"error-old\",\"code\":\"FUTURE901\",\"message\":\"bad \\\"field\\\"\\n\",\"issues\":[{\"path\":\"/arguments/name\",\"code\":\"TYP005\",\"message\":\"not allowed\"}],\"causeId\":\"cause-old\"}}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": {
+          "causeId": "cause-old",
+          "code": "FUTURE901",
+          "id": "error-old",
+          "issues": [
+            {
+              "code": "TYP005",
+              "message": "not allowed",
+              "path": "/arguments/name"
+            }
+          ],
+          "message": "bad \"field\"\n"
+        },
+        "id": "observation-CANCELLED",
+        "node": "id1000",
+        "run": "run-2",
+        "state": "CANCELLED"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-CANCELLED\",\"node\":\"id1000\",\"run\":\"run-2\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"CANCELLED\",\"error\":{\"id\":\"error-old\",\"code\":\"FUTURE901\",\"message\":\"bad \\\"field\\\"\\n\",\"issues\":[{\"path\":\"/arguments/name\",\"code\":\"TYP005\",\"message\":\"not allowed\"}],\"causeId\":\"cause-old\"}}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "observation",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "error": [],
+        "id": "observation-SKIPPED",
+        "node": "id1000",
+        "run": "run-2",
+        "state": "SKIPPED"
+      }
+    },
+    "source": "{\"record\":\"observation\",\"value\":{\"id\":\"observation-SKIPPED\",\"node\":\"id1000\",\"run\":\"run-2\",\"at\":\"2026-09-10T12:00:00Z\",\"state\":\"SKIPPED\",\"error\":[]}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "diagnostic",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "cell": "cell-a",
+        "diagnostic": {
+          "code": "FUTURE999",
+          "end": 13,
+          "hints": [
+            "use :help",
+            "line\nbreak"
+          ],
+          "message": "unrecognized",
+          "severity": "error",
+          "start": 9
+        },
+        "id": "diagnostic-error",
+        "source": "say \"😀\" nope"
+      }
+    },
+    "source": "{\"record\":\"diagnostic\",\"value\":{\"id\":\"diagnostic-error\",\"at\":\"2026-09-10T12:00:00Z\",\"cell\":\"cell-a\",\"source\":\"say \\\"😀\\\" nope\",\"diagnostic\":{\"code\":\"FUTURE999\",\"severity\":\"error\",\"message\":\"unrecognized\",\"start\":9,\"end\":13,\"hints\":[\"use :help\",\"line\\nbreak\"]}}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "diagnostic",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "cell": "cell-a",
+        "diagnostic": {
+          "code": "FUTURE999",
+          "end": 13,
+          "hints": [
+            "use :help",
+            "line\nbreak"
+          ],
+          "message": "unrecognized",
+          "severity": "warning",
+          "start": 9
+        },
+        "id": "diagnostic-warning",
+        "source": "say \"😀\" nope"
+      }
+    },
+    "source": "{\"record\":\"diagnostic\",\"value\":{\"id\":\"diagnostic-warning\",\"at\":\"2026-09-10T12:00:00Z\",\"cell\":\"cell-a\",\"source\":\"say \\\"😀\\\" nope\",\"diagnostic\":{\"code\":\"FUTURE999\",\"severity\":\"warning\",\"message\":\"unrecognized\",\"start\":9,\"end\":13,\"hints\":[\"use :help\",\"line\\nbreak\"]}}}"
+  },
+  {
+    "accepted": true,
+    "kind": "journal",
+    "normalized": {
+      "record": "diagnostic",
+      "value": {
+        "at": "2026-09-10T12:00:00Z",
+        "cell": "cell-a",
+        "diagnostic": {
+          "code": "FUTURE999",
+          "end": 13,
+          "hints": [
+            "use :help",
+            "line\nbreak"
+          ],
+          "message": "unrecognized",
+          "severity": "info",
+          "start": 9
+        },
+        "id": "diagnostic-info",
+        "source": "say \"😀\" nope"
+      }
+    },
+    "source": "{\"record\":\"diagnostic\",\"value\":{\"id\":\"diagnostic-info\",\"at\":\"2026-09-10T12:00:00Z\",\"cell\":\"cell-a\",\"source\":\"say \\\"😀\\\" nope\",\"diagnostic\":{\"code\":\"FUTURE999\",\"severity\":\"info\",\"message\":\"unrecognized\",\"start\":9,\"end\":13,\"hints\":[\"use :help\",\"line\\nbreak\"]}}}"
+  },
+  {
+    "accepted": true,
+    "kind": "recovery",
+    "normalized": {
+      "cell": "cell-a",
+      "record": "accepted"
+    },
+    "source": "{\"record\":\"accepted\",\"cell\":\"cell-a\"}"
+  },
+  {
+    "accepted": true,
+    "kind": "recovery",
+    "normalized": {
+      "at": "2026-09-10T12:00:00Z",
+      "capability": "catalog create",
+      "cell": "cell-a",
+      "node": "id1000",
+      "record": "calling",
+      "safe": false
+    },
+    "source": "{\"record\":\"calling\",\"node\":\"id1000\",\"cell\":\"cell-a\",\"capability\":\"catalog create\",\"safe\":false,\"at\":\"2026-09-10T12:00:00Z\"}"
+  },
+  {
+    "accepted": true,
+    "kind": "recovery",
+    "normalized": {
+      "node": "id1000",
+      "produced": true,
+      "record": "called"
+    },
+    "source": "{\"record\":\"called\",\"node\":\"id1000\",\"produced\":true}"
+  },
+  {
+    "accepted": true,
+    "kind": "recovery",
+    "normalized": {
+      "node": "id1000",
+      "produced": false,
+      "record": "called"
+    },
+    "source": "{\"record\":\"called\",\"node\":\"id1000\",\"produced\":false}"
+  }
+]

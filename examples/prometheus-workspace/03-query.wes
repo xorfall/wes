@@ -1,0 +1,1 @@
+prom query query:"sum by (service) (rate(wes_demo_requests_total[5m]))" > response

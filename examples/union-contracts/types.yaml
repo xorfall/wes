@@ -1,0 +1,18 @@
+version: 1
+types:
+  TextTag: {base: Text, enum: [text]}
+  CountTag: {base: Text, enum: [count]}
+  Positive: {base: Int, min: 1}
+  TextBlock:
+    base: Record
+    fields:
+      kind: TextTag
+      text: Text
+      note: {type: 'Option<Text>', optional: true}
+  CountBlock:
+    base: Record
+    fields:
+      kind: CountTag
+      count: Positive
+  Block: {base: 'Union<TextBlock, CountBlock>'}
+  Content: {base: 'Union<Text, List<Block>>'}

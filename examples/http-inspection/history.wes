@@ -1,0 +1,3 @@
+@trace(http) sensor history > readings
+:calc pure { return $readings.body; } > reading_table
+:calc pure { return {view: "line", x: "time", y: "reading", points: $readings.body.map(row => { return {x: text(row.time), y: decimal(row.reading)}; }), dropped: 0}; } > reading_chart

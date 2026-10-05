@@ -1,0 +1,5 @@
+:package load path:types.yaml
+pg run args:"-XAtcSELECT COALESCE(json_agg(p ORDER BY p.id), '[]'::json) FROM (SELECT id, name, category, price, stock, active FROM public.products ORDER BY id LIMIT 100) p;" > products_raw
+:calc {
+  return parseJson(text($products_raw.stdout), "List<DemoProduct>");
+} > products

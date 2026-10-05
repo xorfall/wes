@@ -1,0 +1,7 @@
+:help calc
+:calc pure { return httpCatalogue("statuses"); } > status_catalogue
+:calc pure { return $status_catalogue; } > status_table
+:calc pure { return httpCatalogue("errors"); } > error_catalogue
+:calc pure { return $error_catalogue; } > error_table
+:calc pure { return httpStatus("499"); } > extension_status
+:calc pure { return httpError("ENV021"); } > unknown_error

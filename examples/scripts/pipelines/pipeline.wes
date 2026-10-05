@@ -1,0 +1,3 @@
+:calc { return {message: "pipe-ok"}; } > request
+| echo run args:input.message > response *> processError
+| :calc { return {exitCode: input.exitCode, stdout: text(input.stdout)}; } > result *> decodeError

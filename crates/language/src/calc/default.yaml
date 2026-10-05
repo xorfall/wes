@@ -1,0 +1,93 @@
+version: 1
+lexical: {identifier: unicode, strings: quoted, comments: slash, numbers: exact}
+statements:
+  const: binding
+  let: binding-mut
+  function: function
+  if: if
+  else: else
+  while: while
+  for: for
+  of: of
+  return: return
+  break: break
+  continue: continue
+operators:
+  "||": {operation: or, precedence: 1}
+  "&&": {operation: and, precedence: 2}
+  "==": {operation: eq, precedence: 3}
+  "!=": {operation: ne, precedence: 3}
+  "<": {operation: lt, precedence: 4}
+  "<=": {operation: le, precedence: 4}
+  ">": {operation: gt, precedence: 4}
+  ">=": {operation: ge, precedence: 4}
+  "+": {operation: add, precedence: 5}
+  "-": {operation: sub, precedence: 5}
+  "*": {operation: mul, precedence: 6}
+  "/": {operation: divide, precedence: 6}
+operations:
+  instant: {operation: instant, min: 1, max: 1}
+  duration: {operation: duration, min: 1, max: 1}
+  interval: {operation: interval, min: 2, max: 2}
+  around: {operation: around, min: 2, max: 2}
+  fromEpochSeconds: {operation: fromEpochSeconds, min: 1, max: 1}
+  fromEpochMillis: {operation: fromEpochMillis, min: 1, max: 1}
+  fromEpochNanos: {operation: fromEpochNanos, min: 1, max: 1}
+  toEpochSeconds: {operation: toEpochSeconds, min: 1, max: 1}
+  toEpochMillis: {operation: toEpochMillis, min: 1, max: 1}
+  toEpochNanos: {operation: toEpochNanos, min: 1, max: 1}
+  durationSeconds: {operation: durationSeconds, min: 1, max: 1}
+  durationMillis: {operation: durationMillis, min: 1, max: 1}
+  durationNanos: {operation: durationNanos, min: 1, max: 1}
+  toSeconds: {operation: toSeconds, min: 1, max: 1}
+  toMillis: {operation: toMillis, min: 1, max: 1}
+  toNanos: {operation: toNanos, min: 1, max: 1}
+  utcParts: {operation: utcParts, min: 1, max: 1}
+
+  some: {operation: some, min: 1, max: 1}
+  isSome: {operation: is-some, min: 1, max: 1}
+  unwrapOr: {operation: unwrap-or, min: 2, max: 2}
+  has: {operation: has, min: 2, max: 2}
+  length: {operation: length, min: 1, max: 1}
+  keys: {operation: keys, min: 1, max: 1}
+  map: {operation: map, min: 2, max: 2}
+  filter: {operation: filter, min: 2, max: 2}
+  reduce: {operation: reduce, min: 3, max: 3}
+  join: {operation: join, min: 2, max: 2}
+  withFields: {operation: with-fields, min: 2, max: 2}
+  slice: {operation: slice, min: 2, max: 3}
+  concat: {operation: concat, min: 2, max: 2}
+  sortBy: {operation: sort-by, min: 2, max: 2}
+  range: {operation: range, min: 1, max: 3}
+  decimal: {operation: decimal, min: 1, max: 1}
+  int: {operation: int, min: 1, max: 1}
+  text: {operation: text, min: 1, max: 1}
+  div: {operation: div, min: 2, max: 2}
+  rem: {operation: rem, min: 2, max: 2}
+  roundDiv: {operation: round-div, min: 3, max: 3}
+  httpStatus: {operation: http-status, min: 1, max: 1}
+  httpError: {operation: http-error, min: 1, max: 1}
+  httpCatalogue: {operation: http-catalogue, min: 1, max: 1}
+  httpAnalysis: {operation: http-analysis, min: 1, max: 1}
+  parseJson: {operation: parse-json, min: 1, max: 2}
+  check: {operation: check, min: 2, max: 2}
+  call: {operation: call, min: 3, max: 3}
+  iter.items: {operation: iter-items, min: 1, max: 1}
+  iter.lines: {operation: iter-lines, min: 1, max: 1}
+  iter.chars: {operation: iter-chars, min: 1, max: 1}
+  iter.words: {operation: iter-words, min: 1, max: 1}
+  iter.split: {operation: iter-split, min: 2, max: 2}
+  iter.regexSplit: {operation: iter-regex-split, min: 2, max: 2}
+  iter.captures: {operation: iter-captures, min: 2, max: 2}
+  iter.matches: {operation: iter-matches, min: 2, max: 2}
+  iter.keys: {operation: iter-keys, min: 1, max: 1}
+  iter.values: {operation: iter-values, min: 1, max: 1}
+  iter.entries: {operation: iter-entries, min: 1, max: 1}
+  iter.jsonLines: {operation: iter-json-lines, min: 1, max: 1}
+  iter.use: {operation: iter-use, min: 2, max: 2}
+  iter.checked: {operation: iter-checked, min: 2, max: 2}
+  take: {operation: take, min: 2, max: 2}
+  skip: {operation: skip, min: 2, max: 2}
+  collect: {operation: collect, min: 1, max: 1}
+  count: {operation: count, min: 1, max: 1}
+  field: {operation: field, min: 2, max: 2}

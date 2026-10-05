@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 0'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Test impact plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      plan: ${{ steps.impact.outputs.plan }}
+      client: ${{ steps.impact.outputs.client }}
+      engine: ${{ steps.impact.outputs.engine }}
+      gui: ${{ steps.impact.outputs.gui }}
+      extractor: ${{ steps.impact.outputs.extractor }}
+      rust: ${{ steps.impact.outputs.rust }}
+      compiler: ${{ steps.impact.outputs.compiler }}
+      examples: ${{ steps.impact.outputs.examples }}
+      desktop: ${{ steps.impact.outputs.desktop }}
+      go_build: ${{ steps.impact.outputs.go_build }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Verify the selector and policy
+        run: python3 -m unittest discover -s tools/ci -p 'test_*.py'
+      - name: Select affected suites
+        id: impact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/impact.py --github --github-output "$GITHUB_OUTPUT"
+
+  client-and-extractor:
+    name: GUI and extractor
+    needs: plan
+    if: needs.plan.outputs.client == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TEST_PLAN: ${{ needs.plan.outputs.plan }}
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        if: needs.plan.outputs.gui == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: needs.plan.outputs.extractor == 'true'
+        with:
+          go-version-file: tools/describe/go.mod
+          cache-dependency-path: tools/describe/go.sum
+      - name: Load the pinned Rust toolchain
+        if: needs.plan.outputs.gui == 'true'
+        run: cargo --version
+      - run: npm ci
+        if: needs.plan.outputs.gui == 'true'
+      - name: Selected client checks
+        if: needs.plan.outputs.gui == 'true'
+        run: python3 tools/ci/run.py gui --plan-env TEST_PLAN
+      - name: Selected extractor checks
+        if: needs.plan.outputs.extractor == 'true'
+        run: python3 tools/ci/run.py extractor --plan-env TEST_PLAN
+
+  engine-and-examples:
+    name: Rust workspace and offline examples (macOS)
+    needs: plan
+    if: needs.plan.outputs.engine == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      TEST_PLAN: ${{ needs.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: needs.plan.outputs.go_build == 'true'
+        with:
+          go-version-file: tools/describe/go.mod
+          cache-dependency-path: tools/describe/go.sum
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Load the pinned Rust toolchain
+        run: cargo --version
+      - run: npm ci
+      - name: Build the extractor
+        if: needs.plan.outputs.go_build == 'true'
+        working-directory: tools/describe
+        run: go build -o wes-extract ./cmd/extract
+      - run: npm run build
+        if: needs.plan.outputs.desktop == 'true' || needs.plan.outputs.examples == 'true'
+      - name: Rust formatting
+        if: needs.plan.outputs.rust == 'true'
+        run: cargo fmt --all --check
+      - name: Selected Rust packages
+        if: needs.plan.outputs.rust == 'true'
+        run: python3 tools/ci/run.py rust --plan-env TEST_PLAN
+      - name: Build CLI and native view validator
+        if: needs.plan.outputs.compiler == 'true' || needs.plan.outputs.examples == 'true'
+        run: cargo build -p wes -p wes-views --bin wes --bin wes-view-build --locked
+      - name: Independent view compiler tests
+        if: needs.plan.outputs.compiler == 'true'
+        env:
+          WES_VIEW_CONTRACT_TOOL: ${{ github.workspace }}/target/debug/wes-view-build
+        run: python3 tools/ci/run.py compiler --plan-env TEST_PLAN
+      - name: Offline examples with isolated homes and synthetic services
+        if: needs.plan.outputs.examples == 'true'
+        run: python3 tools/ci/run.py examples --plan-env TEST_PLAN
+
+  result:
+    name: CI result
+    needs: [plan, client-and-extractor, engine-and-examples]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Require every selected job to succeed
+        env:
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: python3 tools/ci/check.py

@@ -1,0 +1,8 @@
+types:
+  ShortLine: {base: Text, maxLength: 3}
+  Lines: {base: 'Iter<ShortLine>'}
+iterators:
+  shortLines:
+    input: Text
+    output: 'Iter<ShortLine>'
+    mode: lines

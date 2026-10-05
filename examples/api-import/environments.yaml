@@ -1,0 +1,12 @@
+version: 1
+package: api-import-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      inventory:
+        source: {kind: spec, file: inventory.json}
+        bind:
+          target: local
+          endpoint: http://127.0.0.1:8765/v1

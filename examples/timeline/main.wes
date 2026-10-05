@@ -1,0 +1,23 @@
+telemetry metrics > metric_response
+telemetry events > event_response
+:calc {
+  const window = interval(instant("2030-06-15T08:00:00Z"), instant("2030-06-15T08:10:00Z"));
+  const samples = $metric_response.body.samples.map(row => {
+    return {id: text(row.sequence), at: fromEpochSeconds(row.timestamp), value: decimal(row.value), gap: !row.available};
+  }).filter(row => row.at >= window.start && row.at < window.end);
+  const events = $event_response.body.events.map(row => {
+    return {id: row.id, at: instant(row.time), label: row.label, detail: row.detail};
+  }).filter(row => row.at >= window.start && row.at < window.end);
+  const metric = {view: "timeline", id: "requests", title: "Request rate", range: window, coverage: window, omitted: 0, sourceError: "", series: [{id: "rate", label: "requests", unit: "/s", samples: samples}], events: []};
+  const activity = {view: "timeline", id: "releases", title: "Release events", range: window, coverage: window, omitted: 0, sourceError: "", series: [], events: events};
+  return {metric: metric, activity: activity, layout: {view: "timeline-group", title: "Service activity", range: window}};
+} > activity
+:calc { return $activity.metric; } > requestData
+:calc { return $activity.activity; } > eventData
+:calc { return $activity.layout; } > layout
+:view create Timeline input:$requestData > requests
+:view create Timeline input:$eventData > releases
+:view create TimelineGroup input:$layout > group
+:view connect $requests to:$group
+:view connect $releases to:$group
+:inspect $group > groupInfo

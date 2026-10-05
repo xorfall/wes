@@ -1,0 +1,12 @@
+version: 1
+name: HTTP statuses are response data
+steps:
+  - name: Missing resource
+    run: 'http request url:"http://127.0.0.1:8766/orders/999999" > response'
+    expect:
+      - {name: Expected HTTP status, condition: '$response.status == 404'}
+      - {name: Expected JSON body, condition: '$response.body.error == "missing"'}
+  - name: Invalid request
+    run: 'http request method:POST url:"http://127.0.0.1:8766/invalid" > rejected'
+    expect:
+      - {name: Expected validation status, condition: '$rejected.status == 422'}

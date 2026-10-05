@@ -1,0 +1,18 @@
+# A presentation entry for the Docker provider's stats samples.
+# Copy into <data home>/presentations/ to use it.
+version: 1
+type: DockerStatsSample
+applies: [record, list]
+fields:
+  sequence: Int
+  timestamp_ns: Option<Int>
+  cpu_percent: Option<Decimal>
+  memory_usage_bytes: Option<Int>
+  memory_percent: Option<Decimal>
+  online_cpus: Option<Int>
+present:
+  kind: table
+  columns: [sequence, timestamp_ns, cpu_percent, memory_usage_bytes, memory_percent, online_cpus]
+  formats:
+    timestamp_ns: {kind: time, unit: ns, epoch: unix}
+    memory_usage_bytes: size

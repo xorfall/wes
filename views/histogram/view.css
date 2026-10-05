@@ -1,0 +1,8 @@
+.histogram { margin:0; padding:var(--space-md); min-width:0; }
+.histogram figcaption { display:flex; flex-wrap:wrap; gap:calc(var(--space-md) * .75); align-items:baseline; }
+.histogram svg { width:100%; height:220px; }
+.histogram rect { fill:var(--primary); opacity:.75; }
+.histogram text { fill:var(--muted); font:12px var(--type-mono-family); }
+.histogram table { width:100%; border-collapse:collapse; }
+.histogram th { text-align:left; }
+.histogram th,.histogram td { padding:6px; border-bottom:1px solid var(--line); }

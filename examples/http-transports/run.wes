@@ -1,0 +1,3 @@
+@env{internal} http request url:"http://127.0.0.1:18947/health" > internal_health
+@env{external} http request url:"http://127.0.0.1:18947/health" > curl_health
+:calc { return {internal: $internal_health.status, curl: $curl_health.status}; } > health

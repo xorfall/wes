@@ -1,0 +1,9 @@
+:calc { return ["red", "blue"]; } > rawTags
+:type check $rawTags as:"List<Text>" > tags
+inventory getItem id:"a/b" tag:$tags limit:2 X_Request_Id:"demo" > item
+:package load path:item-types.yaml
+:type check $item.body as:ItemBody > itemBody
+inventory putItem id:"a/b" body:$itemBody > updated
+:type check $updated.body.id as:Text > updatedId
+inventory deleteItem id:$updatedId > removed
+:calc { return {name: $updated.body.name, hasNote: isSome($updated.body.note), removed: !isSome($removed.body)}; } > report

@@ -1,0 +1,1 @@
+events watch | probe take value:input > result

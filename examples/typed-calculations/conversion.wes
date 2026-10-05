@@ -1,0 +1,9 @@
+:def totals(input: List<Int>, rate: Int) -> List<Int> as :calc pure {
+  return input.filter(n => n > 1).map(n => n * rate);
+}
+:calc { return [1, 2, 3]; } > source
+totals input:$source rate:10 > direct
+$source | totals rate:10 > piped
+$source | totals input:input rate:10 > explicitPipe
+:inspect template:totals > definition
+:inspect $piped > calculation

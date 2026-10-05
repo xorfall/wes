@@ -1,0 +1,3 @@
+.task-board { padding: var(--space-md); }
+.task-board h3 { margin: 0 0 var(--space-sm); }
+.task-board button { margin: 0 var(--space-sm) var(--space-sm) 0; }

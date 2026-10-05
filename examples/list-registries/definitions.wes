@@ -1,0 +1,1 @@
+:def Summary(input: Text, title: Text) -> Text as :calc pure { return title + ": " + input; }

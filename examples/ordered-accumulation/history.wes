@@ -1,0 +1,2 @@
+:def doubled(input: Int) -> Int as :calc pure { return input * 2; }
+events watch | doubled | :accumulate limit:3 overflow:drop-oldest > history

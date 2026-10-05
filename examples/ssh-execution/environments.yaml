@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "targets": {
+    "remote": {
+      "kind": "ssh",
+      "client": "/usr/bin/ssh",
+      "host": "127.0.0.1",
+      "port": 2222,
+      "user": "example",
+      "identity_file": "/absolute/path/to/identity",
+      "known_hosts": "/absolute/path/to/known_hosts",
+      "shell": "posix",
+      "inherit": "remote",
+      "cwd": "/tmp",
+      "env": {"WES_EXAMPLE": "literal '$HOME; value"}
+    }
+  },
+  "environments": {
+    "ssh_demo": {
+      "imports": {
+        "echo": {"source": {"kind": "process", "bin": "/bin/echo"}, "bind": {"target": "remote", "timeout_ms": 10000}},
+        "vars": {"source": {"kind": "process", "bin": "/usr/bin/printenv"}, "bind": {"target": "remote", "timeout_ms": 10000}},
+        "pwd": {"source": {"kind": "process", "bin": "/bin/pwd"}, "bind": {"target": "remote", "timeout_ms": 10000}}
+      }
+    }
+  }
+}

@@ -1,0 +1,45 @@
+.timeline-group{min-width:0;width:100%;padding:var(--space-sm);font:var(--type-sans-size)/var(--type-sans-leading) var(--type-sans-family);color:var(--on-surface);overflow:hidden}
+.timeline-group button{font:12px/1 var(--type-mono-family);color:var(--on-surface);background:var(--surface);border:var(--stroke-thin) solid var(--line);border-radius:var(--radius-sm);height:24px;min-width:24px;padding:0 8px;cursor:pointer;white-space:nowrap}
+.timeline-group button:hover:not(:disabled){background:var(--surface-variant)}
+.timeline-group button:disabled{opacity:.45;cursor:default}
+.timeline-group :focus-visible{outline:1px solid var(--primary);outline-offset:1px}
+.timeline-group .timeline-glyph{width:24px;padding:0}
+
+.timeline-group-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px var(--space-sm);min-height:32px;min-width:0}
+.timeline-group-head h2{flex:1 1 16ch;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.timeline-group .timeline-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
+.timeline-group-overview{display:flex;flex-wrap:wrap;gap:0 var(--space-md);margin:0 0 4px;font:12px/20px var(--type-mono-family);color:var(--muted)}
+.timeline-group-overview span{min-width:0;overflow-wrap:anywhere}
+
+.timeline-tracks{min-width:0;max-height:720px;overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;border-top:var(--stroke-thin) solid var(--line)}
+
+.timeline-group-axis{padding-left:14px;min-width:0;border-top:var(--stroke-thin) solid var(--line)}
+.timeline-axis{display:block;width:100%;overflow:hidden}
+.timeline-axis text{font:11px var(--type-mono-family);fill:var(--muted)}
+.timeline-axis-rule{stroke:var(--line);stroke-width:1;shape-rendering:crispEdges}
+.timeline-axis-selection{fill:color-mix(in srgb,var(--primary) 12%,transparent)}
+.timeline-axis-cursor{stroke:var(--muted);stroke-width:1}
+.timeline-axis-guide{stroke:var(--primary);stroke-width:1.5;stroke-dasharray:4 3}
+/* Two reserved lines so cursor, selection and picked text never move the plots; longer text scrolls here. */
+.timeline-group-readout{margin:0;height:40px;overflow-y:auto;overscroll-behavior:contain;font:12px/20px var(--type-mono-family);color:var(--muted);overflow-wrap:anywhere}
+.timeline-group-empty{margin:var(--space-sm) 0}
+.timeline-source-controls{display:flex;align-items:center;flex-wrap:wrap;gap:4px;min-height:28px;margin-bottom:4px;font:12px var(--type-mono-family);color:var(--muted)}
+.timeline-source-control{display:inline-flex;align-items:center;gap:1px}
+/* Expanded and window: one wrapping row holds source controls, count and viewport. */
+.timeline-group-bar{display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-md);min-height:28px;margin-bottom:4px;min-width:0}
+.timeline-group-bar .timeline-source-controls{margin-bottom:0}
+.timeline-group-bar .timeline-group-overview{margin:0;min-width:0}
+.timeline-source-controls button[aria-pressed=true]{color:var(--primary);background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.timeline-tracks>[hidden]{display:none}
+.timeline-group-preview .timeline-tracks{max-height:100px;border-top:0;box-shadow:inset 0 var(--stroke-thin) 0 var(--line)}
+.timeline-group-preview .timeline-toolbar .timeline-range{display:none}
+.timeline-group-preview .timeline-group-readout{display:none}
+
+.timeline-group-preview .timeline-group-overview{display:none}
+.timeline-preview-count{font:12px var(--type-mono-family);color:var(--muted);white-space:nowrap}
+
+.timeline-tracks>div {position:relative;padding-left:14px}
+.timeline-source-number {position:absolute;top:5px;left:0;width:12px;font:11px var(--type-mono-family);color:var(--muted);z-index:3;background:var(--surface)}
+.timeline-group-preview {padding:4px}
+.timeline-group-preview .timeline-tracks>div {height:25px;overflow:hidden}
+.timeline-group-preview .timeline-tracks>[hidden] {display:none}

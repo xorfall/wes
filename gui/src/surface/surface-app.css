@@ -1,0 +1,70 @@
+/*
+ * The surface as the client's whole window: the session or a screen, and the one line the caret is
+ * actually in beneath it.
+ */
+.wes-terminal.surface-app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  background-color: var(--ground);
+}
+.wes-terminal.surface-app > :first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/*
+ * The real input, sitting under the drawn prompt.
+ *
+ * It is a line the browser owns, so the caret can be placed with a mouse, moved with a word key and
+ * read by anything assistive; the drawn line above it is what the colours are for. One pixel tall
+ * and transparent rather than hidden, because a field with `display: none` takes no keys.
+ */
+.wes-terminal .surface-prompt-input {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 0 var(--page-gutter);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  outline: none;
+  font: inherit;
+}
+
+.wes-terminal .surface-trouble {
+  flex: 0 0 auto;
+  padding: 0 var(--page-gutter) var(--space-sm);
+}
+
+.wes-terminal .surface-draft-notice,
+.wes-terminal .surface-repeat-question {
+  flex: 0 0 auto;
+  padding: var(--space-xs) var(--page-gutter);
+}
+.wes-terminal .surface-draft-notice .cell-action,
+.wes-terminal .surface-repeat-question .cell-action,
+.wes-terminal .result-read-status .cell-action,
+.wes-terminal .interactive-response .cell-action {
+  margin-right: var(--space-sm);
+}
+
+/* Focus is saved on every pane switch. Save feedback must never shrink the workspace
+   and resize every terminal while a write is in flight (or when a write fails). */
+.wes-terminal .surface-save-status {
+  position: absolute;
+  right: var(--page-gutter);
+  bottom: var(--space-xs);
+  max-width: calc(100% - 2 * var(--page-gutter));
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--ground);
+  color: var(--mono-dim);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  z-index: 2;
+}
+.wes-terminal .surface-save-status:empty { display: none; }
+.wes-terminal .surface-save-status[data-error="true"] { color: var(--mono-bad); }

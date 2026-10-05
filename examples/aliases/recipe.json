@@ -1,0 +1,12 @@
+{
+  "define": [
+    "/alias twice = :calc { return 2 * (_); }",
+    "/alias ls = sh run cmd:\"ls _\"",
+    "/alias nodes = :list nodes"
+  ],
+  "cases": [
+    {"input": "twice 21", "expanded": ":calc { return 2 * (21); }"},
+    {"input": "ls -AlFh | head -n 5", "expanded": "sh run cmd:\"ls -AlFh | head -n 5\""},
+    {"input": "nodes", "expanded": ":list nodes"}
+  ]
+}

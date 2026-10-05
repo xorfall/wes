@@ -1,0 +1,12 @@
+version: 1
+package: api-import-failure-lesson
+targets:
+  local: {kind: local}
+environments:
+  lesson:
+    imports:
+      failures:
+        source: {kind: spec, file: failures.json}
+        bind:
+          target: local
+          endpoint: http://127.0.0.1:8765/v1

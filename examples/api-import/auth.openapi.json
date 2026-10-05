@@ -1,0 +1,20 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Synthetic credential lesson", "version": "1"},
+  "components": {
+    "securitySchemes": {"DemoToken": {"type": "http", "scheme": "bearer"}}
+  },
+  "paths": {
+    "/secure": {
+      "get": {
+        "operationId": "secure",
+        "security": [{"DemoToken": []}],
+        "responses": {
+          "200": {"description": "Private fixture", "content": {"application/json": {"schema": {
+            "type": "object", "required": ["message"], "properties": {"message": {"type": "string"}}
+          }}}}
+        }
+      }
+    }
+  }
+}

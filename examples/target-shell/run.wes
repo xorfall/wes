@@ -1,0 +1,3 @@
+:env use "qa"
+sh run cmd:"printf '%s\\n' \"$QA_REMOTE\"; printf '%s' \"quote's; literal\"" timeout:PT2S > shell_result
+:calc { return { exit: $shell_result.exitCode, text: text($shell_result.stdout) }; } > summary

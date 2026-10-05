@@ -1,0 +1,84 @@
+version: 1
+types:
+  MonitorRequest:
+    base: Record
+    fields: {seq: Int, second: Text, route: Text, durationMs: Int, status: Int}
+  MonitorHealth:
+    base: Record
+    fields: {state: Text, count: Int, errors: Int, errorPercent: Decimal, meanMs: Decimal, maxMs: Int, last: Int}
+  Table:
+    base: Record
+    fields: {view: Text, columns: 'List<Text>', rows: 'List<List<Text>>'}
+  MetricKind: {base: Text, enum: [metric]}
+  MetricText: {base: Text, maxLength: 256}
+  Metric:
+    base: Record
+    fields:
+      view: MetricKind
+      value: 'Union<Int, Decimal>'
+      label: {type: MetricText, optional: true}
+      unit: {type: MetricText, optional: true}
+      status: {type: MetricText, optional: true}
+  HistogramKind: {base: Text, enum: [histogram]}
+  HistogramCount: {base: Int, min: 0}
+  HistogramBin:
+    base: Record
+    fields: {lower: 'Union<Int, Decimal>', upper: 'Union<Int, Decimal>', count: HistogramCount}
+  HistogramBins: {base: 'List<HistogramBin>', maxItems: 200}
+  Histogram:
+    base: Record
+    fields: {view: HistogramKind, bins: HistogramBins, total: HistogramCount}
+  TimelineKind: {base: Text, enum: [timeline]}
+  TimelineGroupKind: {base: Text, enum: [timeline-group]}
+  TimelineKey: {base: Text, minLength: 1, maxLength: 128}
+  TimelineText: {base: Text, maxLength: 2048}
+  TimelineSample:
+    base: Record
+    fields: {id: TimelineKey, at: Instant, value: 'Union<Int, Decimal>', gap: Bool}
+  TimelineSeries:
+    base: Record
+    fields: {id: TimelineKey, label: TimelineText, unit: TimelineText, samples: 'List<TimelineSample>'}
+  TimelineEvent:
+    base: Record
+    fields: {id: TimelineKey, at: Instant, label: TimelineText, detail: TimelineText}
+  Timeline:
+    base: Record
+    fields:
+      view: TimelineKind
+      id: TimelineKey
+      title: TimelineText
+      range: Interval
+      coverage: Interval
+      omitted: Int
+      sourceError: TimelineText
+      series: 'List<TimelineSeries>'
+      events: 'List<TimelineEvent>'
+  TimelineGroup:
+    base: Record
+    fields: {view: TimelineGroupKind, title: TimelineText, range: Interval}
+  TimeRange:
+    base: Record
+    fields: {start: Instant, end: Instant}
+  TimelineItem:
+    base: Record
+    fields: {source: Text, series: Text, id: Text, at: Instant, value: Text}
+  TimeState:
+    base: Record
+    fields: {viewport: TimeRange, cursor: 'Option<Instant>', selection: 'Option<TimeRange>', draft: 'Option<TimeRange>', selectedItem: 'Option<TimelineItem>'}
+  CursorKind: {base: Text, enum: [cursor]}
+  ViewportKind: {base: Text, enum: [viewport]}
+  SelectionKind: {base: Text, enum: [selection, selection-preview]}
+  ItemKind: {base: Text, enum: [item]}
+  CursorEvent:
+    base: Record
+    fields: {kind: CursorKind, at: 'Option<Instant>'}
+  ViewportEvent:
+    base: Record
+    fields: {kind: ViewportKind, range: TimeRange}
+  SelectionEvent:
+    base: Record
+    fields: {kind: SelectionKind, range: 'Option<TimeRange>'}
+  ItemEvent:
+    base: Record
+    fields: {kind: ItemKind, item: 'Option<TimelineItem>'}
+  TimeEvent: {base: 'Union<CursorEvent, Union<ViewportEvent, Union<SelectionEvent, ItemEvent>>>'}

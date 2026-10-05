@@ -1,0 +1,68 @@
+version = 1
+# Unknown paths also select everything. These inputs can change the test graph,
+# dependency resolution, build environment, or the selector itself.
+full = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/build.rs", "rust-toolchain.toml", ".cargo/**", ".github/**", "ci/**", "tools/ci/**", "**/package.json", "package.json", "package-lock.json", "**/go.mod", "**/go.sum", "docs/testing.md", "AGENTS.md", ".gitignore"]
+documentation = ["README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "CONTRIBUTING.md", "docs/**", "**/LICENSE"]
+
+[suites.gui]
+rust_inputs = ["wes-core", "wes-views", "wes-budgets"]
+[suites.extractor]
+rust_inputs = ["wes-core"]
+[suites.compiler]
+rust_inputs = ["wes-core", "wes-views"]
+[suites.examples]
+rust_inputs = ["wes"]
+
+[[rules]]
+name = "client and desktop resources"
+paths = ["gui/**", "tools/view-dev/**"]
+rust = ["wes-desktop"]
+suites = ["gui"]
+
+[[rules]]
+name = "terminal input exercised by application integration tests"
+paths = ["gui/src/terminal-input.ts"]
+rust = ["wes"]
+suites = ["gui"]
+
+[[rules]]
+name = "application stream fixtures consumed by GUI tests"
+paths = ["crates/app/tests/fixtures/**"]
+rust = []
+suites = ["gui"]
+
+[[rules]]
+name = "engine transport consumed by the client"
+paths = ["crates/app/src/web/**", "crates/app/src/protocol.rs", "crates/app/src/web.rs"]
+rust = []
+suites = ["gui"]
+
+[[rules]]
+name = "extractor integration"
+paths = ["tools/describe/**"]
+rust = ["wes"]
+suites = ["extractor", "examples"]
+
+[[rules]]
+name = "view packages, SDK and compiler"
+paths = ["views/**", "packages/view-sdk/**", "tools/view-package/**", "tools/view-build.mjs"]
+rust = ["wes-views"]
+suites = ["gui", "compiler", "examples"]
+
+[[rules]]
+name = "shared operating budgets"
+paths = ["packages/budgets/**"]
+rust = ["wes-budgets"]
+suites = ["gui"]
+
+[[rules]]
+name = "shared acceptance fixtures"
+paths = ["tests/**"]
+rust = ["wes-core"]
+suites = ["gui", "extractor", "examples"]
+
+[[rules]]
+name = "examples imported by Rust, GUI and Go tests"
+paths = ["examples/**"]
+rust = ["wes-core", "wes-language", "wes-views", "wes-engine", "wes-adapters", "wes"]
+suites = ["gui", "extractor", "compiler", "examples"]

@@ -1,0 +1,14 @@
+types:
+  TaskBoard:
+    base: Record
+    fields:
+      title: Text
+      items: List<Text>
+  TaskState:
+    base: Record
+    fields:
+      selected: Text
+  TaskEvent:
+    base: Record
+    fields:
+      selected: Text

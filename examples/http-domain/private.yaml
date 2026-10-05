@@ -1,0 +1,17 @@
+version: 1
+name: Private domain results remain private
+steps:
+  - name: Private sample
+    run: '@trace(http) sensor sample > sample'
+  - name: Private trace
+    run: ':read trace:$sample > trace'
+  - name: Private analysis
+    run: ':calc pure { return httpAnalysis($trace); } > analysis'
+    expect:
+      - {name: Correct observed status, condition: '$analysis.statuses[0].code == 200'}
+  - name: Extract private status
+    run: ':calc { return $analysis.statuses[0].code; } > status'
+  - name: Private definition lookup
+    run: ':calc pure { return httpStatus($status); } > definition'
+    expect:
+      - {name: Correct classification, condition: '$definition.class == "success"'}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "provider": "demo",
+  "types": {},
+  "operations": [
+    {
+      "path": [
+        "read"
+      ],
+      "method": "GET",
+      "route": "/unused",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "200": "Int"
+      }
+    }
+  ]
+}

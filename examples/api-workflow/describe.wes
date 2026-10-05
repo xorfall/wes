@@ -1,0 +1,1 @@
+:describe url:"http://127.0.0.1:8771/openapi.json" provider:sensor_demo out:"sensor.generated.json"

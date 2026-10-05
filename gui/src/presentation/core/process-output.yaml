@@ -1,0 +1,10 @@
+# Core presentation shipped with the client. A data-home file with the same `type` overrides it.
+version: 1
+type: ProcessOutput
+applies: [record]
+fields:
+  exitCode: Int
+  stdout: Bytes
+  stderr: Bytes
+present:
+  kind: process

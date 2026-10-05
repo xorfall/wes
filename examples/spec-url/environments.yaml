@@ -1,0 +1,9 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      catalog:
+        source: {kind: spec, url: "http://127.0.0.1:8765/catalog.provider.json"}
+        bind: {target: local, endpoint: "https://example.invalid/api"}

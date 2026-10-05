@@ -1,0 +1,14 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  internal:
+    imports:
+      http:
+        source: {kind: builtin, name: http}
+        bind: {target: local, transport: internal}
+  external:
+    imports:
+      http:
+        source: {kind: builtin, name: http}
+        bind: {target: local, transport: curl}

@@ -1,0 +1,232 @@
+/*
+ * The grown prompt: a gutter and the lines beside it, on the same sunk strip the prompt sits on,
+ * because it is the prompt with more room and not a different thing.
+ *
+ * The drawn lines are the layout and the field lies over them (`.prompt-stack` in session.css), so
+ * the two can only ever be the same height. Nothing here is allowed to come between two lines: a
+ * row inserted there would push the drawing away from the text the caret is in. That is why the
+ * mistake rows are under the block, in the same column as the code, still pointing at the column.
+ */
+.wes-terminal .editor {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-sm) var(--page-gutter);
+  border-width: var(--stroke-thin) 0 0 0;
+  outline: none;
+}
+
+.wes-terminal .editor-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.wes-terminal .editor-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wes-terminal .editor-gutter {
+  flex: 0 0 auto;
+  user-select: none;
+  /* Twelve lines and then it scrolls, in step with the field that is doing the scrolling. */
+  max-height: calc(12 * var(--type-mono-size) * var(--type-mono-leading));
+  overflow: hidden;
+}
+
+.wes-terminal .editor-lines {
+  display: block;
+  max-height: calc(12 * var(--type-mono-size) * var(--type-mono-leading));
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* The mistake points at characters, so it keeps the code's own column and adds no offset. */
+.wes-terminal .editor-mistakes {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Beside the editor the code starts after the gutter, so the rows start there too (measured). */
+.wes-terminal .edit-card .editor-mistakes {
+  padding-left: var(--edit-gutter, 0px);
+}
+
+.wes-terminal .editor-completion,
+.wes-terminal .prompt-completion {
+  margin-bottom: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-width: var(--stroke-thin);
+}
+
+/*
+ * `/edit` — the screen the prompt hands a program to.
+ *
+ * The card holds the code and the rows that accuse it; the pane under it holds the bound node's own
+ * cell. Code and output scroll independently inside the screen body, so the head, the context
+ * line and the footer stay where the eye left them.
+ */
+/* The body is the screen's whole middle, so the card and the pane share what there is. */
+.wes-terminal .screen-body:has(> .edit-body) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.wes-terminal .edit-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+  flex: 1 1 auto;
+  padding-top: var(--space-sm);
+}
+
+.wes-terminal .edit-card {
+  padding: var(--space-sm) var(--space-md);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  min-height: 0;
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+}
+
+/* Carry the card's allocated height down to the one element that owns code scrolling.
+ * Clipping the card would hide reachable source and completion popups instead of
+ * fixing the mismatch between its flex height and the editor's intrinsic height. */
+.wes-terminal .edit-code,
+.wes-terminal .edit-code .cm-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.wes-terminal .edit-card .editor-mistakes {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 35%;
+  overflow: auto;
+}
+
+/*
+ * Ten lines at least, sixteen at most.
+ *
+ * At least, so a short program still leaves the completion list somewhere to open: a card as short
+ * as its one line would put the list over the diagnostic and the output pane. At most, so a long
+ * one scrolls inside itself rather than pushing the result off the screen. A short
+ * pane may allocate less height; the content minimum never becomes a viewport minimum.
+ */
+.wes-terminal .edit-code .cm-content {
+  min-height: calc(10 * var(--type-mono-size) * var(--type-mono-leading));
+}
+.wes-terminal .edit-code .cm-scroller {
+  min-height: 0;
+  overflow: auto;
+  max-height: calc(16 * var(--type-mono-size) * var(--type-mono-leading));
+}
+
+/* Outrank the Surface [class] reset so CodeMirror's managed caret stays visible. */
+.wes-terminal .cm-editor .cm-cursor,
+.wes-terminal .cm-editor .cm-dropCursor {
+  border-left: var(--stroke-thin) solid var(--mono-ref);
+}
+
+/* The gutter is the surface's own: a number, and a dot where a line is refused. */
+.wes-terminal .edit-code .cm-gutters {
+  user-select: none;
+}
+.wes-terminal .edit-code .cm-lineNumbers .cm-gutterElement {
+  min-width: 3ch;
+  padding: 0 0 0 var(--space-xs);
+}
+.wes-terminal .edit-code .cm-mistakes .cm-gutterElement {
+  min-width: 2ch;
+  text-align: center;
+}
+
+/*
+ * The completion popup, in the surface's own dress.
+ *
+ * CodeMirror places it under the caret's line and flips it above when there is no room below, which
+ * is what the prompt's own list does for the same reason: a list somewhere the caret cannot see is
+ * not an offer.
+ */
+.wes-terminal .calc-completion,
+.wes-terminal .cm-tooltip.calc-completion {
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  background-color: var(--ground);
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+}
+.wes-terminal .cm-tooltip.calc-completion ul li {
+  padding: 0 var(--space-sm);
+  color: var(--mono-dim);
+}
+.wes-terminal .cm-tooltip.calc-completion ul li[aria-selected] {
+  background-color: var(--sunk);
+  color: var(--mono-provider);
+}
+.wes-terminal .cm-tooltip.calc-completion .cm-completionDetail {
+  margin-left: var(--space-md);
+  color: var(--mono-faint);
+  font-style: normal;
+}
+.wes-terminal .cm-tooltip.calc-completion .calc-completion-source {
+  padding: var(--space-xs) var(--space-sm);
+  border-top: var(--stroke-thin) solid var(--line);
+  color: var(--mono-faint);
+}
+
+.wes-terminal .edit-output-head,
+.wes-terminal .edit-context {
+  flex: 0 0 auto;
+}
+.wes-terminal .edit-output {
+  /* Result length must not shrink the source card through an intrinsic flex basis. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* `/edit env|types|views`'s own head: a name for the file and the one action it offers. */
+.wes-terminal .environment-documents { display: grid; gap: var(--space-sm); padding: var(--space-md); }
+.wes-terminal .environment-document { display: flex; flex-wrap: wrap; gap: var(--space-md); padding: var(--space-sm); text-align: left; cursor: pointer; font: inherit; background: var(--ground); border: var(--stroke-thin) solid var(--line); }
+.wes-terminal .environment-document:focus-visible, .wes-terminal .environment-document:hover { border-color: var(--mono-ref); }
+.wes-terminal .edit-file-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.wes-terminal .edit-file-name {
+  box-sizing: border-box;
+  width: 22ch;
+  font: inherit;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  color: var(--mono-ink);
+  background: transparent;
+  border: 0;
+  border-bottom: var(--stroke-thin) solid var(--line);
+  padding: 0 0 2px;
+}
+.wes-terminal .edit-file-name::placeholder {
+  color: var(--mono-faint);
+}
+.wes-terminal .edit-file-status {
+  flex: 0 0 auto;
+}
+.wes-terminal .edit-run-status {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  max-height: 35vh;
+  flex: 0 1 auto;
+}

@@ -1,0 +1,5 @@
+Non-persistent creation fixture
+POST /items accepts no parameters and previews an item creation.
+Success uses status 201 and media type application/json.
+Observed payload: {"id":29,"name":"CRATE-E"}
+The operation changes no server state; its result is a simulation.

@@ -1,0 +1,21 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Synthetic map responses", "version": "1"},
+  "components": {"schemas": {
+    "Rates": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+    "Quote": {"type": "object", "required": ["base", "rates"], "properties": {
+      "base": {"type": "string"}, "rates": {"$ref": "#/components/schemas/Rates"}
+    }}
+  }},
+  "paths": {
+    "/rates": {"get": {"operationId": "rates", "security": [], "responses": {
+      "200": {"description": "Dynamic rate keys", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Rates"}}}}
+    }}},
+    "/quote": {"get": {"operationId": "quote", "security": [], "responses": {
+      "200": {"description": "Nested rate map", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Quote"}}}}
+    }}},
+    "/rates-invalid": {"get": {"operationId": "invalidRates", "security": [], "responses": {
+      "200": {"description": "Intentionally invalid fixture response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Rates"}}}}
+    }}}
+  }
+}

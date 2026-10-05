@@ -1,0 +1,15 @@
+version: 1
+package: assistant-example
+targets:
+  assistant_local: {kind: local}
+environments:
+  assistant_demo:
+    imports:
+      sensor:
+        source: {kind: spec, file: ../api-workflow/sensor.json}
+        bind: {target: assistant_local, endpoint: http://127.0.0.1:8771}
+  assistant_private:
+    imports:
+      sensor:
+        source: {kind: spec, file: ../api-workflow/sensor.json}
+        bind: {target: assistant_local, endpoint: http://127.0.0.1:8771, output: private}

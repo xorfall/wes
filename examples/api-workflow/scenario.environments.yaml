@@ -1,0 +1,12 @@
+version: 1
+package: sensor-walkthrough
+targets:
+  sensor_demo_local: {kind: local}
+environments:
+  sensor_demo:
+    imports:
+      sensor_demo:
+        source: {kind: spec, file: sensor.json}
+        bind:
+          target: sensor_demo_local
+          endpoint: http://127.0.0.1:8771

@@ -1,0 +1,158 @@
+/*
+ * Presentation renderers. Lines are exactly what tier 2 decided: no wrapping and no clipping of
+ * their own, whitespace kept so columns line up in display columns.
+ */
+.wes-terminal .value-presented,
+.wes-terminal .value-fields,
+.wes-terminal .value-drawn-table,
+.wes-terminal .value-text,
+.wes-terminal .value-http,
+.wes-terminal .value-nested,
+.wes-terminal .value-notice,
+.wes-terminal .value-error,
+.wes-terminal .value-stream {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.wes-terminal .value-line {
+  white-space: pre;
+  tab-size: 4;
+  overflow: hidden;
+}
+/* Notices and failure details wrap; neither is a fixed-column data row. */
+.wes-terminal .value-notice .value-line,
+.wes-terminal .value-error .value-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+}
+.wes-terminal .value-toggle {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wes-terminal .value-toggle:focus-visible {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+}
+/* Tables own one vertical viewport. Nested detail wells cannot contribute column widths. */
+.wes-terminal .value-table-frame { position:relative; max-width:100%; min-width:0; width:fit-content; }
+.wes-terminal .value-table-scroll { overflow:auto; min-width:0; max-width:100%; max-height:var(--output-height,14lh); }
+.wes-terminal .value-table { width:max-content; max-width:none; border-collapse:separate; border-spacing:0; border:1px solid var(--line); font:inherit; }
+.wes-terminal .value-table-cell { padding:1px 8px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); white-space:nowrap; text-align:left; min-width:0; background:var(--sheet); }
+.wes-terminal .value-table-cell:last-child { border-right:0; }
+.wes-terminal .value-table-cell .mono-literal { color:var(--mono-ink); }
+.wes-terminal .value-table-numeric { text-align:right; }
+.wes-terminal .value-table-head .value-table-cell { position:sticky; top:0; z-index:3; background:var(--head); color:var(--mono-dim); font-weight:400; }
+.wes-terminal .value-table-row:hover .value-table-cell { background:color-mix(in srgb,var(--mono-meta) 7%,var(--sheet)); }
+.wes-terminal .table-row-selected .value-table-cell { background:color-mix(in srgb,var(--mono-meta) 12%,var(--sheet)); }
+.wes-terminal .value-table-key { position:sticky; left:0; z-index:2; font-weight:600; }
+.wes-terminal .value-table-head .value-table-key { z-index:4; }
+.wes-terminal .value-table-detail-row>td { padding:0; max-width:0; border-bottom:1px solid var(--line); background:var(--well); }
+.wes-terminal .table-detail-width { position:sticky; left:0; width:var(--table-visible-width); padding:8px; contain:inline-size; }
+.wes-terminal .value-table-detail-body { min-width:0; overflow:visible; }
+.wes-terminal .table-detail-width .value-table-scroll { max-height:none; overflow-x:auto; overflow-y:hidden; }
+.wes-terminal .table-detail-width .value-table-head .value-table-cell { position:static; }
+.wes-terminal .table-detail-width .value-table-key { position:sticky; }
+.wes-terminal .table-sort { font:inherit; color:inherit; cursor:pointer; }
+.wes-terminal .table-sort:focus-visible { outline:2px solid var(--mono-meta); }
+/* A line with its own ▸/▾: the control sits between the name and the value, on the same baseline. */
+.wes-terminal .value-line-disclosed { display: flex; align-items: baseline; min-width: 0; }
+.wes-terminal .value-line-disclosed > .value-line { flex: 0 1 auto; min-width: 0; }
+.wes-terminal .value-line-disclosed > .value-line:last-child { flex: 1 1 auto; }
+.wes-terminal .value-toggle-inline { width: auto; flex: 0 0 auto; }
+
+/* A disclosure grows into the same bounded viewport. */
+.wes-terminal .value-block-grown { min-height:6lh; max-height:var(--output-height,14lh); overflow:auto; resize:vertical; }
+.wes-terminal .value-table-detail-section + .value-table-detail-section { margin-top:8px; }
+.wes-terminal .value-nested-pages { display: flex; align-items: center; gap: var(--space-sm); }
+.wes-terminal .value-nested-pages button { color: var(--mono-ref); }
+.wes-terminal .value-nested-pages button:disabled { color: var(--mono-faint); }
+
+/* Controls have their own row and never cover a column header. */
+.wes-terminal .value-table-block { display:flex; flex-direction:column; min-width:0; max-width:100%; }
+.wes-terminal .value-table-tools { position:relative; display:flex; min-width:0; margin-bottom:4px; z-index:5; }
+.wes-terminal .value-table-toolbar { position:relative; display:flex; align-items:center; flex-wrap:wrap; gap:5px; min-height:24px; padding:0; background:none; }
+.wes-terminal .value-table-button,
+.wes-terminal .value-table-pin,
+.wes-terminal .value-table-clear {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; color: var(--mono-dim); cursor: pointer; border-radius: var(--radius-sm);
+}
+.wes-terminal .value-table-button:hover,
+.wes-terminal .value-table-pin:hover,
+.wes-terminal .value-table-clear:hover { color: var(--mono-ref); background: var(--sel); }
+.wes-terminal .value-table-button:focus-visible,
+.wes-terminal .value-table-pin:focus-visible,
+.wes-terminal .value-table-clear:focus-visible,
+.wes-terminal .value-table-more:focus-visible { outline: var(--stroke-thin) solid var(--mono-ref); outline-offset: 1px; }
+.wes-terminal .value-table-on { color: var(--mono-ref); }
+.wes-terminal .value-table-icon { display: block; flex: 0 0 auto; }
+.wes-terminal .value-table-pin { width: 20px; height: 20px; margin-right: var(--space-xs); vertical-align: -2px; display: inline-flex; color: var(--mono-faint); }
+.wes-terminal .value-table-pin.value-table-on { color: var(--mono-ref); }
+.wes-terminal .value-table-filter { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--mono-ref); }
+.wes-terminal .value-table-filter input {
+  font: inherit; width: 16ch; padding: 0 var(--space-xs); color: var(--mono-ink); background: var(--ground);
+  border: var(--stroke-thin) solid var(--mono-ref); border-radius: var(--radius-sm);
+}
+.wes-terminal .value-table-filter input:focus-visible { outline: none; }
+.wes-terminal .value-table-menu {
+  position: absolute; top: calc(100% + 2px); right: 0; z-index: 5; min-width: 200px;
+  display: flex; flex-direction: column; gap: 2px; padding: var(--space-sm) 10px;
+  box-shadow: 0 6px 18px rgba(27, 29, 31, 0.10);
+}
+.wes-terminal .value-table-menu-row input { accent-color: var(--mono-ref); }
+.wes-terminal .value-table-menu-row { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; white-space: nowrap; }
+.wes-terminal .value-table-menu-note { margin-left: auto; }
+.wes-terminal .value-table-menu-actions {
+  display: flex; justify-content: space-between; gap: var(--space-md);
+  margin-top: var(--space-xs); padding-top: var(--space-xs); border-top: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .value-table-menu-actions button { cursor: pointer; }
+/* The header's right edge is a handle inside the cell (the cell clips what leaves it): dragging it sets the width. */
+.wes-terminal .value-table-sizable { position: relative; }
+.wes-terminal .value-table-head .value-table-key.value-table-sizable { position: sticky; }
+.wes-terminal .value-table-grip { position: absolute; top: 0; bottom: 0; right: 0; width: 6px; z-index: 2; cursor: col-resize; touch-action: none; }
+.wes-terminal .value-table-grip:hover { background: var(--mono-ref); opacity: 0.35; }
+/* `+n rows · show k more` belongs to the table above it: it starts where the table starts. */
+.wes-terminal .value-table-more { display: block; align-self: flex-start; margin-top: 2px; cursor: pointer; text-align: left; }
+
+/* Counts and fallback explanations are prose, not fixed-column data rows. */
+.wes-terminal .value-more {
+  min-width: 0;
+  max-width: 100%;
+  appearance: none;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wes-terminal .value-counts {
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.wes-terminal .table-view [hidden] { display:none !important; }
+.wes-terminal .table-inspection-tabs { display:flex; gap:6px; padding:3px 0; }
+.wes-terminal .table-inspection-tabs [aria-selected=true],.wes-terminal .cell-data-tools [aria-pressed=true] { background:var(--head); color:var(--mono-ink); }
+.wes-terminal .table-row-select { color:var(--mono-dim); cursor:pointer; margin-right:6px; }
+.wes-terminal .table-row-inspector { padding:6px 0; }
+.wes-terminal .table-detail-width .json-tree { max-height:none; overflow:visible; resize:none; }
+
+.wes-terminal .value-table-cell>.value-toggle-inline { display:inline-flex; margin-right:.4ch; }
+.wes-terminal .value-table-detail-section>.mono-line { white-space:pre-wrap; overflow-wrap:anywhere; }

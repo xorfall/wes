@@ -1,0 +1,8 @@
+:calc pure {
+  return $response.body.data.result.map(series => {
+    return {
+      service: series.metric.service,
+      requestsPerSecond: decimal(series.value[1])
+    };
+  });
+} > rates

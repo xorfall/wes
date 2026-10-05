@@ -1,0 +1,67 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Local sensor walkthrough",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "https://documentation-only.invalid",
+      "description": "Execution endpoint is supplied explicitly in wes"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Reading": {
+        "type": "object",
+        "required": [
+          "time",
+          "reading"
+        ],
+        "properties": {
+          "time": {
+            "type": "string"
+          },
+          "reading": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/history": {
+      "get": {
+        "operationId": "history",
+        "summary": "Get three synthetic reading points for LAB1",
+        "security": [],
+        "parameters": [
+          {
+            "name": "sensor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Use LAB1; an unknown sensor returns 404"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ordered reading history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reading"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

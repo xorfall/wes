@@ -1,0 +1,1 @@
+echo run args:"literal ; $(touch SHOULD_NOT_EXIST) $HOME 'quote'" > result

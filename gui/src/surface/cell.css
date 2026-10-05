@@ -1,0 +1,163 @@
+/* Ledger is the only cell layout. The view owns its content, the cell owns its zones. */
+.wes-terminal .cell { min-width:0; border:1px solid transparent; border-radius:4px; outline:none; font:var(--type-mono-size)/var(--type-mono-leading) var(--type-mono-family); }
+.wes-terminal .cell-pinned { border-color:var(--rule); }
+.wes-terminal .cell:focus-within,.wes-terminal .cell-focus,.wes-terminal .cell-type-open { border-color:var(--active); outline:none; }
+.wes-terminal .cell-frame { min-width:0; padding:0 10px 7px; background:var(--sheet); }
+.wes-terminal .cell-band { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; margin:0 -10px 8px; padding:8px 10px; background:var(--sunk); border-bottom:1px solid var(--line); border-radius:3px 3px 0 0; }
+.wes-terminal .cell-command { min-width:0; }
+.wes-terminal .cell-command-clip { max-height:6lh; overflow:hidden; }
+.wes-terminal .cell-command-unfolded { max-height:none; }
+.wes-terminal .cell-fold-marker { padding-left:2ch; }
+.wes-terminal .cell-source { display:flex; gap:1ch; min-width:0; align-items:baseline; }
+.wes-terminal .cell-source-line { white-space:pre-wrap; overflow-wrap:break-word; min-width:0; width:100%; flex:1; }
+.wes-terminal .cell-prompt { flex:none; color:var(--mono-meta); width:1ch; text-align:right; }
+.wes-terminal .cell-fold { display:block; margin-left:2ch; color:var(--mono-dim); font:inherit; cursor:pointer; }
+.wes-terminal .cell-run { min-width:0; margin-left:0; border-left:2px solid var(--mono-ok); padding-left:10px; }
+.wes-terminal .cell-run { margin-bottom:6px; }
+.wes-terminal .cell-run-failed { border-color:var(--mono-bad); }
+.wes-terminal .cell-run-live { border-color:var(--mono-meta); }
+.wes-terminal .cell-run-stale { border-color:var(--mono-warn); }
+/*
+ * The run band: state, duration and retention hold fixed columns whatever they say; an empty column
+ * keeps its width. Widths follow the container, never the text: `outcome unknown` is 15ch,
+ * `99999 min 59 s` 15ch, `999 of 1000 kept` 16ch; anything longer is cut and stays whole in its title.
+ * Notes take their own wrapping line beneath.
+ */
+.wes-terminal .cell-verdict-row { display:grid; grid-template-columns:minmax(0,16ch) minmax(0,15ch) minmax(0,16ch) minmax(0,1fr) auto;
+  grid-template-areas:"state duration retention marks time" "notes notes notes notes notes"; align-items:baseline; gap:0 1ch; }
+.wes-terminal .cell-slot { display:block; min-width:0; min-height:1lh; overflow:hidden; }
+.wes-terminal .cell-slot-state { grid-area:state; }
+.wes-terminal .cell-slot-duration { grid-area:duration; }
+.wes-terminal .cell-slot-retention { grid-area:retention; }
+.wes-terminal .cell-run-marks { grid-area:marks; display:flex; flex-wrap:wrap; align-items:baseline; gap:0 1ch; min-width:0; }
+.wes-terminal .cell-run-notes { grid-area:notes; min-width:0; }
+.wes-terminal .cell-verdict-row .mono-line.cell-run-notes { white-space:pre-wrap; overflow-wrap:anywhere; }
+.wes-terminal .cell-verdict { min-width:0; }
+.wes-terminal .cell-time { grid-area:time; min-width:5ch; text-align:right; color:var(--mono-dim); font-size:12px; white-space:nowrap; }
+.wes-terminal .cell-mark { min-width:0; max-width:100%; overflow-wrap:anywhere; color:var(--mono-dim); font-size:12px; }
+.wes-terminal .cell-cancel-status { min-width:0; max-width:100%; overflow-wrap:anywhere; font-size:12px; }
+.wes-terminal .cell-result { min-width:0; margin:8px 0; border:1px solid var(--line); border-radius:3px; }
+.wes-terminal .result-header { display:grid; grid-template-columns:minmax(6ch,18ch) minmax(0,1fr) auto; align-items:center; gap:4px 8px; min-width:0; box-sizing:border-box; min-height:32px; padding:1px 6px 1px 8px; background:var(--well); border-bottom:1px solid var(--line); font-size:12px; }
+.wes-terminal .cell-result-selected .result-header { background:color-mix(in srgb,var(--well),var(--mono-ref) 9%); }
+.wes-terminal .result-name { min-width:0; cursor:default; }
+.wes-terminal .result-name .mono-line { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .result-typeline { display:flex; align-items:center; gap:8px; min-width:0; }
+.wes-terminal .result-type-slot { flex:1 1 0; min-width:0; }
+/* The header shows one bounded line; the full type lives in the dialog. */
+.wes-terminal .result-type { display:inline-block; box-sizing:border-box; min-width:0; max-width:min(100%,calc(40ch + 8px)); vertical-align:middle; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--mono-dim); }
+.wes-terminal .result-primary-fact { display:inline; font-size:12px; }
+.wes-terminal .result-duration { color:var(--mono-dim); white-space:pre; }
+.wes-terminal .result-facts { display:block; flex:none; width:18ch; max-width:18ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .result-controls { display:flex; align-items:center; gap:6px; }
+.wes-terminal .result-size { display:inline-flex; border:1px solid var(--line); border-radius:4px; padding:1px; background:var(--sheet); }
+.wes-terminal .result-header button { min-height:24px; }
+.wes-terminal .result-header .result-size-choice { box-sizing:border-box; width:24px; min-width:24px; padding:2px; border-radius:2px; }
+.wes-terminal .result-size-choice[aria-checked=true] { background:var(--sel); color:var(--mono-ref); box-shadow:inset 0 0 0 1px var(--rule); }
+.wes-terminal .result-header .result-inspect { box-sizing:border-box; width:24px; min-width:24px; padding:2px; border:1px solid var(--line); background:var(--sheet); }
+.wes-terminal .result-controls svg { display:block; width:18px; height:18px; margin:auto; }
+.wes-terminal .cell-source-line .source-string { display:inline-block; max-width:100%; overflow-wrap:anywhere; vertical-align:bottom; }
+.wes-terminal .cell-data { position:relative; min-width:0; padding:6px 8px; }
+.wes-terminal .cell-data-empty { color:var(--mono-dim); }
+/* Status of the data, in flow: it has height only while one of its items is shown. */
+.wes-terminal .cell-data-status { display:flex; flex-wrap:wrap; align-items:center; gap:2px 1.5ch; min-width:0; font-size:12px; }
+.wes-terminal .cell-data-status:has(>:not([aria-hidden=true])) { margin-bottom:4px; }
+.wes-terminal .result-type-popover { container-type:inline-size; container-name:result-type-popup; display:flex; flex-direction:column; max-height:calc(100dvh - 24px); position:fixed; z-index:1000; color:var(--mono-ink); background:var(--sheet); border:1px solid var(--rule); border-radius:4px; box-shadow:0 8px 28px #0003; font:var(--type-mono-size)/var(--type-mono-leading) var(--type-mono-family); }
+.wes-terminal .result-type-title { flex:none; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.wes-terminal .result-type-title span { min-width:0; flex:1 1 auto; }
+.wes-terminal .result-type-title button { flex:none; min-height:28px; }
+.wes-terminal .result-type-popover pre { min-height:0; margin:0; padding:10px; max-height:min(55dvh,16lh); overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.wes-terminal .result-type-popover:focus-visible,.wes-terminal .result-type-popover pre:focus-visible { outline:1px solid var(--active); outline-offset:1px; }
+@container (max-width:700px) {
+  .wes-terminal .result-header { gap:4px 6px; }
+  .wes-terminal .result-facts { width:12ch; max-width:12ch; }
+  .wes-terminal .result-duration { display:none; }
+}
+@container (max-width:480px) {
+  .wes-terminal .result-header { grid-template-columns:minmax(0,1fr) auto; gap:3px 6px; }
+  .wes-terminal .result-name { grid-column:1; grid-row:1; }
+  .wes-terminal .result-controls { grid-column:2; grid-row:1; }
+  .wes-terminal .result-typeline { grid-column:1/-1; grid-row:2; }
+}
+.wes-terminal .cell-action { appearance:none; border:0; background:none; font:inherit; color:var(--mono-dim); padding:1px 4px; border-radius:3px; cursor:pointer; }
+.wes-terminal .cell-action:hover:not(:disabled) { background:var(--sel); color:var(--mono-ink); }
+.wes-terminal .cell-action:disabled { color:var(--mono-faint); cursor:default; }
+.wes-terminal .cell-action:focus-visible,.wes-terminal .cell-fold:focus-visible { outline:1px solid var(--active); outline-offset:1px; }
+.wes-terminal .cell-action kbd { font:inherit; color:var(--mono-ref); }
+.wes-terminal .cell-actions { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; margin-top:8px; border-left:1px solid var(--line); padding-left:7px; font-size:12px; }
+.wes-terminal .cell-actions>[role=group] { display:flex; align-items:baseline; flex-wrap:wrap; gap:1px 3px; }
+.wes-terminal .cell-actions>[role=group]+[role=group] { border-left:1px solid var(--rule); padding-left:10px; }
+.wes-terminal .cell-target { display:inline-flex; align-items:baseline; gap:3px; color:var(--mono-ref); }
+.wes-terminal .cell-target button { cursor:pointer; min-width:18px; }
+.wes-terminal .cell-counts,.wes-terminal .cell-confirm { padding:5px 10px; font-size:12px; color:var(--mono-dim); }
+.wes-terminal .cell-question .mono-line { white-space:pre-wrap; overflow-wrap:anywhere; }
+.wes-terminal .cell-quiet { color:var(--mono-dim); }
+.wes-terminal .cell-data .value-line { min-width:0; }
+.wes-terminal .cell { container-type:inline-size; }
+@container (max-width:480px) {
+  .wes-terminal .cell-band { grid-template-columns:minmax(0,1fr); gap:4px; }
+  /* Two fixed rows: state, duration and time; then retention under state, with the marks beside it. */
+  .wes-terminal .cell-verdict-row { grid-template-columns:minmax(0,16ch) minmax(0,1fr) auto;
+    grid-template-areas:"state duration time" "retention marks marks" "notes notes notes"; }
+}
+@container (max-width:280px) {
+  .wes-terminal .cell-verdict-row { grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"state time" "duration duration" "retention retention" "marks marks" "notes notes"; }
+}
+
+.wes-terminal .view-host-viewport { min-width:0; }
+
+.wes-terminal .cell-run-outcome-unknown,.wes-terminal .cell-run-not-run,.wes-terminal .cell-run-cancelled,.wes-terminal .cell-run-stopped { border-color:var(--mono-warn); }
+.wes-terminal .cell-run-waiting,.wes-terminal .cell-run-skipped { border-color:var(--mono-faint); }
+
+/* One expanded builtin scroll surface; small results retain their natural height. */
+.wes-terminal .view-host-builtin { max-height:14lh; overflow:auto; min-height:0;  }
+.wes-terminal .view-host-builtin .json-expanded,.wes-terminal .view-host-builtin .process-full .process-scroll,.wes-terminal .view-host-builtin .value-table-scroll { height:auto!important; min-height:0!important; max-height:none!important; resize:none!important; }
+.wes-terminal .view-host-builtin .json-expanded,.wes-terminal .view-host-builtin .process-full .process-scroll { overflow:visible; }
+.wes-terminal .view-host-builtin .value-table-scroll { overflow-x:auto; overflow-y:hidden; }
+.wes-terminal .result-resize { appearance:none; position:relative; display:flex; align-items:center; justify-content:center; width:100%; height:12px; margin-top:2px; padding:0; background:transparent; border:0; cursor:ns-resize; touch-action:none; user-select:none; color:var(--mono-faint); }
+.wes-terminal .result-resize::before { content:""; width:28px; height:4px; border-top:1px solid currentColor; border-bottom:1px solid currentColor; }
+.wes-terminal .result-resize:hover,.wes-terminal .result-resize:focus-visible { color:var(--mono-dim); background:var(--well); }
+.wes-terminal .result-resize:focus-visible { outline:1px solid var(--active); }
+
+.wes-terminal .cell-action-group-name { color:var(--mono-faint); margin-right:4px; }
+.wes-terminal .cell-target { min-width:0; max-width:100%; }
+.wes-terminal .cell-target-name { min-width:0; max-width:24ch; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.wes-terminal .cell-target button { flex:none; min-width:26px; min-height:26px; }
+
+.wes-terminal .result-type[aria-expanded=true] { background:var(--sel); box-shadow:inset 0 0 0 1px var(--rule); }
+.wes-terminal[data-palette=ink] .cell-result-selected .result-header { background:color-mix(in srgb,var(--well),var(--mono-ref) 14%); }
+.wes-terminal .result-controls button { position:relative; }
+.wes-terminal .result-controls button:focus-visible::after { content:attr(data-tooltip); position:absolute; z-index:3; top:calc(100% + 5px); right:0; width:max-content; padding:3px 6px; background:var(--sheet); color:var(--mono-ink); border:1px solid var(--line); border-radius:3px; font:12px/1.5 var(--type-mono-family); pointer-events:none; }
+.wes-terminal .result-resize:focus-visible::after { content:attr(data-tooltip); position:absolute; z-index:3; bottom:calc(100% + 5px); right:0; width:max-content; padding:3px 6px; background:var(--sheet); color:var(--mono-ink); border:1px solid var(--line); border-radius:3px; font:12px/1.5 var(--type-mono-family); pointer-events:none; }
+
+/* Flex children must shrink before a long execution diagnostic is clipped or unfolded. */
+.wes-terminal .cell-verdict-row { min-width:0; max-width:100%; }
+.wes-terminal .cell-verdict-failure { display:flex; align-items:baseline; gap:0 1ch; flex:0 1 auto; min-width:0; max-width:100%; }
+/* Expanded, the message takes the full width and the toggle drops beneath it. */
+.wes-terminal .cell-verdict-failure-expanded { flex-wrap:wrap; }
+.wes-terminal .cell-verdict-toggle { flex:none; padding:0 4px; white-space:nowrap; }
+.wes-terminal .cell-verdict-disclosure { flex:0 1 auto; min-width:0; max-width:100%; }
+.wes-terminal .cell-verdict-disclosure>.cell-verdict { max-width:100%; }
+.wes-terminal .cell-verdict-disclosure>.cell-verdict-expanded { white-space:pre-wrap; overflow-wrap:anywhere; text-overflow:clip; }
+.wes-terminal .cell-mark.badge-target { display:inline-flex; align-items:center; flex:none; padding:1px 5px; color:var(--mono-meta); background:color-mix(in srgb,var(--mono-meta) 12%,var(--sheet)); border:1px solid color-mix(in srgb,var(--mono-meta) 30%,var(--line)); border-radius:3px; }
+.wes-terminal .cell-action-dialog { position:fixed; inset:0; margin:auto; width:min(44ch,calc(100vw - 24px)); max-height:calc(100dvh - 24px); padding:0; border:1px solid var(--rule); border-radius:6px; background:var(--sheet); color:var(--mono-ink); font:var(--type-mono-size)/var(--type-mono-leading) var(--type-mono-family); box-shadow:0 10px 30px #0003; overflow:auto; }
+.wes-terminal .cell-action-dialog::backdrop { background:#0003; }
+.wes-terminal .cell-action-dialog>header { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); }
+.wes-terminal .cell-action-dialog>header button { margin-left:auto; }
+.wes-terminal .cell-action-menu>[role=group] { display:flex; flex-direction:column; align-items:stretch; padding:6px; }
+.wes-terminal .cell-action-menu>[role=group]+[role=group] { border-top:1px solid var(--line); }
+.wes-terminal .cell-action-menu .cell-action { text-align:left; min-height:28px; }
+.wes-terminal .cell-action-menu .cell-action-group-name { padding:2px 4px; color:var(--mono-dim); }
+.wes-terminal .cell-action-menu .cell-target { padding:2px 4px; }
+
+/* The bottom edge follows the viewport in normal flow, clear of its scrollbars. */
+.wes-terminal .view-host { position:relative; min-width:0; max-width:100%; }
+.wes-terminal .cell-data:has(>.view-host-resizable) { padding-bottom:0; }
+.wes-terminal .view-host-resizable .view-layout-scroll,
+.wes-terminal .view-host-resizable .value-block-grown,
+.wes-terminal .view-host-resizable .json-expanded,
+.wes-terminal .view-host-resizable .process-scroll,
+.wes-terminal .view-host-resizable .value-table-scroll { resize:none; }
+.wes-terminal .view-host-resizable[style]>.view-host-viewport { overflow:auto; }
+.wes-terminal .view-host-resizable[style] .view-layout-scroll { height:auto; max-height:none; overflow:visible; }
+.wes-terminal .view-host-resizable[style] .view-layout-content { height:auto; }

@@ -1,0 +1,23 @@
+.wes-terminal .session-layout { display:flex; position:relative; min-width:0; min-height:0; height:100%; gap:0; container-type:inline-size; }
+.wes-terminal .session-layout>.session { flex:1 1 40ch; min-width:0; }
+.wes-terminal .inspector-stack { display:flex; flex:0 0 var(--inspector-width,64ch); min-width:32ch; max-width:calc(100% - 40ch); min-height:0; border-left:1px solid var(--rule); background:var(--sheet); }
+.wes-terminal .inspector-stack[hidden],.wes-terminal .inspector-host[hidden] { display:none !important; }
+.wes-terminal .inspector-stack.inspector-overlay { position:absolute; inset:0; z-index:30; max-width:none; min-width:0; border-left:0; }
+.wes-terminal .inspector-resize { flex:0 0 7px; width:7px; cursor:col-resize; touch-action:none; border:0; background:transparent; }
+.wes-terminal .inspector-resize:hover { background:var(--sel); }
+.wes-terminal .inspector-host { display:flex; flex-direction:column; min-width:0; min-height:0; width:100%; font:var(--type-mono-size)/var(--type-mono-leading) var(--type-mono-family); }
+.wes-terminal .inspector-header { flex:none; padding:9px 10px 5px; border-bottom:1px solid var(--line); background:var(--sunk); }
+.wes-terminal .inspector-title { display:flex; align-items:baseline; flex-wrap:wrap; gap:1ch; }
+.wes-terminal .inspector-title strong { color:var(--mono-ref); font-weight:600; overflow-wrap:anywhere; }
+.wes-terminal .inspector-title span { color:var(--mono-dim); font-size:12px; overflow-wrap:anywhere; }
+.wes-terminal .inspector-live { display:flex; align-items:baseline; flex-wrap:wrap; gap:1ch; color:var(--mono-dim); font-size:12px; }
+.wes-terminal .inspector-update-pending { color:var(--mono-meta); }
+.wes-terminal .inspector-tabs { display:flex; gap:5px; padding-top:6px; align-items:center; }
+.wes-terminal .inspector-tabs [aria-selected=true] { color:var(--mono-ink); border-bottom:2px solid var(--mono-meta); border-radius:0; }
+.wes-terminal .inspector-window { margin-left:auto; }
+.wes-terminal .inspector-content { flex:1; min-height:0; min-width:0; overflow:auto; padding:10px; }
+.wes-terminal .inspector-content [hidden] { display:none !important; }
+.wes-terminal .inspector-content .value-block-grown { max-height:none; }
+.wes-terminal .inspector-content .run-history { margin:0; max-height:none; border:0; box-shadow:none; }
+.wes-terminal .inspector-details { margin-top:16px; border-top:1px solid var(--line); color:var(--mono-dim); padding-top:6px; }
+.wes-terminal .inspector-details pre { white-space:pre-wrap; overflow-wrap:anywhere; }

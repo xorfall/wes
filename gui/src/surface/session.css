@@ -1,0 +1,255 @@
+/*
+ * The session's own shape: a bar at the top, the scrollback between, the prompt and the footer at
+ * the bottom. The scrollback is the only part that scrolls, so the prompt stays where the hands are.
+ */
+.wes-terminal .session {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--ground);
+}
+
+.wes-terminal .session-top {
+  flex: 0 0 auto;
+  padding: var(--space-sm) var(--page-gutter);
+  border-width: 0 0 var(--stroke-thin) 0;
+}
+
+/*
+ * The pinned strip: cells held in view while the scrollback moves under them.
+ *
+ * Present only when something is pinned, and bounded to a third of the session's height with its
+ * own scrollbar, so a handful of tall cells cannot crowd out the prompt or the rest of the
+ * scrollback. The bottom hairline is the same one the top bar and the prompt already draw, so the
+ * strip reads as one more band of the session rather than a new kind of chrome.
+ */
+.wes-terminal .session-pinned {
+  flex: 0 0 auto;
+  max-height: 33%;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-sm) var(--page-gutter);
+  border-width: 0 0 var(--stroke-thin) 0;
+  border-style: solid;
+  border-color: var(--line);
+}
+.wes-terminal .session-pinned > * {
+  flex: 0 0 auto;
+}
+
+.wes-terminal .session-scrollback {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  /* Twenty-four between cells, as the surface spaces them, and nothing above the first one. */
+  gap: var(--space-lg);
+  padding: 0 var(--page-gutter) var(--space-md);
+}
+/*
+ * A cell is as tall as its preview and no shorter. Flex children shrink by default, which in a
+ * scrollback means the oldest cells quietly lose their last line — and the line they lose first is
+ * the verdict, which is the one line every cell must have.
+ */
+.wes-terminal .session-scrollback > * {
+  flex: 0 0 auto;
+}
+
+/*
+ * The one thing that happened without anybody asking.
+ *
+ * It is the scrollback's last line and scrolls with it — a band pinned over the newest cell would
+ * cover the cell it is talking about.
+ */
+.wes-terminal .session-note {
+  padding-top: var(--space-xs);
+}
+
+/*
+ * Where a `/clear` drew the line. A quiet rule rather than a cell of its own, so scrolling up past
+ * it reads as finding where the fresh screen began, not as finding another result.
+ */
+.wes-terminal .session-clear-mark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0;
+  color: var(--mono-dim);
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  letter-spacing: var(--type-mono-tracking);
+}
+.wes-terminal .session-clear-mark::before,
+.wes-terminal .session-clear-mark::after {
+  content: "";
+  flex: 1;
+  border-top: var(--stroke-thin) dashed var(--line);
+}
+
+/* Blank room under a fresh screen, held open in JS until new output takes its place. Never interactive. */
+.wes-terminal .session-clear-tail {
+  flex: none;
+}
+
+.wes-terminal .session-prompt {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--page-gutter);
+  border-width: var(--stroke-thin) 0 0 0;
+}
+
+/*
+ * The prompt is two layers: the coloured runs, and over them the field the browser owns. The caret
+ * has to be a real one — a drawn block cannot be placed with a mouse, moved with a word key or read
+ * by anything assistive — and the colours have to be ours, so drawn and field share the same box,
+ * the same face, and the field's own text stays transparent.
+ *
+ * The field is the one in the flow, so its `rows` — one line, up to ten, never more — is what
+ * decides how tall the prompt gets. Past ten lines the field scrolls natively; drawn has no
+ * scrollbar of its own to drag, so JS carries the field's scroll position over to it.
+ */
+.wes-terminal .prompt-line {
+  min-width: 0;
+  position: relative;
+}
+/*
+ * The list opens upward, into the scrollback's room, because the prompt is at the bottom of the
+ * screen and a list that opened downward would have nowhere to go.
+ */
+.wes-terminal .prompt-line .prompt-completion {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 2;
+}
+
+.wes-terminal .prompt-stack {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+/*
+ * The gutter is only ever the first line's — the prefix does not repeat down the stack. It is as
+ * wide as its own text and never shrinks, so a longer prefix is shown whole instead of being cut
+ * to a fixed width; the inherited clipping is switched off for the same reason.
+ */
+.wes-terminal .prompt-stack .prompt-prefix {
+  flex: 0 0 auto;
+  width: max-content;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.wes-terminal .prompt-editor {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Native rows is capped at ten; leave room for its horizontal scrollbar. */
+  overflow: hidden;
+}
+.wes-terminal .prompt-editor .prompt-drawn,
+.wes-terminal .prompt-editor .prompt-field {
+  tab-size: 4;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  line-height: var(--type-mono-leading);
+  letter-spacing: var(--type-mono-tracking);
+  white-space: pre;
+}
+.wes-terminal .prompt-editor .prompt-drawn {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-overflow: clip;
+  pointer-events: none;
+}
+.wes-terminal .prompt-editor .prompt-field {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  resize: none;
+  overflow: auto;
+  white-space: pre;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--mono-ref);
+  outline: none;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  letter-spacing: var(--type-mono-tracking);
+}
+.wes-terminal .prompt-editor .prompt-field::selection {
+  background-color: var(--sel);
+}
+
+.wes-terminal .session-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-xs) var(--page-gutter) var(--space-sm);
+}
+.wes-terminal .session-counts,
+.wes-terminal .session-keys {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+ * A session in a pane.
+ *
+ * It keeps the scrollback, the prompt and the context line, and gives up the top bar and the
+ * footer: the split says which workspace this is and which keys move between panes, and saying
+ * either twice costs the pane the room it was opened for.
+ */
+.wes-terminal .session-in-pane {
+  /* The pane grid applies the window's gutter once; a session inside a pane adds none. */
+  --page-gutter: 0px;
+  height: 100%;
+  min-height: 0;
+}
+.wes-terminal .session-in-pane .session-pinned {
+  padding-left: 0;
+  padding-right: 0;
+}
+.wes-terminal .session-in-pane .session-scrollback {
+  padding-left: 0;
+  padding-right: 0;
+}
+.wes-terminal .session-in-pane .session-prompt {
+  padding-left: var(--space-sm);
+  padding-right: var(--space-sm);
+}
+
+/*
+ * `/debug`'s report, read only, wherever a cell mounts it in its output slot. Filesystem paths run
+ * long and unbroken, so they wrap inside the report rather than forcing the cell wider than the
+ * scrollback it sits in or than the pane it may share with another session.
+ */
+.wes-terminal .debug-report {
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm);
+  max-width: 100%;
+  max-height: 32rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--mono-ink);
+  background: var(--ground);
+  font: inherit;
+  border: var(--stroke-thin) solid var(--mono-faint);
+}

@@ -1,0 +1,564 @@
+/*
+ * The screens' shared frame. Each one fills the window it is summoned into — over the workspace or
+ * in a pane — and keeps the same four bands: the session's top line, the screen's name beside what
+ * it is about, the screen, and the footer that says how to leave.
+ */
+.wes-terminal .screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--ground);
+  outline: none;
+}
+
+.wes-terminal .screen-top {
+  flex: 0 0 auto;
+  padding: var(--space-sm) var(--page-gutter);
+  border-width: 0 0 var(--stroke-thin) 0;
+}
+
+.wes-terminal .screen-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--page-gutter) var(--space-xs);
+  min-width: 0;
+}
+.wes-terminal .screen-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wes-terminal .screen-keys {
+  flex: 0 0 auto;
+}
+
+.wes-terminal .screen-tools {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: 0 var(--page-gutter) var(--space-sm);
+}
+
+.wes-terminal .screen-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--page-gutter);
+}
+
+.wes-terminal .screen-footer {
+  flex: 0 0 auto;
+  padding: var(--space-sm) var(--page-gutter) var(--space-md);
+}
+
+/* A chip a screen offers: the same dress as a cell's action, because it is the same kind of offer. */
+.wes-terminal .screen-chip {
+  appearance: none;
+  padding: 1px var(--space-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wes-terminal .screen-chip.on {
+  color: var(--on-primary);
+  background-color: var(--mono-ref);
+  border-color: var(--mono-ref);
+}
+
+/*
+ * --- /env: one card per environment (the `option` role; the chosen one `option-chosen`). The card
+ * that can change real systems wears the failed rail; the chosen card holds its setup below its
+ * radio line, so the setup plainly belongs to it.
+ */
+.wes-terminal .env-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.wes-terminal .env-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.wes-terminal .env-rail {
+  position: absolute;
+  top: calc(-1 * var(--stroke-thin));
+  bottom: calc(-1 * var(--stroke-thin));
+  left: calc(-1 * var(--stroke-thin));
+  width: 3px;
+}
+.wes-terminal .env-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px var(--space-md);
+  cursor: pointer;
+  outline: none;
+}
+.wes-terminal .env-row:focus-visible {
+  box-shadow: inset 0 0 0 var(--stroke-thin) var(--mono-ref);
+}
+.wes-terminal .env-radio {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-top: 5px;
+  border: 1.5px solid var(--mono-dim);
+  border-radius: 50%;
+}
+.wes-terminal .env-radio.on {
+  border-color: var(--mono-ref);
+  box-shadow: inset 0 0 0 3px var(--mono-ref);
+}
+.wes-terminal .env-said {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wes-terminal .env-headline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-md);
+  min-width: 0;
+}
+.wes-terminal .env-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.wes-terminal .env-badge {
+  display: inline-block;
+  border: var(--stroke-thin) solid currentColor;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.8em;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: default;
+}
+.wes-terminal .env-execution-controls {
+  margin: 0 var(--space-md) var(--space-sm) calc(var(--space-md) + 24px);
+}
+.wes-terminal .env-facts {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.wes-terminal .env-asking {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 var(--space-md) 10px calc(var(--space-md) + 24px);
+  padding-top: var(--space-sm);
+  border-top: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .env-asking p {
+  margin: 0;
+  flex: 1 1 320px;
+}
+.wes-terminal .env-note {
+  margin: var(--space-md) 0 0;
+  max-width: 90ch;
+}
+
+/* --- /open: the tabs' keys sit beside them, and the result gets the room. --- */
+.wes-terminal .open-result {
+  padding: var(--space-md);
+  border-width: var(--stroke-thin);
+  outline: none;
+  min-height: 0;
+}
+.wes-terminal .open-tail,
+.wes-terminal .open-note {
+  padding-top: var(--space-sm);
+}
+.wes-terminal .open-json {
+  white-space: pre;
+}
+
+/* --- /peek: one piece of a result and nothing else; the text is the thing to read and take. --- */
+/* Lines stay lines (a calc trace keeps its indentation); a long message wraps rather than clips. */
+.wes-terminal .peek-text,
+.wes-terminal .inspection-text.peek-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  margin: 0;
+}
+
+/* --- /settings: tabs across the top, then rows of a label, its command, and the options as cards. --- */
+/*
+ * The tabs: the same row the panes' workspace tabs are, so the two read as one thing — names in
+ * mono-dim, the open one in ink on the rail, a hairline for a floor. The row scrolls sideways in a
+ * narrow pane rather than wrapping.
+ */
+.wes-terminal .settings-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-xs);
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  box-shadow: inset 0 calc(-1 * var(--stroke-thin)) 0 var(--line);
+}
+.wes-terminal .settings-tab {
+  appearance: none;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 0;
+  border-bottom: var(--stroke-rail) solid transparent;
+  border-radius: 0;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.wes-terminal .settings-tab:hover { color: var(--mono-ink); }
+.wes-terminal .settings-tab[aria-selected="true"] { color: var(--mono-ink); border-bottom-color: var(--mono-ref); }
+.wes-terminal .settings-tab:focus-visible {
+  background-color: var(--sel);
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: calc(-1 * var(--stroke-thin));
+}
+
+.wes-terminal .settings-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  max-width: 1080px;
+  padding: var(--space-sm) 0 var(--space-md);
+}
+/*
+ * A row: the setting's name and its command in a column on the left, the cards on the right, so
+ * the names line up down the screen and the cards take the width. A section the screen does not
+ * choose for says what is actually set — the keys, the providers, what is being kept — as facts
+ * across the whole width, two columns like every other fact on these screens.
+ */
+.wes-terminal .settings-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+  gap: var(--space-sm) var(--space-lg);
+  align-items: start;
+}
+.wes-terminal .settings-row-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: var(--space-xs);
+}
+/* The name and its command are read, not clipped: a long command wraps under its label. */
+.wes-terminal .settings-row-head .mono-line {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+.wes-terminal .settings-command { cursor: default; }
+.wes-terminal .settings-facts {
+  display: flex;
+  flex-direction: column;
+}
+.wes-terminal .settings-empty {
+  padding-top: var(--space-xs);
+}
+/*
+ * A fixed set of choices is one row of joined chips, with what the chosen one means said under it; a
+ * font row is a chip that opens a list of the machine's families, each drawn in its own face.
+ */
+.wes-terminal .settings-choice { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-xs); min-width: 0; }
+.wes-terminal .settings-segments { display: inline-flex; flex-wrap: wrap; }
+.wes-terminal .settings-segment { padding: 1px var(--space-md); }
+.wes-terminal .settings-segments .settings-segment { border-radius: 0; }
+.wes-terminal .settings-segments .settings-segment:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.wes-terminal .settings-segments .settings-segment:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.wes-terminal .settings-segments .settings-segment + .settings-segment { border-left-width: 0; }
+.wes-terminal .settings-segment:focus-visible { outline: var(--stroke-thin) solid var(--mono-ref); outline-offset: 1px; position: relative; }
+.wes-terminal .settings-note-line { color: var(--mono-dim); }
+.wes-terminal .font-picker { position: relative; }
+.wes-terminal .font-picker-chip { display: inline-flex; align-items: center; gap: var(--space-sm); padding: 1px var(--space-md); }
+.wes-terminal .font-picker-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; width: 440px; max-height: 360px; overflow: auto;
+  display: flex; flex-direction: column; gap: 1px; padding: var(--space-sm);
+  box-shadow: 0 8px 22px rgba(27, 29, 31, 0.12);
+}
+.wes-terminal .font-picker-filter { width: 100%; margin-bottom: var(--space-xs); }
+.wes-terminal .font-picker-group { padding: var(--space-xs) var(--space-sm) 2px; text-transform: uppercase; letter-spacing: 0.3px; font-size: 11px; }
+.wes-terminal .font-picker-entry {
+  display: grid; grid-template-columns: 18px minmax(0, 170px) minmax(0, 1fr); align-items: baseline;
+  padding: 3px var(--space-sm); text-align: left; cursor: pointer; border-radius: var(--radius-sm); color: var(--mono-ink);
+}
+.wes-terminal .font-picker-entry:hover,
+.wes-terminal .font-picker-entry:focus-visible { background: var(--sel); outline: none; }
+.wes-terminal .font-picker-chosen { background: var(--sel); }
+.wes-terminal .font-picker-name,
+.wes-terminal .font-picker-sample { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The cards fill the row's width in as many columns as fit, and never grow past a comfortable width. */
+.wes-terminal .settings-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--space-sm);
+  min-width: 0;
+  max-width: 880px;
+}
+.wes-terminal .settings-option {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-width: var(--stroke-thin);
+  text-align: left;
+  cursor: pointer;
+}
+.wes-terminal .settings-option:hover { border-color: var(--rail); }
+.wes-terminal .settings-option.option-chosen:hover { border-color: var(--mono-ref); }
+.wes-terminal .settings-option:focus-visible {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: 1px;
+}
+/* What a card says wraps inside it; a card is not a status line and does not cut its own words. */
+.wes-terminal .settings-option .mono-line {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+.wes-terminal .settings-preview {
+  min-width: 0;
+  padding: var(--space-md);
+  border-width: var(--stroke-thin);
+}
+/*
+ * The data section's own rows: a field with its one action, notes that wrap, a status line. The
+ * same grid as every row, so the labels line up with the choices above and the facts below.
+ */
+.wes-terminal .settings-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+  max-width: 880px;
+}
+.wes-terminal .settings-field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.wes-terminal .settings-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  letter-spacing: var(--type-mono-tracking);
+  color: var(--mono-ink);
+  background: var(--sunk);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: 0;
+}
+.wes-terminal .settings-field:focus-visible {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: calc(-1 * var(--stroke-thin));
+}
+.wes-terminal .settings-note {
+  margin: 0;
+  max-width: 72ch;
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-faint);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.wes-terminal .settings-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+}
+.wes-terminal .settings-status,
+.wes-terminal .settings-fact {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+.wes-terminal .settings-row-head code.settings-command {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* In a pane the room is the pane's: the label sits over its cards rather than beside them. */
+.wes-terminal .screen-in-pane .settings-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); }
+.wes-terminal .screen-in-pane .settings-row-head { flex-direction: row; align-items: baseline; gap: var(--space-md); padding-top: 0; }
+.wes-terminal .screen-in-pane .settings-options { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+/* --- /graph: the canvas takes the room, the panel answers the question. --- */
+.wes-terminal .graph-layout {
+  display: flex;
+  gap: var(--space-lg);
+  height: 100%;
+  min-height: 0;
+}
+.wes-terminal .graph-canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 320px;
+}
+.wes-terminal .graph-panel {
+  flex: 0 1 360px;
+  min-width: 0;
+  max-width: min(360px, 100%);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border-width: var(--stroke-thin);
+}
+/* Fact names keep their padded column; only values wrap, including existing indentation. */
+.wes-terminal .graph-fact,
+.wes-terminal .graph-cycle {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+.wes-terminal .graph-selection-fact {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  flex-shrink: 0;
+}
+.wes-terminal .graph-selection-fact > :first-child { white-space: pre; }
+.wes-terminal .graph-selection-fact > :last-child { min-width: 0; }
+.wes-terminal .graph-panel-keys {
+  padding-top: var(--space-xs);
+}
+/*
+ * The panel's three actions are clickable keyboard hints, left-aligned with
+ * the facts above them.
+ */
+.wes-terminal .graph-panel-offers {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.wes-terminal .graph-panel-key {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+/* Nothing has been run yet: one line where the canvas would be, and no empty canvas. */
+.wes-terminal .graph-empty {
+  flex: 1 1 auto;
+  padding-top: var(--space-md);
+}
+.wes-terminal .graph-cycles-title {
+  padding-top: var(--space-md);
+}
+/* A node says what it is with the colour the scrollback would use for it, and what it holds under. */
+.wes-terminal .graph-node {
+  display: flex;
+  align-items: center;
+  border-width: var(--stroke-thin);
+  /* Override the generic role corners with the graph-node radius. */
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-sm);
+  /*
+   * A node is the size the layout gave it and no other size. A real workspace names a type like
+   * `List<Unknown> · 1.8 KB`, which is longer than `table 248×6`, and a node that grew to fit it
+   * would be a node the layout had not placed: the text is cut, not the box.
+   */
+  overflow: hidden;
+}
+.wes-terminal .graph-node-said {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+}
+.wes-terminal .graph-node-name,
+.wes-terminal .graph-node-detail {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wes-terminal .graph-node-name {
+  font-family: var(--type-mono-strong-family);
+  font-weight: var(--type-mono-strong-weight);
+}
+.wes-terminal .graph-node-detail {
+  color: var(--mono-dim);
+  font-size: var(--type-sans-small-size);
+}
+.wes-terminal .graph-node-stale {
+  border-style: dashed;
+}
+/* An input that ordered one construction: still owned, but refreshes no longer travel along it. */
+.wes-terminal .graph-edge-creation .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
+.wes-terminal .graph-edge-constructed .react-flow__edge-path {
+  stroke-dasharray: 2 4;
+}
+
+/* A screen inside a pane brings its tools and its body and nothing else. */
+.wes-terminal .screen-in-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background-color: transparent;
+}
+.wes-terminal .screen-in-pane .screen-tools {
+  padding: 0 0 var(--space-sm);
+}
+.wes-terminal .screen-in-pane .screen-body {
+  padding: 0;
+}
+
+/* The minimap: the graph's shapes in miniature, and where the view is. */
+.wes-terminal .react-flow__minimap {
+  width: 124px;
+  height: 74px;
+  /* Keep the minimap inside the canvas, inset 12px from both edges, clear of the footer. */
+  bottom: 12px;
+  right: 12px;
+  margin: 0;
+  background-color: var(--sunk);
+  border: var(--stroke-thin) solid var(--line);
+  /* The viewport rectangle is drawn to the graph's own scale and can reach past the box. */
+  overflow: hidden;
+}
+.wes-terminal .react-flow__minimap-node {
+  fill: var(--rail);
+  stroke: none;
+}
+.wes-terminal .react-flow__minimap-mask {
+  fill: var(--ground);
+  fill-opacity: 0.6;
+  stroke: var(--mono-ref);
+  stroke-width: 2;
+}

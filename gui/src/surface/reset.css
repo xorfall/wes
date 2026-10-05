@@ -1,0 +1,27 @@
+/* A consistent baseline for Surface components and embedded controls. */
+.wes-terminal {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  line-height: var(--type-mono-leading);
+  letter-spacing: var(--type-mono-tracking);
+  color: var(--mono-ink);
+}
+.wes-terminal :where([class]),
+.wes-terminal :where([class])::before,
+.wes-terminal :where([class])::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border-style: solid;
+  border-width: 0;
+  border-color: transparent;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+}

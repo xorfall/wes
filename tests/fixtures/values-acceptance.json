@@ -1,0 +1,557 @@
+[
+  {
+    "input": "text",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{},\"data\":\"hello \\\"world\\\"\\n\\\\\"}",
+    "before": {
+      "data": {
+        "kind": "Text",
+        "value": "hello \"world\"\n\\"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Text",
+        "value": "hello \"world\"\n\\"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "int",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"},\"provenance\":{},\"data\":9223372036854775807}",
+    "before": {
+      "data": {
+        "kind": "Int",
+        "value": "9223372036854775807"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Int",
+        "value": "9223372036854775807"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "decimal",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"},\"provenance\":{},\"data\":12.3400}",
+    "before": {
+      "data": {
+        "kind": "Decimal",
+        "value": "12.3400"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Decimal",
+        "value": "12.3400"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "decimal-negative-scale",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"},\"provenance\":{},\"data\":1000}",
+    "before": {
+      "data": {
+        "kind": "Decimal",
+        "value": "1E+3"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Decimal",
+        "value": "1000"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  },
+  {
+    "input": "bool",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"BOOL\"},\"provenance\":{},\"data\":true}",
+    "before": {
+      "data": {
+        "kind": "Bool",
+        "value": true
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Bool",
+        "value": true
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "instant",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"INSTANT\"},\"provenance\":{},\"data\":\"2024-02-29T12:34:56.123456789Z\"}",
+    "before": {
+      "data": {
+        "kind": "Moment",
+        "value": "2024-02-29T12:34:56.123456789Z"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Moment",
+        "value": "2024-02-29T12:34:56.123456789Z"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "duration",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"DURATION\"},\"provenance\":{},\"data\":\"-PT0.5S\"}",
+    "before": {
+      "data": {
+        "kind": "Length",
+        "value": "-PT0.5S"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Length",
+        "value": "-PT0.5S"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "bytes",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"BYTES\"},\"provenance\":{},\"data\":\"AAH/Igo=\"}",
+    "before": {
+      "data": {
+        "kind": "Bytes",
+        "value": "AAH/Igo="
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Bytes",
+        "value": "AAH/Igo="
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "empty-bytes",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"BYTES\"},\"provenance\":{},\"data\":\"\"}",
+    "before": {
+      "data": {
+        "kind": "Bytes",
+        "value": ""
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Bytes",
+        "value": ""
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "unknown-int",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":7}",
+    "before": {
+      "data": {
+        "kind": "Int",
+        "value": "7"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Decimal",
+        "value": "7"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  },
+  {
+    "input": "unknown-bytes",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":\"QUI=\"}",
+    "before": {
+      "data": {
+        "kind": "Bytes",
+        "value": "QUI="
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Text",
+        "value": "QUI="
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  },
+  {
+    "input": "unknown-instant",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":\"1970-01-01T00:00:00Z\"}",
+    "before": {
+      "data": {
+        "kind": "Moment",
+        "value": "1970-01-01T00:00:00Z"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Text",
+        "value": "1970-01-01T00:00:00Z"
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  },
+  {
+    "input": "cautions",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"},\"provenance\":{\"source\":\"example\"},\"data\":1}",
+    "before": {
+      "data": {
+        "kind": "Int",
+        "value": "1"
+      },
+      "facts": {
+        "source": "example"
+      },
+      "cautions": [
+        "input-warning",
+        "unchecked:value"
+      ]
+    },
+    "after": {
+      "data": {
+        "kind": "Int",
+        "value": "1"
+      },
+      "facts": {
+        "source": "example"
+      },
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  },
+  {
+    "input": "escaped-provenance",
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"quoted\\\"key\":\"line1\\nline2\\\\\"},\"data\":\"fine\"}",
+    "before": {
+      "data": {
+        "kind": "Text",
+        "value": "fine"
+      },
+      "facts": {
+        "quoted\"key": "line1\nline2\\"
+      },
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Text",
+        "value": "fine"
+      },
+      "facts": {
+        "quoted\"key": "line1\nline2\\"
+      },
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "record",
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{},\"data\":{\"id\":3}}",
+    "before": {
+      "data": {
+        "kind": "Fields",
+        "value": {
+          "id": {
+            "kind": "Int",
+            "value": "3"
+          }
+        }
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Fields",
+        "value": {
+          "id": {
+            "kind": "Int",
+            "value": "3"
+          }
+        }
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "wide-record",
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{},\"data\":{\"attachment\":\"QUI=\",\"id\":3}}",
+    "before": {
+      "data": {
+        "kind": "Fields",
+        "value": {
+          "id": {
+            "kind": "Int",
+            "value": "3"
+          },
+          "attachment": {
+            "kind": "Bytes",
+            "value": "QUI="
+          }
+        }
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Fields",
+        "value": {
+          "attachment": {
+            "kind": "Text",
+            "value": "QUI="
+          },
+          "id": {
+            "kind": "Int",
+            "value": "3"
+          }
+        }
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  },
+  {
+    "input": "quoted-record-name",
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"A\"B\",\"fields\":[{\"name\":\"id\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{},\"data\":{\"id\":3}}",
+    "before": {
+      "data": {
+        "kind": "Fields",
+        "value": {
+          "id": {
+            "kind": "Int",
+            "value": "3"
+          }
+        }
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": null,
+    "equal": false,
+    "error": "MalformedDocumentException"
+  },
+  {
+    "input": "quoted-field-name",
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"i\"d\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{},\"data\":{\"i\\\"d\":3}}",
+    "before": {
+      "data": {
+        "kind": "Fields",
+        "value": {
+          "i\"d": {
+            "kind": "Int",
+            "value": "3"
+          }
+        }
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": null,
+    "equal": false,
+    "error": "MalformedDocumentException"
+  },
+  {
+    "input": "empty-record",
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"Empty\",\"fields\":[]},\"provenance\":{},\"data\":{}}",
+    "before": {
+      "data": {
+        "kind": "Fields",
+        "value": {}
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Fields",
+        "value": {}
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "empty-list",
+    "encoded": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"INT\"}},\"provenance\":{},\"data\":[]}",
+    "before": {
+      "data": {
+        "kind": "Sequence",
+        "value": []
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Sequence",
+        "value": []
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "list",
+    "encoded": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"INT\"}},\"provenance\":{},\"data\":[1,2]}",
+    "before": {
+      "data": {
+        "kind": "Sequence",
+        "value": [
+          {
+            "kind": "Int",
+            "value": "1"
+          },
+          {
+            "kind": "Int",
+            "value": "2"
+          }
+        ]
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Sequence",
+        "value": [
+          {
+            "kind": "Int",
+            "value": "1"
+          },
+          {
+            "kind": "Int",
+            "value": "2"
+          }
+        ]
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": true,
+    "error": ""
+  },
+  {
+    "input": "unknown-list",
+    "encoded": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"unknown\"}},\"provenance\":{},\"data\":[1,\"QQ==\"]}",
+    "before": {
+      "data": {
+        "kind": "Sequence",
+        "value": [
+          {
+            "kind": "Int",
+            "value": "1"
+          },
+          {
+            "kind": "Bytes",
+            "value": "QQ=="
+          }
+        ]
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "after": {
+      "data": {
+        "kind": "Sequence",
+        "value": [
+          {
+            "kind": "Decimal",
+            "value": "1"
+          },
+          {
+            "kind": "Text",
+            "value": "QQ=="
+          }
+        ]
+      },
+      "facts": {},
+      "cautions": []
+    },
+    "equal": false,
+    "error": ""
+  }
+]

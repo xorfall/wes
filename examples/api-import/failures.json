@@ -1,0 +1,279 @@
+{
+  "version": 1,
+  "provider": "failures",
+  "types": {
+    "Api_Ready_401cf6c5": {
+      "base": "Record",
+      "fields": {
+        "ready": {
+          "optional": false,
+          "type": "Bool"
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "invalidResponse"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Ready"
+      },
+      "method": "GET",
+      "route": "/invalid-response",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "Api_Ready_401cf6c5"
+      },
+      "evidence": "#/paths/~1invalid-response/get"
+    },
+    {
+      "path": [
+        "limited"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Ready",
+        "429": "Synthetic rate limit"
+      },
+      "method": "GET",
+      "route": "/limited",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "Api_Ready_401cf6c5",
+        "429": null
+      },
+      "evidence": "#/paths/~1limited/get"
+    },
+    {
+      "path": [
+        "wrongMedia"
+      ],
+      "summary": "",
+      "responseDescriptions": {
+        "200": "Ready"
+      },
+      "method": "GET",
+      "route": "/wrong-media",
+      "auth": [],
+      "authOptions": [
+        {
+          "schemes": [],
+          "auth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": "Api_Ready_401cf6c5"
+      },
+      "evidence": "#/paths/~1wrong-media/get"
+    }
+  ],
+  "source": {
+    "sha256": "1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+    "format": "3.1.0",
+    "discovered": 3,
+    "emitted": 3,
+    "skipped": 0,
+    "provenance": {
+      "version": 1,
+      "status": "current",
+      "entries": [
+        {
+          "target": "#/operations/0/authOptions",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1invalid-response/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/0/method",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1invalid-response/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/0/path",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1invalid-response/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/components/schemas/Ready/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/0/responses/200",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1invalid-response/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/0/route",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1invalid-response/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/1/authOptions",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1limited/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/1/method",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1limited/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/1/path",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1limited/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/components/schemas/Ready/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/1/responses/200",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1limited/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/1/responses/429",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1limited/get/responses/429",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/1/route",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1limited/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/operations/2/authOptions",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1wrong-media/get/security",
+          "lines": [],
+          "basis": "documented",
+          "reason": "No authentication requirements are declared by the source security array."
+        },
+        {
+          "target": "#/operations/2/method",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1wrong-media/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "HTTP method from the source operation."
+        },
+        {
+          "target": "#/operations/2/path",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1wrong-media/get",
+          "lines": [],
+          "basis": "inferred",
+          "reason": "Command name normalized from operationId or method and route."
+        },
+        {
+          "target": "#/operations/2/responses/200",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/components/schemas/Ready/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/operations/2/responses/200",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1wrong-media/get/responses/200",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Response contract for this exact HTTP status."
+        },
+        {
+          "target": "#/operations/2/route",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/paths/~1wrong-media/get",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Route from the source operation."
+        },
+        {
+          "target": "#/types/Api_Ready_401cf6c5/base",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/components/schemas/Ready/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        },
+        {
+          "target": "#/types/Api_Ready_401cf6c5/fields/ready/optional",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/components/schemas/Ready/required",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Field presence follows the required list. Without a documented presence guarantee the field is accepted as optional, not asserted always present."
+        },
+        {
+          "target": "#/types/Api_Ready_401cf6c5/fields/ready/type",
+          "source": "sha256:1d2072f7c66425323c4fe0e80dbfebaf7e24ead70473faa61cadeac7f095ef91",
+          "pointer": "#/components/schemas/Ready/properties/ready/type",
+          "lines": [],
+          "basis": "documented",
+          "reason": "Translated schema type; the runtime checks the resulting contract."
+        }
+      ]
+    }
+  },
+  "servers": [],
+  "diagnostics": []
+}

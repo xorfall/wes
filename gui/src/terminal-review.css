@@ -1,0 +1,10 @@
+.terminal-target-review { overflow: auto; min-height: 0; padding: 1rem; border: 1px solid var(--line); background: var(--ground); }
+.terminal-review-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.terminal-target-review code { overflow-wrap: anywhere; font-size: .8em; }
+.terminal-target-review dl { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr); gap: .3rem .75rem; }
+.terminal-target-review dl > div { display: contents; }
+.terminal-target-review dd { margin: 0; overflow-wrap: anywhere; }
+.terminal-target-review dt { color: var(--mono-dim); }
+.terminal-review-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.shell-surface:has(.terminal-target-review) .terminal-emulator { display: none; }
+@media (max-width: 640px) { .terminal-review-comparison { grid-template-columns: 1fr; } }

@@ -1,0 +1,526 @@
+/* Current surface design tokens. Edit here; tokens.test.ts verifies the contract. */
+
+/* Ordinary text: Ordinary text and values on a mono line. */
+.wes-terminal .mono-ink, .wes-terminal.mono-ink {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ink);
+}
+
+/* Secondary fact: Secondary facts, timings, the redirect arrow. */
+.wes-terminal .mono-dim, .wes-terminal.mono-dim {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-dim);
+}
+
+/* Faint: Timestamps, separators, gutters, the +N rows tail. */
+.wes-terminal .mono-faint, .wes-terminal.mono-faint {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-faint);
+}
+
+/* Keyword: The command keywords, running, the live badge. */
+.wes-terminal .mono-meta, .wes-terminal.mono-meta {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-meta);
+}
+
+/* Provider call: Provider calls and operations. */
+.wes-terminal .mono-provider, .wes-terminal.mono-provider {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-provider);
+}
+
+/* Parameter name: Parameter names, with their colon. */
+.wes-terminal .mono-param, .wes-terminal.mono-param {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-param);
+}
+
+/* Literal: Literal values: dates, numbers, quoted strings. */
+.wes-terminal .mono-literal, .wes-terminal.mono-literal {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-literal);
+}
+
+/* Reference: References, the caret, the redirect target. */
+.wes-terminal .mono-ref, .wes-terminal.mono-ref {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ref);
+}
+
+/* Good verdict: ok, paid. */
+.wes-terminal .mono-ok, .wes-terminal.mono-ok {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ok);
+}
+
+/* Warning verdict: pending, stale counts, PROD. */
+.wes-terminal .mono-warn, .wes-terminal.mono-warn {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-warn);
+}
+
+/* Bad verdict: failed, and the diagnostic underline. */
+.wes-terminal .mono-bad, .wes-terminal.mono-bad {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-bad);
+}
+
+/* Reference, bold: The caret. */
+.wes-terminal .mono-ref-strong, .wes-terminal.mono-ref-strong {
+  font-family: var(--type-mono-strong-family);
+  font-size: var(--type-mono-strong-size);
+  font-weight: var(--type-mono-strong-weight);
+  letter-spacing: var(--type-mono-strong-tracking);
+  line-height: var(--type-mono-strong-leading);
+  color: var(--mono-ref);
+}
+
+/* Keyword, bold: running. */
+.wes-terminal .mono-meta-strong, .wes-terminal.mono-meta-strong {
+  font-family: var(--type-mono-strong-family);
+  font-size: var(--type-mono-strong-size);
+  font-weight: var(--type-mono-strong-weight);
+  letter-spacing: var(--type-mono-strong-tracking);
+  line-height: var(--type-mono-strong-leading);
+  color: var(--mono-meta);
+}
+
+/* Bad verdict, bold: failed. */
+.wes-terminal .mono-bad-strong, .wes-terminal.mono-bad-strong {
+  font-family: var(--type-mono-strong-family);
+  font-size: var(--type-mono-strong-size);
+  font-weight: var(--type-mono-strong-weight);
+  letter-spacing: var(--type-mono-strong-tracking);
+  line-height: var(--type-mono-strong-leading);
+  color: var(--mono-bad);
+}
+
+/* Ordinary text, bold: The wes brand. */
+.wes-terminal .mono-ink-strong, .wes-terminal.mono-ink-strong {
+  font-family: var(--type-mono-strong-family);
+  font-size: var(--type-mono-strong-size);
+  font-weight: var(--type-mono-strong-weight);
+  letter-spacing: var(--type-mono-strong-tracking);
+  line-height: var(--type-mono-strong-leading);
+  color: var(--mono-ink);
+}
+
+/* Terminal ground: The ground a terminal surface and a screen are painted on. */
+.wes-terminal .surface-terminal, .wes-terminal.surface-terminal {
+  background-color: var(--ground);
+  box-shadow: var(--shadow-none);
+}
+
+/* Sunk strip: The prompt strip, a bordered cell header, the side nav. */
+.wes-terminal .surface-sunk, .wes-terminal.surface-sunk {
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell, at rest: The boundary of a cell nothing is happening to. */
+.wes-terminal .frame-default, .wes-terminal.frame-default {
+  background-color: var(--ground);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell, focused: The cell the caret is in: violet boundary; the selection wash is an appearance choice (cell.css). */
+.wes-terminal .frame-focus, .wes-terminal.frame-focus {
+  background-color: var(--ground);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell, stale: The cell's data is older than its retention promised. */
+.wes-terminal .frame-stale, .wes-terminal.frame-stale {
+  background-color: var(--ground);
+  border-color: var(--mono-warn);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell, failed: The command in this cell did not succeed. */
+.wes-terminal .frame-failed, .wes-terminal.frame-failed {
+  background-color: var(--ground);
+  border-color: var(--mono-bad);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell, pinned: The cell is kept in view while the scrollback moves. */
+.wes-terminal .frame-pinned, .wes-terminal.frame-pinned {
+  background-color: var(--ground);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell, live: The command is still running; the verdict reads running. */
+.wes-terminal .frame-live, .wes-terminal.frame-live {
+  background-color: var(--ground);
+  border-color: var(--mono-meta);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Environment badge: The environment a command ran against, when it is not the default. */
+.wes-terminal .badge-environment, .wes-terminal.badge-environment {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  font-weight: var(--type-sans-small-weight);
+  letter-spacing: var(--type-sans-small-tracking);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-warn);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  border-style: solid;
+}
+
+/* Revision badge: The workspace revision a command saw. */
+.wes-terminal .badge-revision, .wes-terminal.badge-revision {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  font-weight: var(--type-sans-small-weight);
+  letter-spacing: var(--type-sans-small-tracking);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-faint);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  border-style: solid;
+}
+
+/* Grant badge: How long the grant this command used still has. */
+.wes-terminal .badge-grant, .wes-terminal.badge-grant {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  font-weight: var(--type-sans-small-weight);
+  letter-spacing: var(--type-sans-small-tracking);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-warn);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  border-style: solid;
+}
+
+/* Target badge: The target a command ran against, when it is not the default. */
+.wes-terminal .badge-target, .wes-terminal.badge-target {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  font-weight: var(--type-sans-small-weight);
+  letter-spacing: var(--type-sans-small-tracking);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-meta);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  border-style: solid;
+}
+
+/* Traced badge: The command was traced. */
+.wes-terminal .badge-traced, .wes-terminal.badge-traced {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  font-weight: var(--type-sans-small-weight);
+  letter-spacing: var(--type-sans-small-tracking);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-meta);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  border-style: solid;
+}
+
+/* Effects acknowledged: A repeat someone forced past the effects guard; per attempt, always on the cell. */
+.wes-terminal .badge-effects, .wes-terminal.badge-effects {
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  font-weight: var(--type-sans-small-weight);
+  letter-spacing: var(--type-sans-small-tracking);
+  line-height: var(--type-sans-small-leading);
+  color: var(--mono-warn);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  border-style: solid;
+}
+
+/* Output rail: The hairline that indents output under a cell's verdict in the minimal chrome. Not a state: it says where output begins, not how the command went. */
+.wes-terminal .rail-output, .wes-terminal.rail-output {
+  background-color: var(--rail);
+  border-width: var(--stroke-none);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Cell action: A key and its verb in the actions strip. Subdued: an action is offered, not announced. */
+.wes-terminal .cell-action, .wes-terminal.cell-action {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-dim);
+  background-color: var(--sunk);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Spacer: Holds a gap open in a flowed row and paints nothing. Used for the 30px indent the minimal chrome gives its output. */
+.wes-terminal .spacer, .wes-terminal.spacer {
+  background-color: var(--transparent);
+  border-width: var(--stroke-none);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Rail, default: The 2px rail of a cell in the default state. */
+.wes-terminal .rail-default, .wes-terminal.rail-default {
+  background-color: var(--ground);
+  border-color: var(--ground);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Rail, focus: The 2px rail of a cell in the focus state. */
+.wes-terminal .rail-focus, .wes-terminal.rail-focus {
+  background-color: var(--mono-ref);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Rail, stale: The 2px rail of a cell in the stale state. */
+.wes-terminal .rail-stale, .wes-terminal.rail-stale {
+  background-color: var(--mono-warn);
+  border-color: var(--mono-warn);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Rail, failed: The 2px rail of a cell in the failed state. */
+.wes-terminal .rail-failed, .wes-terminal.rail-failed {
+  background-color: var(--mono-bad);
+  border-color: var(--mono-bad);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Rail, pinned: The 2px rail of a cell in the pinned state. */
+.wes-terminal .rail-pinned, .wes-terminal.rail-pinned {
+  background-color: var(--mono-ref);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Rail, live: The 2px rail of a cell in the live state. */
+.wes-terminal .rail-live, .wes-terminal.rail-live {
+  background-color: var(--mono-meta);
+  border-color: var(--mono-meta);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Graph node, ok: A node whose shape is ok; the graph says it the way the scrollback does. */
+.wes-terminal .graph-node-ok, .wes-terminal.graph-node-ok {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ok);
+  background-color: var(--ground);
+  border-color: var(--mono-ok);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  border-style: solid;
+}
+
+/* Graph node, running: A node whose shape is running; the graph says it the way the scrollback does. */
+.wes-terminal .graph-node-running, .wes-terminal.graph-node-running {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-meta);
+  background-color: var(--ground);
+  border-color: var(--mono-meta);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  border-style: solid;
+}
+
+/* Graph node, stale: A node whose shape is stale; the graph says it the way the scrollback does. */
+.wes-terminal .graph-node-stale, .wes-terminal.graph-node-stale {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-warn);
+  background-color: var(--ground);
+  border-color: var(--mono-warn);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  border-style: solid;
+}
+
+/* Graph node, failed: A node whose shape is failed; the graph says it the way the scrollback does. */
+.wes-terminal .graph-node-failed, .wes-terminal.graph-node-failed {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-bad);
+  background-color: var(--ground);
+  border-color: var(--mono-bad);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  border-style: solid;
+}
+
+/* Graph node, selected: A node whose shape is selected; the graph says it the way the scrollback does. */
+.wes-terminal .graph-node-selected, .wes-terminal.graph-node-selected {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ref);
+  background-color: var(--ground);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-none);
+  border-style: solid;
+}
+
+/* Series line: The curve of a series preview; the accent, because the shape is the point. */
+.wes-terminal .series-line, .wes-terminal.series-line {
+  color: var(--mono-ref);
+}
+
+/* Chosen option: The option a setting currently holds. A role, because a chip's own selected look is overridden by the role that colours it. */
+.wes-terminal .chip-chosen, .wes-terminal.chip-chosen {
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  letter-spacing: var(--type-mono-tracking);
+  line-height: var(--type-mono-leading);
+  color: var(--on-primary);
+  background-color: var(--mono-ref);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Option card: One choice a setting offers: a name and what it means. */
+.wes-terminal .option, .wes-terminal.option {
+  background-color: var(--ground);
+  border-color: var(--line);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}
+
+/* Option card, chosen: The choice a setting currently holds: the accent border and the same wash a focused cell takes. */
+.wes-terminal .option-chosen, .wes-terminal.option-chosen {
+  background-color: var(--sel);
+  border-color: var(--mono-ref);
+  border-width: var(--stroke-thin);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-none);
+  border-style: solid;
+}

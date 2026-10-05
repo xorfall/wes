@@ -1,0 +1,11 @@
+:def positive(input: Int) -> Bool as :calc pure { return input > 0; }
+:calc { return 7; } | :fork {
+    { :calc { return 1 / 0; } > broken }
+    when positive { :calc { return input * 2; } > doubled }
+    { :calc { return input + 1; } > incremented }
+}
+:calc { return 1 / 0; } | :fork {
+    on success { :calc { return 99; } > unreachable }
+    on failed { :calc { return input.code; } > failureCode }
+    on cancelled { :calc { return 99; } > notCancelled }
+}

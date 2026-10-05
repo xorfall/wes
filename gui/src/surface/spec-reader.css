@@ -1,0 +1,221 @@
+/*
+ * The contract reader shared by drafts, saved revisions and workspace snapshots, in the table
+ * language: hairline cells on a sunk header, one mono line per operation or type, and an opened row
+ * unfolding in place under a quiet accent wash. Identifiers are mono; prose and labels are sans.
+ * Closed cells stay on one line and show their whole text as a hint; an opened row wraps whole.
+ * Narrow panes are read from the reader's own width (a container query), not the window's: the same
+ * tables fold to fewer columns, and route and operation stay separate lines. Every font and colour
+ * comes from the theme tokens; rules stay scoped above Surface's reset.
+ */
+.wes-terminal .spec-reader {
+  --t-line: var(--stroke-thin) solid var(--line);
+  --t-wash: color-mix(in srgb, var(--mono-ref) 6%, transparent);
+  --t-chev: 18px;
+  --t-flag: 80px;
+  /* Narrow requiredness column: room for `req.` in mono plus cell padding and hairline. */
+  --t-flag-narrow: 52px;
+  --t-detail-label: 110px;
+  --t-measure: 720px;
+  --field-indent: 20px;
+  --field-chev: 14px;
+  min-width: 0;
+  font-family: var(--type-sans-family);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--mono-ink);
+  container-type: inline-size;
+}
+.wes-terminal .spec-reader p { margin: 0; }
+
+/* Filter, count and collapse: one quiet line above the table. */
+.wes-terminal .spec-reader-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-md); padding-bottom: var(--space-sm); color: var(--mono-dim); font-size: var(--type-sans-small-size); }
+.wes-terminal .spec-reader-tools .settings-field { flex: 0 1 280px; min-width: 120px; padding: 2px var(--space-sm); }
+.wes-terminal .spec-reader-count { margin-left: auto; color: var(--mono-faint); }
+.wes-terminal .spec-reader-link,
+.wes-terminal .spec-t-linkbtn { appearance: none; padding: 0; cursor: pointer; font-family: var(--type-mono-family); font-size: var(--type-mono-size); color: var(--mono-ref); background: transparent; border: 0; }
+.wes-terminal .spec-reader-link:hover,
+.wes-terminal .spec-t-linkbtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- the table ---------- */
+.wes-terminal .spec-t { min-width: 0; border-left: var(--t-line); border-top: var(--t-line); font-family: var(--type-mono-family); font-size: var(--type-mono-size); line-height: var(--type-mono-leading); color: var(--mono-ink); }
+.wes-terminal .spec-t-row { display: grid; align-items: stretch; min-width: 0; }
+.wes-terminal .spec-t-th { min-width: 0; padding: 0 var(--space-sm); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 400; color: var(--mono-dim); background: var(--sunk); border-right: var(--t-line); border-bottom: var(--t-line); }
+.wes-terminal .spec-t-td { min-width: 0; padding: 2px var(--space-sm); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-right: var(--t-line); border-bottom: var(--t-line); }
+.wes-terminal .spec-t-tdw { min-width: 0; padding: 3px var(--space-sm); white-space: normal; overflow-wrap: anywhere; border-right: var(--t-line); border-bottom: var(--t-line); }
+.wes-terminal .spec-t-open { background: var(--t-wash); }
+.wes-terminal .spec-t-strong { font-weight: var(--type-mono-strong-weight); }
+.wes-terminal .spec-t code { font-family: var(--type-mono-family); font-size: inherit; color: inherit; background: none; padding: 0; }
+
+/* The disclosure column: a fixed, centred chevron that never takes the row's width. */
+.wes-terminal .spec-t .spec-c-chev { padding: 2px 0; overflow: visible; text-align: center; }
+.wes-terminal .spec-t-chev,
+.wes-terminal .spec-field-chev { appearance: none; padding: 0; cursor: pointer; font: inherit; line-height: inherit; color: var(--mono-ref); background: transparent; border: 0; }
+/* A row's name also opens it; it stays one ellipsized line until the row is open. */
+.wes-terminal .spec-t-rowbtn { appearance: none; display: block; max-width: 100%; padding: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; text-align: left; font: inherit; line-height: inherit; color: inherit; background: transparent; border: 0; }
+.wes-terminal .spec-t-open > .spec-t-row > .spec-t-td { white-space: normal; overflow-wrap: anywhere; }
+.wes-terminal .spec-t-open > .spec-t-row .spec-t-rowbtn { white-space: normal; overflow-wrap: anywhere; font-weight: var(--type-mono-strong-weight); }
+.wes-terminal .spec-t-open > .spec-t-row .spec-operation-route { font-weight: var(--type-mono-strong-weight); }
+
+.wes-terminal .spec-method { font-size: 12px; font-weight: var(--type-mono-strong-weight); letter-spacing: .4px; }
+.wes-terminal .spec-doc-summary { font-family: var(--type-sans-family); font-size: 13px; color: var(--mono-ink); }
+.wes-terminal .spec-row-status { margin-right: var(--space-sm); font-family: var(--type-sans-family); font-size: var(--type-sans-small-size); }
+
+/* Column tracks keep the approved proportions at any pane width. */
+.wes-terminal .spec-ops-row { grid-template-columns: var(--t-chev) 72px minmax(0, 2.9fr) minmax(0, 2.1fr) minmax(0, 4.3fr) minmax(0, 1.5fr) minmax(0, 1.1fr); }
+.wes-terminal .spec-types-row { grid-template-columns: var(--t-chev) minmax(0, 3fr) 88px 64px minmax(0, 7fr); }
+.wes-terminal .spec-inputs-row { grid-template-columns: minmax(0, 1.7fr) 70px minmax(0, 1.5fr) var(--t-flag) minmax(0, 4fr); }
+.wes-terminal .spec-body-row { grid-template-columns: minmax(0, 2.4fr) var(--t-flag) minmax(0, 4fr); }
+.wes-terminal .spec-body-named .spec-body-row { grid-template-columns: minmax(0, 1.7fr) minmax(0, 2fr) var(--t-flag) minmax(0, 4fr); }
+.wes-terminal .spec-responses-row { grid-template-columns: 70px minmax(0, 1.6fr) minmax(0, 1fr); }
+.wes-terminal .spec-fields-row { grid-template-columns: minmax(0, 2.3fr) minmax(0, 2.2fr) var(--t-flag) var(--t-flag) minmax(0, 4fr); }
+
+/* ---------- an opened row ---------- */
+.wes-terminal .spec-t-detail { display: grid; grid-template-columns: var(--t-detail-label) minmax(0, 1fr); align-items: start; column-gap: 12px; row-gap: 10px; min-width: 0; padding: 10px var(--space-md) 14px 34px; border-right: var(--t-line); border-bottom: var(--t-line); }
+.wes-terminal .spec-t-detail > * { min-width: 0; }
+.wes-terminal .spec-t-label { font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); font-weight: 400; line-height: 1.5; color: var(--mono-dim); }
+.wes-terminal .spec-t-detail > .spec-t-label { padding-top: 2px; }
+.wes-terminal .spec-t-prose,
+.wes-terminal .spec-t-detail > .spec-documentation { max-width: var(--t-measure); font-family: var(--type-sans-family); font-size: 14px; line-height: 1.6; color: var(--mono-ink); }
+.wes-terminal .spec-t-value { overflow-wrap: anywhere; }
+.wes-terminal .spec-t-note { font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-dim); }
+.wes-terminal .spec-t-footnote { margin-top: 6px; font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-dim); }
+.wes-terminal .spec-t-sub { background: var(--surface); }
+.wes-terminal .spec-t-sub .spec-documentation { font-family: var(--type-sans-family); font-size: 13px; line-height: 1.5; }
+.wes-terminal .spec-t-name { font-weight: var(--type-mono-strong-weight); }
+.wes-terminal .spec-auth { display: flex; flex-direction: column; gap: 2px; font-family: var(--type-sans-family); font-size: 13px; }
+.wes-terminal .spec-media-type { margin-right: var(--space-sm); font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-faint); }
+
+/* Evidence and the way to the source: a disclosure at the left, small actions at the right. */
+.wes-terminal .spec-t-evidence { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wes-terminal .spec-t-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-xs) 14px; min-width: 0; }
+.wes-terminal .spec-t-fill { flex: 1; }
+.wes-terminal .spec-t-layer { appearance: none; display: flex; align-items: baseline; gap: var(--space-sm); padding: 0; cursor: pointer; text-align: left; font-family: var(--type-mono-family); font-size: var(--type-mono-size); line-height: var(--type-mono-leading); color: var(--mono-ink); background: transparent; border: 0; }
+.wes-terminal .spec-t-action { appearance: none; padding: 0 var(--space-sm); cursor: pointer; white-space: nowrap; font-family: var(--type-mono-family); font-size: var(--type-mono-size); line-height: var(--type-mono-leading); color: var(--mono-dim); background: var(--sunk); border: var(--t-line); border-radius: var(--radius-sm); }
+.wes-terminal .spec-t-action:hover { color: var(--mono-ink); }
+
+/* Links to types and evidence. A reference wraps whole rather than widening its cell. */
+.wes-terminal .spec-type-link,
+.wes-terminal .spec-evidence-link { appearance: none; padding: 0; min-width: 0; text-align: left; white-space: normal; cursor: pointer; background: transparent; border: 0; }
+.wes-terminal .spec-type-link { font-family: var(--type-mono-family); font-size: var(--type-mono-size); line-height: inherit; color: var(--mono-ref); overflow-wrap: anywhere; }
+.wes-terminal .spec-evidence-link { display: inline-block; font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-faint); }
+.wes-terminal .spec-evidence-link:hover,
+.wes-terminal .spec-type-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.wes-terminal .spec-reader button:focus-visible,
+.wes-terminal .spec-reader summary:focus-visible { outline: var(--stroke-rail) solid var(--mono-meta); outline-offset: 1px; }
+
+/*
+ * A field's name cell: a fixed 14px chevron (or a quiet mark) and the name as one compact group,
+ * indented per nesting level. The name only shrinks and breaks when it is longer than its cell, so a
+ * short word such as `shipping` is never split; the chevron never grows into the name's space.
+ */
+.wes-terminal .spec-field-cell { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.wes-terminal .spec-field-chev,
+.wes-terminal .spec-field-mark { flex: 0 0 var(--field-chev); width: var(--field-chev); text-align: left; }
+.wes-terminal .spec-field-mark { color: var(--mono-faint); }
+.wes-terminal .spec-field-name { appearance: none; flex: 0 1 auto; min-width: 0; padding: 0; cursor: pointer; text-align: left; white-space: normal; word-break: normal; overflow-wrap: break-word; font: inherit; font-weight: var(--type-mono-strong-weight); line-height: inherit; color: var(--mono-ink); background: transparent; border: 0; }
+.wes-terminal .spec-field-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.wes-terminal .spec-field-note { display: block; font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-dim); overflow-wrap: anywhere; }
+.wes-terminal .spec-field-note code { font-family: var(--type-mono-family); font-size: 12.5px; color: var(--mono-ink); }
+.wes-terminal .spec-field-basis { color: var(--mono-faint); }
+.wes-terminal .spec-schema-selected > * { background: var(--sel); }
+.wes-terminal .spec-schema-selected > :first-child { box-shadow: inset var(--stroke-rail) 0 0 var(--mono-ref); }
+
+/* The way back from a followed reference, inside the type it opened. */
+.wes-terminal .spec-reader-return { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-xs) 10px; padding: 4px 10px; border: var(--stroke-thin) solid color-mix(in srgb, var(--mono-meta) 40%, transparent); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--mono-meta) 5%, transparent); }
+.wes-terminal .spec-constraints { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.wes-terminal .spec-constraints > div { display: flex; gap: var(--space-md); min-width: 0; }
+.wes-terminal .spec-constraints dt { color: var(--mono-dim); }
+.wes-terminal .spec-constraints dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- documentation prose ---------- */
+.wes-terminal .spec-documentation { min-width: 0; max-width: 76ch; line-height: 1.55; color: var(--mono-ink); overflow-wrap: anywhere; }
+.wes-terminal .spec-documentation p { margin: 0 0 6px; white-space: pre-wrap; }
+.wes-terminal .spec-documentation > :last-child { margin-bottom: 0; }
+.wes-terminal .spec-documentation ul,
+.wes-terminal .spec-documentation ol { margin: 0 0 6px; padding-left: 18px; list-style: revert; }
+.wes-terminal .spec-documentation li { padding: 1px 0; }
+.wes-terminal .spec-documentation code { padding: 0 4px; font-family: var(--type-mono-family); font-size: 12px; background: var(--sunk); border: var(--t-line); border-radius: var(--radius-sm); }
+.wes-terminal .spec-documentation pre { margin: 4px 0 8px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sunk); border: var(--t-line); border-radius: var(--radius-sm); }
+.wes-terminal .spec-documentation pre code { padding: 0; background: transparent; border: 0; }
+.wes-terminal .spec-documentation a { color: var(--mono-ref); text-decoration: underline; text-underline-offset: 2px; }
+.wes-terminal .spec-documentation strong,
+.wes-terminal .spec-doc-heading { font-weight: 600; }
+
+/* Parts that exist for one width only. */
+.wes-terminal .spec-reader .spec-t-narrow { display: none; }
+
+/* ---------- narrow panes: fewer columns, the same tables ---------- */
+@container (max-width: 620px) {
+  .wes-terminal .spec-reader .spec-t-wide { display: none; }
+  .wes-terminal .spec-reader span.spec-t-narrow { display: inline; }
+  .wes-terminal .spec-reader p.spec-t-narrow,
+  .wes-terminal .spec-t-detail > span.spec-t-narrow,
+  .wes-terminal .spec-reader span.spec-row-narrow { display: block; }
+
+  /* Operations: route over operation in one column; the summary moves into the opened row. */
+  .wes-terminal .spec-ops-row { grid-template-columns: var(--t-chev) 58px minmax(0, 1fr) 62px; grid-template-areas: "chev method route returns" "chev method op returns"; }
+  .wes-terminal .spec-ops-row > .spec-c-chev { grid-area: chev; }
+  .wes-terminal .spec-ops-row > .spec-c-method { grid-area: method; }
+  .wes-terminal .spec-ops-row > .spec-c-route { grid-area: route; white-space: normal; overflow-wrap: anywhere; border-bottom: 0; }
+  .wes-terminal .spec-ops-row > .spec-c-op { grid-area: op; padding-top: 0; font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-dim); }
+  .wes-terminal .spec-ops-row > .spec-c-op .spec-t-rowbtn { white-space: normal; overflow-wrap: anywhere; font-weight: 400; }
+  .wes-terminal .spec-ops-row > .spec-c-ret { grid-area: returns; }
+  .wes-terminal .spec-ops-row > .spec-c-sum,
+  .wes-terminal .spec-ops-row > .spec-c-in,
+  .wes-terminal .spec-ops-row > .spec-c-ret .spec-ret-shape,
+  .wes-terminal .spec-t-head.spec-ops-row > .spec-c-op { display: none; }
+  .wes-terminal .spec-t-head.spec-ops-row > .spec-c-route { border-bottom: var(--t-line); }
+
+  /* Types: the description reads as a line under the name; the shape folds away. */
+  .wes-terminal .spec-types-row { grid-template-columns: var(--t-chev) minmax(0, 1fr) 54px; grid-template-areas: "chev type count" "chev desc count"; }
+  .wes-terminal .spec-types-row > .spec-c-chev { grid-area: chev; }
+  .wes-terminal .spec-types-row > .spec-c-type { grid-area: type; white-space: normal; overflow-wrap: anywhere; border-bottom: 0; }
+  .wes-terminal .spec-types-row > .spec-c-type .spec-t-rowbtn { white-space: normal; overflow-wrap: anywhere; }
+  .wes-terminal .spec-types-row > .spec-c-count { grid-area: count; }
+  .wes-terminal .spec-types-row > .spec-c-desc { grid-area: desc; padding-top: 0; white-space: normal; }
+  .wes-terminal .spec-types-row > .spec-c-desc .spec-doc-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-family: var(--type-sans-small-family); font-size: var(--type-sans-small-size); color: var(--mono-dim); }
+  .wes-terminal .spec-types-row > .spec-c-shape,
+  .wes-terminal .spec-t-head.spec-types-row > .spec-c-desc { display: none; }
+  .wes-terminal .spec-t-head.spec-types-row > .spec-c-type { border-bottom: var(--t-line); }
+
+  /* Opened rows: one column, labels as small capitals above what they name. */
+  .wes-terminal .spec-t-detail { grid-template-columns: minmax(0, 1fr); row-gap: 6px; padding: 8px 10px 12px 26px; }
+  .wes-terminal .spec-t-detail > .spec-t-label { padding-top: 4px; font-size: 11px; letter-spacing: .3px; text-transform: uppercase; }
+  .wes-terminal .spec-t-detail > .spec-t-label:empty { display: none; }
+  .wes-terminal .spec-t-prose,
+  .wes-terminal .spec-t-detail > .spec-documentation { font-size: 13.5px; }
+
+  /* Sub-tables: description becomes a full-width line under its row. */
+  .wes-terminal .spec-inputs-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) var(--t-flag-narrow); grid-template-areas: "name type req" "desc desc desc"; }
+  .wes-terminal .spec-inputs-row > .spec-c-name { grid-area: name; }
+  .wes-terminal .spec-inputs-row > .spec-c-type { grid-area: type; }
+  .wes-terminal .spec-inputs-row > .spec-c-req { grid-area: req; }
+  .wes-terminal .spec-inputs-row > .spec-c-desc { grid-area: desc; }
+  .wes-terminal .spec-inputs-row > .spec-c-loc,
+  .wes-terminal .spec-inputs-row > .spec-c-desc:empty,
+  .wes-terminal .spec-body-row > .spec-c-desc:empty,
+  .wes-terminal .spec-t-head.spec-inputs-row > .spec-c-desc { display: none; }
+
+  .wes-terminal .spec-body-row { grid-template-columns: minmax(0, 1fr) var(--t-flag-narrow); grid-template-areas: "type req" "desc desc"; }
+  .wes-terminal .spec-body-named .spec-body-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--t-flag-narrow); grid-template-areas: "name type req" "desc desc desc"; }
+  .wes-terminal .spec-body-row > .spec-c-name { grid-area: name; }
+  .wes-terminal .spec-body-row > .spec-c-type { grid-area: type; }
+  .wes-terminal .spec-body-row > .spec-c-req { grid-area: req; }
+  .wes-terminal .spec-body-row > .spec-c-desc { grid-area: desc; }
+  .wes-terminal .spec-t-head.spec-body-row > .spec-c-desc { display: none; }
+
+  .wes-terminal .spec-responses-row { grid-template-columns: 44px minmax(0, 1fr); grid-template-areas: "status desc" "status type"; }
+  .wes-terminal .spec-responses-row > .spec-c-status { grid-area: status; }
+  .wes-terminal .spec-responses-row > .spec-c-desc { grid-area: desc; border-bottom: 0; }
+  .wes-terminal .spec-responses-row > .spec-c-type { grid-area: type; padding-top: 0; }
+  .wes-terminal .spec-t-head.spec-responses-row > .spec-c-type { display: none; }
+  .wes-terminal .spec-t-head.spec-responses-row > .spec-c-desc { border-bottom: var(--t-line); }
+
+  .wes-terminal .spec-fields-row { grid-template-columns: minmax(0, 1fr) minmax(0, .8fr) var(--t-flag-narrow); grid-template-areas: "field type req" "desc desc desc"; }
+  .wes-terminal .spec-fields-row > .spec-c-field { grid-area: field; }
+  .wes-terminal .spec-fields-row > .spec-c-type { grid-area: type; }
+  .wes-terminal .spec-fields-row > .spec-c-req { grid-area: req; }
+  .wes-terminal .spec-fields-row > .spec-c-desc { grid-area: desc; }
+  .wes-terminal .spec-fields-row > .spec-c-null,
+  .wes-terminal .spec-t-head.spec-fields-row > .spec-c-desc { display: none; }
+}

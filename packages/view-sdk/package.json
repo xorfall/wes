@@ -1,0 +1,29 @@
+{
+  "name": "@wes/view-sdk",
+  "version": "1.0.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./theme": "./theme.ts",
+    "./theme.json": "./theme.json",
+    "./authoring.json": "./authoring.json"
+  },
+  "dependencies": {
+    "lossless-json": "4.3.1"
+  },
+  "peerDependencies": {
+    "react": "18.3.1"
+  },
+  "files": [
+    "index.ts",
+    "contract.ts",
+    "values.ts",
+    "time.ts",
+    "geometry.ts",
+    "frame.tsx",
+    "theme.ts",
+    "theme.json",
+    "authoring.json"
+  ]
+}

@@ -1,0 +1,4 @@
+vars run args:DEMO_STAGE > stage
+:calc {
+  return {exitCode: $stage.exitCode, stageBytes: $stage.stdout};
+} > report

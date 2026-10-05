@@ -1,0 +1,115 @@
+/* Full inspection uses the same surface roles, with scrollable content instead of preview ellipses. */
+.wes-terminal .result-inspection { min-width: 0; margin-top: var(--space-sm); }
+.wes-terminal .result-inspection p { margin: var(--space-xs) 0; }
+.wes-terminal .result-inspection details { margin-top: var(--space-sm); }
+.wes-terminal .result-inspection summary { cursor: pointer; color: var(--mono-dim); }
+.wes-terminal .inspection-text,
+.wes-terminal .open-json.inspection-text {
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm);
+  max-width: 100%;
+  max-height: 32rem;
+  overflow: auto;
+  white-space: pre;
+  text-overflow: clip;
+  user-select: text;
+  background: var(--ground);
+  color: var(--mono-ink);
+  font: inherit;
+  border: var(--stroke-thin) solid var(--mono-faint);
+}
+.wes-terminal .inspection-scroll { overflow: auto; max-height: 24rem; }
+
+/*
+ * A failed describe's saved report, in the cell's fold and in the error peek.
+ *
+ * Prose wraps — it is a finding to read, not a column to line up — and each finding is one row:
+ * its kind, operation and source lines on a head line, its message under them, a hairline at its
+ * left the way an HTTP inspection's steps have. In the cell the rows sit under a scroll ceiling so
+ * a long report does not stretch the scrollback; the peek gives them all the room.
+ */
+.wes-terminal .describe-failure { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+.wes-terminal .describe-failure p,
+.wes-terminal .describe-failure-problem p { margin: 0; min-width: 0; }
+.wes-terminal .describe-failure-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .describe-failure-meta { white-space: normal; overflow-wrap: anywhere; }
+.wes-terminal .describe-failure-issues {
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.wes-terminal .describe-failure-issue {
+  border-left: var(--stroke-thin) solid var(--mono-faint);
+  padding-left: var(--space-sm);
+  min-width: 0;
+}
+.wes-terminal .describe-failure-issue-head { white-space: normal; overflow-wrap: anywhere; }
+.wes-terminal .describe-failure-cell .describe-failure-issues { max-height: 24rem; overflow: auto; }
+.wes-terminal .describe-failure-problem { display: flex; flex-direction: column; gap: var(--space-xs); align-items: flex-start; }
+.wes-terminal .describe-failure-fold { white-space: normal; }
+.wes-terminal .peek-describe-failure { margin-top: var(--space-md); }
+.wes-terminal .http-response-status { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+.wes-terminal .http-headers { width: 100%; border-collapse: collapse; }
+.wes-terminal .http-headers th,
+.wes-terminal .http-headers td { text-align: left; vertical-align: top; padding: var(--space-xs) var(--space-sm); overflow-wrap: anywhere; }
+.wes-terminal .http-headers th { width: 24%; }
+.wes-terminal .result-inspection .http-inspection { max-height: 34rem; overflow: auto; }
+.wes-terminal .result-inspection .http-inspection > ol > li { border-left: var(--stroke-thin) solid var(--mono-faint); padding-left: var(--space-sm); margin-top: var(--space-sm); }
+.wes-terminal .result-inspection .live-http-inspection { margin-top: var(--space-sm); }
+
+/*
+ * The source, wherever it is read.
+ *
+ * It is a view of a result now rather than a fold inside a cell, so it is not scoped to one: the
+ * same rules dress it in a tab of the open screen, in a pane, and in the result's own window. It
+ * gets the room a tab has — the cell's old ceiling was the ceiling of a fold in a scrollback.
+ */
+.wes-terminal .cell-source-view {
+  min-width: 0;
+  padding: var(--space-sm);
+  border-width: var(--stroke-thin);
+}
+/* Keyboard focus inside the read-only source shows on its whole box, not on the clipped content. */
+.wes-terminal .cell-source-view:focus-within {
+  outline: var(--stroke-thin) solid var(--mono-ref);
+  outline-offset: calc(-1 * var(--stroke-thin));
+}
+.wes-terminal .cell-source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.wes-terminal .cell-source-code .cm-scroller {
+  max-height: min(70vh, 720px);
+  overflow: auto;
+}
+.wes-terminal .cell-source-fallback {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: min(70vh, 720px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mono-ink);
+  font: inherit;
+  white-space: pre;
+  resize: none;
+}
+
+/* One-line readers remain scrollable/selectable without a thumb covering their text.
+   Multiline readers retain normal scrollbar affordances. */
+.wes-terminal .cell-source-view[data-single-line="true"] .cm-scroller,
+.wes-terminal .cell-source-view[data-single-line="true"] .cell-source-fallback,
+.wes-terminal .inspection-text[data-single-line="true"] {
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.wes-terminal .cell-source-view[data-single-line="true"] .cm-scroller::-webkit-scrollbar,
+.wes-terminal .cell-source-view[data-single-line="true"] .cell-source-fallback::-webkit-scrollbar,
+.wes-terminal .inspection-text[data-single-line="true"]::-webkit-scrollbar { display: none; }

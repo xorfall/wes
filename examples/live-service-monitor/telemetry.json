@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "provider": "telemetry",
+  "types": {
+    "LatencyMs": {
+      "base": "Int",
+      "min": 0,
+      "max": 60000
+    },
+    "HttpStatus": {
+      "base": "Int",
+      "min": 100,
+      "max": 599
+    },
+    "RequestEvent": {
+      "base": "Record",
+      "fields": {
+        "seq": "Int",
+        "second": "Text",
+        "route": "Text",
+        "durationMs": "LatencyMs",
+        "status": "HttpStatus"
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "watch"
+      ],
+      "summary": "Synthetic service request events over SSE",
+      "method": "GET",
+      "route": "/events",
+      "stream": true,
+      "auth": [],
+      "parameters": [
+        {
+          "name": "feed",
+          "wire": "feed",
+          "location": "query",
+          "type": "Text",
+          "required": true,
+          "encoding": "scalar"
+        }
+      ],
+      "responses": {
+        "200": "RequestEvent",
+        "204": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+[
+  {
+    "command": "",
+    "encoded": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"unknown\"}},\"provenance\":{},\"data\":[{\"command\":\":import\",\"summary\":\"learns a service, so its calls become commands\"},{\"command\":\":change\",\"summary\":\"changes an argument of a call that already ran\"},{\"command\":\":view\",\"summary\":\"draws a result — a table, a line, a candlestick chart, csv\"},{\"command\":\":inspect\",\"summary\":\"describes one thing: a result, a node, or a call\"},{\"command\":\":list\",\"summary\":\"lists what the engine knows about\"},{\"command\":\":wait\",\"summary\":\"blocks until named results are ready\"},{\"command\":\":refresh\",\"summary\":\"runs a node again and stales everything built on it\"},{\"command\":\":cancel\",\"summary\":\"stops a node that is still running\"},{\"command\":\":timeout\",\"summary\":\"sets a local execution budget; expiry cancels the operation\"},{\"command\":\":policy\",\"summary\":\"whether stale results run again unasked — reactive or manual\"},{\"command\":\":drop\",\"summary\":\"forgets a node, and everything built on it\"},{\"command\":\":save\",\"summary\":\"keeps this session under a name\"},{\"command\":\":help\",\"summary\":\"says what a command is for; without one, lists them all\"},{\"command\":\":load\",\"summary\":\"opens a session kept under a name\"},{\"command\":\":type\",\"summary\":\"loads optional type contracts or validates a value\"},{\"command\":\":def\",\"summary\":\"defines one reusable command: :def name(parameter: Type) as provider command key:?parameter\"}]}"
+  },
+  {
+    "command": "import",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":import\",\"implemented\":true,\"otherArguments\":true,\"parameters\":[{\"name\":\"as\",\"required\":false,\"type\":\"Text\"}],\"producesValue\":false,\"summary\":\"learns a service, so its calls become commands\",\"takes\":[]}}"
+  },
+  {
+    "command": "change",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":change\",\"implemented\":true,\"otherArguments\":true,\"parameters\":[],\"producesValue\":false,\"summary\":\"changes an argument of a call that already ran\",\"takes\":[]}}"
+  },
+  {
+    "command": "view",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":view\",\"implemented\":true,\"otherArguments\":true,\"parameters\":[{\"name\":\"as\",\"required\":false,\"type\":\"Text\"}],\"producesValue\":true,\"summary\":\"draws a result — a table, a line, a candlestick chart, csv\",\"takes\":[]}}"
+  },
+  {
+    "command": "inspect",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":inspect\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":true,\"summary\":\"describes one thing: a result, a node, or a call\",\"takes\":[]}}"
+  },
+  {
+    "command": "list",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":list\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[{\"name\":\"provider\",\"required\":false,\"type\":\"Text\"}],\"producesValue\":true,\"summary\":\"lists what the engine knows about\",\"takes\":[\"providers\",\"capabilities\",\"names\",\"nodes\",\"renderers\",\"importers\",\"commands\",\"workspaces\"]}}"
+  },
+  {
+    "command": "wait",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":wait\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"blocks until named results are ready\",\"takes\":[]}}"
+  },
+  {
+    "command": "refresh",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":refresh\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"runs a node again and stales everything built on it\",\"takes\":[]}}"
+  },
+  {
+    "command": "cancel",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":cancel\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"stops a node that is still running\",\"takes\":[]}}"
+  },
+  {
+    "command": "timeout",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":timeout\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[{\"name\":\"after\",\"required\":true,\"type\":\"Duration\"}],\"producesValue\":false,\"summary\":\"sets a local execution budget; expiry cancels the operation\",\"takes\":[]}}"
+  },
+  {
+    "command": "policy",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":policy\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[{\"name\":\"mode\",\"required\":true,\"type\":\"Text\"}],\"producesValue\":false,\"summary\":\"whether stale results run again unasked — reactive or manual\",\"takes\":[]}}"
+  },
+  {
+    "command": "drop",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":drop\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"forgets a node, and everything built on it\",\"takes\":[]}}"
+  },
+  {
+    "command": "save",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":save\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"keeps this session under a name\",\"takes\":[]}}"
+  },
+  {
+    "command": "help",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":help\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":true,\"summary\":\"says what a command is for; without one, lists them all\",\"takes\":[\"import\",\"change\",\"view\",\"inspect\",\"list\",\"wait\",\"refresh\",\"cancel\",\"timeout\",\"policy\",\"drop\",\"save\",\"help\",\"load\",\"type\",\"for\",\"if\",\"use\",\"trace\",\"alias\",\"def\",\"let\",\"set\"]}}"
+  },
+  {
+    "command": "load",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":load\",\"implemented\":true,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"opens a session kept under a name\",\"takes\":[]}}"
+  },
+  {
+    "command": "type",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":type\",\"implemented\":true,\"otherArguments\":true,\"parameters\":[],\"producesValue\":false,\"summary\":\"loads optional type contracts or validates a value\",\"takes\":[\"load\",\"check\"]}}"
+  },
+  {
+    "command": "for",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":for\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "if",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":if\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "use",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":use\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "trace",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":trace\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "alias",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":alias\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "def",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":def\",\"implemented\":true,\"otherArguments\":true,\"parameters\":[],\"producesValue\":false,\"summary\":\"defines one reusable command: :def name(parameter: Type) as provider command key:?parameter\",\"takes\":[]}}"
+  },
+  {
+    "command": "let",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":let\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "set",
+    "encoded": "{\"type\":{\"kind\":\"unknown\"},\"provenance\":{},\"data\":{\"command\":\":set\",\"implemented\":false,\"otherArguments\":false,\"parameters\":[],\"producesValue\":false,\"summary\":\"reserved, not implemented yet — the name is taken so that implementing it later breaks nothing\",\"takes\":[]}}"
+  },
+  {
+    "command": "missing",
+    "error": "there is no command called ':missing'"
+  }
+]

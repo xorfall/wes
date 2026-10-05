@@ -1,0 +1,137 @@
+/*
+ * The forms' shared shape. A preview is bounded: whatever the data does, the cell keeps its size,
+ * and what did not fit becomes the tail line the cell draws under it.
+ */
+.wes-terminal {
+  /* The breathing room a table cell takes beside its column edge. */
+  --table-cell-padding: 6px;
+}
+
+.wes-terminal .form-table {
+  display: grid;
+  align-items: baseline;
+  min-width: 0;
+}
+.wes-terminal .form-table-header,
+.wes-terminal .form-table-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+}
+/* The header sits on the sunk strip; the rows sit on the ground, and nothing rules between them. */
+.wes-terminal .form-table-header {
+  border-width: 0;
+}
+.wes-terminal .form-table-cell {
+  padding: 0 var(--table-cell-padding);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wes-terminal .form-table-right {
+  text-align: right;
+}
+.wes-terminal .form-table-cell > span {
+  padding: 0 var(--space-xs);
+}
+
+/* Every preview stacks its lines and nothing else; the cell decides how much room they get. */
+.wes-terminal .form-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.wes-terminal .record-fields { display: grid; grid-template-columns: fit-content(35%) minmax(0, 1fr); gap: 0 var(--space-md); margin: 0; }
+.wes-terminal .record-output { position: relative; }
+.wes-terminal .cell .record-output { position: static; }
+.wes-terminal .record-viewport { overflow: hidden; }
+.wes-terminal .record-field { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+.wes-terminal .record-field dt { overflow-wrap: anywhere; }
+.wes-terminal .record-field dd { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .record-details > summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .record-detail-content { max-height: 24rem; overflow: auto; }
+.wes-terminal .record-detail-content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .text-disclosure > summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wes-terminal .text-disclosure[open] > summary { max-height: 24rem; overflow: auto; }
+.wes-terminal .record-remaining { min-height: 1lh; margin-top: var(--space-xs); }
+.wes-terminal .record-resize { position: absolute; z-index: 1; bottom: -4px; left: 0; right: 0; height: 9px; cursor: ns-resize; touch-action: none; user-select: none; outline: none; }
+.wes-terminal .record-resize > span { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--ground); color: var(--mono-ref); opacity: 0; padding: 0 var(--space-sm); font-size: 14px; line-height: 18px; }
+.wes-terminal .record-resize:hover, .wes-terminal .record-resize:focus-visible, .wes-terminal .record-resize.dragging { background: var(--line); }
+.wes-terminal .record-resize:hover > span, .wes-terminal .record-resize:focus-visible > span, .wes-terminal .record-resize.dragging > span { opacity: 1; }
+.wes-terminal .record-more { display: block; cursor: pointer; border: 0; background: none; padding: 0; margin-top: var(--space-xs); font: inherit; text-align: left; }
+.wes-terminal .record-more:hover, .wes-terminal .record-more:focus-visible { color: var(--mono-ref); text-decoration: underline; }
+.wes-terminal .list-output { min-width: 0; overflow-x: auto; }
+
+/* Shared result views inherit the same typography as native Surface forms. */
+.wes-terminal .dim { font: inherit; color: var(--mono-dim); }
+
+/* Bars: a padded label, the track, and the share. The labels line the tracks up under each other. */
+.wes-terminal .form-bars {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.wes-terminal .form-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+.wes-terminal .form-bar-label,
+.wes-terminal .form-bar-value {
+  flex: 0 0 auto;
+}
+.wes-terminal .form-bar-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 6px;
+  background-color: var(--sunk);
+  border: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .form-bar-fill {
+  height: 100%;
+  background-color: var(--mono-ref);
+}
+
+/* The curve: one line, a faint area under it, a dot on the last point. No axes, no legend. */
+.wes-terminal .form-sparkline {
+  display: block;
+  width: 100%;
+  height: 34px;
+}
+.wes-terminal .form-sparkline-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.wes-terminal .form-sparkline-area {
+  fill: currentColor;
+  opacity: 0.12;
+  stroke: none;
+}
+.wes-terminal .form-sparkline-last {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* The process asks in place, so the field sits on the line where the question was asked. */
+.wes-terminal .form-answer {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  padding: 2px var(--space-sm);
+  background-color: var(--ground);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+  color: var(--mono-ink);
+  outline: none;
+}
+.wes-terminal .form-answer:focus {
+  border-color: var(--mono-ref);
+}

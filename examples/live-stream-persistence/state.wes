@@ -1,0 +1,1 @@
+events watch | :calc { return input + 1; } > latest | :stream accumulate limit:100 overflow:drop-oldest > collected

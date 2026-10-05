@@ -1,0 +1,1725 @@
+[
+  {
+    "input": "",
+    "tokens": [
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 0,
+        "end": 0
+      }
+    ],
+    "diagnostics": [],
+    "printed": ""
+  },
+  {
+    "input": "directory users > users *> failure",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "directory",
+        "start": 0,
+        "end": 9
+      },
+      {
+        "kind": "WORD",
+        "text": "users",
+        "start": 10,
+        "end": 15
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 16,
+        "end": 17
+      },
+      {
+        "kind": "WORD",
+        "text": "users",
+        "start": 18,
+        "end": 23
+      },
+      {
+        "kind": "ERROR_BIND",
+        "text": "*>",
+        "start": 24,
+        "end": 26
+      },
+      {
+        "kind": "WORD",
+        "text": "failure",
+        "start": 27,
+        "end": 34
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 34,
+        "end": 34
+      }
+    ],
+    "diagnostics": [],
+    "printed": "directory users > users *> failure"
+  },
+  {
+    "input": "$users::cancel > stopped",
+    "tokens": [
+      {
+        "kind": "REF",
+        "text": "users::cancel",
+        "start": 0,
+        "end": 14
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 15,
+        "end": 16
+      },
+      {
+        "kind": "WORD",
+        "text": "stopped",
+        "start": 17,
+        "end": 24
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 24,
+        "end": 24
+      }
+    ],
+    "diagnostics": [],
+    "printed": "$users::cancel > stopped"
+  },
+  {
+    "input": ":timeout $users after:PT0.5S",
+    "tokens": [
+      {
+        "kind": "META",
+        "text": ":",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "WORD",
+        "text": "timeout",
+        "start": 1,
+        "end": 8
+      },
+      {
+        "kind": "REF",
+        "text": "users",
+        "start": 9,
+        "end": 15
+      },
+      {
+        "kind": "KEY",
+        "text": "after",
+        "start": 16,
+        "end": 22
+      },
+      {
+        "kind": "WORD",
+        "text": "PT0.5S",
+        "start": 22,
+        "end": 28
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 28,
+        "end": 28
+      }
+    ],
+    "diagnostics": [],
+    "printed": ":timeout $users after:PT0.5S"
+  },
+  {
+    "input": "@unchecked{items, provenance} reports summarize input:$users",
+    "tokens": [
+      {
+        "kind": "AT",
+        "text": "@",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "WORD",
+        "text": "unchecked",
+        "start": 1,
+        "end": 10
+      },
+      {
+        "kind": "BRACE_OPEN",
+        "text": "{",
+        "start": 10,
+        "end": 11
+      },
+      {
+        "kind": "WORD",
+        "text": "items",
+        "start": 11,
+        "end": 16
+      },
+      {
+        "kind": "COMMA",
+        "text": ",",
+        "start": 16,
+        "end": 17
+      },
+      {
+        "kind": "WORD",
+        "text": "provenance",
+        "start": 18,
+        "end": 28
+      },
+      {
+        "kind": "BRACE_CLOSE",
+        "text": "}",
+        "start": 28,
+        "end": 29
+      },
+      {
+        "kind": "WORD",
+        "text": "reports",
+        "start": 30,
+        "end": 37
+      },
+      {
+        "kind": "WORD",
+        "text": "summarize",
+        "start": 38,
+        "end": 47
+      },
+      {
+        "kind": "KEY",
+        "text": "input",
+        "start": 48,
+        "end": 54
+      },
+      {
+        "kind": "REF",
+        "text": "users",
+        "start": 54,
+        "end": 60
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 60,
+        "end": 60
+      }
+    ],
+    "diagnostics": [],
+    "printed": "@unchecked{items, provenance} reports summarize input:$users"
+  },
+  {
+    "input": "@interactive sh run cmd:\"read value\"",
+    "tokens": [
+      {
+        "kind": "AT",
+        "text": "@",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "WORD",
+        "text": "interactive",
+        "start": 1,
+        "end": 12
+      },
+      {
+        "kind": "WORD",
+        "text": "sh",
+        "start": 13,
+        "end": 15
+      },
+      {
+        "kind": "WORD",
+        "text": "run",
+        "start": 16,
+        "end": 19
+      },
+      {
+        "kind": "KEY",
+        "text": "cmd",
+        "start": 20,
+        "end": 24
+      },
+      {
+        "kind": "STRING",
+        "text": "read value",
+        "start": 24,
+        "end": 36
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 36,
+        "end": 36
+      }
+    ],
+    "diagnostics": [],
+    "printed": "@interactive sh run cmd:\"read value\""
+  },
+  {
+    "input": ":def products as catalog list category:?category",
+    "tokens": [
+      {
+        "kind": "DEF",
+        "text": ":def",
+        "start": 0,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "products",
+        "start": 5,
+        "end": 13
+      },
+      {
+        "kind": "WORD",
+        "text": "as",
+        "start": 14,
+        "end": 16
+      },
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 17,
+        "end": 24
+      },
+      {
+        "kind": "WORD",
+        "text": "list",
+        "start": 25,
+        "end": 29
+      },
+      {
+        "kind": "KEY",
+        "text": "category",
+        "start": 30,
+        "end": 39
+      },
+      {
+        "kind": "WORD",
+        "text": "?category",
+        "start": 39,
+        "end": 48
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 48,
+        "end": 48
+      }
+    ],
+    "diagnostics": [],
+    "printed": ":def products as catalog list category:?category"
+  },
+  {
+    "input": ":def orders(items: List<Map<Text, Order>>, kind: Category) as catalog submit orders:?items kind:?kind",
+    "tokens": [
+      {
+        "kind": "DEF",
+        "text": ":def",
+        "start": 0,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "orders",
+        "start": 5,
+        "end": 11
+      },
+      {
+        "kind": "SIGNATURE",
+        "text": "items: List<Map<Text, Order>>, kind: Category",
+        "start": 11,
+        "end": 58
+      },
+      {
+        "kind": "WORD",
+        "text": "as",
+        "start": 59,
+        "end": 61
+      },
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 62,
+        "end": 69
+      },
+      {
+        "kind": "WORD",
+        "text": "submit",
+        "start": 70,
+        "end": 76
+      },
+      {
+        "kind": "KEY",
+        "text": "orders",
+        "start": 77,
+        "end": 84
+      },
+      {
+        "kind": "WORD",
+        "text": "?items",
+        "start": 84,
+        "end": 90
+      },
+      {
+        "kind": "KEY",
+        "text": "kind",
+        "start": 91,
+        "end": 96
+      },
+      {
+        "kind": "WORD",
+        "text": "?kind",
+        "start": 96,
+        "end": 101
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 101,
+        "end": 101
+      }
+    ],
+    "diagnostics": [],
+    "printed": ":def orders(items: List<Map<Text, Order>>, kind: Category) as catalog submit orders:?items kind:?kind"
+  },
+  {
+    "input": "catalog echo value:call(x,y)",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "call(x,y)",
+        "start": 19,
+        "end": 28
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 28,
+        "end": 28
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:call(x,y)"
+  },
+  {
+    "input": "catalog echo value:\"?category\"",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "?category",
+        "start": 19,
+        "end": 30
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 30,
+        "end": 30
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:\"?category\""
+  },
+  {
+    "input": "catalog echo url:https://example.invalid:8443/path at:2026-09-10T12:00:00Z",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "url",
+        "start": 13,
+        "end": 17
+      },
+      {
+        "kind": "WORD",
+        "text": "https://example.invalid:8443/path",
+        "start": 17,
+        "end": 50
+      },
+      {
+        "kind": "KEY",
+        "text": "at",
+        "start": 51,
+        "end": 54
+      },
+      {
+        "kind": "WORD",
+        "text": "2026-09-10T12:00:00Z",
+        "start": 54,
+        "end": 74
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 74,
+        "end": 74
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo url:https://example.invalid:8443/path at:2026-09-10T12:00:00Z"
+  },
+  {
+    "input": "catalog echo value:\"a\\\"b\\\\c\"",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "a\"b\\c",
+        "start": 19,
+        "end": 28
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 28,
+        "end": 28
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:\"a\\\"b\\\\c\""
+  },
+  {
+    "input": "directory users\r\n:inspect $users\n",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "directory",
+        "start": 0,
+        "end": 9
+      },
+      {
+        "kind": "WORD",
+        "text": "users",
+        "start": 10,
+        "end": 15
+      },
+      {
+        "kind": "NEWLINE",
+        "text": "",
+        "start": 16,
+        "end": 17
+      },
+      {
+        "kind": "META",
+        "text": ":",
+        "start": 17,
+        "end": 18
+      },
+      {
+        "kind": "WORD",
+        "text": "inspect",
+        "start": 18,
+        "end": 25
+      },
+      {
+        "kind": "REF",
+        "text": "users",
+        "start": 26,
+        "end": 32
+      },
+      {
+        "kind": "NEWLINE",
+        "text": "",
+        "start": 32,
+        "end": 33
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 33,
+        "end": 33
+      }
+    ],
+    "diagnostics": [],
+    "printed": "directory users\n:inspect $users"
+  },
+  {
+    "input": "catalog echo value:\"İstanbul 🦀 終\" > result",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "İstanbul 🦀 終",
+        "start": 19,
+        "end": 34
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 35,
+        "end": 36
+      },
+      {
+        "kind": "WORD",
+        "text": "result",
+        "start": 37,
+        "end": 43
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 43,
+        "end": 43
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:\"İstanbul 🦀 終\" > result"
+  },
+  {
+    "input": "catalog echo names:a,b,c",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "names",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "a,b,c",
+        "start": 19,
+        "end": 24
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 24,
+        "end": 24
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo names:a,b,c"
+  },
+  {
+    "input": "@unchecked{a b,c} catalog echo value:yes",
+    "tokens": [
+      {
+        "kind": "AT",
+        "text": "@",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "WORD",
+        "text": "unchecked",
+        "start": 1,
+        "end": 10
+      },
+      {
+        "kind": "BRACE_OPEN",
+        "text": "{",
+        "start": 10,
+        "end": 11
+      },
+      {
+        "kind": "WORD",
+        "text": "a",
+        "start": 11,
+        "end": 12
+      },
+      {
+        "kind": "WORD",
+        "text": "b",
+        "start": 13,
+        "end": 14
+      },
+      {
+        "kind": "COMMA",
+        "text": ",",
+        "start": 14,
+        "end": 15
+      },
+      {
+        "kind": "WORD",
+        "text": "c",
+        "start": 15,
+        "end": 16
+      },
+      {
+        "kind": "BRACE_CLOSE",
+        "text": "}",
+        "start": 16,
+        "end": 17
+      },
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 18,
+        "end": 25
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 26,
+        "end": 30
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 31,
+        "end": 37
+      },
+      {
+        "kind": "WORD",
+        "text": "yes",
+        "start": 37,
+        "end": 40
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 40,
+        "end": 40
+      }
+    ],
+    "diagnostics": [],
+    "printed": "@unchecked{a, b, c} catalog echo value:yes"
+  },
+  {
+    "input": "catalog echo value:",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 19,
+        "end": 19
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "LEX003",
+        "start": 19,
+        "end": 19
+      }
+    ],
+    "printed": "catalog echo"
+  },
+  {
+    "input": "$",
+    "tokens": [
+      {
+        "kind": "REF",
+        "text": "",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "LEX002",
+        "start": 0,
+        "end": 1
+      }
+    ],
+    "printed": "$"
+  },
+  {
+    "input": ":",
+    "tokens": [
+      {
+        "kind": "META",
+        "text": ":",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR002",
+        "start": 0,
+        "end": 1
+      }
+    ],
+    "printed": ""
+  },
+  {
+    "input": "@ sh run",
+    "tokens": [
+      {
+        "kind": "AT",
+        "text": "@",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "WORD",
+        "text": "sh",
+        "start": 2,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "run",
+        "start": 5,
+        "end": 8
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 8,
+        "end": 8
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR005",
+        "start": 0,
+        "end": 1
+      }
+    ],
+    "printed": ""
+  },
+  {
+    "input": "@unchecked{a\n:inspect $users",
+    "tokens": [
+      {
+        "kind": "AT",
+        "text": "@",
+        "start": 0,
+        "end": 1
+      },
+      {
+        "kind": "WORD",
+        "text": "unchecked",
+        "start": 1,
+        "end": 10
+      },
+      {
+        "kind": "BRACE_OPEN",
+        "text": "{",
+        "start": 10,
+        "end": 11
+      },
+      {
+        "kind": "WORD",
+        "text": "a",
+        "start": 11,
+        "end": 12
+      },
+      {
+        "kind": "NEWLINE",
+        "text": "",
+        "start": 12,
+        "end": 13
+      },
+      {
+        "kind": "META",
+        "text": ":",
+        "start": 13,
+        "end": 14
+      },
+      {
+        "kind": "WORD",
+        "text": "inspect",
+        "start": 14,
+        "end": 21
+      },
+      {
+        "kind": "REF",
+        "text": "users",
+        "start": 22,
+        "end": 28
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 28,
+        "end": 28
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR007",
+        "start": 1,
+        "end": 10
+      }
+    ],
+    "printed": ":inspect $users"
+  },
+  {
+    "input": "catalog echo value:\"unterminated\n:inspect $users",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "unterminated",
+        "start": 19,
+        "end": 32
+      },
+      {
+        "kind": "NEWLINE",
+        "text": "",
+        "start": 32,
+        "end": 33
+      },
+      {
+        "kind": "META",
+        "text": ":",
+        "start": 33,
+        "end": 34
+      },
+      {
+        "kind": "WORD",
+        "text": "inspect",
+        "start": 34,
+        "end": 41
+      },
+      {
+        "kind": "REF",
+        "text": "users",
+        "start": 42,
+        "end": 48
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 48,
+        "end": 48
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "LEX001",
+        "start": 19,
+        "end": 32
+      }
+    ],
+    "printed": "catalog echo value:\"unterminated\"\n:inspect $users"
+  },
+  {
+    "input": "catalog echo value:\"unknown\\q\"",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "unknownq",
+        "start": 19,
+        "end": 30
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 30,
+        "end": 30
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "LEX004",
+        "start": 27,
+        "end": 29
+      }
+    ],
+    "printed": "catalog echo value:\"unknownq\""
+  },
+  {
+    "input": "catalog echo value:yes >",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "yes",
+        "start": 19,
+        "end": 22
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 23,
+        "end": 24
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 24,
+        "end": 24
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR003",
+        "start": 23,
+        "end": 24
+      }
+    ],
+    "printed": "catalog echo value:yes"
+  },
+  {
+    "input": "catalog echo value:yes *> failure > result",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "yes",
+        "start": 19,
+        "end": 22
+      },
+      {
+        "kind": "ERROR_BIND",
+        "text": "*>",
+        "start": 23,
+        "end": 25
+      },
+      {
+        "kind": "WORD",
+        "text": "failure",
+        "start": 26,
+        "end": 33
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 34,
+        "end": 35
+      },
+      {
+        "kind": "WORD",
+        "text": "result",
+        "start": 36,
+        "end": 42
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 42,
+        "end": 42
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR004",
+        "start": 34,
+        "end": 35
+      }
+    ],
+    "printed": "catalog echo value:yes *> failure"
+  },
+  {
+    "input": ":def bad(x: List<Text) as catalog echo value:?x",
+    "tokens": [
+      {
+        "kind": "DEF",
+        "text": ":def",
+        "start": 0,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "bad",
+        "start": 5,
+        "end": 8
+      },
+      {
+        "kind": "SIGNATURE",
+        "text": "x: List<Text",
+        "start": 8,
+        "end": 22
+      },
+      {
+        "kind": "WORD",
+        "text": "as",
+        "start": 23,
+        "end": 25
+      },
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 26,
+        "end": 33
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 34,
+        "end": 38
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 39,
+        "end": 45
+      },
+      {
+        "kind": "WORD",
+        "text": "?x",
+        "start": 45,
+        "end": 47
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 47,
+        "end": 47
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR008",
+        "start": 23,
+        "end": 25
+      }
+    ],
+    "printed": ""
+  },
+  {
+    "input": ":def bad(x: Text,) as catalog echo value:?x",
+    "tokens": [
+      {
+        "kind": "DEF",
+        "text": ":def",
+        "start": 0,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "bad",
+        "start": 5,
+        "end": 8
+      },
+      {
+        "kind": "SIGNATURE",
+        "text": "x: Text,",
+        "start": 8,
+        "end": 18
+      },
+      {
+        "kind": "WORD",
+        "text": "as",
+        "start": 19,
+        "end": 21
+      },
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 22,
+        "end": 29
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 30,
+        "end": 34
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 35,
+        "end": 41
+      },
+      {
+        "kind": "WORD",
+        "text": "?x",
+        "start": 41,
+        "end": 43
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 43,
+        "end": 43
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR008",
+        "start": 19,
+        "end": 21
+      }
+    ],
+    "printed": ""
+  },
+  {
+    "input": ":def bad(x Text) as catalog echo value:?x",
+    "tokens": [
+      {
+        "kind": "DEF",
+        "text": ":def",
+        "start": 0,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "bad",
+        "start": 5,
+        "end": 8
+      },
+      {
+        "kind": "SIGNATURE",
+        "text": "x Text",
+        "start": 8,
+        "end": 16
+      },
+      {
+        "kind": "WORD",
+        "text": "as",
+        "start": 17,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 20,
+        "end": 27
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 28,
+        "end": 32
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 33,
+        "end": 39
+      },
+      {
+        "kind": "WORD",
+        "text": "?x",
+        "start": 39,
+        "end": 41
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 41,
+        "end": 41
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "PAR008",
+        "start": 17,
+        "end": 19
+      }
+    ],
+    "printed": ""
+  },
+  {
+    "input": "catalog echo value:yes>result",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "yes",
+        "start": 19,
+        "end": 22
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 22,
+        "end": 23
+      },
+      {
+        "kind": "WORD",
+        "text": "result",
+        "start": 23,
+        "end": 29
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 29,
+        "end": 29
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:yes > result"
+  },
+  {
+    "input": "$result::error",
+    "tokens": [
+      {
+        "kind": "REF",
+        "text": "result::error",
+        "start": 0,
+        "end": 14
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 14,
+        "end": 14
+      }
+    ],
+    "diagnostics": [],
+    "printed": "$result::error"
+  },
+  {
+    "input": "$result::",
+    "tokens": [
+      {
+        "kind": "REF",
+        "text": "result::",
+        "start": 0,
+        "end": 9
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 9,
+        "end": 9
+      }
+    ],
+    "diagnostics": [],
+    "printed": "$result::"
+  },
+  {
+    "input": "catalog echo value:\"books > injected\"",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "books > injected",
+        "start": 19,
+        "end": 37
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 37,
+        "end": 37
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:\"books > injected\""
+  },
+  {
+    "input": " catalog echo value:test",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": " catalog",
+        "start": 0,
+        "end": 8
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 9,
+        "end": 13
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 14,
+        "end": 20
+      },
+      {
+        "kind": "WORD",
+        "text": "test",
+        "start": 20,
+        "end": 24
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 24,
+        "end": 24
+      }
+    ],
+    "diagnostics": [],
+    "printed": " catalog echo value:test"
+  },
+  {
+    "input": "catalog echo value:test",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "WORD",
+        "text": "test",
+        "start": 19,
+        "end": 23
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 23,
+        "end": 23
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:test"
+  },
+  {
+    "input": "$é > alias",
+    "tokens": [
+      {
+        "kind": "REF",
+        "text": "é",
+        "start": 0,
+        "end": 2
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 3,
+        "end": 4
+      },
+      {
+        "kind": "WORD",
+        "text": "alias",
+        "start": 5,
+        "end": 10
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 10,
+        "end": 10
+      }
+    ],
+    "diagnostics": [],
+    "printed": "$é > alias"
+  },
+  {
+    "input": "$𝒜 > alias",
+    "tokens": [
+      {
+        "kind": "REF",
+        "text": "𝒜",
+        "start": 0,
+        "end": 3
+      },
+      {
+        "kind": "BIND",
+        "text": ">",
+        "start": 4,
+        "end": 5
+      },
+      {
+        "kind": "WORD",
+        "text": "alias",
+        "start": 6,
+        "end": 11
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 11,
+        "end": 11
+      }
+    ],
+    "diagnostics": [],
+    "printed": "$𝒜 > alias"
+  },
+  {
+    "input": "catalog echo value:\"x\"\n\n:inspect $alias",
+    "tokens": [
+      {
+        "kind": "WORD",
+        "text": "catalog",
+        "start": 0,
+        "end": 7
+      },
+      {
+        "kind": "WORD",
+        "text": "echo",
+        "start": 8,
+        "end": 12
+      },
+      {
+        "kind": "KEY",
+        "text": "value",
+        "start": 13,
+        "end": 19
+      },
+      {
+        "kind": "STRING",
+        "text": "x",
+        "start": 19,
+        "end": 22
+      },
+      {
+        "kind": "NEWLINE",
+        "text": "",
+        "start": 22,
+        "end": 23
+      },
+      {
+        "kind": "NEWLINE",
+        "text": "",
+        "start": 23,
+        "end": 24
+      },
+      {
+        "kind": "META",
+        "text": ":",
+        "start": 24,
+        "end": 25
+      },
+      {
+        "kind": "WORD",
+        "text": "inspect",
+        "start": 25,
+        "end": 32
+      },
+      {
+        "kind": "REF",
+        "text": "alias",
+        "start": 33,
+        "end": 39
+      },
+      {
+        "kind": "EOF",
+        "text": "",
+        "start": 39,
+        "end": 39
+      }
+    ],
+    "diagnostics": [],
+    "printed": "catalog echo value:\"x\"\n:inspect $alias"
+  }
+]

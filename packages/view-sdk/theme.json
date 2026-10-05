@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "delivery": "Wes supplies these role classes and CSS variables in every custom View. Select roles by meaning. The client resolves their appearance, including palette, density and chosen fonts; do not copy current colors or font names into author CSS. Use semantic HTML and text labels for status. Author CSS owns layout.",
+  "tokens": {
+    "--surface": "View background.",
+    "--on-surface": "Text on the View background.",
+    "--surface-variant": "Inset or secondary background.",
+    "--muted": "Secondary text.",
+    "--primary": "Interactive accent.",
+    "--on-primary": "Text on the accent.",
+    "--success": "Successful status.",
+    "--warning": "Warning status.",
+    "--error": "Failure status.",
+    "--info": "Informational status.",
+    "--line": "Separators and borders.",
+    "--space-xs": "Smallest spacing.",
+    "--space-sm": "Small spacing.",
+    "--space-md": "Ordinary spacing.",
+    "--space-lg": "Section spacing.",
+    "--space-xl": "Large section spacing.",
+    "--radius-sm": "Small corners.",
+    "--radius-md": "Medium corners.",
+    "--stroke-thin": "Ordinary border width."
+  },
+  "roles": {
+    "table-key": {
+      "usage": "Names and keys identifying a row.",
+      "style": {
+        "font-family": "var(--type-mono-family)",
+        "font-size": "var(--type-mono-size)",
+        "font-weight": "var(--type-mono-weight)",
+        "letter-spacing": "var(--type-mono-tracking)",
+        "line-height": "var(--type-mono-leading)",
+        "color": "var(--mono-dim)"
+      }
+    },
+    "table-value": {
+      "usage": "Values in a data column.",
+      "style": {
+        "font-family": "var(--type-mono-family)",
+        "font-size": "var(--type-mono-size)",
+        "font-weight": "var(--type-mono-weight)",
+        "letter-spacing": "var(--type-mono-tracking)",
+        "line-height": "var(--type-mono-leading)",
+        "color": "var(--mono-ink)"
+      }
+    },
+    "table-time": {
+      "usage": "Timestamps and durations.",
+      "style": {
+        "font-family": "var(--type-mono-family)",
+        "font-size": "var(--type-mono-size)",
+        "font-weight": "var(--type-mono-weight)",
+        "letter-spacing": "var(--type-mono-tracking)",
+        "line-height": "var(--type-mono-leading)",
+        "color": "var(--mono-faint)"
+      }
+    },
+    "status-ok": {
+      "usage": "Successful or healthy status; always include a text label.",
+      "style": {
+        "font-family": "var(--type-mono-family)",
+        "font-size": "var(--type-mono-size)",
+        "font-weight": "var(--type-mono-weight)",
+        "letter-spacing": "var(--type-mono-tracking)",
+        "line-height": "var(--type-mono-leading)",
+        "color": "var(--mono-ok)",
+        "background-color": "var(--sunk)",
+        "border-color": "var(--line)",
+        "border-width": "var(--stroke-thin)",
+        "border-radius": "var(--radius-sm)",
+        "border-style": "solid"
+      }
+    },
+    "status-warn": {
+      "usage": "Degraded, pending or stale status; always include a text label.",
+      "style": {
+        "font-family": "var(--type-mono-family)",
+        "font-size": "var(--type-mono-size)",
+        "font-weight": "var(--type-mono-weight)",
+        "letter-spacing": "var(--type-mono-tracking)",
+        "line-height": "var(--type-mono-leading)",
+        "color": "var(--mono-warn)",
+        "background-color": "var(--sunk)",
+        "border-color": "var(--line)",
+        "border-width": "var(--stroke-thin)",
+        "border-radius": "var(--radius-sm)",
+        "border-style": "solid"
+      }
+    },
+    "status-bad": {
+      "usage": "Failed or unavailable status; always include a text label.",
+      "style": {
+        "font-family": "var(--type-mono-family)",
+        "font-size": "var(--type-mono-size)",
+        "font-weight": "var(--type-mono-weight)",
+        "letter-spacing": "var(--type-mono-tracking)",
+        "line-height": "var(--type-mono-leading)",
+        "color": "var(--mono-bad)",
+        "background-color": "var(--sunk)",
+        "border-color": "var(--line)",
+        "border-width": "var(--stroke-thin)",
+        "border-radius": "var(--radius-sm)",
+        "border-style": "solid"
+      }
+    },
+    "screen-title": {
+      "usage": "Title of the View or a section.",
+      "style": {
+        "font-family": "var(--type-sans-family)",
+        "font-size": "var(--type-sans-size)",
+        "font-weight": "var(--type-sans-weight)",
+        "letter-spacing": "var(--type-sans-tracking)",
+        "line-height": "var(--type-sans-leading)",
+        "color": "var(--mono-ink)"
+      }
+    },
+    "screen-label": {
+      "usage": "Interface labels, column headings, captions and hints.",
+      "style": {
+        "font-family": "var(--type-sans-small-family)",
+        "font-size": "var(--type-sans-small-size)",
+        "font-weight": "var(--type-sans-small-weight)",
+        "letter-spacing": "var(--type-sans-small-tracking)",
+        "line-height": "var(--type-sans-small-leading)",
+        "color": "var(--mono-dim)"
+      }
+    }
+  },
+  "baseStyles": {
+    "body": {
+      "color": "var(--on-surface)",
+      "background": "var(--surface)",
+      "font-family": "var(--type-sans-family)",
+      "font-size": "var(--type-sans-size)",
+      "font-weight": "var(--type-sans-weight)",
+      "letter-spacing": "var(--type-sans-tracking)",
+      "line-height": "var(--type-sans-leading)"
+    },
+    "button,input,select,textarea": {
+      "font": "inherit",
+      "color": "inherit"
+    },
+    "button": {
+      "cursor": "pointer",
+      "padding": "var(--space-xs) var(--space-sm)",
+      "border": "var(--stroke-thin) solid var(--line)",
+      "border-radius": "var(--radius-sm)",
+      "background": "var(--surface-variant)"
+    },
+    "button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible": {
+      "outline": "var(--stroke-rail) solid var(--primary)",
+      "outline-offset": "var(--space-xs)"
+    },
+    "button[aria-pressed=true]": {
+      "color": "var(--on-primary)",
+      "background": "var(--primary)"
+    }
+  }
+}

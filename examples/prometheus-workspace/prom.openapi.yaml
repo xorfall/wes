@@ -1,0 +1,49 @@
+openapi: 3.1.0
+info:
+  title: Synthetic Prometheus instant-query demo
+  version: 1.0.0
+  description: A deliberately small contract for this demo's vector response.
+security: []
+paths:
+  /api/v1/query:
+    get:
+      operationId: query
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Synthetic per-service request rates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, data]
+                properties:
+                  status: {type: string, enum: [success]}
+                  data:
+                    type: object
+                    required: [resultType, result]
+                    properties:
+                      resultType: {type: string, enum: [vector]}
+                      result:
+                        type: array
+                        items:
+                          type: object
+                          required: [metric, value]
+                          properties:
+                            metric:
+                              type: object
+                              required: [service]
+                              properties:
+                                service: {type: string}
+                            value:
+                              type: array
+                              minItems: 2
+                              maxItems: 2
+                              items:
+                                anyOf:
+                                  - {type: number}
+                                  - {type: string}

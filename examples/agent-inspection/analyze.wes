@@ -1,0 +1,7 @@
+:calc {
+  return $dataset.rows.filter(r => r.status >= 500).map(r => ({id: r.id, status: r.status}));
+} > failures
+:calc {
+  return {total: length($dataset.rows), errors: length($failures),
+          sumIds: $failures.reduce((sum, r) => sum + r.id, 0)};
+} > summary

@@ -1,0 +1,4 @@
+:read trace:$bad > retained_trace
+:calc pure { return httpAnalysis($retained_trace); } > offline_analysis
+:calc { return $offline_analysis.findings; } > offline_findings
+:calc pure { return $offline_findings; } > offline_table

@@ -1,0 +1,13 @@
+# Core presentation shipped with the client. A data-home file with the same `type` overrides it.
+version: 1
+type: HttpResponse
+applies: [record]
+fields:
+  status: Int
+  version: Text
+  headers: List<HttpHeader>
+  body: Bytes
+present:
+  kind: http
+  offers:
+    - kind: http

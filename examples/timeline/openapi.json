@@ -1,0 +1,105 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Synthetic telemetry",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/metrics": {
+      "get": {
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Synthetic telemetry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "samples"
+                  ],
+                  "properties": {
+                    "samples": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "sequence",
+                          "timestamp",
+                          "value",
+                          "available"
+                        ],
+                        "properties": {
+                          "sequence": {
+                            "type": "integer"
+                          },
+                          "timestamp": {
+                            "type": "number"
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "available": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "events",
+        "responses": {
+          "200": {
+            "description": "Synthetic telemetry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "events"
+                  ],
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "time",
+                          "label",
+                          "detail"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "time": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

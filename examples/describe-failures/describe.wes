@@ -1,0 +1,1 @@
+:describe file:openapi.json provider:synthetic out:must-not-exist.json > specification

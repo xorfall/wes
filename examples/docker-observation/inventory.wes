@@ -1,0 +1,2 @@
+docker containers project:wes-observation-qa limit:100 > containers
+:calc { return $containers.returned; } > count

@@ -1,0 +1,2 @@
+:help docker
+sh run cmd:"printf environment-editor-ok"

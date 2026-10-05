@@ -1,0 +1,14 @@
+docker stats container:CONTAINER_ID > stats
+docker events container:CONTAINER_ID > events
+:calc {
+  if (length($stats) == 0) return {samples: 0};
+  const latest = $stats[length($stats) - 1];
+  return {samples: length($stats), sequence: latest.sequence,
+          cpu: latest.cpu_percent, cpu_unavailable: latest.cpu_unavailable,
+          memory: latest.memory_percent, memory_unavailable: latest.memory_unavailable};
+} > resource_summary
+:calc {
+  if (length($events) == 0) return {events: 0};
+  const latest = $events[length($events) - 1];
+  return {events: length($events), action: latest.action, timestamp_ns: latest.timestamp_ns};
+} > event_summary

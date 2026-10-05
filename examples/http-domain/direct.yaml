@@ -1,0 +1,11 @@
+version: 1
+name: Direct HTTP 404 remains a completed response
+steps:
+  - name: Request
+    run: '@trace(http) http request url:"http://127.0.0.1:8767/missing" > response'
+  - name: Capture evidence
+    run: ':read trace:$response > trace'
+  - name: Analyze
+    run: ':calc pure { return httpAnalysis($trace); } > analysis'
+    expect:
+      - {name: Status is separate from execution success, condition: '$analysis.statuses[0].code == 404 && $analysis.executionState == "completed" && length($analysis.errors) == 0'}

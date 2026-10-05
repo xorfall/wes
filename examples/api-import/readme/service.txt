@@ -1,0 +1,25 @@
+Storage list fixture
+
+This text specifies a synthetic, loopback-only listing API.
+It is an input to offline extraction checks, not a remote service guide.
+No endpoint in this fixture requires authentication.
+An example server can listen at http://127.0.0.1:8765.
+
+Listing contract
+GET /items has operation identifier listItems and returns stored entries.
+Supply limit as a required integer query argument.
+A successful list request produces status 200 and media type application/json.
+The JSON array contains objects with non-null integer id and non-null string name fields, both always present.
+
+Example payload (observations do not define numeric bounds):
+[{"id":11,"name":"BIN-A"},{"id":12,"name":"BIN-B"}]
+
+Availability contract
+GET /health has operation identifier health and returns status 204 with no body.
+It accepts no parameters.
+
+Constraints outside the endpoint section
+The limit argument must be between 1 and 100 inclusive.
+Those numbers bound the page size; they impose no time-based quota.
+The example array length is neither a default nor an enumeration of valid limits.
+SDK function names do not introduce additional HTTP operations.

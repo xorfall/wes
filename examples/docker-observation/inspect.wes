@@ -1,0 +1,1 @@
+docker inspect container:CONTAINER_ID > inspected

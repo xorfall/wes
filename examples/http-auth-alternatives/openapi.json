@@ -1,0 +1,28 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Synthetic auth alternatives", "version": "1"},
+  "servers": [{"url": "https://example.invalid"}],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+      "apiSecret": {"type": "apiKey", "in": "header", "name": "X-API-Secret"},
+      "basic": {"type": "http", "scheme": "basic"}
+    }
+  },
+  "security": [{"apiKey": [], "apiSecret": []}, {"basic": []}],
+  "paths": {
+    "/items": {
+      "get": {
+        "operationId": "listItems",
+        "responses": {"200": {"description": "Items", "content": {"application/json": {"schema": {"type": "array", "items": {"type": "string"}}}}}}
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "security": [],
+        "responses": {"204": {"description": "Healthy"}}
+      }
+    }
+  }
+}

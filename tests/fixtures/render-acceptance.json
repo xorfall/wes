@@ -1,0 +1,1580 @@
+[
+  {
+    "case": {
+      "name": "table",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"label\",\"value\",\"count\"],\"rows\":[[\"first\",\" 12.3400 \",\"2\"],[\"a,\\\"b\\\"\\r\\nc\",\"bad\",\"3\"],[\"last\",\"1E+3\",\"4\"]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "label"
+            },
+            {
+              "kind": "Text",
+              "value": "value"
+            },
+            {
+              "kind": "Text",
+              "value": "count"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                {
+                  "kind": "Text",
+                  "value": " 12.3400 "
+                },
+                {
+                  "kind": "Text",
+                  "value": "2"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "a,\"b\"\r\nc"
+                },
+                {
+                  "kind": "Text",
+                  "value": "bad"
+                },
+                {
+                  "kind": "Text",
+                  "value": "3"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                {
+                  "kind": "Text",
+                  "value": "1E+3"
+                },
+                {
+                  "kind": "Text",
+                  "value": "4"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-empty",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"label\",\"value\",\"count\"],\"rows\":[],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "label"
+            },
+            {
+              "kind": "Text",
+              "value": "value"
+            },
+            {
+              "kind": "Text",
+              "value": "count"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": []
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-options",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "columns": "count, label, count"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"count\",\"label\",\"count\"],\"rows\":[[\"2\",\"first\",\"2\"],[\"3\",\"a,\\\"b\\\"\\r\\nc\",\"3\"],[\"4\",\"last\",\"4\"]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "count"
+            },
+            {
+              "kind": "Text",
+              "value": "label"
+            },
+            {
+              "kind": "Text",
+              "value": "count"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "2"
+                },
+                {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                {
+                  "kind": "Text",
+                  "value": "2"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "3"
+                },
+                {
+                  "kind": "Text",
+                  "value": "a,\"b\"\r\nc"
+                },
+                {
+                  "kind": "Text",
+                  "value": "3"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "4"
+                },
+                {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                {
+                  "kind": "Text",
+                  "value": "4"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-wrapped",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"total\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"total\":3,\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"label\",\"value\",\"count\"],\"rows\":[[\"first\",\" 12.3400 \",\"2\"],[\"a,\\\"b\\\"\\r\\nc\",\"bad\",\"3\"],[\"last\",\"1E+3\",\"4\"]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "label"
+            },
+            {
+              "kind": "Text",
+              "value": "value"
+            },
+            {
+              "kind": "Text",
+              "value": "count"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                {
+                  "kind": "Text",
+                  "value": " 12.3400 "
+                },
+                {
+                  "kind": "Text",
+                  "value": "2"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "a,\"b\"\r\nc"
+                },
+                {
+                  "kind": "Text",
+                  "value": "bad"
+                },
+                {
+                  "kind": "Text",
+                  "value": "3"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                {
+                  "kind": "Text",
+                  "value": "1E+3"
+                },
+                {
+                  "kind": "Text",
+                  "value": "4"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-of",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[]}}",
+      "options": {
+        "of": "items"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"label\",\"value\",\"count\"],\"rows\":[[\"first\",\" 12.3400 \",\"2\"],[\"a,\\\"b\\\"\\r\\nc\",\"bad\",\"3\"],[\"last\",\"1E+3\",\"4\"]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "label"
+            },
+            {
+              "kind": "Text",
+              "value": "value"
+            },
+            {
+              "kind": "Text",
+              "value": "count"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                {
+                  "kind": "Text",
+                  "value": " 12.3400 "
+                },
+                {
+                  "kind": "Text",
+                  "value": "2"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "a,\"b\"\r\nc"
+                },
+                {
+                  "kind": "Text",
+                  "value": "bad"
+                },
+                {
+                  "kind": "Text",
+                  "value": "3"
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                {
+                  "kind": "Text",
+                  "value": "1E+3"
+                },
+                {
+                  "kind": "Text",
+                  "value": "4"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-ambiguous",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[]}}",
+      "options": {}
+    },
+    "error": "'Row' holds more than one list of records, so say which one with 'of:'; it has items, other"
+  },
+  {
+    "case": {
+      "name": "table-scalar",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"hello\"}",
+      "options": {}
+    },
+    "error": "there is nothing to draw in a Text; a view is drawn from a list of records"
+  },
+  {
+    "case": {
+      "name": "csv",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"label,value,count\\r\\nfirst, 12.3400 ,2\\r\\n\\\"a,\\\"\\\"b\\\"\\\"\\r\\nc\\\",bad,3\\r\\nlast,1E+3,4\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "label,value,count\r\nfirst, 12.3400 ,2\r\n\"a,\"\"b\"\"\r\nc\",bad,3\r\nlast,1E+3,4\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "csv-empty",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"label,value,count\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "label,value,count\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "csv-options",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "columns": "count, label, count"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"label,value,count\\r\\nfirst, 12.3400 ,2\\r\\n\\\"a,\\\"\\\"b\\\"\\\"\\r\\nc\\\",bad,3\\r\\nlast,1E+3,4\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "label,value,count\r\nfirst, 12.3400 ,2\r\n\"a,\"\"b\"\"\r\nc\",bad,3\r\nlast,1E+3,4\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "csv-wrapped",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"total\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"total\":3,\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"label,value,count\\r\\nfirst, 12.3400 ,2\\r\\n\\\"a,\\\"\\\"b\\\"\\\"\\r\\nc\\\",bad,3\\r\\nlast,1E+3,4\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "label,value,count\r\nfirst, 12.3400 ,2\r\n\"a,\"\"b\"\"\r\nc\",bad,3\r\nlast,1E+3,4\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "csv-of",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[]}}",
+      "options": {
+        "of": "items"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"label,value,count\\r\\nfirst, 12.3400 ,2\\r\\n\\\"a,\\\"\\\"b\\\"\\\"\\r\\nc\\\",bad,3\\r\\nlast,1E+3,4\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "label,value,count\r\nfirst, 12.3400 ,2\r\n\"a,\"\"b\"\"\r\nc\",bad,3\r\nlast,1E+3,4\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "csv-ambiguous",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[]}}",
+      "options": {}
+    },
+    "error": "'Row' holds more than one list of records, so say which one with 'of:'; it has items, other"
+  },
+  {
+    "case": {
+      "name": "csv-scalar",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"hello\"}",
+      "options": {}
+    },
+    "error": "there is nothing to draw in a Text; a view is drawn from a list of records"
+  },
+  {
+    "case": {
+      "name": "line",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "x": "label"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"points\":[{\"x\":\"first\",\"y\":12.3400},{\"x\":\"last\",\"y\":1000}],\"view\":\"line\",\"x\":\"label\",\"y\":\"value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "12.3400"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1E+3"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-empty",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[]}",
+      "options": {
+        "x": "label"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":0,\"points\":[],\"view\":\"line\",\"x\":\"label\",\"y\":\"value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": []
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "0"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-options",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "x": "LABEL",
+        "y": "count"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":0,\"points\":[{\"x\":\"first\",\"y\":2},{\"x\":\"a,\\\"b\\\"\\r\\nc\",\"y\":3},{\"x\":\"last\",\"y\":4}],\"view\":\"line\",\"x\":\"label\",\"y\":\"count\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "count"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "2"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "a,\"b\"\r\nc"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "3"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "4"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "0"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-wrapped",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"total\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"total\":3,\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}}",
+      "options": {
+        "x": "label"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"points\":[{\"x\":\"first\",\"y\":12.3400},{\"x\":\"last\",\"y\":1000}],\"view\":\"line\",\"x\":\"label\",\"y\":\"value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "12.3400"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1E+3"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-of",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[]}}",
+      "options": {
+        "of": "items",
+        "x": "label"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"points\":[{\"x\":\"first\",\"y\":12.3400},{\"x\":\"last\",\"y\":1000}],\"view\":\"line\",\"x\":\"label\",\"y\":\"value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "12.3400"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1E+3"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-ambiguous",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[]}}",
+      "options": {}
+    },
+    "error": "'Row' holds more than one list of records, so say which one with 'of:'; it has items, other"
+  },
+  {
+    "case": {
+      "name": "line-scalar",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"hello\"}",
+      "options": {}
+    },
+    "error": "there is nothing to draw in a Text; a view is drawn from a list of records"
+  },
+  {
+    "case": {
+      "name": "table-all-types",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"text\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"int\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"decimal\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"flag\",\"type\":{\"kind\":\"primitive\",\"name\":\"BOOL\"}},{\"name\":\"at\",\"type\":{\"kind\":\"primitive\",\"name\":\"INSTANT\"}},{\"name\":\"duration\",\"type\":{\"kind\":\"primitive\",\"name\":\"DURATION\"}},{\"name\":\"bytes\",\"type\":{\"kind\":\"primitive\",\"name\":\"BYTES\"}},{\"name\":\"list\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"object\",\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"a\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"text\":\"hello\",\"int\":7,\"decimal\":123.5,\"flag\":true,\"at\":\"2024-01-01T00:00:00Z\",\"duration\":\"PT-0.5S\",\"bytes\":\"AAH/\",\"list\":[\"a\",\"b\"],\"object\":{\"a\":\"x\"}}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"text\",\"int\",\"decimal\",\"flag\",\"at\",\"duration\",\"bytes\",\"list\",\"object\"],\"rows\":[[\"hello\",\"7\",\"123.5\",\"true\",\"2024-01-01T00:00:00Z\",\"-PT0.5S\",\"3 bytes\",\"[2]\",\"{1}\"]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "text"
+            },
+            {
+              "kind": "Text",
+              "value": "int"
+            },
+            {
+              "kind": "Text",
+              "value": "decimal"
+            },
+            {
+              "kind": "Text",
+              "value": "flag"
+            },
+            {
+              "kind": "Text",
+              "value": "at"
+            },
+            {
+              "kind": "Text",
+              "value": "duration"
+            },
+            {
+              "kind": "Text",
+              "value": "bytes"
+            },
+            {
+              "kind": "Text",
+              "value": "list"
+            },
+            {
+              "kind": "Text",
+              "value": "object"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "hello"
+                },
+                {
+                  "kind": "Text",
+                  "value": "7"
+                },
+                {
+                  "kind": "Text",
+                  "value": "123.5"
+                },
+                {
+                  "kind": "Text",
+                  "value": "true"
+                },
+                {
+                  "kind": "Text",
+                  "value": "2024-01-01T00:00:00Z"
+                },
+                {
+                  "kind": "Text",
+                  "value": "-PT0.5S"
+                },
+                {
+                  "kind": "Text",
+                  "value": "3 bytes"
+                },
+                {
+                  "kind": "Text",
+                  "value": "[2]"
+                },
+                {
+                  "kind": "Text",
+                  "value": "{1}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-ragged",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"label\":\"missing\"},{\"count\":7}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[\"label\",\"value\",\"count\"],\"rows\":[[\"missing\",\"\",\"\"],[\"\",\"\",\"7\"]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Text",
+              "value": "label"
+            },
+            {
+              "kind": "Text",
+              "value": "value"
+            },
+            {
+              "kind": "Text",
+              "value": "count"
+            }
+          ]
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": "missing"
+                },
+                {
+                  "kind": "Text",
+                  "value": ""
+                },
+                {
+                  "kind": "Text",
+                  "value": ""
+                }
+              ]
+            },
+            {
+              "kind": "Sequence",
+              "value": [
+                {
+                  "kind": "Text",
+                  "value": ""
+                },
+                {
+                  "kind": "Text",
+                  "value": ""
+                },
+                {
+                  "kind": "Text",
+                  "value": "7"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-zero-selected",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "columns": ", ,"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"columns\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}},{\"name\":\"rows\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"list\",\"element\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"columns\":[],\"rows\":[[],[],[]],\"view\":\"table\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "table"
+        },
+        "columns": {
+          "kind": "Sequence",
+          "value": []
+        },
+        "rows": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Sequence",
+              "value": []
+            },
+            {
+              "kind": "Sequence",
+              "value": []
+            },
+            {
+              "kind": "Sequence",
+              "value": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "table-missing-column",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "columns": "absent"
+      }
+    },
+    "error": "no such column: absent; this record has label, value, count"
+  },
+  {
+    "case": {
+      "name": "line-missing-role",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {}
+    },
+    "error": "no field for 'x'; looked for x, t, time, at, date, timestamp; this record has label, value, count"
+  },
+  {
+    "case": {
+      "name": "line-bad-role",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "x": "missing"
+      }
+    },
+    "error": "'x:missing' names a field that is not there; this record has label, value, count"
+  },
+  {
+    "case": {
+      "name": "line-empty-option",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "x": "label",
+        "y": ""
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"points\":[{\"x\":\"first\",\"y\":12.3400},{\"x\":\"last\",\"y\":1000}],\"view\":\"line\",\"x\":\"label\",\"y\":\"value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "12.3400"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1E+3"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-nontext-option",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "x": "label",
+        "y": 1
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"points\":[{\"x\":\"first\",\"y\":12.3400},{\"x\":\"last\",\"y\":1000}],\"view\":\"line\",\"x\":\"label\",\"y\":\"value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "label"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "first"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "12.3400"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "last"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1E+3"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "line-case-conventions",
+      "format": "line",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"TIME\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"Value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"TIME\":\"a\",\"Value\":\"+1.20\"},{\"TIME\":\"b\",\"Value\":\"NaN\"},{\"TIME\":\"c\",\"Value\":\"１.２\"}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"points\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Point\",\"fields\":[{\"name\":\"x\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"y\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"points\":[{\"x\":\"a\",\"y\":1.20},{\"x\":\"c\",\"y\":1.2}],\"view\":\"line\",\"x\":\"TIME\",\"y\":\"Value\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "line"
+        },
+        "x": {
+          "kind": "Text",
+          "value": "TIME"
+        },
+        "y": {
+          "kind": "Text",
+          "value": "Value"
+        },
+        "points": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "a"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1.20"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "x": {
+                  "kind": "Text",
+                  "value": "c"
+                },
+                "y": {
+                  "kind": "Decimal",
+                  "value": "1.2"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "candlestick",
+      "format": "candlestick",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"time\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"open\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"high\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"low\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"close\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"volume\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"time\":\"a\",\"open\":\"1.00\",\"high\":\"4\",\"low\":\"0.5\",\"close\":\"3\",\"volume\":\"10\"},{\"time\":\"b\",\"open\":\"2\",\"high\":\"6\",\"low\":\"1\",\"close\":\"4\",\"volume\":\"bad\"},{\"time\":\"bad\",\"open\":\"no\",\"high\":\"4\",\"low\":\"1\",\"close\":\"3\"}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"series\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Candle\",\"fields\":[{\"name\":\"t\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"o\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"h\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"l\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"c\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"v\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"series\":[{\"c\":3,\"h\":4,\"l\":0.5,\"o\":1.00,\"t\":\"a\",\"v\":10},{\"c\":4,\"h\":6,\"l\":1,\"o\":2,\"t\":\"b\",\"v\":0}],\"view\":\"candlestick\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "candlestick"
+        },
+        "series": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "t": {
+                  "kind": "Text",
+                  "value": "a"
+                },
+                "o": {
+                  "kind": "Decimal",
+                  "value": "1.00"
+                },
+                "h": {
+                  "kind": "Decimal",
+                  "value": "4"
+                },
+                "l": {
+                  "kind": "Decimal",
+                  "value": "0.5"
+                },
+                "c": {
+                  "kind": "Decimal",
+                  "value": "3"
+                },
+                "v": {
+                  "kind": "Decimal",
+                  "value": "10"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "t": {
+                  "kind": "Text",
+                  "value": "b"
+                },
+                "o": {
+                  "kind": "Decimal",
+                  "value": "2"
+                },
+                "h": {
+                  "kind": "Decimal",
+                  "value": "6"
+                },
+                "l": {
+                  "kind": "Decimal",
+                  "value": "1"
+                },
+                "c": {
+                  "kind": "Decimal",
+                  "value": "4"
+                },
+                "v": {
+                  "kind": "Decimal",
+                  "value": "0"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "candlestick-no-volume",
+      "format": "candlestick",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"time\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"open\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"high\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"low\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"close\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"volume\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"time\":\"a\",\"open\":\"1.00\",\"high\":\"4\",\"low\":\"0.5\",\"close\":\"3\",\"volume\":\"10\"},{\"time\":\"b\",\"open\":\"2\",\"high\":\"6\",\"low\":\"1\",\"close\":\"4\",\"volume\":\"bad\"},{\"time\":\"bad\",\"open\":\"no\",\"high\":\"4\",\"low\":\"1\",\"close\":\"3\"}]}",
+      "options": {
+        "v": "no"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"series\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Candle\",\"fields\":[{\"name\":\"t\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"o\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"h\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"l\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"c\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":1,\"series\":[{\"c\":3,\"h\":4,\"l\":0.5,\"o\":1.00,\"t\":\"a\"},{\"c\":4,\"h\":6,\"l\":1,\"o\":2,\"t\":\"b\"}],\"view\":\"candlestick\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "candlestick"
+        },
+        "series": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "t": {
+                  "kind": "Text",
+                  "value": "a"
+                },
+                "o": {
+                  "kind": "Decimal",
+                  "value": "1.00"
+                },
+                "h": {
+                  "kind": "Decimal",
+                  "value": "4"
+                },
+                "l": {
+                  "kind": "Decimal",
+                  "value": "0.5"
+                },
+                "c": {
+                  "kind": "Decimal",
+                  "value": "3"
+                }
+              }
+            },
+            {
+              "kind": "Fields",
+              "value": {
+                "t": {
+                  "kind": "Text",
+                  "value": "b"
+                },
+                "o": {
+                  "kind": "Decimal",
+                  "value": "2"
+                },
+                "h": {
+                  "kind": "Decimal",
+                  "value": "6"
+                },
+                "l": {
+                  "kind": "Decimal",
+                  "value": "1"
+                },
+                "c": {
+                  "kind": "Decimal",
+                  "value": "4"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "1"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "candlestick-empty",
+      "format": "candlestick",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"time\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"open\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"high\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"low\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"close\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"volume\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"series\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Candle\",\"fields\":[{\"name\":\"t\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"o\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"h\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"l\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"c\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"v\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":0,\"series\":[],\"view\":\"candlestick\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "candlestick"
+        },
+        "series": {
+          "kind": "Sequence",
+          "value": []
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "0"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "candlestick-bad-volume-role",
+      "format": "candlestick",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"time\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"open\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"high\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"low\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"close\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"volume\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"time\":\"a\",\"open\":\"1.00\",\"high\":\"4\",\"low\":\"0.5\",\"close\":\"3\",\"volume\":\"10\"},{\"time\":\"b\",\"open\":\"2\",\"high\":\"6\",\"low\":\"1\",\"close\":\"4\",\"volume\":\"bad\"},{\"time\":\"bad\",\"open\":\"no\",\"high\":\"4\",\"low\":\"1\",\"close\":\"3\"}]}",
+      "options": {
+        "v": "missing"
+      }
+    },
+    "error": "'v:missing' names a field that is not there; this record has time, open, high, low, close, volume"
+  },
+  {
+    "case": {
+      "name": "candlestick-explicit-roles",
+      "format": "candlestick",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"a\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"b\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"c\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"d\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"e\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"a\":\"row\",\"b\":1,\"c\":3,\"d\":0,\"e\":2}]}",
+      "options": {
+        "t": "a",
+        "o": "b",
+        "h": "c",
+        "l": "d",
+        "c": "e"
+      }
+    },
+    "encoded": "{\"type\":{\"kind\":\"record\",\"name\":\"View\",\"fields\":[{\"name\":\"view\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"series\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Candle\",\"fields\":[{\"name\":\"t\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"o\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"h\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"l\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}},{\"name\":\"c\",\"type\":{\"kind\":\"primitive\",\"name\":\"DECIMAL\"}}]}}},{\"name\":\"dropped\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"dropped\":0,\"series\":[{\"c\":2,\"h\":3,\"l\":0,\"o\":1,\"t\":\"row\"}],\"view\":\"candlestick\"}}",
+    "data": {
+      "kind": "Fields",
+      "value": {
+        "view": {
+          "kind": "Text",
+          "value": "candlestick"
+        },
+        "series": {
+          "kind": "Sequence",
+          "value": [
+            {
+              "kind": "Fields",
+              "value": {
+                "t": {
+                  "kind": "Text",
+                  "value": "row"
+                },
+                "o": {
+                  "kind": "Decimal",
+                  "value": "1"
+                },
+                "h": {
+                  "kind": "Decimal",
+                  "value": "3"
+                },
+                "l": {
+                  "kind": "Decimal",
+                  "value": "0"
+                },
+                "c": {
+                  "kind": "Decimal",
+                  "value": "2"
+                }
+              }
+            }
+          ]
+        },
+        "dropped": {
+          "kind": "Int",
+          "value": "0"
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "name": "csv-single-empty-correction",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"value\":\"\"}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"value\\r\\n\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "value\r\n\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "csv-zero-column-correction",
+      "format": "csv",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{}]}",
+      "options": {}
+    },
+    "encoded": "{\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"},\"provenance\":{\"source\":\"fixture\"},\"data\":\"\\r\\n\\r\\n\"}",
+    "data": {
+      "kind": "Text",
+      "value": "\r\n\r\n"
+    }
+  },
+  {
+    "case": {
+      "name": "table-missing-columns",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}},\"provenance\":{\"source\":\"fixture\"},\"data\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}]}",
+      "options": {
+        "columns": "absent,other,absent"
+      }
+    },
+    "error": "no such column: absent, other, absent; this record has label, value, count"
+  },
+  {
+    "case": {
+      "name": "table-ambiguous-with-metadata",
+      "format": "table",
+      "input": "{\"type\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"total\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}},{\"name\":\"items\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}},{\"name\":\"other\",\"type\":{\"kind\":\"list\",\"element\":{\"kind\":\"record\",\"name\":\"Row\",\"fields\":[{\"name\":\"label\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"value\",\"type\":{\"kind\":\"primitive\",\"name\":\"TEXT\"}},{\"name\":\"count\",\"type\":{\"kind\":\"primitive\",\"name\":\"INT\"}}]}}}]},\"provenance\":{\"source\":\"fixture\"},\"data\":{\"items\":[{\"count\":2,\"value\":\" 12.3400 \",\"label\":\"first\"},{\"count\":3,\"label\":\"a,\\\"b\\\"\\r\\nc\",\"value\":\"bad\"},{\"count\":4,\"label\":\"last\",\"value\":\"1E+3\"}],\"other\":[],\"total\":3}}",
+      "options": {}
+    },
+    "error": "'Row' holds more than one list of records, so say which one with 'of:'; it has items, other"
+  }
+]

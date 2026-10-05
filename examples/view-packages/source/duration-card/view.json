@@ -1,0 +1,65 @@
+{
+  "name": "DurationCard",
+  "id": "duration-card",
+  "summary": "Show an elapsed duration in seconds.",
+  "renderer": "View.tsx",
+  "input": "DurationCard",
+  "outputs": {},
+  "interaction": null,
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 24,
+        "rows": 2
+      },
+      "preferred": {
+        "columns": 32,
+        "rows": 6
+      },
+      "max": {
+        "columns": 96,
+        "rows": 16
+      },
+      "placement": {
+        "width": "preferred",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 24,
+        "rows": 2
+      },
+      "preferred": {
+        "columns": 32,
+        "rows": 6
+      },
+      "max": {
+        "columns": 96,
+        "rows": 16
+      },
+      "placement": {
+        "width": "preferred",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 24,
+        "rows": 2
+      },
+      "preferred": {
+        "columns": 32,
+        "rows": 6
+      },
+      "max": {
+        "columns": 96,
+        "rows": 16
+      },
+      "placement": {
+        "width": "preferred",
+        "align": "start"
+      }
+    }
+  }
+}

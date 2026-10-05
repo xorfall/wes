@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "key": {
+    "service": "inventory",
+    "apiVersion": "v1",
+    "scope": "default"
+  },
+  "revision": "5002e4c16586bdec407adbd1e7ce78300bee05f7bd6190e7664200ab926fbcc1",
+  "descriptor": "descriptor.json",
+  "reviewed": true,
+  "source": {
+    "path": "source.openapi.json",
+    "sha256": "3bc56b092af9c46f9f74b741574e7adf17212d7b8733b12e778dbaafc611d1d6"
+  }
+}

@@ -1,0 +1,22 @@
+name: wes-postgres-demo
+services:
+  postgres:
+    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    container_name: wes-postgres-demo
+    network_mode: none
+    environment:
+      POSTGRES_DB: wes_demo
+      # Synthetic demo only: Unix socket access, no network or published ports.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command: [postgres, -c, "listen_addresses="]
+    volumes:
+      - data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-demo.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d wes_demo"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+volumes:
+  data:
+    name: wes-postgres-demo-data

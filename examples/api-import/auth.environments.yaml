@@ -1,0 +1,19 @@
+version: 1
+package: api-import-auth-lesson
+targets:
+  local: {kind: local}
+environments:
+  lesson:
+    secretSlots:
+      token: {required: true}
+    secretRefs:
+      token: tutorial/inventory/token
+    imports:
+      secureApi:
+        source: {kind: spec, file: auth.json}
+        bind:
+          target: local
+          endpoint: http://127.0.0.1:8765/v1
+          credentials:
+            DemoToken: {secret: token}
+          output: private

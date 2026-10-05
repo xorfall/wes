@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "provider": "orders",
+  "types": {
+    "Input": {
+      "base": "Record",
+      "fields": {
+        "total": {
+          "type": "Int",
+          "optional": false
+        }
+      }
+    },
+    "Order": {
+      "base": "Record",
+      "fields": {
+        "id": {
+          "type": "Int",
+          "optional": false
+        },
+        "total": {
+          "type": "Int",
+          "optional": false
+        },
+        "status": {
+          "type": "Text",
+          "optional": false
+        }
+      }
+    },
+    "Deleted": {
+      "base": "Record",
+      "fields": {
+        "deleted": {
+          "type": "Bool",
+          "optional": false
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "path": [
+        "create"
+      ],
+      "method": "POST",
+      "route": "/orders",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "body",
+          "wire": "body",
+          "location": "body",
+          "type": "Input",
+          "required": true,
+          "encoding": "json"
+        }
+      ],
+      "responses": {
+        "201": "Order"
+      }
+    },
+    {
+      "path": [
+        "get"
+      ],
+      "method": "GET",
+      "route": "/orders/{id}",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "Int",
+          "required": true,
+          "encoding": "scalar"
+        }
+      ],
+      "responses": {
+        "200": "Order"
+      }
+    },
+    {
+      "path": [
+        "invalid"
+      ],
+      "method": "POST",
+      "route": "/invalid",
+      "auth": [],
+      "parameters": [],
+      "responses": {
+        "201": "Order"
+      }
+    },
+    {
+      "path": [
+        "delete"
+      ],
+      "method": "DELETE",
+      "route": "/orders/{id}",
+      "auth": [],
+      "parameters": [
+        {
+          "name": "id",
+          "wire": "id",
+          "location": "path",
+          "type": "Int",
+          "required": true,
+          "encoding": "scalar"
+        }
+      ],
+      "responses": {
+        "200": "Deleted"
+      }
+    }
+  ]
+}

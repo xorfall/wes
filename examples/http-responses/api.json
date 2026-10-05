@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "provider": "sample",
+  "types": {
+    "Item": {"base": "Record", "fields": {"title": "Text"}},
+    "Problem": {"base": "Record", "fields": {"message": "Text"}}
+  },
+  "operations": [{
+    "path": ["get"], "method": "GET", "route": "/{kind}", "auth": [],
+    "parameters": [{"name": "kind", "wire": "kind", "location": "path", "type": "Text", "required": true, "encoding": "scalar"}],
+    "responses": {"200": "Item", "204": null, "400": "Problem"}
+  }]
+}

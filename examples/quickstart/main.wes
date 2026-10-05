@@ -1,0 +1,2 @@
+:calc { return 6 * 7; } > total
+:calc { return $total + 1; } > next

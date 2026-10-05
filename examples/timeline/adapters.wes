@@ -1,0 +1,67 @@
+// Pure adapters for successful scalar range matrices and Loki log streams.
+// Load types.yaml first with :package load. Arguments receive the API JSON body, not an HTTP envelope.
+:def PrometheusTimeline(input: PrometheusRange, window: Interval, id: TimelineKey, title: TimelineText, unit: TimelineText) -> Timeline as :calc pure {
+  function labelKey(labels) {
+    return sortBy(keys(labels), key => key).map(key => {
+      const value = check('Text', labels[key]);
+      return text(length(key)) + ':' + key + text(length(value)) + ':' + value;
+    }).join('');
+  }
+  const series = sortBy(input.data.result.map(stream => {
+    check('AdapterAccepted', !has(stream, 'histograms'));
+    const key = labelKey(stream.metric);
+    const rows = sortBy(stream.values.map(pair => {
+      const at = fromEpochSeconds(decimal(pair[0]));
+      const value = check('Text', pair[1]);
+      if (value == 'NaN') { return {id: text(toEpochNanos(at)), at: at, value: 0, gap: true}; }
+      return {id: text(toEpochNanos(at)), at: at, value: decimal(value), gap: false};
+    }), row => row.at);
+    let i = 1; while (i < length(rows)) {
+      check('AdapterAccepted', rows[i - 1].at != rows[i].at);
+      i = i + 1;
+    }
+    const samples = rows.filter(row => row.at >= window.start && row.at < window.end);
+    let name = key; if (key == '') { name = 'scalar'; }
+    return {id: name, label: name, unit: unit, samples: samples};
+  }), stream => stream.id);
+  let i = 1; while (i < length(series)) {
+    check('AdapterAccepted', series[i - 1].id != series[i].id);
+    i = i + 1;
+  }
+  return {view: 'timeline', id: id, title: title, range: window, coverage: window, omitted: 0, sourceError: '', series: series, events: []};
+}
+// Loki callers supply omission count and coverage; the API limit alone does not reveal either.
+// Structured metadata triples are rejected by the pair contract.
+:def LokiTimeline(input: LokiRange, window: Interval, id: TimelineKey, title: TimelineText, omitted: AdapterCount, coverage: Interval) -> Timeline as :calc pure {
+  function labelKey(labels) {
+    return sortBy(keys(labels), key => key).map(key => {
+      const value = check('Text', labels[key]);
+      return text(length(key)) + ':' + key + text(length(value)) + ':' + value;
+    }).join('');
+  }
+  const streams = sortBy(input.data.result.map(stream => {
+    return {key: labelKey(stream.stream), values: stream.values};
+  }), stream => stream.key);
+  let events = [];
+  let s = 0; while (s < length(streams)) {
+    if (s > 0) { check('AdapterAccepted', streams[s - 1].key != streams[s].key); }
+    const stream = streams[s];
+    let name = stream.key; if (name == '') { name = 'log'; }
+    const rows = sortBy(sortBy(stream.values.map(pair => {
+      return {at: fromEpochNanos(int(pair[0])), detail: pair[1]};
+    }), row => row.detail), row => row.at);
+    let occurrence = 0;
+    let previous = 0;
+    const selected = rows.map(row => {
+      const nanos = toEpochNanos(row.at);
+      if (nanos == previous) { occurrence = occurrence + 1; } else { occurrence = 0; }
+      previous = nanos;
+      return {id: name + '/' + text(nanos) + '/' + text(occurrence), at: row.at, label: name, detail: row.detail};
+    }).filter(row => row.at >= window.start && row.at < window.end);
+    events = concat(events, selected);
+    s = s + 1;
+  }
+  check('AdapterAccepted', length(events) <= 10000);
+  check('AdapterAccepted', coverage.start >= window.start && coverage.end <= window.end);
+  return {view: 'timeline', id: id, title: title, range: window, coverage: coverage, omitted: omitted, sourceError: '', series: [], events: sortBy(events, event => event.at)};
+}

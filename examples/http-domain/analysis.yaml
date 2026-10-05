@@ -1,0 +1,53 @@
+version: 1
+name: HTTP domain definitions and observed failures
+steps:
+  - name: Status definition
+    run: ':calc pure { return httpStatus("404"); } > not_found'
+    expect:
+      - {name: Discoverable category, condition: '$not_found.code == 404 && $not_found.class == "client-error"'}
+  - name: Error definition
+    run: ':calc pure { return httpError("HTTP007"); } > response_error'
+    expect:
+      - {name: Response boundary category, condition: '$response_error.known && $response_error.category == "response"'}
+  - name: Successful call
+    run: '@trace(http) sensor sample > sample'
+  - name: Capture success evidence
+    run: ':read trace:$sample > successful_trace'
+  - name: Analyze success
+    run: ':calc pure { return httpAnalysis($successful_trace); } > successful_analysis'
+    expect:
+      - {name: Response and business result accepted, condition: '$successful_analysis.executionState == "completed" && $successful_analysis.statuses[0].code == 200 && !$successful_analysis.partial'}
+  - name: Missing resource
+    run: '@trace(http) sensor missing > missing *> missing_error'
+    expect:
+      - {name: Received status, condition: '$missing.status == 404'}
+  - name: Capture missing evidence
+    run: ':read trace:$missing > missing_trace'
+  - name: Analyze missing
+    run: ':calc pure { return httpAnalysis($missing_trace); } > missing_analysis'
+    expect:
+      - {name: Received 404 is not transport failure, condition: '$missing_analysis.statuses[0].code == 404 && $missing_analysis.executionState == "completed"'}
+  - name: Invalid request
+    run: '@trace(http) sensor invalid > invalid'
+    expect:
+      - {name: Received validation response, condition: '$invalid.status == 422'}
+  - name: Capture invalid evidence
+    run: ':read trace:$invalid > invalid_trace'
+  - name: Analyze invalid
+    run: ':calc pure { return httpAnalysis($invalid_trace); } > invalid_analysis'
+    expect:
+      - {name: Received 422 retained, condition: '$invalid_analysis.statuses[0].code == 422'}
+  - name: Invalid response JSON
+    run: '@trace(http) sensor bad > bad'
+    expect:
+      - {name: Original unreadable body retained, condition: '$bad.validation.state == "unreadable" && $bad.bodyKind == "bytes"'}
+  - name: Capture rejected response evidence
+    run: ':read trace:$bad > bad_trace'
+  - name: Analyze rejected response
+    run: ':calc pure { return httpAnalysis($bad_trace); } > bad_analysis'
+    expect:
+      - {name: Response received despite unreadable body, condition: '$bad_analysis.statuses[0].code == 200 && $bad_analysis.executionState == "completed"'}
+  - name: Extract findings
+    run: ':calc { return $bad_analysis.findings; } > findings'
+  - name: Tabulate findings
+    run: '$findings > findings_table'

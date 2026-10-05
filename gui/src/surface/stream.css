@@ -1,0 +1,52 @@
+ .wes-terminal .stream-result{ min-width:0; } .wes-terminal .stream-controls{ display:flex; align-items:center; gap:6px; min-width:0; } .wes-terminal .stream-phase{ font-size:12px; } .wes-terminal .stream-hold{ width:24px; height:24px; padding:3px!important; display:grid; place-items:center; } .wes-terminal .stream-hold svg{ width:16px; height:16px; } .wes-terminal .stream-new{ font-size:12px; white-space:nowrap; } .wes-terminal .live-view{ min-width:0; } .wes-terminal .stream-notice{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; padding:4px 0; } .wes-terminal .stream-snapshot, .wes-terminal .stream-counts{ font-size:12px; display:flex; flex-wrap:wrap; gap:12px; padding:3px 0; } .wes-terminal .log-tools{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:12px; padding:4px 0; } .wes-terminal .log-tools input{ color:var(--mono-ink); background:transparent; border:1px solid var(--line); border-radius:3px; padding:3px 5px; font:inherit; width:12ch; min-width:6ch; max-width:100%; } .wes-terminal .log-tools select{ color:inherit; background:var(--sheet); border:1px solid var(--line); border-radius:3px; font:inherit; max-width:100%; } .wes-terminal .log-scroll{ overflow:auto; overscroll-behavior:contain; height:14lh; min-height:1lh; max-height:100%; scrollbar-gutter:stable; } .wes-terminal .log-view[data-mode=preview] .log-scroll{ height:6lh; } .wes-terminal .log-view[data-mode=window] .log-scroll{ height:32lh; } .wes-terminal .log-row{ display:flex; align-items:baseline; gap:10px; min-width:0; padding:1px 0; } .wes-terminal .log-row time, .wes-terminal .log-row>span:first-of-type{ flex:none; font-size:12px; } .wes-terminal .log-row time{ min-width:12ch; } .wes-terminal .log-message{ white-space:pre-wrap; overflow-wrap:anywhere; flex:1; min-width:0; unicode-bidi:plaintext; } .wes-terminal .log-flags{ font-size:12px; } .wes-terminal .log-match{ background:var(--sel); } .wes-terminal .log-notice, .wes-terminal .log-counts{ font-size:12px; margin:3px 0; } .wes-terminal .view-host-stream.view-host-builtin .log-scroll{ height:auto; max-height:none; overflow:visible; } .wes-terminal .view-host-stream.view-host-builtin{ scrollbar-gutter:stable; }
+@container (max-width:480px) { .wes-terminal .stream-phase{ font-size:12px; } .wes-terminal .stream-controls{ gap:4px; } .wes-terminal .log-tools input{ width:10ch; } } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view){ overflow:hidden; } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .view-host-content, .wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .live-view{ height:100%; display:flex; flex-direction:column; min-height:0; } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .log-view{ display:flex; flex-direction:column; flex:1; min-height:0; } .wes-terminal .view-host-stream.view-host-builtin .log-view .log-scroll{ flex:1; min-height:0; overflow:auto; } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view,.value-table-block){ height:14lh; }
+.wes-terminal .live-view { position:relative; }
+.wes-terminal .stream-notice { position:absolute; z-index:2; bottom:24px; left:4px; right:4px; background:var(--sheet); border:1px solid var(--line); border-radius:3px; padding:4px 6px; max-height:3lh; overflow:auto; }
+.wes-terminal .log-sequence { min-width:3ch; text-align:right; font-size:12px; user-select:none; }
+.wes-terminal .view-host-stream.view-host-builtin:has(.value-table-block) { overflow:hidden; }
+.wes-terminal .view-host-stream.view-host-builtin:has(.value-table-block) .view-host-content,.wes-terminal .view-host-stream.view-host-builtin:has(.value-table-block) .live-view { height:100%; min-height:0; }
+.wes-terminal .view-host-stream.view-host-builtin .value-table-scroll { max-height:calc(var(--stream-rows,14)*1lh - 3lh)!important; overflow-y:auto; }
+
+.wes-terminal .stream-phase { width:14ch; flex:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+.wes-terminal .stream-footer { flex:none; height:2lh; min-height:2lh; overflow:auto; font-size:12px; }
+.wes-terminal .stream-status-line { display:flex; gap:8px; align-items:center; height:1lh; min-width:0; }
+.wes-terminal .stream-status-line .stream-counts { padding:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.wes-terminal .stream-snapshot { flex:1; min-width:0; border:0; padding:0; background:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .stream-new { max-width:20ch; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+.wes-terminal .stream-footer>.stream-counts { height:1lh; padding:0; flex-wrap:nowrap; white-space:nowrap; }
+.wes-terminal .stream-notice { bottom:2lh; }
+.wes-terminal .view-host-stream.view-host-builtin .live-view { height:100%; display:flex; flex-direction:column; min-height:0; }
+.wes-terminal .view-host-stream.view-host-builtin .stream-value { flex:1; min-height:0; overflow:auto; padding-bottom:1lh; }
+.wes-terminal .view-host-stream.view-host-builtin:has(.log-view,.value-table-block) .stream-value { height:100%; overflow:hidden; padding-bottom:0; }
+.wes-terminal .log-match-count { width:11ch; flex:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+.wes-terminal .log-tools input,.wes-terminal .log-tools select { background:var(--sheet); }
+.wes-terminal .live-view-terminal .log-message,.wes-terminal .live-view-read-failed .log-message { color:var(--mono-dim); }
+
+.wes-terminal .stream-status-line>.stream-counts { flex:1; min-width:0; display:block; }
+.wes-terminal .stream-new { flex-shrink:1; min-width:0; }
+.wes-terminal .stream-footer>.stream-counts { overflow:auto; max-width:100%; }
+
+/* The log's own scroller is the only scroll owner: the host and value clip, and every ancestor bounds it. */
+.wes-terminal .view-host-resizable[style]>.view-host-stream.view-host-builtin:has(.log-view) { overflow:hidden; }
+.wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .stream-value { display:flex; flex-direction:column; }
+.wes-terminal .log-view>:not(.log-scroll) { flex:none; }
+/* Follow and reading restore the position themselves; browser scroll anchoring would move it twice. */
+.wes-terminal .log-scroll { overflow-anchor:none; }
+.wes-terminal .log-mode { display:inline-flex; gap:2px; flex:none; }
+.wes-terminal .log-mode [aria-pressed=true] { background:var(--head); color:var(--mono-ink); }
+.wes-terminal .log-tools-compact { justify-content:flex-end; padding:0 0 2px; }
+.wes-terminal .log-view[data-mode=preview] .log-scroll { height:5lh; }
+
+/*
+ * A fill container gives its live result a definite height (a dashboard card's preferred rows).
+ * Controls, tools, counts and footer keep their size; the value's own viewport takes the rest and is
+ * the only vertical scroll owner. Flex bases are 0px, never 0%, so no viewport sizes from its content.
+ * Each viewport keeps 3 rows; below that minimum the container itself scrolls as the fallback.
+ */
+.wes-terminal .stream-fill { display:flex; flex-direction:column; }
+.wes-terminal .stream-fill .stream-result,.wes-terminal .stream-fill .live-view { flex:1 1 0px; display:flex; flex-direction:column; }
+.wes-terminal .stream-fill .stream-controls,.wes-terminal .stream-fill .stream-footer { flex:none; }
+.wes-terminal .stream-fill .stream-value { flex:1 1 0px; min-height:3lh; overflow:auto; }
+.wes-terminal .stream-fill .stream-value:has(>.log-view) { display:flex; flex-direction:column; min-height:auto; overflow:visible; }
+.wes-terminal .stream-fill .log-view { flex:1 1 0px; display:flex; flex-direction:column; }
+.wes-terminal .stream-fill .log-view .log-scroll { flex:1 1 0px; height:auto; min-height:3lh; max-height:none; }

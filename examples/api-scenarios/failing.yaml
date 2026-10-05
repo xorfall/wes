@@ -1,0 +1,15 @@
+version: 1
+name: Wrong expectation still cleans up
+steps:
+  - name: Input
+    run: ':calc { return {total: 42}; } > payload'
+  - name: Create
+    run: 'orders create body:$payload > created'
+    expect:
+      - {name: Intentionally wrong total, condition: '$created.body.total == 999'}
+      - {name: Other checks still run, condition: '$created.body.status == "created"'}
+  - name: Must be skipped
+    run: orders invalid
+cleanup:
+  - name: Delete
+    run: orders delete id:$created.body.id

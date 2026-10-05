@@ -1,0 +1,30 @@
+[package]
+name = "wes-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+wes-budgets.workspace = true
+tracing.workspace = true
+wes-core.workspace = true
+wes-views.workspace = true
+wes-language.workspace = true
+indexmap.workspace = true
+thiserror.workspace = true
+secrecy.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+regex.workspace = true
+sha2.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

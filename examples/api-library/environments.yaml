@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "package": "api-library-demo",
+  "targets": {
+    "local": {
+      "kind": "local"
+    }
+  },
+  "environments": {
+    "demo": {
+      "secretSlots": {},
+      "secretRefs": {},
+      "imports": {
+        "inventory": {
+          "source": {
+            "kind": "spec",
+            "file": "repository/descriptor.json",
+            "sha256": "5002e4c16586bdec407adbd1e7ce78300bee05f7bd6190e7664200ab926fbcc1"
+          },
+          "bind": {
+            "target": "local",
+            "endpoint": "http://127.0.0.1:8765/v1",
+            "credentials": {}
+          }
+        }
+      }
+    }
+  }
+}

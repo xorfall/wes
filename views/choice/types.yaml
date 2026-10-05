@@ -1,0 +1,14 @@
+types:
+  ChoiceKind: {base: Text, enum: [choice]}
+  ChoiceOptions: {base: 'List<ChoiceOption>', maxItems: 100}
+  ChoiceKey: {base: Text, maxLength: 128}
+  ChoiceLabel: {base: Text, maxLength: 256}
+  ChoiceOption:
+    base: Record
+    fields: {value: ChoiceKey, label: ChoiceLabel}
+  Choice:
+    base: Record
+    fields: {view: ChoiceKind, title: ChoiceLabel, options: ChoiceOptions}
+  ChoiceState:
+    base: Record
+    fields: {value: ChoiceKey}

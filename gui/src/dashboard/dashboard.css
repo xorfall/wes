@@ -1,0 +1,543 @@
+/*
+ * Dashboard canvas and editor. Geometry owns every rectangle (cards and group frames are
+ * absolutely placed); these rules only dress them. A card's 1 px border and 12 px padding are
+ * the chrome geometry reserves, set from the canvas as custom properties.
+ */
+.wes-terminal .dashboard-canvas {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  background-color: var(--ground);
+}
+.wes-terminal .dashboard-sizer {
+  height: 0;
+  width: 100%;
+}
+.wes-terminal .dashboard-empty {
+  padding: var(--space-md);
+  color: var(--mono-dim);
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+}
+.wes-terminal .dashboard-stage {
+  position: relative;
+}
+
+/* Group frames: the padding band and heading strip geometry leaves around nested groups. */
+.wes-terminal .dashboard-groups {
+  position: absolute;
+  inset: 0;
+}
+.wes-terminal .dashboard-group {
+  position: absolute;
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--sunk);
+}
+/* The selected root is an outline only: it must never intercept a click meant for a card or group. */
+.wes-terminal .dashboard-group.root {
+  background-color: transparent;
+  pointer-events: none;
+}
+.wes-terminal .dashboard-group.selected {
+  border-color: var(--primary);
+}
+.wes-terminal .dashboard-group-select {
+  position: absolute;
+  top: 3px;
+  left: var(--space-sm);
+  height: 18px;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-sm);
+  color: var(--mono-dim);
+  font-family: var(--type-label-family);
+  font-size: 11.5px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.wes-terminal .dashboard-group-select:hover,
+.wes-terminal .dashboard-group-select[aria-pressed="true"] {
+  color: var(--primary);
+}
+
+/* Cards. */
+.wes-terminal .dashboard-card {
+  position: absolute;
+  overflow: hidden;
+  border: var(--dashboard-card-border) solid var(--line);
+  border-radius: var(--radius-sm);
+  background-color: var(--sheet);
+}
+.wes-terminal .dashboard-card.selected {
+  outline: var(--stroke-thin) solid var(--primary);
+  outline-offset: 1px;
+}
+.wes-terminal .dashboard-card-content {
+  padding: calc(var(--dashboard-card-padding) - 4px) var(--dashboard-card-padding) var(--dashboard-card-padding);
+}
+.wes-terminal .dashboard-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin-bottom: var(--space-xs);
+}
+.wes-terminal .dashboard-card-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mono-dim);
+  font-family: var(--type-label-family);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-leading);
+}
+.wes-terminal .dashboard-card-select {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 var(--space-sm);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--mono-dim);
+  font-family: var(--type-label-family);
+  font-size: 11.5px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.wes-terminal .dashboard-card-select:hover {
+  color: var(--mono-ink);
+  border-color: var(--rule);
+}
+.wes-terminal .dashboard-card-select[aria-pressed="true"] {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.wes-terminal .dashboard-card-body {
+  min-width: 0;
+}
+/*
+ * A view declaring finite maximum rows scrolls inside its card past them; 1lh is the body's real line height.
+ * A live body is also a stream fill (stream.css): its result's own viewport scrolls, the body only below its minimum.
+ */
+.wes-terminal .dashboard-card-body.bounded {
+  max-height: calc(var(--dashboard-rows) * 1lh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+/*
+ * The card body owns its result's height. Inner viewports drop their cell-sized preferred height and
+ * native resize grip; a bounded body also lifts their caps so finite content takes its natural height
+ * and the body alone scrolls past its maximum. An unbounded body keeps each viewport's own cap.
+ */
+.wes-terminal .dashboard-card-body .view-layout-scroll,
+.wes-terminal .dashboard-card-body .json-expanded,
+.wes-terminal .dashboard-card-body .process-scroll {
+  height: auto;
+  min-height: 0;
+  resize: none;
+}
+.wes-terminal .dashboard-card-body .view-layout-content {
+  height: auto;
+}
+/* The expanded table rule is a long child chain; matching it needs the precedent used by cell hosts. */
+.wes-terminal .dashboard-card-body .value-table-scroll {
+  height: auto !important;
+  min-height: 0 !important;
+  resize: none !important;
+}
+.wes-terminal .dashboard-card-body.bounded .view-layout-scroll,
+.wes-terminal .dashboard-card-body.bounded .json-expanded,
+.wes-terminal .dashboard-card-body.bounded .process-scroll {
+  max-height: none;
+  overflow: visible;
+}
+.wes-terminal .dashboard-card-body.bounded .value-table-scroll {
+  max-height: none !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.wes-terminal .dashboard-card-missing {
+  color: var(--mono-faint);
+}
+
+/* Editor: beside the canvas when the measured frame is wide enough, below it otherwise. */
+.wes-terminal .dashboard-editor-frame {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.wes-terminal .dashboard-editor-frame.beside {
+  flex-direction: row;
+  align-items: stretch;
+}
+.wes-terminal .dashboard-editor-frame.below {
+  flex-direction: column;
+  height: auto;
+}
+.wes-terminal .dashboard-editor-canvas {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+.wes-terminal .dashboard-editor-canvas > .dashboard-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.wes-terminal .dashboard-editor-frame.below .dashboard-editor-canvas {
+  flex: 0 0 auto;
+}
+.wes-terminal .dashboard-editor-frame.viewing {
+  flex-direction: column;
+}
+.wes-terminal .dashboard-editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--sheet);
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  line-height: var(--type-sans-small-leading);
+}
+.wes-terminal .dashboard-editor-frame.beside .dashboard-editor {
+  flex: 0 0 288px;
+}
+.wes-terminal .dashboard-editor-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md) var(--space-xs) 12px;
+  border-bottom: var(--stroke-thin) solid var(--line);
+  background-color: var(--head);
+}
+.wes-terminal .dashboard-editor-head h2 {
+  flex: 1 1 auto;
+  font-family: var(--type-label-family);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+.wes-terminal .dashboard-editor-status,
+.wes-terminal .dashboard-editor-hint {
+  color: var(--mono-dim);
+  font-size: 11.5px;
+}
+.wes-terminal .dashboard-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .dashboard-editor-title {
+  overflow-wrap: anywhere;
+  color: var(--mono-dim);
+  font-family: var(--type-label-family);
+  font-size: 12px;
+  font-weight: 600;
+}
+.wes-terminal .dashboard-editor-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) 6px;
+  min-width: 0;
+}
+.wes-terminal .dashboard-editor-label {
+  flex: 0 0 56px;
+  color: var(--mono-dim);
+  font-size: 12px;
+}
+.wes-terminal .dashboard-segments {
+  display: inline-flex;
+  flex-wrap: wrap;
+}
+.wes-terminal .dashboard-segments .dashboard-button {
+  border-radius: 0;
+}
+.wes-terminal .dashboard-segments .dashboard-button:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+.wes-terminal .dashboard-segments .dashboard-button:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.wes-terminal .dashboard-segments .dashboard-button + .dashboard-button {
+  margin-left: -1px;
+}
+
+.wes-terminal .dashboard-button {
+  height: 24px;
+  padding: 0 var(--space-sm);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  background-color: var(--sheet);
+  color: var(--mono-ink);
+  font-family: var(--type-label-family);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.wes-terminal .dashboard-button:hover:not(:disabled) {
+  border-color: var(--rule);
+}
+.wes-terminal .dashboard-button[aria-pressed="true"] {
+  position: relative;
+  z-index: 1;
+  border-color: var(--primary);
+  background-color: var(--sel);
+  color: var(--primary);
+}
+.wes-terminal .dashboard-button.primary {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+.wes-terminal .dashboard-button.danger {
+  border-color: color-mix(in srgb, var(--error) 55%, transparent);
+  color: var(--error);
+}
+.wes-terminal .dashboard-button:disabled,
+.wes-terminal .dashboard-tree-node:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.wes-terminal .dashboard-input {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  background-color: var(--terminal);
+  color: var(--mono-ink);
+  font-family: var(--type-mono-family);
+  font-size: 12px;
+}
+.wes-terminal .dashboard-input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.wes-terminal .dashboard-number {
+  flex: 0 0 64px;
+}
+.wes-terminal .dashboard-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wes-terminal .dashboard-tree .dashboard-tree {
+  padding-left: 12px;
+  border-left: var(--stroke-thin) solid var(--line);
+  margin-left: 6px;
+}
+.wes-terminal .dashboard-tree-node {
+  display: block;
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: var(--stroke-thin) solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--mono-ink);
+  font-family: var(--type-mono-family);
+  font-size: 12px;
+  cursor: pointer;
+}
+.wes-terminal .dashboard-tree-node[aria-pressed="true"] {
+  border-color: var(--primary);
+  background-color: var(--sel);
+  color: var(--primary);
+}
+.wes-terminal .dashboard-editor-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.wes-terminal .dashboard-editor-problem {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.wes-terminal .dashboard-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Host: a compact toolbar over the board, definition panels and the saved-board library. */
+.wes-terminal .dashboard-host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  font-family: var(--type-sans-small-family);
+  font-size: var(--type-sans-small-size);
+  line-height: var(--type-sans-small-leading);
+}
+.wes-terminal .dashboard-host-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs) var(--space-md);
+  min-width: 0;
+  padding: var(--space-xs) 0;
+  border-bottom: var(--stroke-thin) solid var(--line);
+}
+/* The exit leads the header; at narrow widths it keeps its own line and the title wraps beside or below it. */
+.wes-terminal .dashboard-host-exit {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wes-terminal .dashboard-host-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1 1 200px;
+}
+.wes-terminal .dashboard-host-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-label-family);
+  font-size: 13px;
+  font-weight: 600;
+}
+.wes-terminal .dashboard-host-title .mono-dim {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--type-mono-family);
+  font-size: 12px;
+}
+.wes-terminal .dashboard-host-status,
+.wes-terminal .dashboard-host-note,
+.wes-terminal .dashboard-library-meta {
+  color: var(--mono-dim);
+  font-size: 11.5px;
+}
+.wes-terminal .dashboard-host-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.wes-terminal .dashboard-host-problem {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.wes-terminal .dashboard-host-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px var(--space-md);
+  padding: 6px 10px;
+  border: var(--stroke-thin) solid color-mix(in srgb, var(--error) 45%, transparent);
+  border-radius: var(--radius-sm);
+}
+.wes-terminal .dashboard-host-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.wes-terminal .dashboard-definition {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.wes-terminal .dashboard-definition-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--mono-dim);
+  font-size: 12px;
+}
+.wes-terminal .dashboard-definition-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 8lh;
+  max-height: 40vh;
+  padding: 6px 8px;
+  resize: vertical;
+  overflow: auto;
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  background-color: var(--terminal);
+  color: var(--mono-ink);
+  font-family: var(--type-mono-family);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+.wes-terminal .dashboard-definition-text:read-only {
+  color: var(--mono-dim);
+}
+.wes-terminal .dashboard-library {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+}
+.wes-terminal .dashboard-library-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+  padding: 6px 0;
+  border-bottom: var(--stroke-thin) solid var(--line);
+}
+.wes-terminal .dashboard-library-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.wes-terminal .dashboard-library-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wes-terminal .dashboard-library-name .mono-dim,
+.wes-terminal .dashboard-library-meta {
+  font-family: var(--type-mono-family);
+}
+.wes-terminal .dashboard-library-meta {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wes-terminal .dashboard-canvas :focus-visible,
+.wes-terminal .dashboard-host :focus-visible,
+.wes-terminal .dashboard-editor :focus-visible {
+  outline: 1.5px solid var(--primary);
+  outline-offset: 1px;
+}

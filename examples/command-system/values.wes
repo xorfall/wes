@@ -1,0 +1,1 @@
+:calc { return {rows: [10, 20, 30, 40], label: "synthetic"}; } > sample
