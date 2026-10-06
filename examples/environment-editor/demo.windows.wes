@@ -1,0 +1,2 @@
+:help docker
+sh run cmd:"(<nul set /p=environment-editor-ok) & cd ."

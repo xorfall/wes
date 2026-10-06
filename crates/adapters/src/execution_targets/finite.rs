@@ -59,7 +59,7 @@ pub(crate) async fn execute(
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
-            command.current_dir(target.cwd().unwrap_or("/"));
+            command.current_dir(crate::process::local_directory(target.cwd()).map_err(failed)?);
             let deadline = tokio::time::Instant::now() + timeout;
             let starting = crate::process::serialized_spawn_async(|| {
                 if lease.is_cancelled() || token.is_cancelled() {

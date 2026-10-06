@@ -49,9 +49,7 @@ impl FileDefinitions {
             return Ok(());
         };
         match directory.remove_file(&self.name) {
-            Ok(()) => directory
-                .open(".")
-                .and_then(|f| f.sync_all())
+            Ok(()) => wes_adapters::sync_directory(&directory)
                 .map_err(|_| "Sandbox cleanup could not be synchronized".into()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err("Sandbox cleanup failed".into()),

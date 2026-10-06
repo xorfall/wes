@@ -37,10 +37,9 @@ pub(super) fn build(
         return match import.endpoint() {
             None => crate::docker::unconnected(alias).map_err(|e| invalid(&e.to_string())),
             Some(endpoint) => {
-                let socket = endpoint.strip_prefix("unix://")
-                    .filter(|path| path.starts_with('/'))
-                    .ok_or_else(|| invalid("Docker endpoint requires unix:///absolute/path/to/docker.sock; use bind: auto for local discovery; remote transports are not implemented"))?;
-                crate::docker::observation::build_at(alias, socket, binding, authority)
+                let endpoint =
+                    crate::docker::LocalEndpoint::from_declaration(endpoint).map_err(invalid)?;
+                crate::docker::observation::build_at(alias, &endpoint.socket(), binding, authority)
                     .map_err(invalid)
             }
         };

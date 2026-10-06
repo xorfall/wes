@@ -262,18 +262,20 @@ impl LaunchedRuntime {
 
     /// Serve the browser client and protocol on `127.0.0.1:port` (0 selects an ephemeral port).
     pub async fn serve(&self, port: u16, site: Option<PathBuf>) -> Result<web::Server, Error> {
-        self.serve_client(port, site, false, None).await
+        self.serve_client(port, site, false, None, None).await
     }
     /// Desktop UI preferences belong to its data home, independent of the ephemeral HTTP origin.
     pub async fn serve_desktop(&self, site: Option<PathBuf>) -> Result<web::Server, Error> {
-        self.serve_client(0, site, true, None).await
+        self.serve_client(0, site, true, None, None).await
     }
     pub(crate) async fn serve_managed(
         &self,
         site: Option<PathBuf>,
         connection: crate::data_home::host::Connection,
+        terminal_executable: Option<PathBuf>,
     ) -> Result<web::Server, Error> {
-        self.serve_client(0, site, true, Some(connection)).await
+        self.serve_client(0, site, true, Some(connection), terminal_executable)
+            .await
     }
     async fn serve_client(
         &self,
@@ -281,6 +283,7 @@ impl LaunchedRuntime {
         site: Option<PathBuf>,
         desktop: bool,
         connection: Option<crate::data_home::host::Connection>,
+        terminal_executable: Option<PathBuf>,
     ) -> Result<web::Server, Error> {
         let home = self.home.clone();
         let base = self.base.clone();
@@ -289,6 +292,11 @@ impl LaunchedRuntime {
             let preferences =
                 desktop.then(|| web::DesktopPreferences::new(home.join("desktop-ui.json")));
             let mut services = browser_services(home, base)?;
+            if let Some(executable) = terminal_executable {
+                if let Some(terminal) = &mut services.terminal {
+                    terminal.executable = executable;
+                }
+            }
             services.desktop_preferences = preferences;
             if desktop {
                 // WebView timers may stop while locked; the native server owns cleanup instead.

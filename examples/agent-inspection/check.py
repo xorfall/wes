@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Run the actual calc files through a real isolated PTY/MCP connection."""
+import sys
 import argparse, base64, json, os, selectors, shlex, subprocess, tempfile, time, urllib.request
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+from fixture_environment import isolated
 ROOT = HERE.parents[1]
 
 def main():
@@ -12,7 +15,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='wes-inspection-') as directory:
         root = Path(directory)
         env = {k:v for k,v in os.environ.items() if not any(w in k for w in ['TOKEN','SECRET','PASSWORD','API_KEY'])}
-        env['HOME'] = str(root)
+        env = isolated(root, env)
         with (root/'server.log').open('w+') as errors:
             app = subprocess.Popen([str(binary),'--home',str(root/'home'),'--serve','0','--no-auto-keep'],
                                    cwd=root,env=env,stdout=subprocess.PIPE,stderr=errors,text=True)

@@ -22,7 +22,7 @@ class ExampleCommandTests(unittest.TestCase):
                 # runtime, subprocesses or services. A new required option must
                 # therefore fail this cheap planner check too.
                 nodes = []
-                for node in ast.parse(source.read_text(), filename=str(source)).body:
+                for node in ast.parse(source.read_text(encoding="utf-8"), filename=str(source)).body:
                     if isinstance(node, ast.Assign) and any(
                         isinstance(target, ast.Name) and target.id == "parser" for target in node.targets
                     ):

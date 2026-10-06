@@ -20,6 +20,18 @@ pub enum Durability {
     FileAndDirectory,
 }
 
+impl Durability {
+    /// Whether this host can establish the mode, as opposed to merely attempt it.
+    ///
+    /// Synchronizing a file is supported everywhere. That a directory's entries are on stable
+    /// storage is a documented guarantee of a POSIX directory fsync. Windows flushes a
+    /// directory handle without stating that guarantee, so a successful flush there is not
+    /// evidence of it and the stronger mode is not offered.
+    pub fn supported(self) -> bool {
+        self == Self::File || cfg!(not(windows))
+    }
+}
+
 pub(crate) enum DirectoryKind {
     Values,
     History,
@@ -103,6 +115,14 @@ impl OwnedDirectory {
         kind: DirectoryKind,
         durability: Durability,
     ) -> Result<Self, DirectoryError> {
+        // A requirement this host cannot establish is refused before a marker or a lock is
+        // written; no receipt can then claim it.
+        if !durability.supported() {
+            return Err(DirectoryError::Io(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "directory-entry durability is not established on this platform; use file durability",
+            )));
+        }
         #[cfg(unix)]
         {
             use cap_std::fs::PermissionsExt;
@@ -173,12 +193,51 @@ impl Deref for OwnedDirectory {
 }
 /// Flush a directory's entries. A capability directory can be a path-only handle (Linux opens it
 /// with `O_PATH`), which the OS refuses to synchronize; a readable handle to the same directory
-/// is opened through the capability instead.
+/// is opened through the capability instead. Windows flushes a directory only through a handle
+/// that may write to it, and opens a directory as a file only with backup semantics; a file
+/// system that cannot flush one reports the failure.
 ///
 /// # Errors
 /// Returns the I/O error when the directory cannot be reopened or synchronized.
 pub fn sync_directory(dir: &Dir) -> io::Result<()> {
-    dir.open(".")?.sync_all()
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        let mut options = OpenOptions::new();
+        options.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+        dir.open_with(".", &options)?.sync_all()
+    }
+    #[cfg(not(windows))]
+    {
+        dir.open(".")?.sync_all()
+    }
+}
+/// Whether flushing a file requires a handle that may write to it. Windows refuses to flush
+/// through a read-only handle; elsewhere read access is enough and keeps read-only records
+/// openable.
+const FLUSH_NEEDS_WRITE_ACCESS: bool = cfg!(windows);
+
+/// Flush a file whose bytes are already complete, reached through a directory capability.
+/// Nothing is written through the handle and the file is neither created nor truncated.
+///
+/// # Errors
+/// Returns the I/O error when the file cannot be opened for the flush or the flush fails.
+pub fn sync_existing_file_in(dir: &Dir, path: impl AsRef<Path>) -> io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(FLUSH_NEEDS_WRITE_ACCESS);
+    dir.open_with(path, &options)?.sync_all()
+}
+/// The same operation for a caller that holds an ambient path instead of a capability.
+///
+/// # Errors
+/// Returns the I/O error when the file cannot be opened for the flush or the flush fails.
+pub fn sync_existing_file(path: &Path) -> io::Result<()> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(FLUSH_NEEDS_WRITE_ACCESS)
+        .open(path)?
+        .sync_all()
 }
 fn marker_exists(dir: &Dir, name: &str) -> Result<bool, DirectoryError> {
     match dir.symlink_metadata(name) {
@@ -218,6 +277,52 @@ pub(crate) fn private_options() -> OpenOptions {
 mod tests {
     use super::*;
 
+    /// Both entry points flush a complete file without changing it, and report a file they
+    /// cannot open for the flush instead of passing over it.
+    #[test]
+    fn an_existing_file_is_flushed_unchanged_through_either_entry_point() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("record.json");
+        std::fs::write(&path, b"complete bytes").unwrap();
+        let dir = Dir::open_ambient_dir(temporary.path(), ambient_authority()).unwrap();
+        sync_existing_file_in(&dir, "record.json").unwrap();
+        sync_existing_file(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"complete bytes");
+
+        assert_eq!(
+            sync_existing_file_in(&dir, "absent.json")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            sync_existing_file(&temporary.path().join("absent.json"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        assert!(!temporary.path().join("absent.json").exists());
+        // A capability does not reach outside its directory for the flush either.
+        assert!(sync_existing_file_in(&dir, "../record.json").is_err());
+
+        // A record the platform will not let this handle flush is an error, not a skipped step.
+        let mut read_only = std::fs::metadata(&path).unwrap().permissions();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(&path, read_only).unwrap();
+        let outcomes = [
+            sync_existing_file_in(&dir, "record.json"),
+            sync_existing_file(&path),
+        ];
+        for outcome in outcomes {
+            assert_eq!(outcome.is_err(), FLUSH_NEEDS_WRITE_ACCESS);
+        }
+        let mut writable = std::fs::metadata(&path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        writable.set_readonly(false);
+        std::fs::set_permissions(&path, writable).unwrap();
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn directory_durability_synchronizes_through_a_capability_handle() {
         let temporary = tempfile::tempdir().unwrap();
@@ -229,5 +334,70 @@ mod tests {
 
         owned.sync().unwrap();
         sync_directory(&Dir::open_ambient_dir(&path, ambient_authority()).unwrap()).unwrap();
+    }
+
+    /// A host that cannot establish directory-entry durability refuses the requirement before
+    /// it creates anything, and stays fully usable with file durability.
+    #[test]
+    fn an_unsupported_durability_is_refused_and_leaves_the_directory_for_a_supported_one() {
+        assert!(Durability::File.supported());
+        assert_eq!(Durability::FileAndDirectory.supported(), cfg!(not(windows)));
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("values");
+        let strong =
+            OwnedDirectory::open(&path, DirectoryKind::Values, Durability::FileAndDirectory);
+        if Durability::FileAndDirectory.supported() {
+            assert_eq!(strong.unwrap().durability(), Durability::FileAndDirectory);
+            return;
+        }
+        let Err(DirectoryError::Io(refused)) = strong else {
+            panic!("an unsupported durability was accepted");
+        };
+        assert_eq!(refused.kind(), io::ErrorKind::Unsupported);
+        // Neither the marker nor the lock was written under a claim that cannot be kept.
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+        let owned = OwnedDirectory::open(&path, DirectoryKind::Values, Durability::File).unwrap();
+        assert_eq!(owned.durability(), Durability::File);
+        owned.sync().unwrap();
+        drop(owned);
+        // The directory it now owns is still refused for the stronger mode, and reopens.
+        assert!(
+            OwnedDirectory::open(&path, DirectoryKind::Values, Durability::FileAndDirectory)
+                .is_err()
+        );
+        OwnedDirectory::open(&path, DirectoryKind::Values, Durability::File).unwrap();
+    }
+
+    /// The explicit synchronization is performed and its refusal reported. On Windows the
+    /// flush needs a handle that may write to the directory; while another holder refuses to
+    /// share that access it cannot be made. That the flush succeeds otherwise is an attempt,
+    /// not the stronger durability mode, which this host does not offer.
+    #[cfg(windows)]
+    #[test]
+    fn directory_synchronization_is_performed_and_its_refusal_is_reported() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("values");
+        let owned = OwnedDirectory::open(&path, DirectoryKind::Values, Durability::File).unwrap();
+        let capability = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+        sync_directory(&capability).unwrap();
+
+        let holder = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&path)
+            .unwrap();
+        assert_eq!(
+            sync_directory(&capability).unwrap_err().raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION)
+        );
+        // File durability makes no directory claim and asks nothing of the file system.
+        owned.sync().unwrap();
+        drop(holder);
+        sync_directory(&capability).unwrap();
     }
 }

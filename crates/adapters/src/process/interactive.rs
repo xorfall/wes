@@ -110,7 +110,8 @@ impl InteractiveInvoker for ProcessConversation {
                             .stdout(Stdio::piped())
                             .stderr(Stdio::piped());
                     }
-                    command.spawn().map_err(|_| Failure::Spawn)
+                    super::ownership::LocalChild::spawn(command, inherited)
+                        .map_err(|_| Failure::Spawn)
                 })
             })
             .await
@@ -121,7 +122,7 @@ impl InteractiveInvoker for ProcessConversation {
                 Err(Failure::Cancelled)
             } else {
                 converse(
-                    &mut child,
+                    child.inner(),
                     &mut io,
                     deadline,
                     this.invoker.config.output_bytes,
@@ -131,6 +132,11 @@ impl InteractiveInvoker for ProcessConversation {
             };
             match result {
                 Ok((status, stdout, stderr)) => {
+                    if cancellation.is_cancelled() {
+                        child.cancel().await.map_err(|_| Failure::Cleanup.error())?;
+                        return Err(InvocationError::Cancelled);
+                    }
+                    child.complete();
                     let mut origin = Provenance::default().with_fact(
                         "ranLocally",
                         if this.invoker.launch.is_some() {
@@ -155,8 +161,7 @@ impl InteractiveInvoker for ProcessConversation {
                     .map_err(|_| Failure::Internal.error())
                 }
                 Err(reason) => {
-                    let _signalled = child.start_kill();
-                    if child.wait().await.is_err() {
+                    if child.cancel().await.is_err() {
                         return Err(Failure::Cleanup.error());
                     }
                     if cancellation.is_cancelled() {

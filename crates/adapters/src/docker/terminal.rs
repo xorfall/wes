@@ -19,9 +19,6 @@ const UNKNOWN: &str = "ENV036: Docker terminal outcome is unknown; remote work m
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) fn plan(target: &Target) -> Result<TerminalPlan, &'static str> {
-    if !cfg!(unix) {
-        return Err("Docker Unix-socket transport is unavailable on this platform");
-    }
     let TargetKind::Docker { socket, .. } = target.kind() else {
         return Err("not a Docker target");
     };

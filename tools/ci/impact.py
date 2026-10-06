@@ -27,10 +27,10 @@ def matches(path, patterns):
 class Model:
     def __init__(self, root=ROOT):
         self.root = Path(root).resolve()
-        self.policy = tomllib.loads((self.root / "ci/tests.toml").read_text())
+        self.policy = tomllib.loads((self.root / "ci/tests.toml").read_text(encoding="utf-8"))
         if self.policy.get("version") != 1 or set(self.policy["suites"]) != SUITES:
             raise ValueError("Unsupported test policy or suite names")
-        workspace = tomllib.loads((self.root / "Cargo.toml").read_text())["workspace"]
+        workspace = tomllib.loads((self.root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]
         self.crates, manifests = {}, {}
         for member in workspace["members"]:
             # This workspace uses explicit member paths. Reject syntax we cannot
@@ -40,7 +40,7 @@ class Model:
             manifest = self.root / member / "Cargo.toml"
             if manifest.is_symlink() or not manifest.resolve().is_relative_to(self.root):
                 raise ValueError("Cargo member manifest escapes the repository")
-            doc = tomllib.loads(manifest.read_text())
+            doc = tomllib.loads(manifest.read_text(encoding="utf-8"))
             name = doc["package"]["name"]
             if name in self.crates or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
                 raise ValueError("Duplicate or invalid Cargo member")
@@ -87,7 +87,7 @@ class Model:
             for source in (self.root / member).rglob("*.rs"):
                 if source.is_symlink():
                     continue  # Git diff treats changed links as full inputs.
-                text = source.read_text()
+                text = source.read_text(encoding="utf-8")
                 normal = re.findall(r'include(?:_(?:str|bytes))?!\s*\(\s*"([^"\n]+)"', text)
                 raw = [m.group("path") for m in re.finditer(
                     r'include(?:_(?:str|bytes))?!\s*\(\s*r(?P<hash>\#*)"(?P<path>[^"\n]+)"(?P=hash)', text)]
@@ -225,13 +225,13 @@ def emit(plan, output):
             "rust": bool(rust), "desktop": "wes-desktop" in rust,
             "go_build": "wes" in rust or bool(suites & {"compiler", "examples"}),
         }
-        with Path(output).open("a") as stream:
+        with Path(output).open("a", encoding="utf-8") as stream:
             stream.write("plan=" + json.dumps(execution, separators=(",", ":")) + "\n")
             for name, value in flags.items():
                 stream.write(f"{name}={str(value).lower()}\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
-        with Path(summary).open("a") as stream:
+        with Path(summary).open("a", encoding="utf-8") as stream:
             stream.write("## Test impact plan\n\nFull: " + str(plan["full"]) + "\n\n")
             stream.write("```json\n" + json.dumps(plan, indent=2) + "\n```\n")
     print(json.dumps(plan, indent=2))
@@ -252,7 +252,7 @@ def main():
     reason = "Explicit full verification" if args.full else None
     files = args.files or []
     if args.github:
-        files, reason = event_changes(ROOT, os.environ["GITHUB_EVENT_NAME"], json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()), os.environ)
+        files, reason = event_changes(ROOT, os.environ["GITHUB_EVENT_NAME"], json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8")), os.environ)
     elif args.base:
         try:
             files, reason = changed(ROOT, args.base, args.head)

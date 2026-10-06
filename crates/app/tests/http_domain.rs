@@ -1,5 +1,7 @@
 //! The HTTP package remains local and policy-aware across app composition and restarts.
-use std::{process::Command, time::Duration};
+#[path = "support/python.rs"]
+mod python;
+use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -15,7 +17,7 @@ use wes_engine::{driver::CancellationToken, source::SourceInput};
 fn actual_http_domain_project_runs_managed_public_private_and_offline() {
     let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/http-domain/check.py");
-    let result = Command::new("python3")
+    let result = python::command()
         .arg(checker)
         .arg("--binary")
         .arg(env!("CARGO_BIN_EXE_wes"))

@@ -1,4 +1,6 @@
 //! Input retention uses synthetic files and bounded loopback fixtures, never live user sources.
+#[path = "support/python.rs"]
+mod python;
 use serde_json::Value;
 use std::{
     fs,
@@ -185,7 +187,7 @@ fn archive_receives_the_same_once_read_bytes_that_the_engine_receives() {
 
 #[test]
 fn actual_example_restores_yaml_views_and_specs_without_original_files() {
-    let result = std::process::Command::new("python3")
+    let result = python::command()
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/import-retention/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -238,12 +240,8 @@ environments:
         fs::read(inputs.join("environment.yaml")).unwrap()
     );
     let spec_receipt = receipts.iter().find(|r| r["kind"] == "spec").unwrap();
-    assert!(
-        spec_receipt["origin"]
-            .as_str()
-            .unwrap()
-            .ends_with("/inputs/spec.json")
-    );
+    // Compared as a path: its separators are the host's.
+    assert!(Path::new(spec_receipt["origin"].as_str().unwrap()).ends_with("inputs/spec.json"));
     assert_eq!(
         fs::read_to_string(home.join(spec_receipt["object"].as_str().unwrap())).unwrap(),
         spec

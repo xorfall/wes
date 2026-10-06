@@ -1,3 +1,5 @@
+#[path = "support/python.rs"]
+mod python;
 use serde_json::{Value, json};
 use wes::{
     runtime::{RuntimeOptions, launch},
@@ -274,7 +276,7 @@ async fn overall_deadline_cancels_a_waiting_http_call_and_joins_shutdown() {
 fn checked_in_api_scenario_project_passes_against_isolated_loopback() {
     let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/api-scenarios/check.py");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(checker)
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()

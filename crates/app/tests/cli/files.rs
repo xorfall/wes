@@ -360,7 +360,7 @@ fn fifo_is_rejected_without_opening_home() {
 fn actual_http_inspection_project_is_checked_with_isolated_loopback_and_homes() {
     let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/http-inspection/check.py");
-    let output = std::process::Command::new("python3")
+    let output = super::python::command()
         .arg(checker)
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()

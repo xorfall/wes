@@ -821,3 +821,47 @@ fn historical_journal_is_rejected_without_rewriting() {
     assert!(FileHistory::open(dir.path(), ReadLimits::default(), Durability::File).is_err());
     assert_eq!(fs::read(path).unwrap(), bytes);
 }
+
+/// A history acknowledges only what this host establishes. Where directory-entry durability
+/// is not offered the requirement is refused, no stronger receipt exists, and the same
+/// history continues with file durability.
+#[test]
+fn a_history_acknowledges_only_the_durability_this_host_establishes() {
+    let dir = private_temp();
+    let mut history = open(dir.path());
+    assert_eq!(
+        history.append(&command("first")).unwrap().persistence,
+        Persistence::FileSynced
+    );
+    drop(history);
+    let strong = FileHistory::open(
+        dir.path(),
+        ReadLimits::default(),
+        Durability::FileAndDirectory,
+    );
+    if Durability::FileAndDirectory.supported() {
+        assert_eq!(
+            strong
+                .unwrap()
+                .append(&command("second"))
+                .unwrap()
+                .persistence,
+            Persistence::FileAndDirectorySynced
+        );
+        return;
+    }
+    assert!(strong.is_err());
+    let mut history = open(dir.path());
+    assert_eq!(
+        history.append(&command("second")).unwrap().persistence,
+        Persistence::FileSynced
+    );
+    assert_eq!(
+        history
+            .capture(HistoryCaptureLimits::default())
+            .unwrap()
+            .journal()
+            .len(),
+        2
+    );
+}

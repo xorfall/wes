@@ -1,6 +1,8 @@
+#[path = "support/python.rs"]
+mod python;
 #[test]
 fn actual_command_system_example_uses_canonical_sources_and_structured_results() {
-    let result = std::process::Command::new("python3")
+    let result = python::command()
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/command-system/check.py"

@@ -56,7 +56,7 @@ def main():
     source.add_argument("--plan-env")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    plan = json.loads(args.plan.read_text() if args.plan else os.environ[args.plan_env])
+    plan = json.loads(args.plan.read_text(encoding="utf-8") if args.plan else os.environ[args.plan_env])
     for directory, argv in commands(args.suite, plan, Model()):
         print(f"[{directory.relative_to(ROOT) or '.'}] {shlex.join(argv)}", flush=True)
         if not args.dry_run:

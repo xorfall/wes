@@ -209,6 +209,21 @@ fn client_arguments(config: &SshTarget) -> Vec<String> {
     arguments
 }
 
+/// The only host values the client is given. The Windows client cannot start without knowing
+/// where the system and its machine-wide program data are; nothing of the user's environment
+/// is forwarded on any platform.
+fn client_environment() -> Vec<(&'static str, std::ffi::OsString)> {
+    let names: &[&str] = if cfg!(windows) {
+        &["SystemRoot", "ProgramData"]
+    } else {
+        &[]
+    };
+    names
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (*name, value)))
+        .collect()
+}
+
 fn client_command(config: &SshTarget, remote: &str, input: bool) -> Command {
     let mut command = Command::new(&config.client);
     if !input {
@@ -216,6 +231,7 @@ fn client_command(config: &SshTarget, remote: &str, input: bool) -> Command {
     }
     command
         .env_clear()
+        .envs(client_environment())
         .arg("-T")
         .args(client_arguments(config))
         .arg(remote);
@@ -409,6 +425,8 @@ fn unknown_with_stderr(reason: &str, stderr: &[u8]) -> InvocationError {
 
 #[cfg(all(test, unix))]
 mod tests;
+#[cfg(all(test, windows))]
+mod windows_tests;
 
 /// POSIX interactive terminal preparation. Host workspace credentials are never forwarded.
 pub(crate) fn terminal(
@@ -449,6 +467,9 @@ pub(crate) fn terminal(
     }
     launch.arg(remote);
     launch.env("TERM", "xterm-256color");
+    for (name, value) in client_environment() {
+        launch.env(name, value);
+    }
     let inputs = config.clone();
     Ok(
         crate::execution_targets::TerminalPlan::remote(launch, "SSH").with_preflight(move || {

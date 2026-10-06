@@ -5,5 +5,5 @@ environments:
   pg-demo:
     imports:
       pg:
-        source: {kind: process, bin: /bin/echo}
+        source: {kind: process, bin: ./example-echo.bin}
         bind: {target: local}

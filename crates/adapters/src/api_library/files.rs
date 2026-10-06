@@ -23,6 +23,10 @@ pub fn validate_directory(path: &Path) -> Result<PathBuf> {
     let mut current = PathBuf::new();
     for part in path.components() {
         current.push(part);
+        // A Windows drive or verbatim prefix is not a directory until its root follows.
+        if matches!(part, std::path::Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(error("library/repository paths must not contain symlinks"));
@@ -296,7 +300,7 @@ impl Library {
                     "immutable library artifact conflicts with existing bytes",
                 ));
             }
-            self.dir.open(path)?.sync_all()?;
+            crate::sync_existing_file_in(&self.dir, path)?;
             sync_directory(&self.dir.open_dir(parent)?)?;
             return Ok(());
         }

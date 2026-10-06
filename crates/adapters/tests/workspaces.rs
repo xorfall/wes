@@ -363,3 +363,33 @@ fn named_generation_acknowledges_directory_sync_when_selected() {
         Persistence::FileAndDirectorySynced
     );
 }
+
+/// A saved generation claims only what this host establishes; a refused stronger requirement
+/// leaves the store as it was and usable with file durability.
+#[test]
+fn a_named_generation_claims_only_the_durability_this_host_establishes() {
+    let root = temp();
+    let mut workspaces = store(root.path());
+    workspaces.save(&name("kept"), &image("source")).unwrap();
+    let (history, captured) = workspaces.load(&name("kept")).unwrap();
+    assert_eq!(
+        captured.checkpoint().journal.persistence,
+        Persistence::FileSynced
+    );
+    assert_eq!(
+        captured.checkpoint().recovery.persistence,
+        Persistence::FileSynced
+    );
+    drop(history);
+    drop(workspaces);
+    let strong = FileWorkspaces::open(
+        root.path(),
+        ReadLimits::default(),
+        Durability::FileAndDirectory,
+    );
+    assert_eq!(strong.is_ok(), Durability::FileAndDirectory.supported());
+    drop(strong);
+    let mut workspaces = store(root.path());
+    let (_, reopened) = workspaces.load(&name("kept")).unwrap();
+    assert_eq!(reopened.journal(), image("source").journal());
+}

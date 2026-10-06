@@ -220,6 +220,16 @@ async fn byte_limit_timeout_and_cancellation_remain_invocation_failures() {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             if size_limit {
+                // The request is read first: closing a socket with unread input resets the
+                // connection on some hosts, and the reply would be lost with it.
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0u8; 1];
+                    if socket.read(&mut byte).await.unwrap() == 0 {
+                        break;
+                    }
+                    request.push(byte[0]);
+                }
                 socket.write_all(b"HTTP/1.1 400 Bad\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789").await.unwrap();
             } else {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;

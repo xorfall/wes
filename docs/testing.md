@@ -73,6 +73,44 @@ and loopback servers. Do not replace these fixtures with a real workspace.
 Container examples default to a synthetic daemon; their explicit `--real` modes
 operate Docker and are not part of the default offline checks.
 
+On Windows a local terminal pane is Windows PowerShell behind a pseudoconsole.
+Its tests start real `powershell.exe` processes and run with the Rust suites:
+
+```sh
+cargo test -p wes-adapters --lib conpty_tests --locked
+cargo test -p wes --lib terminal::windows_tests --locked
+cargo test -p wes --test terminal_windows --locked
+```
+
+Windows passes "Ctrl+C is disabled" from a launcher to everything below it. The
+pane's shell accepts the interrupt again, and one test starts the host that way
+to show it. The line editor is the system's PSReadLine with in-memory history.
+
+`wesx`, `wes-value`, `wes-provider` and each provider name are the executable
+itself under that name, never a batch file, so a caller's arguments reach the
+bridge unchanged. The last suite passes quotes, shell metacharacters and
+non-ASCII text to such a program directly, and runs the commands from a served
+PowerShell pane. Windows PowerShell 5.1 itself drops double quotes inside an
+argument it passes to any program; write them as `\"` there. Providers whose
+names differ only by case get no command. When the executable is on another
+volume than the pane's directory it is copied once instead of linked; a machine
+with a second volume exercises that for real.
+
+`claude`, `codex` and `opencode` in a pane are launchers that attach the
+workspace server. The server is the real executable started as
+`--assistant-mcp --bridge FILE`, so a client that passes on none of the pane's
+environment still reaches the bridge. The suite starts it that way, requires
+every output line to be a protocol message, and checks that its access ends
+when the pane closes. A pane's history is kept in the same private records as on
+Unix and offered to the next shell of that pane as text.
+
+An SSH target uses the configured native client, such as the system's
+`C:\Windows\System32\OpenSSH\ssh.exe`, for finite execution and for terminals.
+The Windows client is given the two host values it cannot start without and
+nothing of the user's environment. Its terminal tests put `cmd.exe` in the
+client's place to exercise the pseudoconsole path; a real server is not part of
+the offline suites.
+
 For View extension checks, install the npm workspace dependencies from the
 repository root. Node.js 22 or newer is required by the GUI workspace; the
 independent compiler supports Node.js 20 or newer.

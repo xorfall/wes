@@ -38,8 +38,62 @@ async fn main() -> ExitCode {
         Ok(false) => ExitCode::FAILURE,
         Err(error) => {
             eprintln!("wes: {error}");
+            for line in rejection(error.as_ref()) {
+                eprintln!("  {line}");
+            }
             ExitCode::FAILURE
         }
+    }
+}
+/// The one place this program learns that its user asked it to stop. A server, a scenario and
+/// a command all end through it, in their own orderly way.
+///
+/// Windows has two such requests. Ctrl+C reaches every process on a console and cannot be
+/// addressed to one of them; Ctrl+Break can be sent to a single process group, which is how
+/// a parent that started this program in its own group asks it, and only it, to stop.
+fn interrupt() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
+    #[cfg(windows)]
+    {
+        let mut ctrl_break = tokio::signal::windows::ctrl_break()?;
+        let mut ctrl_c = tokio::signal::windows::ctrl_c()?;
+        Ok(async move {
+            let received = tokio::select! {
+                received = ctrl_c.recv() => received,
+                received = ctrl_break.recv() => received,
+            };
+            received.ok_or_else(|| io::Error::other("the console's stop requests are unavailable"))
+        })
+    }
+    #[cfg(unix)]
+    {
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        Ok(async move {
+            signal
+                .recv()
+                .await
+                .ok_or_else(|| io::Error::other("stop requests are unavailable"))
+        })
+    }
+    #[cfg(not(any(unix, windows)))]
+    Ok(tokio::signal::ctrl_c())
+}
+
+/// A rejection outside a submitted source (startup, definitions) has no cell to carry its
+/// diagnostics. Each is reported by its code and its payload-independent summary: a detailed
+/// message can hold inferred private types or provider validation data, and this stream is
+/// not the authorized source-validation path.
+fn rejection(error: &(dyn std::error::Error + 'static)) -> Vec<String> {
+    use wes_engine::workspace::WorkspaceError;
+    let workspace = match error.downcast_ref::<wes::ApplicationError>() {
+        Some(wes::ApplicationError::Workspace(workspace)) => Some(workspace),
+        _ => error.downcast_ref::<WorkspaceError>(),
+    };
+    match workspace {
+        Some(WorkspaceError::Rejected { diagnostics, .. }) => diagnostics
+            .iter()
+            .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.public_summary()))
+            .collect(),
+        _ => vec![],
     }
 }
 async fn run(mut args: Arguments) -> Result<bool, Error> {
@@ -208,7 +262,7 @@ async fn run(mut args: Arguments) -> Result<bool, Error> {
             tokio::pin!(run);
             let report = tokio::select! {
                 result = &mut run => result?,
-                signal = tokio::signal::ctrl_c() => {
+                signal = interrupt()? => {
                     signal?;
                     cancel.cancel();
                     run.await?
@@ -221,14 +275,17 @@ async fn run(mut args: Arguments) -> Result<bool, Error> {
         match source {
             Some(source) => tokio::select! {
                 outcome = execute_source(&handle, source, steps, diagnostic_source.as_ref(), args.json) => outcome,
-                signal = tokio::signal::ctrl_c() => signal.map(|()| false).map_err(Error::from),
+                signal = interrupt()? => signal.map(|()| false).map_err(Error::from),
             },
             None => {
                 let server = runtime
                     .serve(args.serve.expect("validated server mode"), args.site)
                     .await?;
+                // The startup line is readiness: the stop handler must already be registered.
+                let stopping = interrupt()?;
+                tokio::pin!(stopping);
                 println!("Listening at http://{}", server.address());
-                let signal = tokio::select! { signal = tokio::signal::ctrl_c() => signal, _ = server.stopped() => Err(io::Error::other("HTTP server stopped")) };
+                let signal = tokio::select! { signal = &mut stopping => signal, _ = server.stopped() => Err(io::Error::other("HTTP server stopped")) };
                 let joined = server.shutdown().await;
                 joined?;
                 signal?;
@@ -687,4 +744,45 @@ fn print_submission(
     }
     output.flush()?;
     Ok(success)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wes_engine::workspace::WorkspaceError;
+    use wes_language::{Diagnostic, Span};
+
+    #[test]
+    fn a_startup_rejection_reports_codes_and_public_summaries_never_detailed_messages() {
+        const MARKER: &str = "SENSITIVE-MARKER-7f3a";
+        let rejected = || WorkspaceError::Rejected {
+            diagnostics: vec![
+                Diagnostic::error(
+                    "ENV010",
+                    Span::at(0),
+                    format!("provider validation saw {MARKER} in a private contract"),
+                )
+                .with_public_message("The default environment could not be prepared."),
+                Diagnostic::error("TYP004", Span::at(0), format!("inferred type {MARKER}")),
+                Diagnostic::error("ZZZ999", Span::at(0), MARKER),
+            ],
+            issues: vec![],
+        };
+        // The application boundary and the bare engine error are both recognised.
+        let wrapped: Error = wes::ApplicationError::Workspace(rejected()).into();
+        let bare: Error = rejected().into();
+        for error in [wrapped, bare] {
+            let lines = rejection(error.as_ref());
+            assert_eq!(
+                lines[0],
+                "ENV010: The default environment could not be prepared."
+            );
+            assert!(lines[1].starts_with("TYP004: Type or contract validation failed"));
+            assert!(lines[2].starts_with("ZZZ999: Operation was rejected"));
+            assert_eq!(lines.len(), 3);
+            assert!(lines.iter().all(|line| !line.contains(MARKER)), "{lines:?}");
+        }
+        let unrelated: Error = std::io::Error::other(MARKER).into();
+        assert!(rejection(unrelated.as_ref()).is_empty());
+    }
 }

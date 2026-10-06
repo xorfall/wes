@@ -7,8 +7,12 @@ mod history;
 mod locale;
 #[cfg(unix)]
 mod path;
-#[cfg(unix)]
+#[cfg(windows)]
+mod powershell;
+#[cfg(any(unix, windows))]
 mod prompt;
+#[cfg(windows)]
+mod published;
 use crate::{ApplicationHandle, CurrentSession};
 pub use bridge::{BridgeReply, BridgeRequest, client};
 use serde::{Deserialize, Serialize};
@@ -368,7 +372,7 @@ impl Manager {
                     let next = environment.clone();
                     let path = updates.directory.path().to_path_buf();
                     let published = tokio::task::spawn_blocking(move || {
-                        #[cfg(unix)]
+                        #[cfg(any(unix, windows))]
                         if changed { prompt::publish_environment(&path, &next)?; }
                         let _ = aliases(&path, names);
                         Ok::<_, io::Error>(())
@@ -660,7 +664,20 @@ fn aliases(directory: &std::path::Path, names: Vec<String>) -> io::Result<()> {
     }
     Ok(())
 }
-#[cfg(unix)]
+/// What a platform contributes to a pane: the shell to start, with its own arguments,
+/// startup files, inherited environment and search path, and the name its history is kept
+/// under. Everything a pane has on every platform is decided once, in `prepare_host`.
+#[cfg(any(unix, windows))]
+struct Shell {
+    history: &'static str,
+    command: HostLaunch,
+}
+
+/// The pane's shell and the workspace around it. One owner for what does not depend on the
+/// platform: the control directory, the assistant configuration, the selected environment's
+/// label, the pane's private history and its budget, the bridge and its token, and the
+/// workspace identity.
+#[cfg(any(unix, windows))]
 fn prepare_host(
     terminal: &TerminalSession,
     config: Config,
@@ -668,45 +685,76 @@ fn prepare_host(
     environment: String,
     port: u16,
 ) -> io::Result<HostLaunch> {
+    let directory = terminal.directory.path();
+    let bridge = format!("http://127.0.0.1:{port}/terminal-bridge");
+    // The control directory wins search-path collisions; provider names come after the
+    // host's own programs.
+    std::fs::create_dir(directory.join("assistants"))?;
+    publish(directory, &config.executable, names)?;
+    assistant::prepare(directory, &config.executable, &bridge, &terminal.token)?;
+    prompt::publish_environment(directory, &environment)?;
+    let Shell {
+        history,
+        mut command,
+    } = shell(directory)?;
+    command.cwd = Some(config.cwd);
+    if let Some(key) = &config.history {
+        let home = config
+            .history_home
+            .as_deref()
+            .ok_or_else(|| io::Error::other("Terminal history is unavailable in this server."))?;
+        command.env("WES_HISTORY_FILE", history::prepare(home, key, history)?);
+        // The same budget the pane's history is validated against when it is opened again.
+        command.env(
+            "WES_HISTORY_BYTES",
+            wes_budgets::get("terminal.history.bytes").to_string(),
+        );
+    }
+    // Resolved from the host's own search path: a provider named git is not a prompt helper.
+    command.env("WES_PROMPT_GIT", prompt::git().unwrap_or_default());
+    command.env(
+        "WES_PROMPT_ENVIRONMENT",
+        prompt::environment_file(directory),
+    );
+    command.env("TERM", "xterm-256color");
+    command.env("WES_BRIDGE_URL", &bridge);
+    command.env("WES_BRIDGE_TOKEN", &terminal.token);
+    command.env("WES_WORKSPACE", terminal.current.name.as_str());
+    command.env("WES_ASSISTANT_DIRECTORY", directory);
+    command.env("WES_MCP_CONFIG", directory.join("mcp.json"));
+    Ok(command)
+}
+
+/// The workspace commands as scripts that hand their own name to the bridge.
+#[cfg(unix)]
+fn publish(
+    directory: &std::path::Path,
+    executable: &std::path::Path,
+    names: Vec<String>,
+) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let script = format!(
         "#!/bin/sh\nexec {} --terminal-bridge \"${{0##*/}}\" \"$@\"\n",
-        shell_quote(&config.executable.to_string_lossy())
+        shell_quote(&executable.to_string_lossy())
     );
-    for name in ["wes-provider", "wes-value"] {
-        let path = terminal.directory.path().join(name);
+    for name in ["wes-provider", "wes-value", "assistants/wesx"] {
+        let path = directory.join(name);
         std::fs::write(&path, &script)?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
     }
-    assistant::prepare(
-        terminal.directory.path(),
-        &config.executable,
-        &format!("http://127.0.0.1:{port}/terminal-bridge"),
-        &terminal.token,
-    )?;
-    // The control command wins PATH collisions; provider aliases remain after native programs.
-    let control = terminal.directory.path().join("assistants/wesx");
-    std::fs::write(&control, &script)?;
-    std::fs::set_permissions(control, std::fs::Permissions::from_mode(0o700))?;
-    aliases(terminal.directory.path(), names)?;
+    aliases(directory, names)
+}
+/// zsh where the system has it, bash otherwise, with a private startup file and none of the
+/// user's.
+#[cfg(unix)]
+fn shell(directory: &std::path::Path) -> io::Result<Shell> {
     let shell = if std::path::Path::new("/bin/zsh").exists() {
         "/bin/zsh"
     } else {
         "/bin/bash"
     };
     let zsh = shell.ends_with("zsh");
-    prompt::publish_environment(terminal.directory.path(), &environment)?;
-    let bootstrap = prompt::prepare(terminal.directory.path(), zsh)?;
-    let history_file = match &config.history {
-        Some(key) => Some(history::prepare(
-            config.history_home.as_deref().ok_or_else(|| {
-                io::Error::other("Terminal history is unavailable in this server.")
-            })?,
-            key,
-            zsh,
-        )?),
-        None => None,
-    };
+    let bootstrap = prompt::prepare(directory, zsh)?;
     let mut command = HostLaunch {
         executable: shell.into(),
         ..Default::default()
@@ -719,7 +767,6 @@ fn prepare_host(
         command.arg(&bootstrap);
     }
     command.arg("-i");
-    command.cwd = Some(config.cwd);
     if zsh {
         command.env("ZDOTDIR", &bootstrap);
     }
@@ -728,7 +775,7 @@ fn prepare_host(
     }
     // zsh emits an inverse '%' to mark partial lines before its prompt. Initial PTY
     // resizing can leave this synthetic marker visible; ordinary program output is untouched.
-    if shell.ends_with("zsh") {
+    if zsh {
         command.env("PROMPT_EOL_MARK", "");
     }
     command.env(
@@ -736,31 +783,16 @@ fn prepare_host(
         path::terminal(
             std::env::var_os("PATH").as_deref(),
             std::env::var_os("HOME").as_deref(),
-            terminal.directory.path(),
+            directory,
         )?,
     );
-    // Resolve before adding generated provider tools: a provider named git is not a prompt helper.
-    command.env("WES_PROMPT_GIT", prompt::git().unwrap_or_default());
-    command.env(
-        "WES_PROMPT_ENVIRONMENT",
-        prompt::environment_file(terminal.directory.path()),
-    );
-    if let Some(path) = history_file {
-        command.env("WES_HISTORY_FILE", path);
-    }
-    command.env("TERM", "xterm-256color");
     // Enables colorized `ls` output without loading the user's rc; a display-only flag, no code runs.
     command.env("CLICOLOR", "1");
     command.env("SHELL", shell);
-    command.env(
-        "WES_BRIDGE_URL",
-        format!("http://127.0.0.1:{port}/terminal-bridge"),
-    );
-    command.env("WES_BRIDGE_TOKEN", &terminal.token);
-    command.env("WES_WORKSPACE", terminal.current.name.as_str());
-    command.env("WES_ASSISTANT_DIRECTORY", terminal.directory.path());
-    command.env("WES_MCP_CONFIG", terminal.directory.path().join("mcp.json"));
-    Ok(command)
+    Ok(Shell {
+        history: if zsh { "zsh" } else { "bash" },
+        command,
+    })
 }
 
 fn run(
@@ -867,11 +899,47 @@ fn pump(
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn aliases(directory: &std::path::Path, names: Vec<String>) -> io::Result<()> {
+    published::aliases(directory, names)
+}
+/// The workspace commands as programs: this executable under each command's name.
+#[cfg(windows)]
+fn publish(
+    directory: &std::path::Path,
+    executable: &std::path::Path,
+    names: Vec<String>,
+) -> io::Result<()> {
+    published::prepare(directory, executable)?;
+    published::aliases(directory, names)
+}
+/// Windows PowerShell with its own bootstrap, an allowlisted environment and the pane's
+/// search path.
+#[cfg(windows)]
+fn shell(directory: &std::path::Path) -> io::Result<Shell> {
+    let mut command = powershell::launch(directory)?;
+    for (key, value) in powershell::environment(std::env::vars_os()) {
+        command.env(key, value);
+    }
+    // Windows matches names without regard to case; an inherited "Path" must not survive
+    // beside the one set here.
+    command
+        .environment
+        .retain(|key, _| !key.eq_ignore_ascii_case("PATH"));
+    command.env(
+        "PATH",
+        published::path(std::env::var_os("PATH").as_deref(), directory)?,
+    );
+    Ok(Shell {
+        history: "powershell",
+        command,
+    })
+}
+#[cfg(not(any(unix, windows)))]
 fn aliases(_: &std::path::Path, _: Vec<String>) -> io::Result<()> {
     Err(io::Error::other("Terminal requires Unix."))
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn prepare_host(
     _: &TerminalSession,
     _: Config,
@@ -886,3 +954,5 @@ fn prepare_host(
 
 #[cfg(all(test, unix))]
 mod lifetime_tests;
+#[cfg(all(test, windows))]
+mod windows_tests;

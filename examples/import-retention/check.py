@@ -8,7 +8,11 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fixture_environment import isolated
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--binary', type=Path, required=True)
@@ -20,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='wes-import-retention-') as temporary:
     user.mkdir()
     inputs = root / 'inputs'
     shutil.copytree(Path(__file__).parent, inputs)
-    environment = {**os.environ, 'HOME': str(user)}
+    environment = isolated(user)
     home = user / '.wes'
     def run(*arguments, diagnostics=False):
         result = subprocess.run([str(binary), '--home', str(home), *arguments], cwd=root,
@@ -51,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='wes-import-retention-') as temporary:
     assert {r['kind'] for r in receipts} == {'spec', 'types', 'environments'}
     for receipt in receipts:
         assert (home / receipt['object']).is_file()
-        assert Path(receipt['origin']).parent == inputs
+        assert os.path.samefile(Path(receipt['origin']).parent, inputs)
     shutil.rmtree(inputs)
     moved = root / 'relocated'
     home.rename(moved)

@@ -92,6 +92,49 @@ def check_shell(shell):
         print('PASS', shell.name, '↑ fresh-process, Unicode/multiline, status, running command, drafts excluded, no replay/global history')
 
 
+def check_shell_budget(shell):
+    budget = next(item['min'] for item in json.loads((ROOT / 'packages/budgets/catalog.json').read_text(encoding='utf-8'))
+                  if item['id'] == 'terminal.history.bytes')
+    with tempfile.TemporaryDirectory(prefix='wes-history-budget-') as directory:
+        root = Path(directory); home = root / 'user'; home.mkdir()
+        history = root / 'private-history'; history.touch(mode=0o600)
+        terminal = prompt.Shell(shell, home, root, git='', history=history, history_bytes=budget)
+        first = ': # FIRST_' + 'Ğ' * (budget // 4)
+        newest = ': # NEWEST_' + 'Ş' * (budget // 4)
+        newest_bytes = newest.encode('utf-8') + b'\0'
+        assert len(newest_bytes) <= budget and len((first + '\0' + newest + '\0').encode('utf-8')) > budget
+        try:
+            terminal.read()
+            terminal.command(first)
+            wait_for(lambda: history.read_bytes() == first.encode('utf-8') + b'\0')
+            terminal.command(newest)
+            wait_for(lambda: history.read_bytes() == newest_bytes)
+            # One accepted command fits by character count but exceeds the UTF-8 byte budget.
+            terminal.command(': # OVERSIZED_' + 'Ç' * budget)
+            wait_for(lambda: history.read_bytes() == b'')
+        finally: terminal.close()
+        # No commands retained is a valid empty file and cannot replay an old command.
+        terminal = prompt.Shell(shell, home, root, git='', history=history, history_bytes=budget)
+        running = 'sleep 30; : BUDGET_RUNNING'
+        try:
+            terminal.read()
+            os.write(terminal.master, (running + '\r').encode())
+            terminal.read()
+            wait_for(lambda: history.read_bytes() == running.encode() + b'\0')
+        finally: terminal.close()
+        terminal = prompt.Shell(shell, home, root, git='', history=history, history_bytes=budget)
+        try:
+            terminal.read()
+            os.write(terminal.master, b'\x1b[A')
+            assert 'BUDGET_RUNNING' in prompt.plain(terminal.read())
+        finally: terminal.close()
+        assert history.stat().st_size <= budget
+        assert history.stat().st_mode & 0o777 == 0o600
+        assert not history.with_name(history.name + '.next').exists()
+        assert not (home / '.bash_history').exists() and not (home / '.zsh_history').exists()
+        print('PASS', shell.name, 'UTF-8 byte budget, newest records, empty reopen, running command recall')
+
+
 class Server:
     def __init__(self, binary, root, data):
         self.errors = (root / 'stderr').open('w+')
@@ -200,5 +243,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path, required=True); args = parser.parse_args()
     for name in ['bash', 'zsh']:
         shell = Path('/bin') / name
-        if shell.exists(): check_shell(shell)
+        if shell.exists():
+            check_shell(shell)
+            check_shell_budget(shell)
     check_application(args.binary.resolve())

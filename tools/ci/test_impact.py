@@ -109,7 +109,7 @@ class SelectionTests(unittest.TestCase):
                                'include!("../../docs/contract.md")',
                                '#[path = "../../docs/contract.md"] mod external;']:
                 with self.subTest(expression=expression):
-                    source.write_text(expression)
+                    source.write_text(expression, encoding="utf-8")
                     plan = Model(root).plan(["docs/contract.md"])
                     self.assertIn("wes-core", plan["rust"])
                     self.assertIn("gui", plan["suites"])
@@ -125,7 +125,7 @@ class SelectionTests(unittest.TestCase):
             for member in self.model.crates.values():
                 (root / member).mkdir(parents=True)
                 shutil.copy(ROOT / member / "Cargo.toml", root / member / "Cargo.toml")
-            with (root / "crates/core/Cargo.toml").open("a") as stream:
+            with (root / "crates/core/Cargo.toml").open("a", encoding="utf-8") as stream:
                 stream.write('\n[target.\'cfg(windows)\'.dev-dependencies]\nbudget-alias = {package = "wes-budgets", path = "../budgets"}\n')
             self.assertIn("wes-core", Model(root).closure({"wes-budgets"}))
 
@@ -145,7 +145,7 @@ class SelectionTests(unittest.TestCase):
             root = Path(tmp)
             (root / "ci").mkdir()
             shutil.copy(ROOT / "ci/tests.toml", root / "ci/tests.toml")
-            (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
+            (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n', encoding="utf-8")
             with self.assertRaises(ValueError):
                 Model(root)
 
@@ -171,7 +171,7 @@ class SelectionTests(unittest.TestCase):
             output = Path(tmp) / "outputs"
             with patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": ""}), patch("builtins.print"):
                 emit(self.model.plan(["gui/src/surface/Cell.tsx"]), output)
-            values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            values = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
             self.assertEqual(values["client"], "true")
             self.assertEqual(values["engine"], "true")
             self.assertEqual(values["desktop"], "true")
@@ -190,7 +190,7 @@ class GitTests(unittest.TestCase):
         self.git("config", "commit.gpgsign", "false")
         self.path = self.root / "gui/file with spaces.ts"
         self.path.parent.mkdir()
-        self.path.write_text("synthetic fixture\n")
+        self.path.write_text("synthetic fixture\n", encoding="utf-8")
         self.commit()
         self.base = self.git("rev-parse", "HEAD").strip()
 
@@ -199,8 +199,11 @@ class GitTests(unittest.TestCase):
         env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
         return subprocess.check_output(["git", "-C", str(self.root), "-c", "core.hooksPath=" + os.devnull, *args], stderr=subprocess.PIPE, env=env).decode()
 
-    def commit(self):
+    def commit(self, mode=None):
         self.git("add", "-A")
+        if mode:
+            # Windows keeps no executable bit on disk; the index records the mode everywhere.
+            self.git("update-index", "--chmod=" + mode, self.path.relative_to(self.root).as_posix())
         self.git("commit", "-qm", "synthetic change")
 
     def test_rename_keeps_old_and_new_ownership(self):
@@ -221,23 +224,29 @@ class GitTests(unittest.TestCase):
 
     def test_mode_only_is_a_real_change(self):
         self.path.chmod(0o755)
-        self.commit()
+        self.commit(mode="+x")
         paths, _ = changed(self.root, self.base, "HEAD")
         self.assertEqual(paths, ["gui/file with spaces.ts"])
 
     def test_symlink_forces_full(self):
         self.path.unlink()
-        self.path.symlink_to("../../external")
-        self.commit()
+        try:
+            self.path.symlink_to("../../external")
+            self.commit()
+        except OSError:
+            # Creating a link needs a privilege on Windows; the index can still record one.
+            target = subprocess.run(["git", "-C", str(self.root), "hash-object", "-w", "--stdin"], input=b"../../external", stdout=subprocess.PIPE, check=True).stdout.decode().strip()
+            self.git("update-index", "--add", "--cacheinfo", "120000," + target + "," + self.path.relative_to(self.root).as_posix())
+            self.git("commit", "-qm", "synthetic change")
         paths, reason = changed(self.root, self.base, "HEAD")
         self.assertEqual(paths, ["gui/file with spaces.ts"])
         self.assertIsNotNone(reason)
 
     def test_push_includes_changes_from_unverified_previous_push(self):
-        self.path.write_text("second change\n")
+        self.path.write_text("second change\n", encoding="utf-8")
         self.commit()
         before = self.git("rev-parse", "HEAD").strip()
-        (self.root / "README.md").write_text("documentation\n")
+        (self.root / "README.md").write_text("documentation\n", encoding="utf-8")
         self.commit()
         event = {"ref": "refs/heads/main", "before": before}
         with patch("impact.successful_base", return_value=self.base):
@@ -246,10 +255,10 @@ class GitTests(unittest.TestCase):
         self.assertEqual(set(paths), {"gui/file with spaces.ts", "README.md"})
 
     def test_pr_includes_unverified_base_changes(self):
-        self.path.write_text("base branch change\n")
+        self.path.write_text("base branch change\n", encoding="utf-8")
         self.commit()
         merge_base = self.git("rev-parse", "HEAD").strip()
-        (self.root / "README.md").write_text("PR docs\n")
+        (self.root / "README.md").write_text("PR docs\n", encoding="utf-8")
         self.commit()
         with patch("impact.successful_base", return_value=self.base):
             paths, reason = event_changes(self.root, "pull_request", {"pull_request": {"base": {"sha": merge_base}}}, {})
@@ -272,7 +281,7 @@ class GitTests(unittest.TestCase):
     def test_non_ancestor_push_base_fails_closed(self):
         self.git("checkout", "--orphan", "other")
         self.git("rm", "-rf", ".")
-        (self.root / "unrelated").write_text("other history")
+        (self.root / "unrelated").write_text("other history", encoding="utf-8")
         self.commit()
         _, reason = event_changes(self.root, "push", {"ref": "refs/heads/main", "before": self.base}, {})
         self.assertIsNotNone(reason)

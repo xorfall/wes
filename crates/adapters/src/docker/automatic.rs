@@ -38,6 +38,14 @@ pub fn with_candidates(
 
 /// Fixed local candidates; no CLI invocation, Docker context or remote host inheritance.
 pub(crate) fn host_candidates() -> Vec<PathBuf> {
+    // Docker Desktop and a native Windows daemon both serve the default context on this pipe.
+    #[cfg(windows)]
+    return vec![PathBuf::from("//./pipe/docker_engine")];
+    #[cfg(not(windows))]
+    host_sockets()
+}
+#[cfg(not(windows))]
+fn host_sockets() -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::from("/var/run/docker.sock")];
     if let Some(home) = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -76,7 +84,9 @@ pub(crate) fn build(
     if candidates.is_empty()
         || candidates.len() > 4
         || candidates.iter().any(|p| {
-            !p.is_absolute()
+            // Rooted, not absolute: Windows calls a Unix socket path without a drive relative,
+            // and an embedding may still name one there. Discovery reports it as not found.
+            !p.has_root()
                 || p.to_str()
                     .is_none_or(|s| s.len() > 4096 || s.chars().any(char::is_control))
         })
@@ -155,19 +165,12 @@ fn select_socket(candidates: &[PathBuf]) -> Result<String, InvocationError> {
     let mut sockets = std::collections::BTreeSet::new();
     let mut checked = Vec::new();
     for candidate in candidates {
-        let state = match std::fs::metadata(candidate) {
-            Ok(metadata) if is_socket(&metadata) => {
-                let canonical = std::fs::canonicalize(candidate).map_err(|_| observation::failure(
-                    "DOCKER_CONNECTION", format!("Cannot resolve Docker socket {}. Check its permissions or set an explicit endpoint in /edit env.", candidate.display())))?;
-                sockets.insert(canonical);
+        let state = match locate(candidate)? {
+            Ok(endpoint) => {
+                sockets.insert(endpoint);
                 "socket"
             }
-            Ok(_) => "not a Unix socket",
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => "not found",
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                "permission denied"
-            }
-            Err(_) => "unavailable",
+            Err(state) => state,
         };
         checked.push(format!("{} ({state})", candidate.display()));
     }
@@ -185,8 +188,9 @@ fn select_socket(candidates: &[PathBuf]) -> Result<String, InvocationError> {
         0 => Err(observation::failure(
             "DOCKER_CONNECTION",
             format!(
-                "No local Docker socket found. Checked: {}. Start Docker, or use /edit env to set bind: {{target: local, endpoint: unix:///absolute/path/to/docker.sock}}. No Docker operation was sent.",
-                checked.join(", ")
+                "No local Docker socket found. Checked: {}. Start Docker, or use /edit env to set bind: {{target: local, endpoint: {}}}. No Docker operation was sent.",
+                checked.join(", "),
+                super::endpoint::DECLARATION_EXAMPLE
             ),
         )),
         _ => Err(observation::failure(
@@ -202,12 +206,47 @@ fn select_socket(candidates: &[PathBuf]) -> Result<String, InvocationError> {
         )),
     }
 }
+/// The endpoint a candidate resolves to, or why it is not one. Nothing is sent to a daemon.
+#[cfg(not(windows))]
+fn locate(candidate: &std::path::Path) -> Result<Result<PathBuf, &'static str>, InvocationError> {
+    Ok(match std::fs::metadata(candidate) {
+        Ok(metadata) if is_socket(&metadata) => Ok(std::fs::canonicalize(candidate).map_err(|_| observation::failure(
+            "DOCKER_CONNECTION", format!("Cannot resolve Docker socket {}. Check its permissions or set an explicit endpoint in /edit env.", candidate.display())))?),
+        Ok(_) => Err("not a Unix socket"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err("not found"),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err("permission denied")
+        }
+        Err(_) => Err("unavailable"),
+    })
+}
+/// Opening a pipe to test it would occupy a server instance, so the pipe namespace is listed.
+#[cfg(windows)]
+fn locate(candidate: &std::path::Path) -> Result<Result<PathBuf, &'static str>, InvocationError> {
+    let pipe = candidate.to_str().map(super::LocalEndpoint::from_socket);
+    let Some(Ok(super::LocalEndpoint::Pipe(name))) = pipe else {
+        return Ok(Err("not a named pipe"));
+    };
+    let Ok(pipes) = std::fs::read_dir(r"\\.\pipe\") else {
+        return Ok(Err("unavailable"));
+    };
+    let listed = pipes.flatten().any(|pipe| {
+        pipe.file_name()
+            .to_str()
+            .is_some_and(|listed| listed.eq_ignore_ascii_case(&name))
+    });
+    Ok(if listed {
+        Ok(PathBuf::from(super::LocalEndpoint::Pipe(name).socket()))
+    } else {
+        Err("not found")
+    })
+}
 #[cfg(unix)]
 fn is_socket(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::FileTypeExt;
     metadata.file_type().is_socket()
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn is_socket(_: &std::fs::Metadata) -> bool {
     false
 }
@@ -239,5 +278,34 @@ mod tests {
                 .to_string()
                 .contains("Multiple local Docker sockets")
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod pipe_tests {
+    use super::*;
+    use tokio::net::windows::named_pipe::ServerOptions;
+    #[tokio::test]
+    async fn selection_lists_the_pipe_namespace_without_connecting() {
+        let name = format!("wes-test-{}", uuid::Uuid::new_v4());
+        let pipe = PathBuf::from(format!("//./pipe/{name}"));
+        let error = select_socket(&[pipe.clone()]).unwrap_err().to_string();
+        assert!(error.contains("No local Docker socket found"));
+        assert!(error.contains("npipe:////./pipe/NAME"));
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .max_instances(1)
+            .create(format!(r"\\.\pipe\{name}"))
+            .unwrap();
+        let socket = PathBuf::from("/var/run/docker.sock");
+        assert_eq!(
+            select_socket(&[socket, pipe]).unwrap(),
+            format!("//./pipe/{name}")
+        );
+        // The only instance is still free for the first real request.
+        tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(format!(r"\\.\pipe\{name}"))
+            .unwrap();
+        drop(server);
     }
 }
