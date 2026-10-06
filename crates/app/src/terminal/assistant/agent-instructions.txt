@@ -61,6 +61,10 @@ Global :policy is unavailable; target a node or set reactive for new nodes only.
 Environment plan/apply can add definitions; use/clear changes only your selection.
 Credentials, execution enabling, grants, destructive environment controls,
 workspace save/load and conversations require the user's controls.
+Replacing an existing provider also requires the user's controls, even if you
+created it. replace:true expresses replacement intent; it never grants authority.
+Ask the user to perform the replacement, or add a distinct provider alias when
+the task permits it. Rejoining a workspace does not bypass this restriction.
 
 Values: $name and $name.field are references. The > operator names a result;
 it does not write a file. For example: :calc { return 6 * 7; } > total
@@ -120,6 +124,14 @@ Workspace/UI: workspace_open joins or explicitly creates a named workspace in
 this home and returns its context. Use workspace on subsequent targeted calls;
 joining does not redirect later calls, move the terminal or inherit grants.
 execute, cancel and tab_open require an explicit workspace. Reload requires rejoining.
+Membership belongs to the live terminal session, not the MCP transport. Restarting
+only an MCP client in the same live pane does not clear membership. After backend
+restart or reopening a pane, obtain workspace_context; explicitly rejoin other
+known workspaces with workspace_open {name:"NAME",create:false}. Use the returned
+workspace and fresh context. Missing membership does not mean saved work was lost;
+do not recreate it. Joining restores neither previous grants nor ownership and
+does not replay commands. If an execution reply was uncertain, inspect it with
+execution_read and the original request_id after joining, before further execution.
 Request lookup is scoped to the workspace and saved terminal pane. Reopening a
 pane restores lookup, not prior grants; a new pane has a new request scope.
 workspace_snapshot and cell_read inspect cells without re-execution. layout_read

@@ -187,6 +187,12 @@ struct PaneCommand {
 fn fail(message: &str) -> BridgeReply {
     BridgeReply::error(2, message)
 }
+fn rejoin_required(name: &str, reason: &str) -> BridgeReply {
+    let join = json!({"name":"workspace_open","arguments":{"name":name,"create":false}});
+    fail(&format!(
+        "{reason} Join this workspace with {join}, then use its returned workspace and fresh context. Membership belongs to the live terminal session; joining does not restore grants or replay work. If a previous execution reply was lost, read execution_read with its original request_id before considering another execution."
+    ))
+}
 fn context(
     observation: &SessionObservation,
     terminal: &TerminalSession,
@@ -228,9 +234,7 @@ fn check_current(
         .map_err(|_| fail("Terminal authority has ended."))?;
     application
         .session_for_generation(&current.generation)
-        .map_err(|_| {
-            fail("Workspace was reloaded; explicitly join it again and read a fresh context.")
-        })?;
+        .map_err(|_| rejoin_required(current.name.as_str(), "Workspace was reloaded."))?;
     Ok(())
 }
 async fn observe_current(
@@ -599,14 +603,17 @@ async fn perform(
             .expect("joined workspaces")
             .get(name)
             .cloned()
-            .ok_or_else(|| fail("Join this workspace with workspace_open first."))?,
+            .ok_or_else(|| {
+                rejoin_required(
+                    name,
+                    "This connection has not joined the requested workspace.",
+                )
+            })?,
         _ => return Err(fail("workspace must be a name.")),
     };
     application
         .session_for_generation(&current.generation)
-        .map_err(|_| {
-            fail("Workspace was reloaded; explicitly join it again and read a fresh context.")
-        })?;
+        .map_err(|_| rejoin_required(current.name.as_str(), "Workspace was reloaded."))?;
     let tool: Tool = serde_json::from_value(request).map_err(|_| {
         fail("Tool arguments could not be decoded; use this tool's inputSchema from tools/list.")
     })?;
@@ -1021,6 +1028,7 @@ mod tests {
     include!("spec_tests.rs");
     #[cfg(unix)]
     include!("view_authoring_tests.rs");
+    include!("workspace_rejoin_tests.rs");
     use crate::{
         runtime::{RuntimeOptions, launch},
         terminal::Manager,
