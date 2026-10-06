@@ -33,7 +33,9 @@ def commands(suite, plan, model):
         return [(ROOT / "tools/describe", ["go", "test", "./..."]),
                 (ROOT / "tools/describe", ["go", "vet", "./..."])]
     if suite == "compiler":
-        return [(ROOT, ["node", "--test", "tools/view-package/compiler.test.mjs"])]
+        return [(ROOT, ["node", "--test", "tools/desktop-build.test.mjs"]),
+                (ROOT, ["node", "--test", "tools/view-package/compiler.test.mjs"]),
+                (ROOT, ["node", "--test", "tools/view-toolchain/export.test.mjs"])]
     if suite == "examples":
         scripts = ["quickstart", "api-import/readme", "editable-api-draft", "schema-provenance",
                    "api-workflow", "prometheus-workspace", "terminal", "assistant", "view-packages", "view-instances", "openapi-import"]
@@ -56,7 +58,7 @@ def main():
     source.add_argument("--plan-env")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    plan = json.loads(args.plan.read_text() if args.plan else os.environ[args.plan_env])
+    plan = json.loads(args.plan.read_text(encoding="utf-8") if args.plan else os.environ[args.plan_env])
     for directory, argv in commands(args.suite, plan, Model()):
         print(f"[{directory.relative_to(ROOT) or '.'}] {shlex.join(argv)}", flush=True)
         if not args.dry_run:

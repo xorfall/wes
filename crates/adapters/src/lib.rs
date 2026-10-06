@@ -9,7 +9,7 @@ pub mod environments;
 pub mod execution_targets;
 pub mod file_lock;
 mod filesystem;
-pub use filesystem::sync_directory;
+pub use filesystem::{sync_directory, sync_existing_file, sync_existing_file_in};
 pub mod http;
 pub mod imports;
 mod input_files;

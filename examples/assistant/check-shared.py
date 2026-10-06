@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Two real PTY/MCP participants share user work without a model or live user data."""
+import sys
 import argparse, base64, json, os, selectors, shlex, subprocess, tempfile, time, urllib.request
 
 # Publish synchronization evidence only after the complete JSON is visible.
@@ -10,6 +11,8 @@ def publish(path, text):
 
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+from fixture_environment import isolated
 ROOT = HERE.parents[1]
 
 def main():
@@ -19,7 +22,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='wes-shared-agent-') as directory:
         root = Path(directory)
         env = {k:v for k,v in os.environ.items() if not any(x in k for x in ['API_KEY', 'TOKEN', 'SECRET', 'PASSWORD'])}
-        env['HOME'] = str(root)
+        env = isolated(root, env)
         with (root / 'server.log').open('w+') as errors:
             app = subprocess.Popen([str(binary), '--home', str(root / 'home'), '--serve', '0', '--no-auto-keep'], cwd=root, env=env, stdout=subprocess.PIPE, stderr=errors, text=True)
             events = None
@@ -58,13 +61,14 @@ def main():
                         if role == 'a' and closed: continue
                         frame = terminal('poll', id=identity, cursor=cursor[role], wait_ms=20)
                         cursor[role] = frame['next']; output[role] += base64.b64decode(frame['data']).decode('utf-8', 'replace')
-                        if frame.get('editor'):
-                            request = frame['editor']; action = request['action']
-                            assert action in ['layout', 'tab'], request
-                            if action == 'tab':
-                                args = json.loads(request['text']); assert args == {'workspace': 'shared-analysis', 'pane': 'p1', 'activate': False}
+                        if frame.get('ui'):
+                            request = frame['ui']; operation = request['operation']
+                            assert operation['kind'] in ['layout_read', 'tab_open'], request
+                            if operation['kind'] == 'tab_open':
+                                args = {key: value for key, value in operation.items() if key != 'kind'}
+                                assert args == {'workspace': 'shared-analysis', 'pane': 'p1', 'activate': False}
                                 tab_requests.append(args)
-                            terminal('editorreply', id=identity, request=request['id'], result={'ok': True, 'layout': {'panes': [{'id': 'p1'}]}})
+                            terminal('uireply', id=identity, request=request['id'], result={'ok': True, 'layout': {'panes': [{'id': 'p1'}]}})
                     if not closed and 'SHARED_A_READY\r\n' in output['a']:
                         terminal('close', id=identities['a']); closed = True
                         publish(root / 'a-closed.json', '{}')

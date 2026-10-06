@@ -12,6 +12,8 @@ use wes::data_home::host::DesktopHost;
 
 mod debug;
 mod keyboard;
+#[cfg(windows)]
+mod terminal;
 mod windows;
 use windows::{Origin, SHELL, follows_navigation, requested_window};
 
@@ -19,9 +21,6 @@ use windows::{Origin, SHELL, follows_navigation, requested_window};
 type Held = Mutex<Option<DesktopHost>>;
 
 fn main() {
-    if let Some(code) = wes::view_toolchain::entry() {
-        std::process::exit(i32::from(code));
-    }
     let tokio = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -30,6 +29,9 @@ fn main() {
         std::process::exit(i32::from(code));
     }
     if let Some(code) = tokio.block_on(wes::terminal::client()) {
+        std::process::exit(i32::from(code));
+    }
+    if let Some(code) = wes::view_toolchain::entry() {
         std::process::exit(i32::from(code));
     }
     tauri::async_runtime::set(tokio.handle().clone());
@@ -63,9 +65,20 @@ fn main() {
                 wes::view_toolchain::use_bundled_resources(resources.clone());
             }
             let site = site_directory(resources.as_deref());
-            let host =
-                tauri::async_runtime::block_on(DesktopHost::start(paths.user_home, Some(site)))
-                    .map_err(|error| -> Box<dyn std::error::Error> { error })?;
+            #[cfg(windows)]
+            let opening = DesktopHost::start_with_terminal(
+                paths.user_home,
+                Some(site),
+                terminal::program(
+                    resources.as_deref(),
+                    &std::env::current_exe()?,
+                    cfg!(debug_assertions),
+                )?,
+            );
+            #[cfg(not(windows))]
+            let opening = DesktopHost::start(paths.user_home, Some(site));
+            let host = tauri::async_runtime::block_on(opening)
+                .map_err(|error| -> Box<dyn std::error::Error> { error })?;
             startup.finish("ok");
             let url: tauri::Url = host.location().url.parse().expect("loopback server URL");
             let mut locations = host.subscribe();

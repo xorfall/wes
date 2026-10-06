@@ -89,9 +89,9 @@ async fn compiled_packages_share_discovery_and_creation_and_assets_require_curre
         202
     );
     let current = fixture.app.current().unwrap();
-    current.session.wait_idle().await.unwrap();
     let mut replay = fixture.stream().await;
     assert_eq!(replay.generation().await, generation);
+    current.session.wait_idle().await.unwrap();
     let creator = loop {
         let created = replay.until("created").await;
         if created["name"] == "badge" {
@@ -103,8 +103,19 @@ async fn compiled_packages_share_discovery_and_creation_and_assets_require_curre
     loop {
         let state = replay.next().await;
         if state["node"] == creator && matches!(state["event"].as_str(), Some("node" | "ready")) {
-            assert!(state["state"] == "ready" || state["event"] == "ready");
-            assert_eq!(state["constructionComplete"], true);
+            // Engine idle does not flush older projection frames queued for this
+            // subscriber. Completion must be checked on its actual ready frame.
+            assert!(
+                state["event"] == "ready"
+                    || matches!(
+                        state["state"].as_str(),
+                        Some("pending" | "running" | "ready")
+                    ),
+                "{state}"
+            );
+            if state["state"] == "ready" || state["event"] == "ready" {
+                assert_eq!(state["constructionComplete"], true, "{state}");
+            }
             if state["event"] == "ready" {
                 break;
             }

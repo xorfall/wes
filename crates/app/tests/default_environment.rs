@@ -1,4 +1,8 @@
 //! Real runtime, private homes and loopback-only providers; no live user data/services.
+#[path = "support/fixtures.rs"]
+mod fixtures;
+#[path = "support/shell.rs"]
+mod shell;
 use std::{sync::Arc, time::Duration};
 use wes::runtime::{RuntimeOptions, launch};
 use wes_core::Data;
@@ -49,6 +53,13 @@ fn field(data: &Data, name: &str) -> Data {
         panic!("expected record: {data:?}")
     };
     fields[name].clone()
+}
+/// The named providers and the host's shell provider, in a listing's order.
+fn listed(others: &[&str]) -> Vec<String> {
+    let mut names: Vec<String> = others.iter().map(|name| (*name).to_owned()).collect();
+    names.push(shell::NAME.into());
+    names.sort();
+    names
 }
 fn providers(data: Data, environment: &str) -> Vec<String> {
     let Data::List(rows) = data else {
@@ -249,11 +260,11 @@ async fn fresh_default_executes_shell_and_http_and_discovery_owns_the_same_names
     assert!(observation.environment_clients.is_empty());
     assert_eq!(
         providers(value(&session, ":list providers").await, "default"),
-        ["docker", "http", "sh"]
+        listed(&["docker", "http"])
     );
     assert_eq!(
         field(
-            &value(&session, "sh run cmd:\"printf default-ok\"").await,
+            &value(&session, &shell::print("default-ok")).await,
             "stdout"
         ),
         Data::Bytes(b"default-ok".to_vec().into())
@@ -288,6 +299,7 @@ async fn fresh_default_executes_shell_and_http_and_discovery_owns_the_same_names
 #[tokio::test]
 async fn default_imports_keep_batch_semantics_captured_revisions_and_offline_reopening() {
     let root = tempfile::tempdir().unwrap();
+    fixtures::echo(root.path());
     let home = root.path().join("home");
     let descriptor = root.path().join("fixture.json");
     std::fs::write(&descriptor, r#"{"version":1,"provider":"fixture","types":{},"operations":[{"path":["items"],"method":"GET","route":"/items","auth":[],"parameters":[],"responses":{"200":"Text"}}]}"#).unwrap();
@@ -301,7 +313,7 @@ async fn default_imports_keep_batch_semantics_captured_revisions_and_offline_reo
         selected: Some("default".into()),
         revisions: session.environment_revisions().await.unwrap(),
     };
-    let old = submit(&session, "sh run cmd:\"printf before\"").await;
+    let old = submit(&session, &shell::print("before")).await;
     accepted(&old);
     assert_eq!(
         field(
@@ -329,8 +341,8 @@ async fn default_imports_keep_batch_semantics_captured_revisions_and_offline_reo
     let after = session.environment_revisions().await.unwrap()["default"];
     assert_ne!(before, after);
     for source in [
-        "sh run cmd:\"printf stale-must-not-run\"",
-        ":import process bin:/bin/echo as:stale",
+        &shell::print("stale-must-not-run"),
+        ":import process bin:./example-echo.bin as:stale",
     ] {
         let result = session
             .submit(
@@ -375,17 +387,14 @@ async fn default_imports_keep_batch_semantics_captured_revisions_and_offline_reo
     );
     assert_eq!(
         providers(value(&session, ":list providers").await, "default"),
-        ["docker", "echo", "fixture", "http", "sh"]
+        listed(&["docker", "echo", "fixture", "http"])
     );
     assert_eq!(
         field(&value(&session, "echo run args:reopened").await, "stdout"),
         Data::Bytes(b"reopened\n".to_vec().into())
     );
     assert_eq!(
-        field(
-            &value(&session, "sh run cmd:\"printf reopened\"").await,
-            "stdout"
-        ),
+        field(&value(&session, &shell::print("reopened")).await, "stdout"),
         Data::Bytes(b"reopened".to_vec().into())
     );
     runtime.shutdown().await.unwrap();
@@ -401,6 +410,7 @@ async fn explicit_environment_and_clear_never_fall_back_and_reopen_does_not_enab
         include_str!("../../../examples/scripts/default-environment/environments.yaml"),
     )
     .unwrap();
+    fixtures::echo(root.path());
     let runtime = launch(RuntimeOptions::new(home.clone(), root.path().into()))
         .await
         .unwrap();
@@ -412,7 +422,7 @@ async fn explicit_environment_and_clear_never_fall_back_and_reopen_does_not_enab
     session.apply_environments(plan).await.unwrap();
     assert_eq!(
         providers(value(&session, ":list providers").await, "default"),
-        ["docker", "http", "sh"]
+        listed(&["docker", "http"])
     );
     accepted(submit(&session, ":env use \"pg-demo\"").await.as_ref());
     assert_eq!(
@@ -427,7 +437,7 @@ async fn explicit_environment_and_clear_never_fall_back_and_reopen_does_not_enab
         ["pg"]
     );
     assert!(
-        submit(&session, "sh run cmd:\"printf must-not-run\"")
+        submit(&session, &shell::print("must-not-run"))
             .await
             .nodes
             .is_empty()
@@ -443,7 +453,7 @@ async fn explicit_environment_and_clear_never_fall_back_and_reopen_does_not_enab
     accepted(submit(&session, ":env clear").await.as_ref());
     assert_eq!(value(&session, ":list providers").await, Data::List(vec![]));
     assert!(
-        submit(&session, "sh run cmd:\"printf must-not-run\"")
+        submit(&session, &shell::print("must-not-run"))
             .await
             .nodes
             .is_empty()
@@ -458,15 +468,12 @@ async fn explicit_environment_and_clear_never_fall_back_and_reopen_does_not_enab
     assert!(!observation.environment_enabled["pg-demo"]);
     assert!(observation.environment_clients.is_empty());
     assert_eq!(
-        field(
-            &value(&session, "sh run cmd:\"printf ready\"").await,
-            "stdout"
-        ),
+        field(&value(&session, &shell::print("ready")).await, "stdout"),
         Data::Bytes(b"ready".to_vec().into())
     );
     assert_eq!(
         providers(value(&session, ":list providers").await, "default"),
-        ["docker", "http", "sh"]
+        listed(&["docker", "http"])
     );
     runtime.shutdown().await.unwrap();
 }

@@ -1,4 +1,8 @@
 //! Portable data homes: real disk/loopback boundaries, synthetic data, no Keychain or user fixtures.
+#[path = "support/python.rs"]
+mod python;
+#[path = "support/shell.rs"]
+mod shell;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -92,6 +96,99 @@ async fn switch(host: &DesktopHost, path: &Path) {
         .unwrap()
         .unwrap();
     assert_eq!(host.location().path, path.canonicalize().unwrap());
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktops_terminal_program_survives_data_folder_switches() {
+    let temp = root();
+    let user = temp.path().join("user");
+    fs::create_dir(&user).unwrap();
+    // The embedding test process is not the terminal entry point.
+    let program = temp.path().join(if cfg!(windows) {
+        "console.exe"
+    } else {
+        "console"
+    });
+    fs::copy(env!("CARGO_BIN_EXE_wes"), &program).unwrap();
+    let host = DesktopHost::start_with_terminal(user.clone(), None, program)
+        .await
+        .unwrap();
+    let http = client();
+    for index in 0..2 {
+        if index != 0 {
+            switch(&host, &temp.path().join("next")).await;
+        }
+        let location = host.location();
+        let generation = generation(&http, &location).await;
+        let started = post(
+            &http,
+            &location,
+            "terminals",
+            json!({"client":"terminal-program", "action":"start"}),
+            Some(&generation),
+        )
+        .await
+        .text()
+        .await
+        .unwrap();
+        let started: Value = serde_json::from_str(&started).unwrap();
+        let pane = started["id"].as_str().unwrap();
+        let file = user.join(format!("terminal-{index}.txt"));
+        let text = if cfg!(windows) {
+            format!(
+                "$o = wesx --help; [IO.File]::WriteAllText('{}', ($o -join \"`n\") + '|' + $LASTEXITCODE + '|END')\r",
+                file.display()
+            )
+        } else {
+            format!(
+                "wesx --help > '{}'; printf '|%s|END' \"$?\" >> '{}'\r",
+                file.display(),
+                file.display()
+            )
+        };
+        assert!(
+            post(
+                &http,
+                &location,
+                "terminals",
+                json!({"client":"terminal-program", "action":"write", "id":pane, "text":text}),
+                Some(&generation)
+            )
+            .await
+            .status()
+            .is_success()
+        );
+        let output = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Ok(text) = fs::read_to_string(&file)
+                    && text.ends_with("|END")
+                {
+                    break text;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            output.contains("wesx provider") && output.ends_with("|0|END"),
+            "{output}"
+        );
+        assert!(
+            post(
+                &http,
+                &location,
+                "terminals",
+                json!({"client":"terminal-program", "action":"close", "id":pane}),
+                Some(&generation)
+            )
+            .await
+            .status()
+            .is_success()
+        );
+    }
+    host.shutdown().await.unwrap();
 }
 
 #[test]
@@ -457,15 +554,18 @@ async fn running_jobs_and_terminals_must_be_finished_before_switching() {
     let here = host.location();
     let client = client();
     let gen_id = generation(&client, &here).await;
+    let marker = temp.path().join("slow-started");
     let submitted = post(
         &client,
         &here,
         "submit",
-        json!({"request":"submit","client":"web-fixture","cell":"slow","text":"sh run cmd:\"sleep 1\" > slow"}),
+        json!({"request":"submit","client":"web-fixture","cell":"slow","text":format!("{} > slow", shell::hold(&marker, 20))}),
         Some(&gen_id),
     )
     .await;
     assert_eq!(submitted.status(), 202);
+    // The refusal is about running work, so the work is first seen to be running.
+    shell::started(&marker);
     let refused = post(
         &client,
         &here,
@@ -648,7 +748,11 @@ fn cli_default_is_isolated_by_user_home_and_explicit_home_takes_precedence() {
     assert_eq!(data_home::selected_home(&user).unwrap(), user.join(".wes"));
     let run = |home: Option<&Path>| {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_wes"));
-        command.env("HOME", &user).current_dir(temp.path());
+        // The user's home is HOME on Unix and USERPROFILE on Windows.
+        command
+            .env("HOME", &user)
+            .env("USERPROFILE", &user)
+            .current_dir(temp.path());
         if let Some(home) = home {
             command.arg("--home").arg(home);
         }
@@ -677,7 +781,7 @@ fn cli_default_is_isolated_by_user_home_and_explicit_home_takes_precedence() {
 #[test]
 fn documented_example_runs_with_its_actual_source_and_isolated_environment() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/data-home/check.py");
-    let result = std::process::Command::new("python3")
+    let result = python::command()
         .arg(script)
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -867,13 +971,15 @@ async fn running_work_in_a_hidden_named_workspace_refuses_data_home_switching() 
     .await;
     assert_eq!(opened.status(), 200);
     let opened: Value = serde_json::from_slice(&opened.bytes().await.unwrap()).unwrap();
+    let marker = temp.path().join("hidden-started");
     let submitted = client.post(format!("{}submit", here.url))
         .header("Content-Type", "application/json")
         .header("X-Wes-Workspace", "hidden")
         .header("X-Wes-Session", opened["generation"].as_str().unwrap())
-        .body(json!({"request":"submit","client":"web-fixture","cell":"hidden-slow","text":"sh run cmd:\"sleep 60\" > slow"}).to_string())
+        .body(json!({"request":"submit","client":"web-fixture","cell":"hidden-slow","text":format!("{} > slow", shell::hold(&marker, 60))}).to_string())
         .send().await.unwrap();
     assert_eq!(submitted.status(), 202);
+    shell::started(&marker);
     let refused = post(
         &client,
         &here,

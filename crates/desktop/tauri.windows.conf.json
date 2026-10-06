@@ -3,8 +3,9 @@
     "resources": {
       "../../tools/describe/wes-extract": null,
       "../../tools/describe/wes-extract.exe": "wes-extract.exe",
-      "../../target/release/wes-view-build": null,
-      "../../target/release/wes-view-build.exe": "wes-view-build.exe"
+      "resources/wes-terminal.exe": "wes-terminal.exe",
+      "resources/wes-view-build": null,
+      "resources/wes-view-build.exe": "wes-view-build.exe"
     }
   }
 }

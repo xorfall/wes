@@ -5,34 +5,50 @@ PROMPT_EOL_MARK=''
 unset HISTFILE
 if [[ -n ${WES_HISTORY_FILE-} ]]; then
   readonly _wes_history_file=$WES_HISTORY_FILE
+  _wes_history_bytes=${WES_HISTORY_BYTES:-0}
+  case $_wes_history_bytes in *[!0-9]*|'') _wes_history_bytes=0 ;; esac
+  readonly _wes_history_bytes=$((10#$_wes_history_bytes))
   HISTSIZE=1000
   _wes_history_entries=()
+  _wes_history_size=0
+  _wes_history_count_bytes() {
+    local LC_ALL=C
+    _wes_history_octets=${#1}
+  }
+  _wes_history_add() {
+    _wes_history_entries+=("$1")
+    _wes_history_count_bytes "$1"
+    ((_wes_history_size += _wes_history_octets + 1))
+    while (( ${#_wes_history_entries[@]} > 1000 ||
+             (_wes_history_bytes > 0 && _wes_history_size > _wes_history_bytes && ${#_wes_history_entries[@]} > 0) )); do
+      _wes_history_count_bytes "${_wes_history_entries[1]}"
+      ((_wes_history_size -= _wes_history_octets + 1))
+      shift _wes_history_entries
+    done
+  }
   # Restore literal commands into zsh's history list, never shell source/eval.
   while IFS= read -r -d '' _wes_history_entry; do
     print -sr -- "$_wes_history_entry"
-    _wes_history_entries+=("$_wes_history_entry")
-    if (( ${#_wes_history_entries[@]} > 1000 )); then
-      _wes_history_entries=("${(@)_wes_history_entries[-1000,-1]}")
-    fi
+    _wes_history_add "$_wes_history_entry"
   done < "$_wes_history_file"
   _wes_history_save() {
     local previous=$? previous_umask
     # preexec receives the full accepted source, including literal newlines, before
     # a long-running command begins; each multiline source remains one record.
-    _wes_history_entries+=("$1")
-    if (( ${#_wes_history_entries[@]} > 1000 )); then
-      _wes_history_entries=("${(@)_wes_history_entries[-1000,-1]}")
-    fi
+    _wes_history_add "$1"
     previous_umask=$(umask)
     umask 077
-    printf '%s\0' "${_wes_history_entries[@]}" > "${_wes_history_file}.next" &&
+    # No retained commands is an empty file; printf with no arguments would emit a lone NUL.
+    { if (( ${#_wes_history_entries[@]} )); then
+        printf '%s\0' "${_wes_history_entries[@]}"
+      fi; } > "${_wes_history_file}.next" &&
       /bin/mv -f "${_wes_history_file}.next" "$_wes_history_file"
     umask "$previous_umask"
     return "$previous"
   }
   preexec_functions+=(_wes_history_save)
 fi
-unset WES_HISTORY_FILE
+unset WES_HISTORY_FILE WES_HISTORY_BYTES
 readonly _wes_git=${WES_PROMPT_GIT-}
 unset WES_PROMPT_GIT
 readonly _wes_environment_file=${WES_PROMPT_ENVIRONMENT-}

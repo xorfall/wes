@@ -437,14 +437,29 @@ async fn perform(
 }
 
 /// Entry point shared by the ordinary CLI and installed desktop executable. No GUI is initialized.
+/// A pane's published program is this executable under the command's own name.
+#[cfg(windows)]
+pub(super) fn published_tool() -> Option<(String, bool)> {
+    super::published::tool()
+}
+#[cfg(not(windows))]
+pub(super) fn published_tool() -> Option<(String, bool)> {
+    None
+}
 pub async fn client() -> Option<u8> {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("--terminal-bridge") {
-        return None;
-    }
-    let Some(tool) = args.next() else {
-        eprintln!("Missing terminal tool.");
-        return Some(2);
+    let tool = match published_tool() {
+        Some((tool, _)) => tool,
+        None => {
+            if args.next().as_deref() != Some("--terminal-bridge") {
+                return None;
+            }
+            let Some(tool) = args.next() else {
+                eprintln!("Missing terminal tool.");
+                return Some(2);
+            };
+            tool
+        }
     };
     let result = exchange(tool, args.collect()).await;
     let reply = result.unwrap_or_else(|()| {
@@ -471,8 +486,32 @@ pub(super) struct Connection {
 }
 impl Connection {
     pub(super) fn from_env() -> Result<Self, ()> {
-        let url = std::env::var("WES_BRIDGE_URL").map_err(|_| ())?;
-        let url = reqwest::Url::parse(&url).map_err(|_| ())?;
+        Self::new(
+            &std::env::var("WES_BRIDGE_URL").map_err(|_| ())?,
+            std::env::var("WES_BRIDGE_TOKEN").map_err(|_| ())?,
+        )
+    }
+    /// A pane's own record of its bridge, for a server started by a client that passes on
+    /// none of the pane's environment.
+    pub(super) fn from_file(path: &std::path::Path) -> Result<Self, ()> {
+        use std::io::Read;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Record {
+            url: String,
+            token: String,
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .map_err(|_| ())?
+            .take(16 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ())?;
+        let record: Record = serde_json::from_slice(&bytes).map_err(|_| ())?;
+        Self::new(&record.url, record.token)
+    }
+    fn new(url: &str, token: String) -> Result<Self, ()> {
+        let url = reqwest::Url::parse(url).map_err(|_| ())?;
         if url.scheme() != "http"
             || url.host_str() != Some("127.0.0.1")
             || url.path() != "/terminal-bridge"
@@ -481,7 +520,6 @@ impl Connection {
         {
             return Err(());
         }
-        let token = std::env::var("WES_BRIDGE_TOKEN").map_err(|_| ())?;
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())

@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 wes-budgets.workspace = true
 portable-pty = "=0.9.0"
+process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "process-group", "job-object"] }
 filedescriptor = "=0.8.3"
 tracing.workspace = true
 wes-core.workspace = true

@@ -1,8 +1,10 @@
 //! Full stdio/PTY/application acceptance without a model account or user's workspace.
+#[path = "support/python.rs"]
+mod python;
 #[test]
 fn mcp_communication_metrics_measure_real_stdio_without_payloads_or_protocol_changes() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/agent-metrics/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -19,7 +21,7 @@ fn mcp_communication_metrics_measure_real_stdio_without_payloads_or_protocol_cha
 #[cfg(unix)]
 fn agents_inspect_large_values_and_failed_cells_without_unbounded_exports() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/agent-inspection/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -35,7 +37,7 @@ fn agents_inspect_large_values_and_failed_cells_without_unbounded_exports() {
 #[cfg(unix)]
 fn terminal_assistants_share_the_open_workspace_through_mcp() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/assistant/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -52,7 +54,7 @@ fn terminal_assistants_share_the_open_workspace_through_mcp() {
 #[cfg(unix)]
 fn multiple_assistants_join_shared_workspaces_with_scoped_authority() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/assistant/check-shared.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -68,7 +70,7 @@ fn multiple_assistants_join_shared_workspaces_with_scoped_authority() {
 #[test]
 fn list_registry_example_files_discover_defined_views_and_restore_them() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/list-registries/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -85,7 +87,7 @@ fn list_registry_example_files_discover_defined_views_and_restore_them() {
 #[cfg(unix)]
 fn actual_live_monitor_runs_through_cooperative_mcp_connections() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/live-service-monitor/check-mcp.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -102,7 +104,7 @@ fn actual_live_monitor_runs_through_cooperative_mcp_connections() {
 #[cfg(unix)]
 fn request_identities_survive_real_mcp_and_application_restart() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/agent-requests/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()
@@ -119,7 +121,7 @@ fn request_identities_survive_real_mcp_and_application_restart() {
 #[cfg(unix)]
 fn command_feedback_preserves_causes_across_cli_ui_and_mcp() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/command-feedback/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()

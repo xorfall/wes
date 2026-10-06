@@ -1,8 +1,10 @@
-//! Direct-child ownership. Finite invocation, piped interaction and terminal handover are distinct.
+//! Local execution ownership. Finite invocation, piped interaction and terminal handover are distinct.
 mod interactive;
 mod launch;
+mod ownership;
 use indexmap::IndexMap;
 pub use interactive::{ProcessConversation, TerminalHandover};
+pub(crate) use launch::local_directory;
 pub use launch::{serialized_spawn, serialized_spawn_async};
 use std::{
     fmt, io,
@@ -106,6 +108,7 @@ pub fn provider(
             command: command.into(),
             argument_key: argument_key.into(),
             config,
+            program_text: false,
         },
     ))
 }
@@ -122,10 +125,12 @@ pub fn wrapping(
     provider(name, vec![executable.into()], "args", config)
 }
 /// Native shell semantics are explicit: POSIX sh on Unix, cmd.exe on Windows.
+pub(crate) const SHELL_NAME: &str = if cfg!(windows) { "cmd" } else { "sh" };
+
 pub fn shell(
     config: ProcessConfig,
 ) -> Result<(ProviderDescription, ProcessInvoker), ProcessConfigError> {
-    shell_named(if cfg!(windows) { "cmd" } else { "sh" }, config)
+    shell_named(SHELL_NAME, config)
 }
 pub(crate) fn shell_named(
     alias: &str,
@@ -144,7 +149,8 @@ pub(crate) fn shell_named(
     #[cfg(any(unix, windows))]
     {
         let _ = name;
-        let (description, invoker) = provider(alias, command, "cmd", config)?;
+        let (description, mut invoker) = provider(alias, command, "cmd", config)?;
+        invoker.program_text = true;
         let mut capability = description
             .capabilities()
             .next()
@@ -166,6 +172,9 @@ pub struct ProcessInvoker {
     command: Arc<[String]>,
     argument_key: Arc<str>,
     config: ProcessConfig,
+    /// The argument is a program in the native shell's language rather than one literal
+    /// argument, and reaches that shell exactly as written.
+    program_text: bool,
 }
 impl fmt::Debug for ProcessInvoker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -189,8 +198,21 @@ impl Invoker for ProcessInvoker {
                 return Err(InvocationError::Cancelled);
             }
             let mut command = Command::new(&line[0]);
+            let supplied = usize::from(line.len() > this.command.len());
+            let literal = if this.program_text && cfg!(windows) {
+                line.len() - supplied
+            } else {
+                line.len()
+            };
+            command.args(&line[1..literal]);
+            // cmd.exe does not read the escaping other programs expect in an argument: a
+            // quote inside the program would arrive as a backslash and a quote. With /S it
+            // takes everything between the first and the last quote as the program.
+            #[cfg(windows)]
+            if let Some(program) = line.get(literal) {
+                command.raw_arg(format!("\"{program}\""));
+            }
             command
-                .args(&line[1..])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -208,14 +230,14 @@ impl Invoker for ProcessInvoker {
                     if let Some(launch) = launch {
                         launch.apply(&mut command)?;
                     }
-                    command.spawn().map_err(|_| Failure::Spawn)
+                    ownership::LocalChild::spawn(command, false).map_err(|_| Failure::Spawn)
                 })
             })
             .await
             .map_err(|_| Failure::Internal.error())?
             .map_err(Failure::error)?;
             let captured = capture(
-                &mut child,
+                child.inner(),
                 deadline,
                 this.config.output_bytes,
                 &cancellation,
@@ -224,8 +246,13 @@ impl Invoker for ProcessInvoker {
             match captured {
                 Ok((status, stdout, stderr)) => {
                     if cancellation.is_cancelled() {
+                        child
+                            .cancel()
+                            .await
+                            .map_err(|error| Failure::Cleanup(error).error())?;
                         return Err(InvocationError::Cancelled);
                     }
+                    child.complete();
                     Value::new(
                         output_shape(),
                         Data::Record(IndexMap::from_iter([
@@ -247,11 +274,10 @@ impl Invoker for ProcessInvoker {
                 Err(reason) => {
                     // start_kill alone is not a reap. Always wait, even if signalling reports an
                     // error (the process may have exited concurrently or be outside our privilege).
-                    let _signalled = child.start_kill();
-                    let reaped = child.wait().await;
+                    let reaped = child.cancel().await;
                     // A successful wait also resolves the signal-vs-natural-exit race.
-                    if reaped.is_err() {
-                        return Err(Failure::Cleanup.error());
+                    if let Err(error) = reaped {
+                        return Err(Failure::Cleanup(error).error());
                     }
                     if cancellation.is_cancelled() {
                         Err(InvocationError::Cancelled)
@@ -270,9 +296,8 @@ impl ProcessInvoker {
         credentials: Arc<dyn wes_engine::credentials::Credentials>,
         names: Vec<String>,
     ) -> Result<Self, ProcessConfigError> {
-        let cwd = target.cwd().unwrap_or("/");
-        if !std::path::Path::new(cwd).is_absolute()
-            || names.len() > 128
+        let cwd = local_directory(target.cwd()).map_err(ProcessConfigError)?;
+        if names.len() > 128
             || names.iter().any(|n| {
                 n.is_empty()
                     || !n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -284,7 +309,7 @@ impl ProcessInvoker {
             ));
         }
         self.launch = Some(Arc::new(ManagedLaunch {
-            cwd: cwd.into(),
+            cwd,
             variables: target.variables().clone(),
             credentials,
             names,
@@ -326,7 +351,7 @@ impl ProcessInvoker {
     }
 }
 struct ManagedLaunch {
-    cwd: String,
+    cwd: std::path::PathBuf,
     variables: std::collections::BTreeMap<String, String>,
     credentials: Arc<dyn wes_engine::credentials::Credentials>,
     names: Vec<String>,
@@ -454,12 +479,16 @@ pub(crate) enum Failure {
     OutputLimit,
     Read,
     Wait,
-    Cleanup,
+    Cleanup(ownership::CleanupError),
     Cancelled,
     Internal,
 }
 impl Failure {
     pub(crate) fn error(self) -> InvocationError {
+        let cleanup = match &self {
+            Self::Cleanup(error) => Some(error.summary()),
+            _ => None,
+        };
         let (code, message) = match self {
             Self::Arguments => (
                 "PROC001",
@@ -473,7 +502,7 @@ impl Failure {
             Self::OutputLimit => ("PROC004", "Combined process output exceeds its byte budget"),
             Self::Read => ("PROC005", "Could not read a process output pipe"),
             Self::Wait => ("PROC006", "Could not observe the local process exit"),
-            Self::Cleanup => ("PROC007", "Could not confirm normal local process cleanup"),
+            Self::Cleanup(_) => ("PROC007", "Could not confirm normal local process cleanup"),
             Self::Cancelled => return InvocationError::Cancelled,
             Self::Internal => ("PROC008", "Process output construction failed"),
         };
@@ -481,7 +510,10 @@ impl Failure {
             ErrorValue::new(
                 ErrorId::new(Uuid::new_v4().to_string()).expect("UUID"),
                 code,
-                message,
+                cleanup.map_or_else(
+                    || message.to_owned(),
+                    |detail| format!("{message}: {detail}"),
+                ),
                 vec![],
                 None,
             )

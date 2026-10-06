@@ -29,18 +29,34 @@ pub(super) enum ClientError {
 }
 impl DockerEngineClient {
     pub fn new(socket: &str) -> Result<Self, &'static str> {
-        if !socket.starts_with('/') || socket.len() > 4096 || socket.chars().any(char::is_control) {
-            return Err("Docker requires an explicit absolute Unix socket path");
-        }
-        #[cfg(not(unix))]
+        let endpoint = super::LocalEndpoint::from_socket(socket)?;
+        #[cfg(not(any(unix, windows)))]
         {
-            let _ = socket;
-            Err("Docker Unix-socket transport is unavailable on this platform")
+            let _ = endpoint;
+            Err("Docker local transport is unavailable on this platform")
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
-            let http = reqwest::Client::builder()
-                .unix_socket(socket)
+            // Each host reaches the daemon through its own kind of local endpoint only.
+            #[cfg(unix)]
+            let builder = match endpoint {
+                super::LocalEndpoint::Socket(path) => reqwest::Client::builder().unix_socket(path),
+                super::LocalEndpoint::Pipe(_) => {
+                    return Err("Docker named pipes are a Windows transport");
+                }
+            };
+            #[cfg(windows)]
+            let builder = match endpoint {
+                super::LocalEndpoint::Pipe(name) => {
+                    reqwest::Client::builder().windows_named_pipe(format!(r"\\.\pipe\{name}"))
+                }
+                super::LocalEndpoint::Socket(_) => {
+                    return Err(
+                        "Docker on Windows requires a named pipe such as //./pipe/docker_engine",
+                    );
+                }
+            };
+            let http = builder
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .retry(reqwest::retry::never())
@@ -193,5 +209,55 @@ mod cancellation_tests {
         server.await.unwrap();
         // Cached success needs no surviving socket listener.
         assert!(client.endpoint().await.is_ok());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod pipe_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::windows::named_pipe::ServerOptions;
+    #[tokio::test]
+    async fn negotiation_reaches_the_engine_over_a_named_pipe() {
+        let name = format!("wes-test-{}", uuid::Uuid::new_v4());
+        let mut server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(format!(r"\\.\pipe\{name}"))
+            .unwrap();
+        let serving = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            let mut header = vec![];
+            while !header.ends_with(b"\r\n\r\n") {
+                let mut b = [0];
+                server.read_exact(&mut b).await.unwrap();
+                header.push(b[0]);
+            }
+            assert!(header.starts_with(b"GET /version "));
+            let body = r#"{"ApiVersion":"1.47","MinAPIVersion":"1.24"}"#;
+            server
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            // Closing a pipe discards unread bytes; wait for the client to finish and hang up.
+            let _ = server.read(&mut [0]).await;
+        });
+        let client = DockerEngineClient::new(&format!("//./pipe/{name}")).unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), client.endpoint())
+                .await
+                .unwrap()
+                .unwrap(),
+            "http://localhost/v1.45"
+        );
+        serving.await.unwrap();
+        for unsupported in ["/var/run/docker.sock", "//./pipe/", "//./pipe/a/b"] {
+            assert!(DockerEngineClient::new(unsupported).is_err());
+        }
     }
 }

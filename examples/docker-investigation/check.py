@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Isolated actual application/PTY/MCP, synthetic Docker socket; never contacts user daemons."""
 import argparse, base64, http.server, json, os, selectors, shlex, socketserver, struct
-import subprocess, tempfile, threading, time, urllib.request
+import sys, subprocess, tempfile, threading, time, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+from fixture_environment import isolated
 ID = 'a'*64
 IMAGE = 'sha256:'+'b'*64
 LINES = ['ERROR allocation failed' if i < 12 else 'INFO synthetic request completed '+str(i)+' payload='+'x'*96 for i in range(200)]
@@ -48,7 +50,7 @@ def main():
         daemon = Daemon(str(root/'docker.sock'), Handler); daemon.calls = []
         thread = threading.Thread(target=daemon.serve_forever, daemon=True); thread.start()
         env = {k:v for k,v in os.environ.items() if not any(w in k for w in ['TOKEN','SECRET','PASSWORD','API_KEY'])}
-        env['HOME'] = str(root)
+        env = isolated(root, env)
         with (root/'server.log').open('w+') as errors:
             app = subprocess.Popen([str(binary),'--home',str(root/'home'),'--serve','0','--no-auto-keep'],
                 cwd=root, env=env, stdout=subprocess.PIPE, stderr=errors, text=True)

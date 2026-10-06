@@ -3,19 +3,35 @@ shopt -u promptvars
 unset HISTFILE
 if [[ -n ${WES_HISTORY_FILE-} ]]; then
   readonly _wes_history_file=$WES_HISTORY_FILE
+  _wes_history_bytes=${WES_HISTORY_BYTES:-0}
+  case $_wes_history_bytes in *[!0-9]*|'') _wes_history_bytes=0 ;; esac
+  readonly _wes_history_bytes=$((10#$_wes_history_bytes))
   HISTSIZE=1000
   unset HISTFILESIZE
   shopt -s cmdhist lithist
   _wes_history_entries=()
+  _wes_history_size=0
   _wes_history_last=0
+  _wes_history_count_bytes() {
+    local LC_ALL=C
+    _wes_history_octets=${#1}
+  }
+  _wes_history_add() {
+    _wes_history_entries+=("$1")
+    _wes_history_count_bytes "$1"
+    ((_wes_history_size += _wes_history_octets + 1))
+    while (( ${#_wes_history_entries[@]} > 1000 ||
+             (_wes_history_bytes > 0 && _wes_history_size > _wes_history_bytes && ${#_wes_history_entries[@]} > 0) )); do
+      _wes_history_count_bytes "${_wes_history_entries[0]}"
+      ((_wes_history_size -= _wes_history_octets + 1))
+      _wes_history_entries=("${_wes_history_entries[@]:1}")
+    done
+  }
   # Bash 3.2's history -r splits literal multiline entries. Private NUL-delimited
   # records preserve each command; history -s inserts text and never executes it.
   while IFS= read -r -d '' _wes_history_entry; do
     builtin history -s -- "$_wes_history_entry"
-    _wes_history_entries+=("$_wes_history_entry")
-    if (( ${#_wes_history_entries[@]} > 1000 )); then
-      _wes_history_entries=("${_wes_history_entries[@]: -1000}")
-    fi
+    _wes_history_add "$_wes_history_entry"
   done < "$_wes_history_file"
   read -r _wes_history_last _ <<< "$(HISTTIMEFORMAT= builtin history 1)"
   _wes_history_saved=$_wes_history_last
@@ -33,14 +49,14 @@ if [[ -n ${WES_HISTORY_FILE-} ]]; then
     source=${listing#"${BASH_REMATCH[0]}"}
     if [[ $number != "$_wes_history_last" ]]; then
       _wes_history_last=$number
-      _wes_history_entries+=("$source")
-      if (( ${#_wes_history_entries[@]} > 1000 )); then
-        _wes_history_entries=("${_wes_history_entries[@]: -1000}")
-      fi
+      _wes_history_add "$source"
     fi
     previous_umask=$(umask)
     umask 077
-    if printf '%s\0' "${_wes_history_entries[@]}" > "${_wes_history_file}.next" &&
+    # No retained commands is an empty file; printf with no arguments would emit a lone NUL.
+    if { if (( ${#_wes_history_entries[@]} )); then
+           printf '%s\0' "${_wes_history_entries[@]}"
+         fi; } > "${_wes_history_file}.next" &&
       /bin/mv -f "${_wes_history_file}.next" "$_wes_history_file"; then
       _wes_history_saved=$number
     fi
@@ -48,7 +64,7 @@ if [[ -n ${WES_HISTORY_FILE-} ]]; then
     return "$previous"
   }
 fi
-unset WES_HISTORY_FILE
+unset WES_HISTORY_FILE WES_HISTORY_BYTES
 readonly _wes_git=${WES_PROMPT_GIT-}
 unset WES_PROMPT_GIT
 readonly _wes_environment_file=${WES_PROMPT_ENVIRONMENT-}

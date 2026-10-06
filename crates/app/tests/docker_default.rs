@@ -1,5 +1,7 @@
 //! Captured Docker connections, no Docker installation or real daemon access.
 #![cfg(unix)]
+#[path = "support/python.rs"]
+mod python;
 use std::{
     sync::{
         Arc, Mutex,
@@ -237,7 +239,7 @@ async fn default_help_import_completion_rebinding_restore_and_authority_share_on
 #[test]
 fn restart_investigation_measures_actual_mcp_calls_and_bytes() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(root.join("examples/docker-investigation/check.py"))
         .args(["--binary", env!("CARGO_BIN_EXE_wes")])
         .output()

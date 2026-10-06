@@ -51,12 +51,18 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
         let data = &display["data"];
         let path = source.strip_prefix(":help").unwrap().trim();
         visited.insert(path.to_string());
-        if data["invocation"].get("command").is_some() {
+        if let Some(command) = data["invocation"]["command"].as_str() {
+            assert!(
+                command == format!(":{path}") || command == path,
+                "{source}: {command}"
+            );
             assert!(
                 data["invocation"]["usage"]
                     .as_str()
                     .unwrap()
-                    .starts_with(&format!(":{path}"))
+                    .starts_with(command),
+                "{source}: {}",
+                data["invocation"]["usage"]
             );
         }
         if let Some(registry) = path.strip_prefix("list ") {

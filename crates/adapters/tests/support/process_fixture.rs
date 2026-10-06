@@ -24,7 +24,7 @@ fn main() {
     };
     let mut control = if let Some(endpoint) = args
         .get(3)
-        .filter(|s| !s.is_empty() && mode != "descendant")
+        .filter(|s| !s.is_empty() && !mode.starts_with("descendant") && mode != "background")
     {
         let mut stream = TcpStream::connect(endpoint).unwrap();
         stream.write_all(b"ready").unwrap();
@@ -98,20 +98,23 @@ fn main() {
             print!("{}", input.len());
         }
         "wait" => std::thread::sleep(Duration::from_secs(3)),
-        "descendant" => {
-            // The test explicitly owns/release-controls this short-lived pipe owner. The production
-            // provider owns only its direct child, not an operating-system process-tree sandbox.
+        "descendant" | "descendant-flood" | "background" => {
+            // The control channel proves this descendant started and observes its actual exit.
+            // It remains in the invocation's execution group when the parent exits.
             let descendant = std::path::Path::new(&args[2]).with_extension("desc.lock");
-            let child = std::process::Command::new(std::env::current_exe().unwrap())
-                .arg("pipe-owner")
-                .arg(descendant)
-                .arg(&args[3])
-                .stdin(std::process::Stdio::null())
-                .spawn()
-                .unwrap();
+            let mut program = std::process::Command::new(std::env::current_exe().unwrap());
+            program.arg(if mode == "descendant-flood" { "pipe-owner-flood" } else { "pipe-owner" }).arg(descendant).arg(&args[3])
+                .stdin(std::process::Stdio::null());
+            if mode == "background" {
+                program.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+            }
+            let child = program.spawn().unwrap();
             drop(child);
         }
-        "pipe-owner" => {
+        "pipe-owner" | "pipe-owner-flood" => {
+            if mode == "pipe-owner-flood" {
+                let _ = std::io::stdout().write_all(&vec![b'x'; 8192]);
+            }
             let stream = control.as_mut().unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))

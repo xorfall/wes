@@ -2,9 +2,7 @@
 from collections import deque
 import json
 from pathlib import Path
-import selectors
-import signal
-import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -13,6 +11,8 @@ import uuid
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent))
+import lifecycle
 
 
 def copy_project(root, port):
@@ -33,20 +33,15 @@ class Client:
         self.closed = False
         self.serial = 0
         self.root = root
-        self.errors = open(root / 'engine.stderr', 'w+')
         args = [str(binary), '--home', str(root / 'home'), '--serve', '0', '--no-auto-keep']
         if site:
             args += ['--site', str(ROOT / 'gui/dist')]
-        self.process = subprocess.Popen(args, cwd=root, text=True, stdout=subprocess.PIPE, stderr=self.errors)
+        self.owned = lifecycle.Owned(args, cwd=root, log=root / 'engine.stderr')
+        self.process = self.owned.process
         try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(self.process.stdout, selectors.EVENT_READ)
-                if not selector.select(30):
-                    raise RuntimeError('Engine startup timed out')
-            line = self.process.stdout.readline().strip()
+            line = self.owned.line(30)
             if not line.startswith('Listening at http://'):
-                self.errors.seek(0)
-                raise RuntimeError(line + self.errors.read())
+                raise RuntimeError(line + self.owned.log())
             self.url = line.removeprefix('Listening at ')
             self.stream = urllib.request.urlopen(self.url + '/events', timeout=30)
             self.reader = threading.Thread(target=self._read, daemon=True)
@@ -164,15 +159,12 @@ class Client:
 
     def close(self):
         self.closed = True
-        if self.process.poll() is None:
-            self.process.send_signal(signal.SIGINT)
-            try:
-                self.process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        if hasattr(self, 'stream'):
-            self.stream.close()
-            self.reader.join(timeout=5)
-        self.process.stdout.close()
-        self.errors.close()
+        try:
+            self.owned.finish()
+        finally:
+            if hasattr(self, 'stream'):
+                self.stream.close()
+                if self.reader.ident is not None:
+                    self.reader.join(timeout=5)
+                if self.reader.is_alive():
+                    raise RuntimeError('monitor event reader did not stop')

@@ -120,8 +120,11 @@ jobs:
         if: needs.plan.outputs.go_build == 'true'
         working-directory: tools/describe
         run: go build -o wes-extract ./cmd/extract
+      - name: Prepare native desktop resources and client
+        if: needs.plan.outputs.desktop == 'true'
+        run: node tools/desktop-build.mjs
       - run: npm run build
-        if: needs.plan.outputs.desktop == 'true' || needs.plan.outputs.examples == 'true'
+        if: needs.plan.outputs.desktop != 'true' && needs.plan.outputs.examples == 'true'
       - name: Rust formatting
         if: needs.plan.outputs.rust == 'true'
         run: cargo fmt --all --check

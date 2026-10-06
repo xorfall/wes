@@ -239,11 +239,13 @@ impl DraftPublication {
 }
 
 fn absolute(base: &Path, text: &str) -> Result<PathBuf> {
+    // The user's home as the host defines it; a variable of one platform is not it.
+    absolute_from(base, text, std::env::home_dir())
+}
+fn absolute_from(base: &Path, text: &str, home: Option<PathBuf>) -> Result<PathBuf> {
     let path = if let Some(rest) = text.strip_prefix("~/") {
-        PathBuf::from(
-            std::env::var_os("HOME").ok_or_else(|| error("Home directory is unavailable"))?,
-        )
-        .join(rest)
+        home.ok_or_else(|| error("Home directory is unavailable"))?
+            .join(rest)
     } else {
         base.join(text)
     };
@@ -289,5 +291,28 @@ impl Export {
     pub(super) fn publish(self) -> Result<PathBuf> {
         self.file.persist_noclobber(&self.path).map_err(|e| std::io::Error::new(e.error.kind(), "Output could not be published; the saved library revision is available. Choose a new filename and export it."))?;
         Ok(self.path)
+    }
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn a_tilde_location_is_beneath_the_hosts_user_home_and_needs_one() {
+        let home = std::env::temp_dir().join("user");
+        let base = std::env::temp_dir().join("work");
+        assert_eq!(
+            absolute_from(&base, "~/specs/api.json", Some(home.clone())).unwrap(),
+            home.join("specs/api.json")
+        );
+        assert_eq!(
+            absolute_from(&base, "specs/api.json", None).unwrap(),
+            base.join("specs/api.json")
+        );
+        assert!(absolute_from(&base, "~/specs/api.json", None).is_err());
+        assert!(absolute_from(&base, "~/../other", Some(home)).is_err());
+        // The process finds its user's home here without a Unix variable being set.
+        assert!(absolute(&base, "~/specs/api.json").unwrap().is_absolute());
     }
 }

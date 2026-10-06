@@ -384,9 +384,12 @@ impl Controller {
         }
     }
     fn expire(&self) {
+        self.expire_at(self.elapsed_ms());
+    }
+    fn expire_at(&self, now_ms: u64) {
         let capture = self.capture.load(Acquire);
         let until = self.until.load(Acquire);
-        if until > 0 && self.elapsed_ms() >= until {
+        if until > 0 && now_ms >= until {
             self.stop_capture_id(Some(capture));
         }
     }

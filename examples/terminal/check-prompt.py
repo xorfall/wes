@@ -33,7 +33,7 @@ def plain(data):
 
 
 class Shell:
-    def __init__(self, shell, home, start, git=None, history=None):
+    def __init__(self, shell, home, start, git=None, history=None, history_bytes=None):
         private = home / ('private-' + shell.name + ('-missing' if git == '' else ''))
         private.mkdir(exist_ok=True)
         env = {'HOME': str(home), 'USER': 'fixture', 'LOGNAME': 'fixture', 'PATH': os.environ['PATH'],
@@ -41,6 +41,7 @@ class Shell:
                'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
                'WES_PROMPT_GIT': shutil.which('git') if git is None else git}
         if history is not None: env['WES_HISTORY_FILE'] = str(history)
+        if history_bytes is not None: env['WES_HISTORY_BYTES'] = str(history_bytes)
         self.environment = private / 'environment'
         self.set_environment('DEV')
         env['WES_PROMPT_ENVIRONMENT'] = str(self.environment)
@@ -63,8 +64,8 @@ class Shell:
         pending.chmod(0o600)
         pending.replace(self.environment)
 
-    def read(self):
-        data = b''
+    def read(self, initial=b''):
+        data = initial
         end = time.monotonic() + 5
         while time.monotonic() < end:
             if select.select([self.master], [], [], .15)[0]:
@@ -74,8 +75,26 @@ class Shell:
         raise AssertionError('shell prompt timed out: ' + repr(data))
 
     def command(self, source):
-        os.write(self.master, source.encode() + b'\r')
-        return self.read()
+        # A long paste can fill the echoed-output pipe while input is still being written.
+        # Drain it while sending, like the application pump, with a bound on both directions.
+        pending = source.encode() + b'\r'
+        echoed = b''
+        deadline = time.monotonic() + 10
+        was_blocking = os.get_blocking(self.master)
+        os.set_blocking(self.master, False)
+        try:
+            while pending:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0, 'shell command input timed out'
+                ready, writable, _ = select.select([self.master], [self.master], [], remaining)
+                if ready:
+                    try: echoed += os.read(self.master, 65536)
+                    except BlockingIOError: pass
+                if writable:
+                    try: pending = pending[os.write(self.master, pending[:1024]):]
+                    except BlockingIOError: pass
+        finally: os.set_blocking(self.master, was_blocking)
+        return self.read(echoed)
 
     def close(self):
         os.close(self.master)

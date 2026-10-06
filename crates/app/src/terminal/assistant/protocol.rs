@@ -190,8 +190,10 @@ struct Reply {
     ticket: Ticket,
     outcome: Outcome,
 }
-pub(super) fn serve(runtime: tokio::runtime::Handle) -> u8 {
-    let connection = super::super::bridge::Connection::from_env();
+pub(super) fn serve(
+    runtime: tokio::runtime::Handle,
+    connection: Result<super::super::bridge::Connection, ()>,
+) -> u8 {
     let collection = Collection::from_env();
     let code = serve_io(
         std::io::stdin().lock(),

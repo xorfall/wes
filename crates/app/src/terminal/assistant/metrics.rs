@@ -233,8 +233,9 @@ impl Collection {
                     }
                     match publish(&recording, &path, began, state) {
                         Ok(published) => previous = published,
-                        Err(_) => {
-                            eprintln!("wes MCP metrics export stopped; tools remain enabled.");
+                        Err(error) => {
+                            // Host classification is useful without disclosing paths or payloads.
+                            eprintln!("wes MCP metrics export stopped: {:?}, OS error {:?}; tools remain enabled.", error.kind(), error.raw_os_error());
                             break;
                         }
                     }
@@ -275,10 +276,10 @@ fn publish(
     report.elapsed_ms = began.elapsed().as_millis();
     report.state = state;
     // Private tempfile plus atomic replacement: readers see one complete snapshot.
-    let mut file = tempfile::NamedTempFile::new_in(path.parent().expect("directory"))?;
-    serde_json::to_writer_pretty(&mut file, &report)?;
-    file.write_all(b"\n")?;
-    file.persist(path).map_err(|e| e.error)?;
+    crate::file_snapshot::write(path, |file| {
+        serde_json::to_writer_pretty(&mut *file, &report)?;
+        file.write_all(b"\n")
+    })?;
     Ok((report.totals.messages, report.totals.completed))
 }
 
@@ -286,6 +287,24 @@ fn publish(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn replacing_a_snapshot_preserves_an_open_readers_complete_old_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("snapshot.json");
+        let meter = Meter::new();
+        let began = Instant::now();
+        publish(&meter, &path, began, "live").unwrap();
+        let reader = std::fs::File::open(&path).unwrap();
+        meter
+            .receive(Some(&json!({"method":"ping"})), 20, &BTreeSet::new())
+            .finish(30, Outcome::Ok);
+        publish(&meter, &path, began, "live").unwrap();
+        let old: Value = serde_json::from_reader(reader).unwrap();
+        let new: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(old["totals"]["completed"], 0);
+        assert_eq!(new["totals"]["completed"], 1);
+    }
 
     #[test]
     fn live_and_final_exports_are_atomic_private_and_session_scoped() {

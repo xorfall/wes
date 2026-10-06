@@ -44,22 +44,18 @@ fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
     Ok(directory)
 }
 
-pub(super) fn prepare(home: &Path, identity: &str, zsh: bool) -> io::Result<PathBuf> {
+pub(super) fn prepare(home: &Path, identity: &str, name: &str) -> io::Result<PathBuf> {
     let identity = key(identity)?;
     let home_dir = Dir::open_ambient_dir(home, ambient_authority())?;
     let root = child(&home_dir, "terminal-history")?;
     let directory = child(&root, &identity)?;
-    let name = if zsh { "zsh" } else { "bash" };
-    // Discard only this shell's fixed private scratch names without following links.
+    // Discard only this shell's fixed private scratch name without following links.
     // A crash may leave a partial write; a pre-existing symlink must never be opened
     // by the shell's native history writer. The active lease excludes another writer.
-    let scratch: &[&str] = if zsh { &["zsh.next"] } else { &["bash.next"] };
-    for name in scratch {
-        match directory.remove_file(name) {
-            Ok(()) => (),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-            Err(error) => return Err(error),
-        }
+    match directory.remove_file(format!("{name}.next")) {
+        Ok(()) => (),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error),
     }
     let mut options = OpenOptions::new();
     options
@@ -101,7 +97,7 @@ pub(super) fn prepare(home: &Path, identity: &str, zsh: bool) -> io::Result<Path
 }
 
 fn valid_records(bytes: &[u8]) -> bool {
-    // Both shells use private UTF-8 commands separated by NUL, never shell source.
+    // Every shell uses private UTF-8 commands separated by NUL, never shell source.
     std::str::from_utf8(bytes).is_ok()
         && (bytes.is_empty()
             || (bytes.last() == Some(&0)
@@ -121,7 +117,11 @@ pub(super) fn forget(home: &Path, identity: &str) -> io::Result<()> {
     };
     // Never traverse symlinked pane directories, even when forgetting corrupt history.
     match root.open_dir_nofollow(&identity) {
-        Ok(_) => root.remove_dir_all(&identity),
+        Ok(directory) => {
+            // Windows does not remove a directory that is still open.
+            drop(directory);
+            root.remove_dir_all(&identity)
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
@@ -145,7 +145,7 @@ mod tests {
     fn identities_private_paths_and_corrupt_history_are_checked() {
         let home = tempfile::tempdir().unwrap();
         let id = uuid::Uuid::new_v4().to_string();
-        let path = prepare(home.path(), &id, true).unwrap();
+        let path = prepare(home.path(), &id, "zsh").unwrap();
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -172,34 +172,34 @@ mod tests {
             "00000000-0000-0000-0000-000000000000",
             &id.to_uppercase(),
         ] {
-            assert!(prepare(home.path(), bad, true).is_err());
+            assert!(prepare(home.path(), bad, "zsh").is_err());
         }
         std::fs::write(&path, b"bad\0history").unwrap();
-        assert!(prepare(home.path(), &id, true).is_err());
+        assert!(prepare(home.path(), &id, "zsh").is_err());
         std::fs::write(&path, [255]).unwrap();
-        assert!(prepare(home.path(), &id, true).is_err());
+        assert!(prepare(home.path(), &id, "zsh").is_err());
         std::fs::remove_file(&path).unwrap();
         let sentinel = home.path().join("untouched");
         std::fs::write(&sentinel, "safe").unwrap();
         symlink(&sentinel, &path).unwrap();
-        assert!(prepare(home.path(), &id, true).is_err());
+        assert!(prepare(home.path(), &id, "zsh").is_err());
         forget(home.path(), &id).unwrap();
         assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "safe");
         assert!(!path.parent().unwrap().exists());
         forget(home.path(), &id).unwrap();
-        let path = prepare(home.path(), &id, false).unwrap();
+        let path = prepare(home.path(), &id, "bash").unwrap();
         let sentinel = home.path().join("scratch-sentinel");
         std::fs::write(&sentinel, "safe").unwrap();
         symlink(&sentinel, path.with_extension("next")).unwrap();
-        prepare(home.path(), &id, false).unwrap();
+        prepare(home.path(), &id, "bash").unwrap();
         assert!(!path.with_extension("next").exists());
         assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "safe");
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        assert!(prepare(home.path(), &id, false).is_err());
+        assert!(prepare(home.path(), &id, "bash").is_err());
         forget(home.path(), &id).unwrap();
         symlink(home.path(), path.parent().unwrap()).unwrap();
-        assert!(prepare(home.path(), &id, false).is_err());
+        assert!(prepare(home.path(), &id, "bash").is_err());
         assert!(forget(home.path(), &id).is_err());
     }
 }

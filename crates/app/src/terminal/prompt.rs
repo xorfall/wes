@@ -4,6 +4,7 @@ use std::{
     path::Path,
 };
 
+#[cfg(unix)]
 pub(super) fn prepare(directory: &Path, zsh: bool) -> io::Result<std::path::PathBuf> {
     let directory = directory.join("prompt");
     std::fs::create_dir(&directory)?;
@@ -35,31 +36,38 @@ pub(super) fn publish_environment(directory: &Path, name: &str) -> io::Result<()
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
         .collect();
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-    use std::os::unix::fs::PermissionsExt;
-    temporary
-        .as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    writeln!(temporary, "{label}")?;
-    temporary
-        .persist(environment_file(directory))
-        .map_err(|error| error.error)?;
-    Ok(())
+    crate::file_snapshot::write(&environment_file(directory), |file| {
+        writeln!(file, "{label}")
+    })
 }
 
 /// Only absolute native PATH entries are eligible; never execute a repository-local git shim.
 pub(super) fn git() -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let directories = std::env::split_paths(&path).chain(
-        ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-            .into_iter()
+        FALLBACK_DIRECTORIES
+            .iter()
+            .copied()
             .map(std::path::PathBuf::from),
     );
     directories
         .filter(|directory| directory.is_absolute())
-        .map(|directory| directory.join("git"))
+        .map(|directory| directory.join(GIT))
         .find(|candidate| executable(candidate) && system_git_ready(candidate))
 }
+#[cfg(unix)]
+const GIT: &str = "git";
+#[cfg(unix)]
+const FALLBACK_DIRECTORIES: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+#[cfg(windows)]
+const GIT: &str = "git.exe";
+#[cfg(windows)]
+const FALLBACK_DIRECTORIES: &[&str] = &[];
+#[cfg(windows)]
+fn executable(path: &Path) -> bool {
+    path.is_file()
+}
+#[cfg(unix)]
 fn executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path)
@@ -95,7 +103,7 @@ fn system_git_ready(_: &Path) -> bool {
     true
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

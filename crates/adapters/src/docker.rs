@@ -20,6 +20,8 @@ use wes_engine::{
 pub(crate) mod automatic;
 mod client;
 pub use automatic::{local as automatic_local, with_candidates as automatic_with_candidates};
+mod endpoint;
+pub(crate) use endpoint::LocalEndpoint;
 mod importer;
 pub use importer::{DockerImporter, unconnected};
 mod destination;
@@ -66,21 +68,13 @@ pub(crate) fn build(
     {
         return Err("Docker executable and cwd must be absolute container paths");
     }
-    #[cfg(not(unix))]
-    {
-        let _ = socket;
-        return Err("Docker Unix-socket transport is unavailable on this platform");
-    }
-    #[cfg(unix)]
-    {
-        let client = DockerEngineClient::new(socket)?;
-        let run = program.capability();
-        let description =
-            ProviderDescription::new(alias, [run], vec![]).map_err(|_| "invalid Docker alias")?;
-        ImportProduct::new(description, Arc::new(DockerExec { client, binding: binding.clone(), authority }), vec![
-            "Docker exec inherits the container's environment plus declared overrides, never the host environment. No TTY/stdin/secret delivery. Disconnect may leave remote work running; image identity is not a filesystem snapshot.".into()
-        ]).map_err(|_| "Docker metadata exceeds budget")
-    }
+    let client = DockerEngineClient::new(socket)?;
+    let run = program.capability();
+    let description =
+        ProviderDescription::new(alias, [run], vec![]).map_err(|_| "invalid Docker alias")?;
+    ImportProduct::new(description, Arc::new(DockerExec { client, binding: binding.clone(), authority }), vec![
+        "Docker exec inherits the container's environment plus declared overrides, never the host environment. No TTY/stdin/secret delivery. Disconnect may leave remote work running; image identity is not a filesystem snapshot.".into()
+    ]).map_err(|_| "Docker metadata exceeds budget")
 }
 
 impl Invoker for DockerExec {

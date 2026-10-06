@@ -5,7 +5,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fixture_environment import isolated
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--binary', type=Path, required=True)
@@ -16,7 +20,8 @@ with tempfile.TemporaryDirectory(prefix='wes-data-home-example-') as temporary:
     root = Path(temporary)
     user = root / 'user'
     user.mkdir()
-    environment = {**os.environ, 'HOME': str(user)}
+    # The synthetic user's home under each platform's own name for it.
+    environment = isolated(user)
     def run(*arguments):
         result = subprocess.run([str(binary), *arguments], cwd=root, env=environment,
                                 text=True, capture_output=True, timeout=30)

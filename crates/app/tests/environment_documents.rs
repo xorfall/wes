@@ -1,4 +1,8 @@
 //! Current-document editing through real admission, isolated storage and synthetic provider inputs.
+#[path = "support/fixtures.rs"]
+mod fixtures;
+#[path = "support/shell.rs"]
+mod shell;
 use std::path::Path;
 use wes::runtime::{RuntimeOptions, launch};
 use wes_core::Data;
@@ -53,6 +57,7 @@ async fn apply(
 #[tokio::test]
 async fn current_documents_promote_default_preserve_other_owners_and_replay_captured_imports() {
     let root = tempfile::tempdir().unwrap();
+    fixtures::echo(root.path());
     let runtime = launch(options(root.path())).await.unwrap();
     let session = runtime.handle.current().unwrap().session;
     let docs = session.environment_documents().await.unwrap();
@@ -60,11 +65,16 @@ async fn current_documents_promote_default_preserve_other_owners_and_replay_capt
     assert_eq!(docs[0].name, "default");
     let package = wes_core::environments::Package::parse(&docs[0].source).unwrap();
     assert_eq!(package.definitions()["default"].imports.len(), 3);
+    assert!(
+        package.definitions()["default"]
+            .imports
+            .contains_key(shell::NAME)
+    );
     assert_eq!(
         package.definitions()["default"].imports["docker"].binding_mode,
         wes_core::environments::BindingMode::Automatic
     );
-    let before = submit(&session, "sh run cmd:\"printf old\" > before", None).await;
+    let before = submit(&session, &format!("{} > before", shell::print("old")), None).await;
     accepted(&before);
     // Another owner is allowed to call its (different) target local.
     let other = format!(
@@ -100,11 +110,11 @@ async fn current_documents_promote_default_preserve_other_owners_and_replay_capt
         )
         .await;
     assert!(format!("{stale:?}").contains("changed since"));
-    accepted(&submit(&session, "sh run cmd:\"printf new\" > after", None).await);
+    accepted(&submit(&session, &format!("{} > after", shell::print("new")), None).await);
     accepted(
         &submit(
             &session,
-            ":import process bin:\"/bin/echo\" as:echo\necho run args:captured > imported",
+            ":import process bin:./example-echo.bin as:echo\necho run args:captured > imported",
             None,
         )
         .await,
@@ -151,6 +161,7 @@ async fn current_documents_promote_default_preserve_other_owners_and_replay_capt
 #[tokio::test]
 async fn editor_reuses_captured_sources_and_cooperative_imports_cannot_replace_an_existing_alias() {
     let root = tempfile::tempdir().unwrap();
+    fixtures::echo(root.path());
     std::fs::write(root.path().join("fixture.json"), r#"{"version":1,"provider":"fixture","types":{},"operations":[{"path":["items"],"method":"GET","route":"/items","auth":[],"parameters":[],"responses":{"200":"Text"}}]}"#).unwrap();
     let runtime = launch(options(root.path())).await.unwrap();
     let session = runtime.handle.current().unwrap().session;
@@ -181,13 +192,13 @@ async fn editor_reuses_captured_sources_and_cooperative_imports_cannot_replace_a
     };
     accepted(
         &session
-            .submit(send(":import process bin:/bin/echo as:agent_echo"))
+            .submit(send(":import process bin:./example-echo.bin as:agent_echo"))
             .await
             .unwrap(),
     );
     let before = session.environment_revisions().await.unwrap();
     let denied = session
-        .submit(send(":import process bin:/bin/echo as:agent_echo"))
+        .submit(send(":import process bin:./example-echo.bin as:agent_echo"))
         .await;
     assert!(
         format!("{denied:?}").contains("requires user authority"),
@@ -230,7 +241,11 @@ async fn runnable_builtin_recipe_uses_actual_example_files_without_docker_io() {
     accepted(&submit(&session, ":env use \"demo\"", None).await);
     let result = submit(
         &session,
-        include_str!("../../../examples/environment-editor/demo.wes"),
+        if cfg!(windows) {
+            include_str!("../../../examples/environment-editor/demo.windows.wes")
+        } else {
+            include_str!("../../../examples/environment-editor/demo.wes")
+        },
         None,
     )
     .await;

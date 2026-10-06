@@ -20,6 +20,18 @@ rust = ["wes-desktop"]
 suites = ["gui"]
 
 [[rules]]
+name = "desktop native artifact preparation"
+paths = ["tools/desktop-build.mjs", "tools/desktop-build.test.mjs"]
+rust = ["wes-desktop"]
+suites = ["gui", "compiler"]
+
+[[rules]]
+name = "embedded standalone view toolchain"
+paths = ["tools/view-toolchain/**"]
+rust = ["wes"]
+suites = ["compiler"]
+
+[[rules]]
 name = "terminal input exercised by application integration tests"
 paths = ["gui/src/terminal-input.ts"]
 rust = ["wes"]

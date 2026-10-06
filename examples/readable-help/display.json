@@ -758,6 +758,9 @@
       "path": "request",
       "invocation": {
         "provider": "http",
+        "command": "http request",
+        "usage": "http request [method:<Text>] url:<Text> [headers:<Unknown>] [body:<Unknown>]",
+        "usageNote": "Angle brackets are placeholders, not literal argument values; brackets mark optional arguments. Supply real values or existing $references. Showing help never calls the operation.",
         "capability": "request",
         "summary": "Sends one HTTP(S) request; every HTTP status is returned as data",
         "safety": "UNSAFE",

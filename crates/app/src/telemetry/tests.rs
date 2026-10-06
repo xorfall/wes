@@ -46,13 +46,16 @@ fn modes_persist_off_clear_memory_and_do_not_change_history_files() {
 #[test]
 fn expiry_and_manual_stop_restore_the_previous_mode_without_restart_persistence() {
     let (root, c) = controller();
-    c.capture_for(Duration::from_millis(20)).unwrap();
-    thread::sleep(Duration::from_millis(40));
+    c.start_capture().unwrap();
+    let deadline = c.until.load(Acquire);
+    c.expire_at(deadline - 1);
+    assert_eq!(c.mode(), Mode::Diagnostic);
+    c.expire_at(deadline);
     assert_eq!(c.mode(), Mode::Basic);
     c.set_mode(Mode::Off).unwrap();
     wait_stopped(&c);
-    c.capture_for(Duration::from_millis(20)).unwrap();
-    thread::sleep(Duration::from_millis(40));
+    c.start_capture().unwrap();
+    c.expire_at(c.until.load(Acquire));
     assert_eq!(c.status()["mode"], "off");
     wait_stopped(&c);
     c.start_capture().unwrap();
@@ -354,5 +357,18 @@ fn failed_capture_creation_from_off_stops_its_new_writer() {
     wait_stopped(&c);
     assert_eq!(c.mode(), Mode::Off);
     assert_eq!(c.status()["recent_count"], 0);
+    c.shutdown();
+}
+
+#[test]
+fn the_writer_expires_a_capture_without_status_reads() {
+    let (_root, c) = controller();
+    c.capture_for(Duration::from_millis(20)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while c.mode() == Mode::Diagnostic {
+        assert!(Instant::now() < deadline, "capture writer did not expire");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(c.mode(), Mode::Basic);
     c.shutdown();
 }

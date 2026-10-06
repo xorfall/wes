@@ -1,3 +1,5 @@
+#[path = "support/python.rs"]
+mod python;
 use std::process::Command;
 #[path = "cli/files.rs"]
 mod files;

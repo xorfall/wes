@@ -1175,10 +1175,11 @@ mod tests {
                 .as_deref(),
             Some("default")
         );
+        // The host shell provider carries the platform's own name.
         assert!(
             bridge::terminal_catalogue(&observation, &terminal)
                 .unwrap()
-                .provider("sh")
+                .provider(if cfg!(windows) { "cmd" } else { "sh" })
                 .is_some()
         );
         let context = invoke(&terminal, &runtime.handle, "workspace_context", json!({})).await;

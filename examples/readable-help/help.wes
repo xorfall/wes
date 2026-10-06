@@ -11,8 +11,11 @@
 :help env
 :help calc
 :help arguments
+:help errors
 :help def
 :help import
+:help import spec
+:help import openapi
 :help import plan
 :help import apply
 :help import plan spec

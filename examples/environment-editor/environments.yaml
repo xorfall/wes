@@ -3,7 +3,6 @@ package: builtins-demo
 targets:
   local:
     kind: local
-    cwd: /tmp
 environments:
   demo:
     imports:

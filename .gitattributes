@@ -1,0 +1,2 @@
+# Sources are embedded and hashed byte-for-byte; keep LF on every platform.
+* text=auto eol=lf

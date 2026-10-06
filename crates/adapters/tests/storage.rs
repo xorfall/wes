@@ -674,3 +674,19 @@ async fn protected_publication_keeps_exact_value_in_one_job_and_recovers_after_r
     worker.shutdown().await.unwrap();
     task.join().await.unwrap();
 }
+
+/// A value store opens with a durability this host establishes and refuses one it does not,
+/// without disturbing the values already kept.
+#[test]
+fn a_value_store_opens_only_with_a_durability_this_host_establishes() {
+    let root = private_temp();
+    let path = root.path().join("values");
+    let mut store = open(&path, None);
+    let handle = store.store(&value(8)).unwrap();
+    drop(store);
+    let strong = FileValues::open(&path, Limits::default(), Durability::FileAndDirectory, None);
+    assert_eq!(strong.is_ok(), Durability::FileAndDirectory.supported());
+    drop(strong);
+    let store = open(&path, None);
+    assert!(store.read(&handle).unwrap().is_some());
+}

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Run actual monitor files through two MCP connections; no model, browser or user data."""
+import sys
 import argparse, base64, json, os, selectors, shlex, subprocess, tempfile, time, urllib.request
 from pathlib import Path
 from fixture import DemoServer, sample
 from support import copy_project, ROOT, HERE
+sys.path.insert(0, str(HERE.parent))
+from fixture_environment import isolated
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -16,7 +19,7 @@ def main():
             def signal(name):
                 pending=root/(name+'.tmp');pending.write_text('{}');pending.replace(root/name)
             env={k:v for k,v in os.environ.items() if not any(w in k for w in ['API_KEY','TOKEN','SECRET','PASSWORD'])}
-            env['HOME']=str(root)
+            env=isolated(root, env)
             with (root/'server.log').open('w+') as errors:
                 app=subprocess.Popen([str(binary),'--home',str(root/'home'),'--serve','0','--no-auto-keep'],cwd=root,env=env,stdout=subprocess.PIPE,stderr=errors,text=True)
                 events=None

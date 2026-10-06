@@ -4,15 +4,17 @@ import argparse
 import json
 import os
 from pathlib import Path
-import selectors
 import shutil
-import signal
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import uuid
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+import lifecycle
+from fixture_environment import isolated
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', type=Path, required=True)
 binary = parser.parse_args().binary.resolve()
@@ -22,16 +24,12 @@ with tempfile.TemporaryDirectory(prefix='wes-document-input-') as directory:
     root = Path(directory).resolve()
     user = root / 'user'; user.mkdir()
     home = root / 'home'
-    env = {**os.environ, 'HOME': str(user)}
-    with (root / 'server.log').open('w+') as errors:
-        app = subprocess.Popen([str(binary), '--home', str(home), '--serve', '0'], cwd=root,
-                               env=env, stdout=subprocess.PIPE, stderr=errors, text=True)
+    env = isolated(user)
+    with lifecycle.Owned([binary, '--home', home, '--serve', '0'], cwd=root, env=env,
+                         log=root / 'server.log', patience=30) as app:
         events = None
         try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(app.stdout, selectors.EVENT_READ)
-                assert selector.select(45), 'server did not start'
-            line = app.stdout.readline().strip()
+            line = app.line(45)
             assert line.startswith('Listening at http://'), line
             url = line.removeprefix('Listening at ')
             events = urllib.request.urlopen(url + '/events', timeout=20)
@@ -62,9 +60,8 @@ with tempfile.TemporaryDirectory(prefix='wes-document-input-') as directory:
             submit(':env apply $reviewed')
         finally:
             if events: events.close()
-            if app.poll() is None: app.send_signal(signal.SIGINT)
-            app.wait(timeout=30)
-            assert app.returncode == 0, (root / 'server.log').read_text()
+            code = app.stop()
+            assert code == 0 and not app.forced, app.log()
     shutil.rmtree(home / 'imports')
     def command(text, selected_home=home):
         reply = subprocess.run([str(binary), '--home', str(selected_home), '--command', text],

@@ -1,4 +1,6 @@
 //! Synthetic captured editor documents: normal session admission, archive and offline replay.
+#[path = "support/python.rs"]
+mod python;
 use std::fs;
 use wes::runtime::{RuntimeOptions, launch};
 use wes_adapters::environments::LocalEnvironments;
@@ -332,7 +334,7 @@ async fn env_text_exclusivity_invalid_yaml_and_unapplied_plan_do_not_change_envi
 
 #[test]
 fn actual_document_example_runs_and_restores_its_checked_in_files() {
-    let output = std::process::Command::new("python3")
+    let output = python::command()
         .arg(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples/document-input/check.py"),

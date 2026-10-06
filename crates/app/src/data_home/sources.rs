@@ -112,7 +112,7 @@ fn immutable(path: &Path, bytes: &[u8]) -> io::Result<()> {
                     "immutable captured input conflicts with existing bytes",
                 ));
             }
-            fs::File::open(path)?.sync_all()?;
+            wes_adapters::sync_existing_file(path)?;
             #[cfg(unix)]
             fs::File::open(path.parent().expect("archive object parent"))?.sync_all()?;
             return Ok(());

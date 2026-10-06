@@ -15,7 +15,7 @@ pub(super) fn default_document(
 ) -> Result<LoadedDefinitions, EnvironmentError> {
     let mut document = json!({"version":1,"package":"default","targets":{"local":{"kind":"local"}},"environments":{name:{
         "id":format!("builtin.{name}"), "owner":"default", "protected":true, "imports":{
-            "sh":{"source":{"kind":"builtin","name":"sh"},"bind":{"target":"local"}},
+            (crate::process::SHELL_NAME):{"source":{"kind":"builtin","name":"sh"},"bind":{"target":"local"}},
             "http":{"source":{"kind":"builtin","name":"http"},"bind":{"target":"local","transport":"internal"}},
             "docker":{"source":{"kind":"builtin","name":"docker"},"bind":"auto"}
         }
@@ -59,7 +59,7 @@ fn insert_import(
             (
                 SourceKey::new("builtin", "docker")?,
                 CapturedSource::new("builtin/v1", "docker")?,
-                json!({"source":{"kind":"builtin","name":"docker"},"bind":{"target":"local","endpoint":format!("unix://{socket}")}}),
+                json!({"source":{"kind":"builtin","name":"docker"},"bind":{"target":"local","endpoint":crate::docker::LocalEndpoint::from_socket(socket).map_err(invalid)?.declaration()}}),
             )
         }
         "process" => (

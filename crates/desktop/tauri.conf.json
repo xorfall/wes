@@ -30,7 +30,7 @@
     "resources": {
       "../../gui/dist": "gui-dist",
       "../../tools/describe/wes-extract": "wes-extract",
-      "../../target/release/wes-view-build": "wes-view-build"
+      "resources/wes-view-build": "wes-view-build"
     }
   }
 }

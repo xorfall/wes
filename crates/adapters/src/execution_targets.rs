@@ -50,12 +50,14 @@ pub(crate) fn driver(target: &Target) -> &'static dyn TargetDriver {
 impl TargetDriver for Local {
     fn terminal(&self, target: &Target) -> Result<TerminalPlan, &'static str> {
         self.validate(target)?;
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return Err("Terminal transport is not supported on this host platform");
         }
-        if target.variables().keys().any(|key| {
-            key.starts_with("WES_") || matches!(key.as_str(), "ZDOTDIR" | "ENV" | "BASH_ENV")
-        }) {
+        if target
+            .variables()
+            .keys()
+            .any(|key| terminal::reserved_variable(key))
+        {
             return Err("Target variables cannot replace terminal integration/startup controls");
         }
         Ok(terminal::local(Some(target.clone())))
@@ -67,11 +69,10 @@ impl TargetDriver for Local {
         true
     }
     fn validate(&self, target: &Target) -> Result<(), &'static str> {
-        if target
-            .cwd()
-            .is_some_and(|cwd| !Path::new(cwd).is_absolute())
-        {
-            return Err("Local target cwd must be an absolute host path");
+        // Only a declared directory is checked here; the default is resolved when a launch
+        // is bound, by the same rule.
+        if let Some(cwd) = target.cwd() {
+            crate::process::local_directory(Some(cwd))?;
         }
         Ok(())
     }
@@ -150,7 +151,7 @@ impl TargetDriver for Ssh {
     }
     fn terminal(&self, target: &Target) -> Result<TerminalPlan, &'static str> {
         self.validate(target)?;
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return Err("Terminal transport is not supported on this host platform");
         }
         crate::ssh::terminal(target)

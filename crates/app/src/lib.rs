@@ -6,6 +6,7 @@ pub mod credential_store;
 pub mod credential_vault;
 pub mod data_home;
 mod execution_status;
+mod file_snapshot;
 pub mod retention;
 pub mod retirement;
 pub mod runtime;

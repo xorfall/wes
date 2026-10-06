@@ -51,9 +51,52 @@ remain governed by the existing environment and HTTP adapter rules.
 Import diagnostics expose producer-authored safe causes. `IMP007` identifies an
 unresolved authentication choice, `IMP008` an unavailable declared credential,
 `IMP009` query-based credential leakage risk, and `IMP010` undocumented
-authentication. `IMP002` remains an advisory whose detailed document/adapter text is not automatically public. Source access
-does not authorize exporting inferred private values or advisory text. MCP
+authentication. `IMP002` remains an advisory whose detailed document/adapter text
+is not automatically public. Source access does not authorize exporting inferred
+private values or advisory text. MCP
 `validate` still checks syntax/admission, not eventual import or runtime success.
+
+## Agent discovery and View development
+
+MCP `help` exposes required importer arguments and provider invocation examples.
+`view_authoring` describes the supported type syntax, theme, SDK and layout
+contracts. A View's input must be a named Record; wrap a list in a named field.
+An `Instant` needs seconds and an explicit `Z` or numeric UTC offset. Wes does
+not infer UTC for an API timestamp without a time zone.
+
+MCP `view_toolchain` reports tools on the Wes backend host. Discovery does not
+install dependencies or run discovered programs. To develop Views without a
+repository checkout, explicitly export the embedded SDK, compiler and matching
+native validator to a new directory:
+
+```sh
+wes --export-view-toolchain NEW_DIRECTORY
+cd NEW_DIRECTORY
+npm ci --ignore-scripts --no-audit --no-fund
+node wes-view-package.mjs init SOURCE_DIRECTORY
+node wes-view-package.mjs build SOURCE_DIRECTORY OUTPUT.wes-view.json
+node wes-view-package.mjs check OUTPUT.wes-view.json
+```
+
+Node.js 20+ and npm are needed for this independent toolchain. The export refuses
+an existing destination and includes no workspace data or credentials. Use a kit
+for the machine's OS/architecture; the wrapper selects its validator without
+requiring it on PATH. The desktop package includes that validator. Source builds
+need `wes-view-build` beside `wes` before exporting.
+
+MCP `view_render_status` reads delivery receipts for an existing live instance
+on the requesting terminal's UI. It does not mount a View, start observation or
+run a provider. Receipts must match the workspace generation, instance,
+definition and acknowledged input revision; these are rechecked after the UI
+reply. No connected UI or mount means unverified, not successful rendering.
+A drawing acknowledgement verifies delivery only: visual correctness, linked
+input freshness, nested members and other windows are not verified.
+
+Terminal/UI requests use typed operations with pane ownership and generation
+checks. Completion notices are producer metadata, independent of result data.
+An agent with source access can learn that `:describe` completed and whether it
+requested a file export; that does not grant access to its private draft. Share
+a draft explicitly through `/spec`. `spec_list` lists shared drafts only.
 
 ## Building
 

@@ -2,6 +2,9 @@
 use super::*;
 use std::collections::BTreeMap;
 use wes_core::environments::{DockerDestination, Target, TargetKind};
+#[cfg(test)]
+#[path = "../../../tests/support/fixtures.rs"]
+mod fixtures;
 
 fn target_summary(target: &Target) -> serde_json::Value {
     let (kind, destination, shell) = match target.kind() {
@@ -88,6 +91,7 @@ mod tests {
     #[tokio::test]
     async fn review_shows_transport_and_provider_changes_without_disclosing_values() {
         let root = tempfile::tempdir().unwrap();
+        let echo = fixtures::echo(root.path());
         let runtime = crate::runtime::launch(crate::runtime::RuntimeOptions::new(
             root.path().join("home"),
             root.path().into(),
@@ -99,7 +103,7 @@ mod tests {
             "environments":{"review-qa":{"targets":["review-target"],
                 "parameters":{"setting":{"type":"Text"}},"config":{"setting":"private-config-before"},
                 "secretSlots":{"token":{"required":false}}, "secretRefs":{"token":"private-ref-before"},
-                "imports":{"echo":{"source":{"kind":"process","bin":"/bin/echo"},"bind":{"target":"review-target"}}}}}});
+                "imports":{"echo":{"source":{"kind":"process","bin":echo},"bind":{"target":"review-target"}}}}}});
         async fn apply(
             root: &std::path::Path,
             session: &wes_engine::session::SessionHandle,
@@ -117,6 +121,8 @@ mod tests {
         std::fs::write(root.path().join("key"), b"synthetic key").unwrap();
         std::fs::write(root.path().join("hosts"), b"synthetic hosts").unwrap();
         recipe["targets"]["review-target"] = json!({"kind":"ssh", "host":"synthetic.invalid", "user":"qa", "client":"/synthetic/ssh", "identity_file":root.path().join("key"), "known_hosts":root.path().join("hosts"), "shell":"posix","inherit":"remote", "env":{"QA_VALUE":"private-after"}});
+        recipe["environments"]["review-qa"]["imports"]["echo"]["source"]["bin"] =
+            json!("/bin/echo");
         recipe["environments"]["review-qa"]["config"]["setting"] = json!("private-config-after");
         recipe["environments"]["review-qa"]["secretRefs"]["token"] = json!("private-ref-after");
         recipe["environments"]["review-qa"]["imports"]["vars"] = json!({"source":{"kind":"process","bin":"/usr/bin/printenv"},"bind":{"target":"review-target"}});
@@ -148,7 +154,12 @@ mod tests {
         assert_eq!(evidence["changes"]["variables"], json!(["QA_VALUE"]));
         assert!(!response.to_string().contains("private-"));
         let second = review.current.revision();
-        recipe["targets"]["review-target"] = json!({"kind":"docker", "socket":"/synthetic/docker.sock", "container":"fixture", "shell":"/bin/bash", "inherit":"container"});
+        let endpoint = if cfg!(windows) {
+            "//./pipe/synthetic-docker"
+        } else {
+            "/synthetic/docker.sock"
+        };
+        recipe["targets"]["review-target"] = json!({"kind":"docker", "socket":endpoint, "container":"fixture", "shell":"/bin/bash", "inherit":"container"});
         recipe["environments"]["review-qa"]["imports"]
             .as_object_mut()
             .unwrap()
@@ -166,7 +177,7 @@ mod tests {
         assert_eq!(response["review"]["after"]["kind"], "Docker");
         assert_eq!(
             response["review"]["after"]["transport"]["Docker socket"],
-            "/synthetic/docker.sock"
+            endpoint
         );
         assert_eq!(response["review"]["changes"]["removed"], json!(["vars"]));
         let missing = wes_engine::execution::TargetReview {

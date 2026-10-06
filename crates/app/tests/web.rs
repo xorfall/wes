@@ -1471,9 +1471,12 @@ async fn environment_input_explanation_reaches_desktop_events_and_absolute_path_
         ),
         (
             "corrected",
+            // A path is data: the language's own encoder writes it as a literal.
             format!(
-                ":env plan file:\"{}\" > proposed",
-                package_dir.join("environments.yaml").display()
+                ":env plan file:{} > proposed",
+                wes_language::quote_text(
+                    &package_dir.join("environments.yaml").display().to_string()
+                )
             ),
         ),
     ] {

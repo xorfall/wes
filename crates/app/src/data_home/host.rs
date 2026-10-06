@@ -79,15 +79,46 @@ pub struct DesktopHost {
     stopped: CancellationToken,
     task: tokio::task::JoinHandle<Result<(), Error>>,
 }
+#[derive(Clone)]
+struct HostServices {
+    site: Option<PathBuf>,
+    terminal_executable: Option<PathBuf>,
+}
 impl DesktopHost {
     /// All filesystem and Keychain fixtures can be isolated by supplying a synthetic user home.
     pub async fn start(user_home: PathBuf, site: Option<PathBuf>) -> Result<Self, Error> {
+        Self::open(
+            user_home,
+            HostServices {
+                site,
+                terminal_executable: None,
+            },
+        )
+        .await
+    }
+    /// GUI hosts supply a console executable for pane commands and assistant clients.
+    /// This host-owned choice survives data-folder switches and cannot come from workspace data.
+    pub async fn start_with_terminal(
+        user_home: PathBuf,
+        site: Option<PathBuf>,
+        terminal_executable: PathBuf,
+    ) -> Result<Self, Error> {
+        Self::open(
+            user_home,
+            HostServices {
+                site,
+                terminal_executable: Some(terminal_executable),
+            },
+        )
+        .await
+    }
+    async fn open(user_home: PathBuf, services: HostServices) -> Result<Self, Error> {
         let selected_user = user_home.clone();
         let selected = tokio::task::spawn_blocking(move || selected_home(&selected_user)).await?;
         let (requests, mut incoming) = mpsc::channel(1);
         let (path, opened) = match selected {
             Ok(path) => {
-                let opened = start(&path, &user_home, site.clone(), requests.clone()).await;
+                let opened = start(&path, &user_home, services.clone(), requests.clone()).await;
                 (path, opened)
             }
             Err(error) => (default_home(&user_home), Err(error)),
@@ -127,7 +158,7 @@ impl DesktopHost {
                     &active,
                     &request.path,
                     &user_home,
-                    site.clone(),
+                    services.clone(),
                     requests.clone(),
                 )
                 .await
@@ -183,7 +214,7 @@ impl DesktopHost {
 async fn start(
     path: &Path,
     user_home: &Path,
-    site: Option<PathBuf>,
+    services: HostServices,
     requests: mpsc::Sender<Switch>,
 ) -> Result<Running, Error> {
     let runtime = launch(RuntimeOptions::new(path.to_owned(), user_home.to_owned())).await?;
@@ -192,7 +223,14 @@ async fn start(
         runtime.identity().id.clone(),
         requests,
     );
-    let server = match runtime.serve_managed(site, connection.clone()).await {
+    let server = match runtime
+        .serve_managed(
+            services.site,
+            connection.clone(),
+            services.terminal_executable,
+        )
+        .await
+    {
         Ok(server) => server,
         Err(error) => {
             let _ = runtime.shutdown().await;
@@ -234,7 +272,7 @@ async fn prepare(
     active: &Running,
     written: &str,
     user_home: &Path,
-    site: Option<PathBuf>,
+    services: HostServices,
     requests: mpsc::Sender<Switch>,
 ) -> Result<Option<Prepared>, Error> {
     let path = expand(written, user_home)?;
@@ -283,7 +321,7 @@ async fn prepare(
             checkpoints.push(checkpoint);
         }
     }
-    let candidate = match start(&path, user_home, site, requests).await {
+    let candidate = match start(&path, user_home, services, requests).await {
         Ok(candidate) => candidate,
         Err(error) => {
             for checkpoint in checkpoints {

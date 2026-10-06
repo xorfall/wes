@@ -1,0 +1,3 @@
+# Windows gives the main thread 1 MiB where macOS and Linux give 8 MiB; the entry future needs more.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "link-arg=/STACK:8388608"]

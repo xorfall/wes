@@ -81,13 +81,14 @@ def main():
                                 assert request['text'] in ['/rsplit xterm','/split','/close'],request
                                 terminal('commandreply',id=identity,request=rid,
                                     error='Four panes are already open.' if request['text']=='/split' else None)
-                            if frame.get('editor'):
-                                request=frame['editor'];rid=request['id']
+                            if frame.get('ui'):
+                                request=frame['ui'];rid=request['id'];operation=request['operation']
+                                assert operation['kind'] in ['draft_read','draft_update'],request
                                 if rid not in replies:
-                                    if request['action']=='read':replies[rid]={'ok':True,**draft}
-                                    elif request['revision']!=draft['revision']:replies[rid]={'ok':False,'error':'Draft changed'}
-                                    else:draft={'text':request['text'],'revision':str(uuid.uuid4())};replies[rid]={'ok':True,**draft}
-                                terminal('editorreply',id=identity,request=rid,result=replies[rid])
+                                    if operation['kind']=='draft_read':replies[rid]={'ok':True,**draft}
+                                    elif operation['revision']!=draft['revision']:replies[rid]={'ok':False,'error':'Draft changed'}
+                                    else:draft={'text':operation['text'],'revision':str(uuid.uuid4())};replies[rid]={'ok':True,**draft}
+                                terminal('uireply',id=identity,request=rid,result=replies[rid])
                             if re.search(re.escape(marker)+r'\r*\n',output):return
                             assert not frame['closed'],output[-5000:]
                             time.sleep(.03)
