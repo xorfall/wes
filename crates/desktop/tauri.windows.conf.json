@@ -1,8 +1,15 @@
 {
+  "build": {
+    "beforeBuildCommand": {
+      "script": "npm run build && node ../tools/desktop-terminal.mjs",
+      "cwd": "../../gui"
+    }
+  },
   "bundle": {
     "resources": {
       "../../tools/describe/wes-extract": null,
-      "../../tools/describe/wes-extract.exe": "wes-extract.exe"
+      "../../tools/describe/wes-extract.exe": "wes-extract.exe",
+      "resources/wes-terminal.exe": "wes-terminal.exe"
     }
   }
 }

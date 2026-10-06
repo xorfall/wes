@@ -7,7 +7,9 @@
 .env.*
 *.log
 /tools/describe/wes-extract
+/tools/describe/wes-extract.exe
 /crates/desktop/gen/
+/crates/desktop/resources/wes-terminal.exe
 /gui/.generated/
 /gui/src/value-views/catalogue.json
 /views/*/contract.ts
