@@ -296,15 +296,26 @@ async fn url_capture_services_archive_exact_ready_descriptor_bytes() {
             ImportRequest::new(
                 "spec".into(),
                 None,
-                [(
-                    "url".into(),
-                    wes_core::Value::new(
-                        Shape::Unknown,
-                        Data::Text(url.into()),
-                        Default::default(),
-                    )
-                    .unwrap(),
-                )]
+                [
+                    (
+                        "endpoint".into(),
+                        wes_core::Value::new(
+                            Shape::Unknown,
+                            Data::Text("http://127.0.0.1:1".into()),
+                            Default::default(),
+                        )
+                        .unwrap(),
+                    ),
+                    (
+                        "url".into(),
+                        wes_core::Value::new(
+                            Shape::Unknown,
+                            Data::Text(url.into()),
+                            Default::default(),
+                        )
+                        .unwrap(),
+                    ),
+                ]
                 .into_iter()
                 .collect(),
             )
@@ -378,7 +389,10 @@ async fn storage_failure_refuses_definitions_and_keeps_original_command_in_histo
     let session = runtime.handle.current().unwrap().session;
     for (id, source) in [
         ("types", ":package load path:\"input.yaml\""),
-        ("spec", ":import spec file:\"spec.json\""),
+        (
+            "spec",
+            ":import spec file:\"spec.json\" endpoint:\"http://127.0.0.1:1\"",
+        ),
     ] {
         session
             .submit(SourceInput::new(id.into(), source.into()).unwrap())
@@ -391,7 +405,7 @@ async fn storage_failure_refuses_definitions_and_keeps_original_command_in_histo
     assert!(!observation.types.iter().any(|t| t == "NotRegistered"));
     for (cell, source) in observation.cells.iter().zip([
         ":package load path:\"input.yaml\"",
-        ":import spec file:\"spec.json\"",
+        ":import spec file:\"spec.json\" endpoint:\"http://127.0.0.1:1\"",
     ]) {
         assert_eq!(cell.input.text(), source);
         let reply = cell.reply.as_ref().unwrap().as_ref().unwrap();

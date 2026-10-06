@@ -2,6 +2,33 @@
 use super::*;
 use wes_adapters::imports::{SpecDocuments, read_url, validate_spec_url};
 use wes_engine::imports::{ImportError, ImportRecipe};
+impl wes_adapters::imports::OpenApiCompiler for ApiLibrary {
+    fn compile(&self, source: &[u8]) -> std::result::Result<Vec<u8>, ImportError> {
+        let executable = self.settings().map_err(|_| failure("OpenAPI compiler settings are unavailable."))?
+            .and_then(|settings| settings.extractor).or_else(bundled_extractor)
+            .ok_or_else(|| failure("OpenAPI import requires the bundled wes-extract executable or an explicitly configured extractor."))?;
+        // This port is invoked by the import coordinator's owned blocking worker.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| failure("OpenAPI conversion worker could not start."))?;
+        let key = PackageKey {
+            service: "api".into(),
+            api_version: "openapi".into(),
+            scope: "direct".into(),
+        };
+        let options = Extraction {
+            location: "captured source".into(),
+            allow_partial: false,
+        };
+        runtime.block_on(io_layer::extract(&executable, &key, source, &options))
+            .map_err(|error| match io_layer::extraction_code(&error) {
+                "DSC002" => failure("OpenAPI contains unsupported or invalid declarations. Use :describe and /spec to inspect them; no provider was installed."),
+                "DSC007" => failure("OpenAPI conversion exceeded its time budget; no provider was installed."),
+                _ => failure("OpenAPI conversion failed. Check the extractor setup or use :describe to inspect the document; no provider was installed."),
+            })
+    }
+}
 
 fn failure(message: &'static str) -> ImportError {
     ImportError::Input(message)

@@ -11,6 +11,7 @@ pub(super) enum Topic {
     Theme,
     Layout,
     Examples,
+    Types,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +57,17 @@ pub(super) fn read(input: Read) -> Value {
                 "view.css": include_str!("../../../../../tools/view-package/template/view.css"),
             }})
         }
+        Topic::Types => json!({
+            "inputRule":"view.json.input must resolve to a named Record contract. Wrap a list/scalar in a Record field; field links address these named fields. State is also a Record. View boundary contracts must be finite; unsupported lazy/management shapes need an explicit adapter.",
+            "builtins":wes_core::contracts::ContractRegistry::new().snapshot().keys().collect::<Vec<_>>(),
+            "schema":crate::web::language::published_yaml(),
+            "viewBoundary":"Supported View port shapes: finite scalar, Record, List, Option and Union. Map, Iter, Unknown, management values and pattern-constrained contracts require an explicit adapter; the general type-package schema includes shapes not permitted at a View boundary.",
+            "syntax":"types.yaml is a Wes type package, not JSON Schema. Define names under types; a definition uses base plus fields/constraints. Field types are type expressions; names and constructors are case-sensitive. List<T>, Option<T>, Map<Text,T>, Union<A,B> are constructors, not YAML collections.",
+            "example":"types:\n  CityReading:\n    base: Record\n    fields:\n      time: Instant\n      temperature: Decimal\n  ForecastInput:\n    base: Record\n    fields:\n      readings: List<CityReading>\n",
+            "manifestInput":"ForecastInput",
+            "valueAdapter":":calc pure { return {readings:$readings}; } > forecastInput",
+            "time":"Instant requires a date, T, hour:minute:second and an explicit Z or numeric UTC offset; it never guesses the machine timezone. Example: 2026-10-06T12:00:00+03:00. A timezone-less API string remains Text until explicitly adapted with known timezone information. Epoch inputs use fromEpochSeconds/Millis/Nanos with explicit units.",
+        }),
     };
-    json!({"version":manifest["version"],"sdk":manifest["sdk"],"topics":["overview","sdk","theme","layout","examples"],"content":content})
+    json!({"version":manifest["version"],"sdk":manifest["sdk"],"topics":["overview","sdk","theme","layout","examples","types"],"content":content})
 }

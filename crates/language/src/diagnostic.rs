@@ -79,6 +79,21 @@ impl Diagnostic {
                 "Unsupported parameter, subcommand or argument form. Use help for the command signature."
             }
             "CHK002" => "A required argument is missing. Use help for the command signature.",
+            "IMP004" => {
+                "Provider already exists; choose another alias or explicitly use replace:true."
+            }
+            "ENV039" => {
+                "Captured environment binding changed or was removed. No provider was called. Submit a new command or use New branch to resolve the current binding."
+            }
+            "CAL006" => {
+                "Calculation resource limit exceeded. Bound the input, reduce recursion or split the calculation."
+            }
+            "CAL009" => {
+                "Callback must be pure and cannot capture mutable outer bindings. Use a pure callback or explicit for-of for effects."
+            }
+            "CAL012" => {
+                "Calculation argument count does not match the operation signature. Read the operation help."
+            }
             "AUT001" => {
                 "Operation affects protected work or shared definitions; change scope is required."
             }

@@ -16,7 +16,7 @@ import { diagnosticsSession, clientDiagnostic, timeClientSubmit } from "./local-
 import { TerminalUnavailable, TerminalRequestError } from "./terminal-errors";
 import { EngineRefusal, SUBMISSION_OUTCOME_HEADER, recordEngineFailure, recordExecutionFailure, requestOperation } from "./engine-diagnostics";
 import { StorageError, storageError } from "./storage-error";
-import { AssistantEditor } from "./assistant-editor";
+import { AssistantUi } from "./assistant-ui";
 import { ResultReader } from "./result-reader";
 import { workspaceHeaders, workspaceName } from "./workspace-binding";
 import type { Event, Request, StoredValue, Suggested, SavedHistoryPage } from "./protocol";
@@ -59,8 +59,26 @@ export class Engine {
     if (generation !== this.generation || result.generation !== generation) throw new Error("Workspace changed; sandbox observation discarded.");
     return result;
   }
-  readonly assistantEditor = new AssistantEditor();
-  private editorGeneration?: string;
+  readonly assistantUi = new AssistantUi();
+  private uiGeneration?: string;
+  /** The live workspace an unbound engine was greeted with; never guessed. */
+  private observedWorkspace?: string;
+  private workspaceListeners = new Set<() => void>();
+  /**
+   * The workspace this engine's views belong to: the explicit binding, otherwise the name announced
+   * by the current session. Undefined while unknown, closed or disconnected.
+   */
+  viewWorkspaceName(): string | undefined { return this.binding ?? this.observedWorkspace; }
+  /** Notifies only when {@link viewWorkspaceName} actually changes. */
+  onViewWorkspace(listener: () => void): () => void {
+    this.workspaceListeners.add(listener);
+    return () => { this.workspaceListeners.delete(listener); };
+  }
+  private observeWorkspace(name: string | undefined): void {
+    const before = this.viewWorkspaceName();
+    this.observedWorkspace = name;
+    if (this.viewWorkspaceName() !== before) this.workspaceListeners.forEach(listener => listener());
+  }
   private readonly results = new ResultReader(() => this.generation, () => this.timeout, () => this.binding);
   constructor(readonly binding?: string, client?: string) {
     if (binding !== undefined && !workspaceName(binding)) throw new Error("Invalid workspace binding");
@@ -195,9 +213,17 @@ export class Engine {
             else waiter.resolve(event);
           }
         }
-        if (event.event === "session") { diagnosticsSession(event.generation); if (this.editorGeneration !== event.generation) { this.assistantEditor.reset(); this.editorGeneration = event.generation; } this.generation = event.generation; this.environments = undefined; this.vocabulary = undefined; onConnection?.("connected"); }
+        if (event.event === "session") {
+          diagnosticsSession(event.generation);
+          if (this.uiGeneration !== event.generation) { this.assistantUi.reset(); this.uiGeneration = event.generation; }
+          this.generation = event.generation; this.environments = undefined; this.vocabulary = undefined;
+          // The greeting carries its identity atomically; a null or invalid name leaves it unknown.
+          this.observeWorkspace(workspaceName(event.workspace) ? event.workspace : undefined);
+          onConnection?.("connected");
+        }
+        if (event.event === "workspace-context" && this.generation !== undefined && workspaceName(event.name)) this.observeWorkspace(event.name);
         if (event.event === "workspace-closed") {
-          this.generation=undefined;this.environments=undefined;this.vocabulary=undefined;
+          this.generation=undefined;this.environments=undefined;this.vocabulary=undefined;this.observeWorkspace(undefined);
           if(event.workspace && typeof window !== "undefined") window.dispatchEvent?.(new CustomEvent("wes-workspace-closed",{detail:event.workspace}));
           if(this.binding!==undefined)source.close();
         }
@@ -209,7 +235,7 @@ export class Engine {
         if (event.event === "environments") this.environments = event;
         if (event.event === "vocabulary") this.vocabulary = event;
         if (["session","planned","ready","workspace-closed"].includes(event.event)) this.valuePackages.invalidate();
-        if (event.event === "failed") recordExecutionFailure(event, { workspace: this.binding ?? "default", generation: this.generation });
+        if (event.event === "failed") recordExecutionFailure(event, { workspace: this.viewWorkspaceName() ?? "Current workspace", generation: this.generation });
         if (["session","ready","failed","cancelled","dropped","work-retired","workspace-closed"].includes(event.event)) this.viewFrames.invalidate();
         if (event.event !== "vocabulary") onEvent(event);
         if ((event.event === "environments" || event.event === "vocabulary") && this.vocabulary) {
@@ -222,7 +248,7 @@ export class Engine {
     };
     source.onerror = () => {
       for (const waiter of this.documentWaiters.values()) waiter.reject(new Error("Connection lost while submitting the document; inspect the submitted cell before retrying."));
-      clientDiagnostic("reconnect"); this.generation = undefined; onConnection?.("reconnecting"); onTrouble("lost the engine");
+      clientDiagnostic("reconnect"); this.generation = undefined; this.observeWorkspace(undefined); onConnection?.("reconnecting"); onTrouble("lost the engine");
     };
     return () => source.close();
   }

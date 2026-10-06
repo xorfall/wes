@@ -203,9 +203,9 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
         } catch (failure) { error = failure instanceof Error ? failure.message : "Pane command failed."; }
         await engine.terminal({ action: "commandreply", id, request: request.id, error }, controller.signal);
       },
-      editor: async request => {
-        const result = await engine.assistantEditor.handle(request);
-        await engine.terminal({ action: "editorreply", id, request: request.id, result }, controller.signal);
+      ui: async request => {
+        const result = await engine.assistantUi.handle(request);
+        await engine.terminal({ action: "uireply", id, request: request.id, result }, controller.signal);
       },
       problem: message => { if (!controller.signal.aborted) fail("server report", message, id, "Inspect the terminal server diagnostic."); },
       connection: (error, operation = "poll") => { if (!controller.signal.aborted) diagnostics.current.connection("output", error, operation, contextFor(id)); },

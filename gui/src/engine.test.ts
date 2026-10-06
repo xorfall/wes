@@ -1,5 +1,5 @@
 vi.mock("./workspace-events", () => ({ WorkspaceEvents: function(path: string) { return new EventSource(path); } }));
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Engine } from "./engine";
 import { StorageError } from "./storage-error";
 import type { FrameSample } from "./value-views/instances";
@@ -12,7 +12,9 @@ class Events {
   onerror?: () => void;
   constructor() { Events.current = this; }
   close() {}
-  say(generation: string) { this.onmessage?.({ data: JSON.stringify({ event: "session", generation }) }); }
+  /** The backend greeting: identity and generation together, null while no workspace is open. */
+  say(generation: string, workspace: string | null = null) { this.onmessage?.({ data: JSON.stringify({ event: "session", workspace, generation }) }); }
+  emit(event: unknown) { this.onmessage?.({ data: JSON.stringify(event) }); }
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -285,7 +287,7 @@ it("reads saved pages with the selected session and preserves exact cursors with
   expect(fetch.mock.calls[0]![0]).toBe("/history?cursor=writer%3A9007199254740993%3A200");
   expect(fetch.mock.calls[0]![1].headers).toEqual({ "X-Wes-Session": "one" });
   expect(fetch.mock.calls[0]![1].body).toBeUndefined();
-  expect(seen).toEqual([{ event: "session", generation: "one" }]);
+  expect(seen).toEqual([{ event: "session", workspace: null, generation: "one" }]);
   fetch.mockResolvedValueOnce({ ok: false, status: 429, text: async () => "reader busy" });
   await expect(engine.history()).rejects.toThrow("429");
   expect(fetch).toHaveBeenCalledTimes(2);
@@ -652,4 +654,82 @@ it("should_RefuseStaleFeedbackWithoutResubmitting_When_TheWorkspaceChangesDuring
   await expect(pinning).rejects.toThrow(/Workspace changed while the Pin was submitted.*not repeated/);
   expect(submit).toHaveBeenCalledTimes(1);
   disconnect();
+});
+
+describe("view workspace identity", () => {
+  const watch = (engine: Engine) => { const seen: (string | undefined)[] = []; engine.onViewWorkspace(() => seen.push(engine.viewWorkspaceName())); return seen; };
+  it("should_ReportAnnouncedWorkspaceName_When_UnboundEngineServesANonDefaultStartupWorkspace", () => {
+    // Arrange
+    vi.stubGlobal("EventSource", Events);
+    const engine = new Engine(), seen = watch(engine);
+    // Act
+    engine.listen(() => {}, () => {});
+    // Assert: unknown before the greeting, never guessed as "default"
+    expect(engine.viewWorkspaceName()).toBeUndefined();
+    Events.current.say("g1", "research");
+    expect(engine.viewWorkspaceName()).toBe("research");
+    Events.current.emit({ event: "workspace-context", name: "research", saved: [] });
+    expect(seen).toEqual(["research"]); // unchanged identity does not notify
+    Events.current.onerror?.();
+    expect(engine.viewWorkspaceName()).toBeUndefined();
+    // A reconnect greeting carries the announced identity again.
+    Events.current.say("g1", "research");
+    expect(engine.viewWorkspaceName()).toBe("research");
+    Events.current.say("g2", "lab");
+    expect(engine.viewWorkspaceName()).toBe("lab");
+    Events.current.emit({ event: "workspace-closed", workspace: "lab" });
+    expect(engine.viewWorkspaceName()).toBeUndefined();
+    expect(seen).toEqual(["research", undefined, "research", "lab", undefined]);
+    expect(seen).not.toContain("default");
+  });
+  it("should_IdentifyWorkspaceFromSessionAlone_When_NoWorkspaceContextFollows", () => {
+    vi.stubGlobal("EventSource", Events);
+    const engine = new Engine();
+    engine.listen(() => {}, () => {});
+    Events.current.say("g1", "research");
+    expect(engine.viewWorkspaceName()).toBe("research");
+  });
+  it("should_ClearWorkspaceName_When_SessionGreetingHasNoWorkspace", () => {
+    vi.stubGlobal("EventSource", Events);
+    const engine = new Engine(), seen = watch(engine);
+    engine.listen(() => {}, () => {});
+    Events.current.say("g1", "research");
+    Events.current.say("g2", null);
+    expect(engine.viewWorkspaceName()).toBeUndefined();
+    Events.current.say("g3", "../escape");
+    expect(engine.viewWorkspaceName()).toBeUndefined();
+    expect(seen).toEqual(["research", undefined]);
+  });
+  it("should_IgnoreWorkspaceContext_When_NoSessionIsCurrent", () => {
+    vi.stubGlobal("EventSource", Events);
+    const engine = new Engine();
+    engine.listen(() => {}, () => {});
+    Events.current.emit({ event: "workspace-context", name: "early", saved: [] });
+    expect(engine.viewWorkspaceName()).toBeUndefined();
+    Events.current.say("g1", null);
+    Events.current.emit({ event: "workspace-context", name: "research", saved: [] });
+    expect(engine.viewWorkspaceName()).toBe("research");
+  });
+  it("should_LogExecutionFailureUnderActualWorkspace_When_EngineIsUnbound", async () => {
+    // Arrange
+    const { applicationLog } = await import("./application-log"); applicationLog.clear();
+    vi.stubGlobal("EventSource", Events); vi.stubGlobal("fetch", vi.fn());
+    const engine = new Engine(); engine.listen(() => {}, () => {});
+    const failed = (id: string) => Events.current.emit({ event: "failed", node: "id1", reason: "synthetic", error: { id, code: "HTTP001", message: "synthetic", causeId: "", issues: [] } });
+    // Act
+    Events.current.say("g1", null); failed("unknown-workspace");
+    Events.current.say("g2", "research"); failed("known-workspace");
+    // Assert
+    expect(applicationLog.snapshot().map(row => row.workspace).sort()).toEqual(["Current workspace", "research"]);
+    applicationLog.clear();
+  });
+  it("should_KeepExplicitBindingAuthoritative_When_SessionAnnouncesAnotherName", () => {
+    vi.stubGlobal("EventSource", Events);
+    const engine = new Engine("bound"), seen = watch(engine);
+    engine.listen(() => {}, () => {});
+    Events.current.say("g1", "other");
+    Events.current.emit({ event: "workspace-context", name: "other", saved: [] });
+    expect(engine.viewWorkspaceName()).toBe("bound");
+    expect(seen).toEqual([]);
+  });
 });

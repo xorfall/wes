@@ -7,7 +7,7 @@
   },
   "sourceFiles": {
     "view.json": "Declarative identity, input, state/event output ports, optional interaction and slots, plus all three layout tiers with min/preferred/max sizes and placement.",
-    "types.yaml": "Wes contracts. Finite scalar, record, list, option and union shapes; explicit adapters for other shapes.",
+    "types.yaml": "Wes type package under types. view.json.input must name a Record contract; wrap lists/scalars in named fields. Read view_authoring types for syntax, constructors, constraints and time rules.",
     "View.tsx": "Default export: defineView(definition, renderer). Import the generated definition from ./contract.",
     "view.css": "Optional author styles. Import from the renderer to include them in the artifact.",
     "contract.ts": "Generated before TypeScript checking. Input, Outputs, State, Event and EventOutputs types come from Wes contracts."
@@ -29,8 +29,8 @@
   "diagnostics": "JSON ok:false, diagnostics:[{code,message,file?,line?,column?}]. Failed builds retain the previous artifact.",
   "version": 1,
   "workflow": [
-    "Read workspace_context and value_read with typed:true for the public input. Read view_authoring theme and sdk before coding.",
-    "Choose explicit input constraints and output/interaction contracts. Generate contract.ts using the compiler; do not invent or copy a builtin contract.",
+    "Read workspace_context and view_toolchain first. The tool inventory describes the Wes backend host, not necessarily the agent terminal. Export the optional kit explicitly, install its locked dependencies with Node/npm on the build host, and invoke node wes-view-package.mjs. No repository checkout or PATH guess is needed. Discovery does not perform these actions. Read public input with value_read typed:true.",
+    "Read view_authoring types. Choose an explicit named Record input and output/interaction contracts; wrap list/scalar data in a field with a pure adapter. Generate contract.ts using the compiler; do not invent or copy a builtin contract.",
     "Read view_authoring layout. Declare intentional tier sizes and placement; use actual allocation width instead of pane count or fixed screen breakpoints. Test a composed dashboard and a standalone host.",
     "Use the supplied theme roles for meaning and CSS variables for layout. Do not fix a palette or font.",
     "Build with the independent compiler, then check the compiled artifact. Verify normal, empty, duplicate identity, invalid and exact-number cases.",
@@ -41,7 +41,7 @@
     "compiler": "wes-view-package",
     "sdk": "@wes/view-sdk",
     "validator": "wes-view-build on PATH, or WES_VIEW_CONTRACT_TOOL",
-    "provisioning": "Discovery provides guidance and examples. It does not install Node or tools, create files, compile, install a View or execute providers."
+    "provisioning": "view_toolchain reports backend-host availability and a repository-free explicit export/setup path. Node/npm and dependency installation remain explicit build-host prerequisites. Discovery does not provision, compile, install a View, grant access or execute providers."
   },
   "layout": {
     "tiers": [
@@ -81,5 +81,6 @@
       "stable live publication height",
       "theme/resize preserve selected state and emit no commands"
     ]
-  }
+  },
+  "verification": "A checked/installed artifact is not proof of a successful UI render. Use view_render_status for a named live instance on the connected originating UI; draw acknowledgement confirms delivery, not visual correctness. No connected UI means unverified."
 }

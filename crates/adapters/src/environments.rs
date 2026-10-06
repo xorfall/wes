@@ -26,6 +26,7 @@ pub struct LocalEnvironments {
     files: InputFiles,
     authority: Authority,
     documents: Option<Arc<dyn crate::imports::SpecDocuments>>,
+    openapi: Option<Arc<dyn crate::imports::OpenApiCompiler>>,
     archive: Option<Arc<dyn crate::source_archive::SourceArchive>>,
     docker_candidates: Vec<std::path::PathBuf>,
 }
@@ -47,12 +48,30 @@ impl LocalEnvironments {
         self.documents = Some(documents);
         self
     }
+    pub fn with_openapi(mut self, compiler: Arc<dyn crate::imports::OpenApiCompiler>) -> Self {
+        self.openapi = Some(compiler);
+        self
+    }
     fn spec_source(
         &self,
         inputs: &InputFiles,
         key: &wes_core::environments::SourceKey,
     ) -> Result<CapturedSource, EnvironmentError> {
-        let captured = if key.source_field() == "url"
+        let captured = if key.kind() == "openapi" {
+            let compiler = self
+                .openapi
+                .as_ref()
+                .ok_or_else(|| invalid("OpenAPI compiler is unavailable"))?;
+            let recipe = crate::imports::openapi::capture_source(
+                inputs,
+                key.source_field(),
+                key.location(),
+                compiler.as_ref(),
+                wes_core::environments::MAX_SOURCE_BYTES,
+            )
+            .map_err(|error| invalid(&error.to_string()))?;
+            CapturedSource::new(recipe.format(), recipe.source())?
+        } else if key.source_field() == "url"
             && let Some(documents) = &self.documents
         {
             let recipe = documents
@@ -111,7 +130,7 @@ impl LocalEnvironments {
                 key.kind() != "builtin"
                     && key.source_field() != "url"
                     && !Path::new(key.location()).is_absolute()
-                    && !(key.kind() != "spec"
+                    && !(!matches!(key.kind(), "spec" | "openapi")
                         && package
                             .definitions()
                             .values()
@@ -138,7 +157,7 @@ impl LocalEnvironments {
                 CapturedSource::new("builtin/v1", key.location())?
             } else if key.kind() == "docker" {
                 CapturedSource::new("docker/observe/v1", key.location())?
-            } else if key.kind() == "spec" {
+            } else if matches!(key.kind(), "spec" | "openapi") {
                 self.spec_source(&inputs, &key)?
             } else if package
                 .definitions()
@@ -207,6 +226,7 @@ impl LocalEnvironments {
                 .map_err(|_| invalid("environment input directory unavailable"))?,
             authority: Authority::default(),
             documents: None,
+            openapi: None,
             archive: None,
             docker_candidates: crate::docker::automatic::host_candidates(),
         })
@@ -343,13 +363,21 @@ impl EnvironmentLoader for LocalEnvironments {
             .credentials(binding, alias)
             .map_err(|_| invalid("invalid scoped credential binding"))?;
         match import.source().format() {
-            "spec/json/v1" => {
+            "spec/json/v1" | crate::imports::openapi::FORMAT => {
+                let normalized;
+                let source = if import.source().format() == crate::imports::openapi::FORMAT {
+                    normalized = crate::imports::openapi::descriptor(import.source().bytes())
+                        .map_err(|error| invalid(&error.to_string()))?;
+                    normalized.as_str()
+                } else {
+                    import.source().bytes()
+                };
                 let mut config = HttpConfig::default();
                 if let Some(ms) = import.timeout_ms() {
                     config.request_timeout = Duration::from_millis(ms as u64);
                 }
                 let reading = crate::descriptor::read_selected(
-                    import.source().bytes().as_bytes(),
+                    source.as_bytes(),
                     Some(alias),
                     credentials,
                     config,
@@ -399,9 +427,13 @@ impl EnvironmentLoader for LocalEnvironments {
                     crate::http::transport::Transport::bound(binding, self.authority.clone())
                         .map_err(invalid)?;
                 let invoker = Arc::new(reading.invoker.with_transport(transport));
-                ImportProduct::new(reading.description, invoker.clone(), reading.warnings)
-                    .map(|p| p.with_streams(invoker))
-                    .map_err(|_| invalid("HTTP environment metadata exceeds budget"))
+                ImportProduct::new_with_warnings(
+                    reading.description,
+                    invoker.clone(),
+                    reading.warnings,
+                )
+                .map(|p| p.with_streams(invoker))
+                .map_err(|_| invalid("HTTP environment metadata exceeds budget"))
             }
             _ => Err(invalid("unsupported captured environment importer format")),
         }

@@ -67,7 +67,7 @@ fn insert_import(
             CapturedSource::new(recipe.format(), recipe.source())?,
             json!({"source":{"kind":"process","bin":recipe.source()},"bind":{"target":"local"}}),
         ),
-        "spec" => {
+        "spec" | "openapi" => {
             let location = if let Some(url) = text("url") {
                 url.to_owned()
             } else {
@@ -81,8 +81,8 @@ fn insert_import(
                     .ok_or_else(|| invalid("Spec path is not UTF-8"))?
                     .to_owned()
             };
-            let key = SourceKey::new("spec", &location)?;
-            let mut declaration = json!({"source":{"kind":"spec",key.source_field():location},"bind":{"target":"local"}});
+            let key = SourceKey::new(request.kind(), &location)?;
+            let mut declaration = json!({"source":{"kind":request.kind(),key.source_field():location},"bind":{"target":"local"}});
             if let Some(endpoint) = text("endpoint") {
                 declaration["bind"]["endpoint"] = json!(endpoint);
             }

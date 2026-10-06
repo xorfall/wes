@@ -29,7 +29,7 @@ it("forwards publication evidence atomically and clears old authority on refresh
   expect(final.nodes[0]?.failure).toBeUndefined();
   expect(final.nodes[0]?.publication).toBe(failed);
   expect(final.nodes[0]?.handle).toBeUndefined();
-  expect(apply(final, { event: "session", generation: "g2" }).nodes).toHaveLength(0);
+  expect(apply(final, { event: "session", workspace: null, generation: "g2" }).nodes).toHaveLength(0);
 });
 
 it("retains the engine's cancellation reason without treating it as failure", () => {
@@ -60,7 +60,7 @@ it("replaces an existing node description without duplicating it or losing its r
   expect(updated.nodes).toHaveLength(1);
   expect(updated.nodes[0]?.name).toBe("renamed");
   expect(updated.nodes[0]?.handle).toBe("saved");
-  expect(apply(updated, { event: "session", generation: "another" })).toEqual(emptyWorkspace);
+  expect(apply(updated, { event: "session", workspace: null, generation: "another" })).toEqual(emptyWorkspace);
 });
 
 it("updates a log receipt in place when its durable acknowledgement arrives", () => {

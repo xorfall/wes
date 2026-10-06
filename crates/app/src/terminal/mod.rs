@@ -9,6 +9,7 @@ mod locale;
 mod path;
 #[cfg(unix)]
 mod prompt;
+pub(crate) mod ui;
 use crate::{ApplicationHandle, CurrentSession};
 pub use bridge::{BridgeReply, BridgeRequest, client};
 use serde::{Deserialize, Serialize};
@@ -79,7 +80,7 @@ pub(super) struct TerminalSession {
     library_tasks: TaskTracker,
     library_capacity: Arc<tokio::sync::Semaphore>,
     assistant: assistant::State,
-    editor: assistant::Editor,
+    ui: ui::Broker,
     commands: commands::Commands,
     current: CurrentSession,
     client: String,
@@ -126,7 +127,7 @@ pub struct Frame {
     pub problem: Option<String>,
     pub destination: Option<String>,
     pub closed: bool,
-    pub editor: Option<assistant::EditorRequest>,
+    pub ui: Option<ui::Request>,
     pub command: Option<commands::CommandRequest>,
 }
 /// Holds terminal-start admission through workspace retirement; independent pane
@@ -279,7 +280,7 @@ impl Manager {
             library_tasks: self.tasks.clone(),
             library_capacity: Arc::new(tokio::sync::Semaphore::new(2)),
             assistant: assistant::State::new(history_key.as_deref()),
-            editor: assistant::Editor::default(),
+            ui: ui::Broker::default(),
             commands: commands::Commands::default(),
             current,
             client,
@@ -425,7 +426,7 @@ impl Manager {
             || frame.next != cursor
             || frame.closed
             || frame.problem.is_some()
-            || frame.editor.is_some()
+            || frame.ui.is_some()
             || frame.command.is_some()
         {
             return Ok(frame);
@@ -458,7 +459,7 @@ impl Manager {
             problem: out.problem.clone(),
             destination: out.destination.clone(),
             closed: terminal.finished.is_cancelled(),
-            editor: terminal.editor.peek(),
+            ui: terminal.ui.peek(),
             command: terminal.commands.peek(),
         }
     }
@@ -491,7 +492,7 @@ impl Manager {
             .finish(request, error);
         Ok(())
     }
-    pub fn editor_reply(
+    pub fn ui_reply(
         &self,
         id: &str,
         generation: &str,
@@ -500,7 +501,7 @@ impl Manager {
         result: serde_json::Value,
     ) -> io::Result<()> {
         self.owned(id, generation, client)?
-            .editor
+            .ui
             .finish(request, result);
         Ok(())
     }

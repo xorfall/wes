@@ -35,6 +35,15 @@ impl std::fmt::Debug for BoundDescribe {
     }
 }
 impl BoundDescribe {
+    /// Payload-independent workflow information for a caller who may read this source.
+    /// It is meaningful only after successful completion; never inspect private result data.
+    pub fn public_completion(&self) -> &'static str {
+        if self.request.out.is_some() {
+            "Description completed, including the requested export. Its result remains private. Review the saved draft in /spec and explicitly share that draft before using MCP spec_list/spec_read."
+        } else {
+            "Description completed. Its result remains private. Review the saved draft in /spec and explicitly share that draft before using MCP spec_list/spec_read. No export was requested."
+        }
+    }
     pub(crate) fn bind(
         task: MetaTask,
         service: Option<Arc<dyn DescribeService>>,
@@ -86,7 +95,16 @@ impl BoundDescribe {
     pub(crate) fn execute(self, cancellation: CancellationToken) -> ExecutionFuture {
         Box::pin(async move {
             match self.service.describe(self.request, cancellation).await {
-                Ok(value) => Outcome::Produced(value),
+                // Privacy is the operation contract, independent of which host implements
+                // conversion. Host output cannot implicitly declassify this artifact.
+                Ok(value) => Outcome::Produced(
+                    value.with_provenance(
+                        value
+                            .provenance()
+                            .clone()
+                            .with_policy(&wes_core::flow::FlowPolicy::default().private()),
+                    ),
+                ),
                 Err(InvocationError::Failed(error)) => Outcome::Failed(error),
                 Err(InvocationError::Cancelled) => Outcome::Cancelled(
                     RuntimeCode::Cancelled

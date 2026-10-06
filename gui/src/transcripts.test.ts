@@ -51,5 +51,5 @@ it("marks gaps even after a final state overtakes lost output and clears transie
   state = apply(state, { event: "conversation", node: "n", run: "r", active: false });
   state = apply(state, { event: "output-gap" });
   expect(state.nodes[0]?.outputLost).toBe(true);
-  expect(apply(state, { event: "session", generation: "other" })).toEqual(emptyWorkspace);
+  expect(apply(state, { event: "session", workspace: null, generation: "other" })).toEqual(emptyWorkspace);
 });

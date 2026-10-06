@@ -31,6 +31,7 @@ fn tool(name: &str, description: &str, mut properties: Value, required: &[&str])
             | "spec_read"
             | "spec_save"
             | "view_authoring"
+            | "view_toolchain"
     ) {
         properties["workspace"] = json!({"type":"string","description":if explicit_workspace {"Explicit target workspace name, including the originating workspace. Use workspace_context or workspace_open to obtain it."} else {"Joined workspace name; omit for your originating workspace."}});
     }
@@ -57,7 +58,9 @@ fn build_tools() -> Value {
     let revision = json!({"type":"string","pattern":"^[0-9a-f]{64}$"});
     let wait = json!({"type":"integer","minimum":0,"maximum":1000,"default":0,"description":"Return when ready/failed or after this many ms; an open stream can be ready without ending."});
     json!({"tools":[
-        tool("view_authoring","Read current View authoring guidance, actual SDK declarations, theme roles, layout sizing/placement rules and builtin layouts, or a complete starter. No repository checkout required. Read overview first, then sdk/theme/layout before coding; readonly, no files, builds, installs or provider calls.",json!({"topic":{"type":"string","enum":["overview","sdk","theme","layout","examples"],"default":"overview"}}),&[]),
+        tool("view_authoring","Read current View authoring guidance, actual SDK declarations, theme roles, layout sizing/placement rules and builtin layouts, or a complete starter. No repository checkout required. Read overview and types first, then sdk/theme/layout before coding; readonly, no files, builds, installs or provider calls.",json!({"topic":{"type":"string","enum":["overview","sdk","theme","layout","examples","types"],"default":"overview"}}),&[]),
+        tool("view_toolchain","Readonly inventory of the Wes backend host's embedded View compiler sources, native validator and Node presence, with repository-free export/setup instructions. Not the agent terminal or selected environment. Does not execute versions, install, export, compile or grant filesystem access.",json!({}),&[]),
+        tool("view_render_status","Read drawing acknowledgements for one public live ViewInstance by binding or node ID (optional $) on the originating connected UI document. No mounting, source execution, observation changes, input/pixels/console bodies or cross-window guarantees. Current draw acknowledgement proves delivery, not visual correctness; nested members are separate, linked-input freshness is unverified. No UI means unverified.",json!({"name":{"type":"string","maxLength":256}}),&["name"]),
         tool("spec_list","List saved API draft revisions explicitly shared by the user in /spec. Home-wide, not workspace-local; no unsaved editor buffers. Default page 50, oldest first.",json!({"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100}}),&[]),
         tool("spec_read","Read a shared saved API draft revision (source up to 64 KiB), exact-text validation and evidence status. evidence:true includes provenance. Diagnostics pages contain up to 100 entries; diagnostics_offset selects the page. Unsaved editor changes are not included.",json!({"key":key,"revision":revision,"evidence":{"type":"boolean"},"diagnostics_offset":{"type":"integer","minimum":0}}),&["key","revision"]),
         tool("spec_save","Save up to 64 KiB of edited API draft text against its exact latest revision. Returns the saved revision and validation, including problems; no import, API call, merge or UI buffer replacement. User must share this draft in /spec. Stale saves fail. After uncertain replies list/read before retrying.",json!({"key":key,"revision":revision,"text":string}),&["key","revision","text"]),
@@ -67,7 +70,7 @@ fn build_tools() -> Value {
         tool("layout_read","Read connected UI pane IDs and workspace tabs, without drafts or result bodies. Use before tab_open; UI must be connected.",json!({}),&[]),
         tool("tab_open","Open a joined workspace in an explicit existing wes pane. Same workspace/pane is reused. Keeps focus unless activate=true; does not rebind the terminal. Read layout after an uncertain reply.",json!({"pane":string,"activate":{"type":"boolean"}}),&["pane"]),
         tool("workspace_context","Read the attached workspace, current environment token, available providers. Start here; reuse context until it changes.",json!({}),&[]),
-        tool("help","Discover provider operations or a meta command. No execution. depth:1..3 includes descendant signatures in one bounded read (128 entries, 64 KiB); choose a narrower path if too large. Use command import with tail [spec] for subcommand parameters. For calculation functions use command calc with tail [iter.matches] (or another listed operation): signatures, returns, behavior and examples.",json!({"provider":string,"command":string,"tail":{"type":"array","items":{"type":"string"}},"depth":{"type":"integer","minimum":0,"maximum":3,"default":0}}),&[]),
+        tool("help","Discover provider operations or a meta command. No execution. depth:1..3 includes descendant signatures in one bounded read (128 entries, 64 KiB); choose a narrower path if too large. Use command import with tail [openapi] for OpenAPI JSON/YAML or [spec] for a ready Wes descriptor; both require endpoint and exactly one of file/url. For calculation functions use command calc with tail [iter.matches] (or another listed operation): signatures, returns, behavior and examples.",json!({"provider":string,"command":string,"tail":{"type":"array","items":{"type":"string"}},"depth":{"type":"integer","minimum":0,"maximum":3,"default":0}}),&[]),
         tool("values_list","List current public materialized values without rerunning producers.",json!({}),&[]),
         tool("value_read","Read an existing public data result by binding name or node ID, with an optional leading $ (e.g. total, $total, id1005, $id1005). No new cells or reruns. Error-output references are not data; use cell_read for errors. Omit selection options for full value (8 MiB). select is a JSON Pointer; offset/limit page a selected list. shape_only returns kind/length; typed:true adds the schema. Selected responses wrap value and optional page; 64 KiB budget. typed preserves scalar kinds. After stream cancellation, returns {status:stopped,source,run,value}; value contains the usual response and is a last observation, not a current calc input. Use calc for filtering/aggregation.",json!({"name":string,"typed":{"type":"boolean"},"select":{"type":"string","maxLength":2048,"description":"JSON Pointer, e.g. /body/items/0; empty selects root. Record keys and list indices only."},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":"List page size; default 50 when paging."},"shape_only":{"type":"boolean","description":"Metadata only; cannot combine with offset/limit."}}),&["name"]),
         tool("validate","Check source syntax and assistant admission only. Does not execute or guarantee type/runtime success.",json!({"source":string}),&["source"]),
@@ -387,7 +390,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            20
+            22
         );
         let advertised = tools();
         let pane = advertised["tools"]

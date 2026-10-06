@@ -651,6 +651,9 @@ impl Workspace {
     pub fn importer_names(&self) -> impl Iterator<Item = &str> {
         self.importers.names()
     }
+    pub fn importer_metadata(&self) -> &IndexMap<String, crate::imports::ImporterMetadata> {
+        self.importers.metadata()
+    }
     pub fn importer_parameters(&self) -> &IndexMap<String, Vec<wes_core::capability::Parameter>> {
         self.importers.parameters()
     }

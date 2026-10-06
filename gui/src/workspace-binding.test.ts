@@ -73,7 +73,7 @@ it("routes commands, results, traces, history and terminals to their owner with 
   for (const engine of engines) {
     engine.listen(() => {}, () => {});
     const stream = Events.all.get(`/events?${new URLSearchParams({ workspace: engine.binding! })}`)!;
-    stream.emit({ event: "session", generation: `g-${encodeURIComponent(engine.binding!)}` });
+    stream.emit({ event: "session", workspace: engine.binding!, generation: `g-${encodeURIComponent(engine.binding!)}` });
     stream.emit({ event: "environments", managed: true, default: engine.binding, enabled: {}, credentials: {}, revisions: {}, providers: {}, clients: {} });
     await engine.submitComposed("same-cell", ":calc 1");
     await engine.fetch("same-result");

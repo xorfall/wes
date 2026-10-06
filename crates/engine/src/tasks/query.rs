@@ -366,7 +366,7 @@ impl BoundQuery {
                                 target.clone(),
                                 self.catalogue(workspace)?.as_ref(),
                             )
-                            .with_importers(workspace.importer_parameters())
+                            .with_importers(workspace.importer_metadata())
                             .map_err(Failure::Session)?,
                         ));
                     }
@@ -968,11 +968,19 @@ pub(super) fn importer_help(
     parameters: &[wes_core::capability::Parameter],
     token: &CancellationToken,
 ) -> Outcome {
-    importer_help_command(name, parameters, MetaCommand::Import, token)
+    importer_help_command(
+        name,
+        &crate::imports::ImporterMetadata {
+            parameters: parameters.to_vec(),
+            ..Default::default()
+        },
+        MetaCommand::Import,
+        token,
+    )
 }
 pub(super) fn importer_help_command(
     name: &str,
-    parameters: &[wes_core::capability::Parameter],
+    metadata: &crate::imports::ImporterMetadata,
     command: MetaCommand,
     token: &CancellationToken,
 ) -> Outcome {
@@ -990,7 +998,7 @@ pub(super) fn importer_help_command(
         let mut usage = format!(":{path}");
         let mut rows = vec![];
         let common = command.spec(&[]);
-        for parameter in parameters.iter().chain(common.parameters.iter()) {
+        for parameter in metadata.parameters.iter().chain(common.parameters.iter()) {
             let shape = budget.shape(&parameter.shape)?;
             // Structured type data and the human usage spelling are separate projections.
             // shape() already bounded depth/work/bytes before formatting the spelling.
@@ -1009,7 +1017,10 @@ pub(super) fn importer_help_command(
         }
         Ok::<_, Failure>(fields([
             ("path", budget.text(&path)?),
-            ("summary", budget.text(common.summary)?),
+            (
+                "summary",
+                budget.text(metadata.summary.unwrap_or(common.summary))?,
+            ),
             (
                 "invocation",
                 fields([
@@ -1017,6 +1028,28 @@ pub(super) fn importer_help_command(
                     ("usage", budget.text(&usage)?),
                     ("parameters", Data::List(rows)),
                 ]),
+            ),
+            (
+                "requirements",
+                Data::List(
+                    metadata
+                        .exactly_one
+                        .iter()
+                        .map(|keys| {
+                            fields([
+                                ("kind", Data::Text("exactly_one".into())),
+                                (
+                                    "arguments",
+                                    Data::List(
+                                        keys.iter()
+                                            .map(|key| Data::Text(key.as_str().into()))
+                                            .collect(),
+                                    ),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
             ),
             ("children", Data::List(vec![])),
         ]))
@@ -1207,8 +1240,19 @@ fn describe(
     budget.step()?;
     let mut path = String::new();
     budget.joined(capability.path.iter().map(String::as_str), " ", &mut path)?;
+    let command = format!("{} {}", provider.name(), path);
+    let mut usage = command.clone();
     let mut parameters = vec![];
     for parameter in &capability.parameters {
+        let placeholder = format!("{}:<{}>", parameter.name, parameter.shape);
+        budget.append(
+            &mut usage,
+            &if parameter.required {
+                format!(" {placeholder}")
+            } else {
+                format!(" [{placeholder}]")
+            },
+        )?;
         budget.step()?;
         parameters.push(fields([
             ("name", budget.text(&parameter.name)?),
@@ -1232,6 +1276,9 @@ fn describe(
     }
     Ok(fields([
         ("provider", budget.text(provider.name())?),
+        ("command", budget.text(&command)?),
+        ("usage", budget.text(&usage)?),
+        ("usageNote", budget.text("Angle brackets are placeholders, not literal argument values; brackets mark optional arguments. Supply real values or existing $references. Showing help never calls the operation.")?),
         ("capability", Data::Text(path.into())),
         ("summary", budget.text(&capability.summary)?),
         (

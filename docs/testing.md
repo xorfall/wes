@@ -58,6 +58,7 @@ cargo build -p wes --locked
 (cd tools/describe && go build -o wes-extract ./cmd/extract)
 python3 examples/quickstart/check.py
 python3 examples/api-import/readme/check.py
+python3 examples/openapi-import/check.py
 python3 examples/editable-api-draft/check.py
 python3 examples/schema-provenance/check.py
 python3 examples/api-workflow/check.py

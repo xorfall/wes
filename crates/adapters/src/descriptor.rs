@@ -27,7 +27,7 @@ type Fields = IndexMap<String, Data>;
 pub struct Reading {
     pub description: ProviderDescription,
     pub invoker: HttpInvoker,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<wes_engine::imports::ImportWarning>,
 }
 
 /// Reads the current explicit contract, bounded to 1 MiB / 20,000 JSON nodes.

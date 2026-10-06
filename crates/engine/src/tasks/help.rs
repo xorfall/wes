@@ -18,7 +18,8 @@ use wes_language::{
 pub struct BoundHelp {
     target: QueryTarget,
     provider: Option<Arc<ProviderDescription>>,
-    importer: Option<(String, Vec<wes_core::capability::Parameter>)>,
+    importer: Option<(String, crate::imports::ImporterMetadata)>,
+    available_importers: Vec<(String, Option<&'static str>)>,
 }
 impl BoundHelp {
     pub(crate) fn new(target: QueryTarget, catalogue: &Catalogue) -> Self {
@@ -30,12 +31,17 @@ impl BoundHelp {
             target,
             provider,
             importer: None,
+            available_importers: vec![],
         }
     }
     pub(crate) fn with_importers(
         mut self,
-        parameters: &indexmap::IndexMap<String, Vec<wes_core::capability::Parameter>>,
+        parameters: &indexmap::IndexMap<String, crate::imports::ImporterMetadata>,
     ) -> Result<Self, &'static str> {
+        self.available_importers = parameters
+            .iter()
+            .map(|(name, metadata)| (name.clone(), metadata.summary))
+            .collect();
         if let QueryTarget::Command(path) = &self.target
             && path.first().is_some_and(|head| head == "import")
             && ((path.len() == 2 && !matches!(path[1].as_str(), "plan" | "apply"))
@@ -88,7 +94,7 @@ impl BoundHelp {
                 ),
             };
         }
-        let data = match &self.target {
+        let mut data = match &self.target {
             QueryTarget::Root => fields([
                 ("path", text("")),
                 (
@@ -119,6 +125,21 @@ impl BoundHelp {
                 );
             }
         };
+        if let QueryTarget::Command(path) = &self.target
+            && (path == &["import"] || path == &["import", "plan"])
+            && let Data::Record(record) = &mut data
+            && let Some(Data::List(children)) = record.get_mut("children")
+        {
+            children.extend(self.available_importers.iter().map(|(name, summary)| {
+                fields([
+                    ("name", text(name)),
+                    (
+                        "summary",
+                        text(summary.unwrap_or("Read importer help for required arguments.")),
+                    ),
+                ])
+            }));
+        }
         Outcome::Produced(help_value(data))
     }
 }
@@ -168,7 +189,7 @@ pub(crate) fn command_help(path: &[String]) -> Data {
         return fields([
             ("path", text("errors")),
             ("summary", text("Codes describe causes; execution state is separate. Inspect nested causes/issues for provider and contract failures.")),
-            ("families", Data::List([("CAL", "Calculation syntax, types, values and budgets"), ("PAR", "Command parsing"), ("CMD", "Command arguments and explicit scope acknowledgement"), ("RES", "Command/target resolution"), ("TYP", "Type/contract validation; TYP000 is successful validation, TYP005 reports a violated constraint"), ("RUN", "Node execution and output availability"), ("ENG", "Engine planning/authority"), ("STO", "Workspace/storage authority"), ("ENV", "Environment/provider binding")].into_iter().map(|(code, meaning)| fields([("code",text(code)),("meaning",text(meaning))])).collect())),
+            ("families", Data::List([("CAL", "Calculation syntax, types, values and budgets"), ("PAR", "Command parsing"), ("CMD", "Command arguments and explicit scope acknowledgement"), ("RES", "Command/target resolution"), ("TYP", "Type/contract validation; TYP000 is successful validation, TYP005 reports a violated constraint"), ("RUN", "Node execution and output availability"), ("ENG", "Engine planning/authority"), ("STO", "Workspace/storage authority"), ("ENV", "Environment/provider binding"), ("IMP", "Import admission and advisory warnings; help import <kind> describes required inputs"), ("DSC", "API documentation conversion")].into_iter().map(|(code, meaning)| fields([("code",text(code)),("meaning",text(meaning))])).collect())),
             ("codes", Data::List(wes_language::calc::diagnostics::CODES.iter().map(|(code,meaning,fix)| fields([("code",text(*code)),("meaning",text(*meaning)),("fix",text(*fix))])).collect())),
         ]);
     }
@@ -494,7 +515,7 @@ fn describe(spec: &CommandSpec) -> Data {
                     ":import spec file:\"/path/service.json\" as:api",
                     ":import process bin:\"/bin/echo\" as:echo",
                 ],
-                "Choose an importer from :list importers. Importer-specific required arguments depend on that importer; use file: or url: for spec, bin: for process.",
+                "Choose an importer from :list importers. Importer-specific required arguments depend on that importer; use file: or url: plus endpoint: for spec/openapi, bin: for process.",
             ),
             "import plan" => (
                 &[
@@ -578,7 +599,7 @@ fn text(value: impl Into<String>) -> Data {
 pub fn help_query(
     call: &wes_language::Call,
     catalogue: &Catalogue,
-    importers: &indexmap::IndexMap<String, Vec<wes_core::capability::Parameter>>,
+    importers: &indexmap::IndexMap<String, crate::imports::ImporterMetadata>,
     token: &CancellationToken,
 ) -> Result<Value, wes_language::Diagnostic> {
     let target = wes_language::targets::resolve(call, true, catalogue)?;
@@ -605,7 +626,7 @@ pub fn help_query(
 pub fn help_tree(
     call: &wes_language::Call,
     catalogue: &Catalogue,
-    importers: &indexmap::IndexMap<String, Vec<wes_core::capability::Parameter>>,
+    importers: &indexmap::IndexMap<String, crate::imports::ImporterMetadata>,
     token: &CancellationToken,
     depth: u8,
 ) -> Result<Value, wes_language::Diagnostic> {
@@ -623,7 +644,7 @@ pub fn help_tree(
     fn expand(
         target: QueryTarget,
         catalogue: &Catalogue,
-        importers: &indexmap::IndexMap<String, Vec<wes_core::capability::Parameter>>,
+        importers: &indexmap::IndexMap<String, crate::imports::ImporterMetadata>,
         token: &CancellationToken,
         depth: u8,
         count: &mut usize,

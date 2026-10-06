@@ -16,6 +16,9 @@ mod sequential;
 use arguments::{Arguments, USAGE, arguments};
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Some(code) = wes::view_toolchain::entry() {
+        return ExitCode::from(code);
+    }
     if let Some(code) = wes::terminal::assistant::entry().await {
         return ExitCode::from(code);
     }

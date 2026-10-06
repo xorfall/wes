@@ -117,7 +117,8 @@ pub(super) async fn list(
     let result = perform(terminal, app, Request::ListDrafts).await?;
     let drafts = result["drafts"].as_array().expect("library drafts");
     Ok(
-        json!({"drafts":drafts.iter().skip(offset).take(limit).collect::<Vec<_>>(),"offset":offset,"total":drafts.len(),"scope":"shared saved API drafts; unsaved editor text is not included"}),
+        json!({"drafts":drafts.iter().skip(offset).take(limit).collect::<Vec<_>>(),"offset":offset,"total":drafts.len(),"scope":"shared saved API drafts; unsaved editor text is not included",
+            "visibility":"Only drafts explicitly shared by the user in /spec appear. An empty list does not prove no drafts exist. Source access and ownership do not grant draft access; grants expire on backend restart."}),
     )
 }
 fn project(

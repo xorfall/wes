@@ -152,6 +152,7 @@ fn max_bytes() -> usize {
 pub(super) struct Projection {
     capacity: Option<Arc<str>>,
     pub generation: String,
+    pub workspace: Option<String>,
     pub frames: BTreeMap<String, Arc<str>>,
     pub order: Vec<String>,
     pub nodes: BTreeSet<String>,
@@ -199,6 +200,7 @@ impl Projection {
         Self {
             capacity: None,
             generation: generation.into(),
+            workspace: None,
             frames: BTreeMap::new(),
             order: vec![],
             nodes: BTreeSet::new(),
@@ -235,7 +237,7 @@ impl Projection {
         let mut output = vec![];
         if previous.is_none() {
             output.push(
-                json!({"event":"session", "generation":self.generation,
+                json!({"event":"session", "generation":self.generation,"workspace":self.workspace,
                     "cells": self.frames.keys().filter_map(|key| key.strip_prefix("cell:")).collect::<Vec<_>>()})
                     .to_string()
                     .into(),
@@ -338,6 +340,7 @@ pub(super) fn build(
     let mut out = Projection {
         capacity: None,
         generation,
+        workspace: Some(workspace.clone()),
         frames: BTreeMap::new(),
         order: vec![],
         nodes: BTreeSet::new(),
@@ -1204,6 +1207,7 @@ mod tests {
      {
         let mut old = Projection {
             capacity: None,
+            workspace: None,
             generation: "one".into(),
             frames: BTreeMap::new(),
             order: vec![],

@@ -169,7 +169,7 @@ pub struct SourceKey {
 }
 impl SourceKey {
     pub fn new(kind: &str, location: &str) -> Result<Self, EnvironmentError> {
-        if !matches!(kind, "spec" | "process" | "docker" | "builtin")
+        if !matches!(kind, "spec" | "openapi" | "process" | "docker" | "builtin")
             || (kind == "builtin" && !matches!(location, "sh" | "http" | "docker"))
             || (kind == "docker" && !location.starts_with('/'))
             || location.is_empty()

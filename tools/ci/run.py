@@ -36,7 +36,7 @@ def commands(suite, plan, model):
         return [(ROOT, ["node", "--test", "tools/view-package/compiler.test.mjs"])]
     if suite == "examples":
         scripts = ["quickstart", "api-import/readme", "editable-api-draft", "schema-provenance",
-                   "api-workflow", "prometheus-workspace", "terminal", "assistant", "view-packages", "view-instances"]
+                   "api-workflow", "prometheus-workspace", "terminal", "assistant", "view-packages", "view-instances", "openapi-import"]
         result = []
         for name in scripts:
             argv = ["python3", f"examples/{name}/check.py"]

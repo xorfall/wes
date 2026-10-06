@@ -8,6 +8,7 @@ import {parseExactJson,stringifyExactJson} from "../../exact-json";
 import {frameHeight} from "../layout";
 import type {Mode} from "../../presentation/types";
 import {LatestDelivery} from "./delivery";
+import {RenderHost,RenderObservationContext,type RenderError} from "../../view-render-status";
 import {frameDocument,type ViewAsset} from "./document";
 import {currentTheme,followTheme} from "./theme";
 import {retainAsset} from "./assets";
@@ -15,7 +16,7 @@ import {MessageRate} from "./message-rate";
 import fonts from "../../surface/fonts.css?inline";
 import authoring from "@wes/view-sdk/authoring.json";
 import type {PresentationNode} from "../../presentation/types";
-interface Model {input:unknown;identity?:string;path:string;slots:Readonly<Record<string,readonly PresentationNode[]>>;mode:Mode;coordinated:boolean}
+interface Model {input:unknown;identity?:string;inputRevision?:string;path:string;slots:Readonly<Record<string,readonly PresentationNode[]>>;mode:Mode;coordinated:boolean}
 interface InspectionSession { controller:InteractionController<unknown,unknown>; apply:(message:Record<string,unknown>)=>boolean }
 interface InspectionOutlet { selected?:string; target:HTMLElement|null; select:(key:string|undefined)=>void }
 const InspectionContext=createContext<InspectionOutlet|undefined>(undefined);
@@ -37,7 +38,7 @@ export function externalModule(asset:ViewAsset):ValueViewModule {
       try{decodeContract(asset.definition,asset.definition.input,data,true,type);return true;}catch{return false;}
     },
     present(input,host){const data=decodeContract(asset.definition,asset.definition.input,input.data,true,input.type);host.spend(8);
-      return {model:{input:data,identity:input.instanceKey,path:input.path,slots:input.slots??{},mode:input.context.mode,coordinated:input.coordinated??false} satisfies Model,children:Object.values(input.slots??{}).flat(),ownLines:8,summary:[{text:asset.definition.name,tone:"dim"}]};},
+      return {model:{input:data,identity:input.instanceKey,inputRevision:input.inputRevision,path:input.path,slots:input.slots??{},mode:input.context.mode,coordinated:input.coordinated??false} satisfies Model,children:Object.values(input.slots??{}).flat(),ownLines:8,summary:[{text:asset.definition.name,tone:"dim"}]};},
     Component:props=><ExternalView key={(props.model as Model).identity} {...props} module={module} asset={asset}/>,
   };return module;
 }
@@ -74,6 +75,16 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const host=useContext(InstanceInteractionHost),hostRef=useRef(host);hostRef.current=host;
   const rebindShared=useRef<()=>void>();
   useLayoutEffect(()=>rebindShared.current?.(),[host]);
+  // Delivery receipts cover only the primary canvas of a live frame entry; inspection mirrors and
+  // ordinary value renderers stay unobserved. Receipts carry enums and labels, never payloads.
+  const observation=useContext(RenderObservationContext),registry=observation?.registry;
+  const scope=mirror?undefined:observation?.scope(model.path,model.identity);
+  const scopeKey=scope&&JSON.stringify([scope.workspace,scope.generation,scope.node,scope.instance]);
+  const renderHost=useRef<RenderHost>();
+  renderHost.current??=new RenderHost(()=>({digest:asset.definition.digest,mode:modelRef.current.mode}));
+  const observed=renderHost.current;
+  // Keyed by the scope's value: a new scope (e.g. generation) moves this host, keeping its identity.
+  useEffect(()=>scope&&registry?registry.register(scope,observed):undefined,[registry,scopeKey,observed]);
   const delivery=useRef<LatestDelivery>(),port=useRef<MessagePort>(),didLoad=useRef(false),connect=useRef<()=>void>();
   const theme=useRef(""),sendTheme=useRef<()=>void>();
   const [document,setDocument]=useState<string>(),[problem,setProblem]=useState<string>(),[height,setHeight]=useState(100),[boxes,setBoxes]=useState<readonly Box[]>([]);
@@ -84,7 +95,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   useEffect(()=>{
     if(!box.current)return;
     theme.current=currentTheme(box.current!);
-    let closed=false;void frameDocument(asset,theme.current,fonts).then(doc=>{if(!closed)setDocument(doc);}).catch(()=>{if(!closed)setProblem("View assets could not be opened safely.");});
+    let closed=false;void frameDocument(asset,theme.current,fonts).then(doc=>{if(!closed)setDocument(doc);}).catch(()=>{if(!closed){setProblem("View assets could not be opened safely.");observed.failed("assets_unavailable");}});
     return ()=>{closed=true;};
   },[asset]);
   useEffect(()=>box.current?followTheme(box.current,css=>{theme.current=css;sendTheme.current?.();}):undefined,[]);
@@ -99,7 +110,8 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     const detachShared=()=>{closeShared?.();closeShared=undefined;};
     const attachShared=()=>{detachShared();if(!closed&&!failed&&controller&&remote)closeShared=hostRef.current?.(modelRef.current.path,remote,controller);};
     rebindShared.current=attachShared;
-    const fail=(message:string)=>{if(closed||failed)return;failed=true;setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
+    observed.restart();
+    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
     const send=(value:unknown)=>{if(closed||failed)return;const text=stringifyExactJson(value);if(text.length>limits.messageCharacters)throw new Error("Message budget");channel.port1.postMessage(text);};
     const sync=()=>{if(controller)send({kind:"state",state:controller.committed(),revision:controller.committedRevision()});};
     const applyEvent=(message:Record<string,unknown>)=>{
@@ -115,7 +127,11 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
       if(!accepted){nextState=previousState;lastOutputs=previousOutputs;lastEvents=previousEvents;}
       return accepted;
     };
-    const d=new LatestDelivery(text=>channel.port1.postMessage(text),fail);delivery.current=d;port.current=channel.port1;
+    const d=new LatestDelivery(text=>channel.port1.postMessage(text),fail,undefined,{
+      label:()=>modelRef.current.inputRevision??null,
+      sent:(sequence,label)=>observed.delivered(sequence,label),
+      drawn:(sequence,label)=>observed.drew(sequence,label),
+    });delivery.current=d;port.current=channel.port1;
     channel.port1.onmessage=event=>{
       if(closed||failed)return;
       try{
@@ -140,6 +156,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
             remote={...module,outputSnapshot:()=>lastOutputs,outputEvents:()=>lastEvents};
             attachShared();setSession({controller,apply:applyEvent});sync();
           }
+          observed.ready();
         }else if(message.kind==="event"){
           const accepted=mirror ? mirror.apply(message) : applyEvent(message);
           if(!controller)throw new Error("Unexpected event before readiness");
@@ -161,17 +178,17 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
         }else if(message.kind==="shortcut"){
           if(!["Tab","Enter","r","R","m","M"].includes(String(message.key))||!(message.ctrl||message.meta))throw new Error();
           iframe.dispatchEvent(new KeyboardEvent("keydown",{key:String(message.key),ctrlKey:!!message.ctrl,metaKey:!!message.meta,shiftKey:!!message.shift,bubbles:true,cancelable:true}));
-        }else if(message.kind==="error")fail("View renderer failed. Close and reopen to retry.");else throw new Error("Unknown message");
-      }catch{fail("View communication rejected: invalid data or message rate exceeded. Close and reopen to retry.");}
+        }else if(message.kind==="error")fail("View renderer failed. Close and reopen to retry.","renderer_failed");else throw new Error("Unknown message");
+      }catch{fail("View communication rejected: invalid data or message rate exceeded. Close and reopen to retry.","communication_rejected");}
     };
     let connected=false;
-    sendTheme.current=()=>{if(connected&&!closed&&!failed){try{send({kind:"theme",css:theme.current});}catch{fail("View theme exceeds the message budget.");}}};
-    const loaded=()=>{if(closed||failed)return;if(connected){fail("View navigation is not permitted. Close and reopen to retry.");return;}connected=true;iframe.contentWindow!.postMessage("wes-view-connect","*",[channel.port2]);sendTheme.current?.();update();};
+    sendTheme.current=()=>{if(connected&&!closed&&!failed){try{send({kind:"theme",css:theme.current});}catch{fail("View theme exceeds the message budget.","delivery_failed");}}};
+    const loaded=()=>{if(closed||failed)return;if(connected){fail("View navigation is not permitted. Close and reopen to retry.","navigation_rejected");return;}connected=true;iframe.contentWindow!.postMessage("wes-view-connect","*",[channel.port2]);sendTheme.current?.();update();};
     connect.current=loaded;
     channel.port1.start();
     didLoad.current=false;iframe.srcdoc=document;
     return ()=>{closed=true;abort.abort();d.close();channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
-  },[document,asset,module,mirror]);
+  },[document,asset,module,mirror,observed]);
   return <><div ref={box} style={{position:"relative",maxWidth:"100%",minWidth:0,overflow:"hidden"}}>
     {problem&&<p className="mono-warn" role="status">{problem}</p>}
     {document&&<iframe ref={frame} onLoad={()=>{didLoad.current=true;connect.current?.();}} sandbox="allow-scripts" aria-label={asset.definition.name} style={{display:"block",border:0,width:"100%",height}}/>}

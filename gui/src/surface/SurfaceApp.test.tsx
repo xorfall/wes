@@ -110,7 +110,7 @@ beforeEach(async () => {
     }),
   });
   await act(async () => { tree = create(<SurfaceApp />); });
-  await emit({ event: "session", generation: "g1" });
+  await emit({ event: "session", workspace: null, generation: "g1" });
   await environment("DEV");
 });
 afterEach(() => {
@@ -385,7 +385,7 @@ it("retains editor draft context through prompt transfer, environment controls a
 
 it("refuses a stale prompt repeatedly without consuming it and requires explicit context review", async () => {
   await type(":calc 1");
-  await emit({ event: "session", generation: "g2" }); await environment("PROD");
+  await emit({ event: "session", workspace: null, generation: "g2" }); await environment("PROD");
   await act(async () => tree.root.findByType(Prompt).props.onSubmit(":calc 1"));
   await act(async () => tree.root.findByType(Prompt).props.onSubmit(":calc 1"));
   expect(submits()).toHaveLength(0);
@@ -459,14 +459,14 @@ it("does not treat a slash typed in an editor as screen navigation", async () =>
 it("retains a labelled observation during handle replacement and discards it on workspace change", async () => {
   act(() => tree.unmount());
   await act(async () => { tree = create(<OpenWindow route={{ node: "one", tab: "json" }} />); });
-  await emit({ event: "session", generation: "window-g1" }, created("one"), ready("one", "first"));
+  await emit({ event: "session", workspace: null, generation: "window-g1" }, created("one"), ready("one", "first"));
   expect(tree.root.findByType(OpenScreen).props.json).toContain("synthetic result");
   let finish!: (response: Response) => void;
   fetchValue.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await emit(ready("one", "second"));
   expect(tree.root.findByType(OpenScreen).props.json).toContain("synthetic result");
   expect(JSON.stringify(tree.toJSON())).toContain("Updating · previous result");
-  await emit({ event: "session", generation: "window-g2" }, { event: "workspace-context", name: "empty", saved: [] });
+  await emit({ event: "session", workspace: "empty", generation: "window-g2" }, { event: "workspace-context", name: "empty", saved: [] });
   await act(async () => finish(Response.json(value("late old result"))));
   expect(tree.root.findByType(OpenScreen).props.json).toBe("");
   expect(lineText(tree.root.findByType(OpenScreen).props.subject)).toContain("no result called one");
@@ -525,7 +525,7 @@ it.each([0, 1])("deletes reviewed work from session pane %s only through authori
 it("a same-session reconnect removes missed retired cells without revoking the terminal generation", async () => {
   await submit(":calc 1"); await accept("one");
   expect(session().props.model.cells).toHaveLength(1);
-  await emit({ event: "session", generation: "g1", cells: [] });
+  await emit({ event: "session", workspace: null, generation: "g1", cells: [] });
   expect(session().props.model.cells).toHaveLength(0);
 });
 
@@ -576,7 +576,7 @@ it("drops an old history walk on workspace replacement", async () => {
   await emit({ event: "planned", cell: "old", text: ":calc 11", nodes: [], restored: true });
   await type("unfinished old draft");
   await promptKey("ArrowUp");
-  await emit({ event: "session", generation: "g2" },
+  await emit({ event: "session", workspace: null, generation: "g2" },
     { event: "planned", cell: "new", text: ":calc 22", nodes: [], restored: true });
   await promptKey("ArrowDown");
   expect(prompts()[0]!.props.draft).toBe(":calc 11");
@@ -619,7 +619,7 @@ it("keeps an authoritative pre-execution refusal in the cell and retries it only
   expect(submits()).toHaveLength(1);
   // A transient notice being cleared and a same-generation reconnect cannot erase local refusal evidence.
   await from("/theme ink");
-  await emit({ event: "session", generation: "g1", cells: [] });
+  await emit({ event: "session", workspace: null, generation: "g1", cells: [] });
   expect(verdict()).toContain(reason);
   expect(submits()).toHaveLength(1);
   await act(async () => cell().props.actions.repeat(false));
@@ -779,7 +779,7 @@ it("uses complete HTTP decoding in a separate result window", async () => {
   act(() => tree.unmount());
   fetchValue.mockImplementation(async () => Response.json(httpValue("window body")));
   await act(async () => { tree = create(<OpenWindow route={{ node: "http-node", tab: "json" }} />); });
-  await emit({ event: "session", generation: "window-g1" }, created("http-node"), ready("http-node", "window-result"));
+  await emit({ event: "session", workspace: null, generation: "window-g1" }, created("http-node"), ready("http-node", "window-result"));
   expect(tree.root.findByType(OpenScreen).props.value).toEqual(httpValue("window body"));
   expect(tree.root.findAllByType("pre").some(pre => pre.children.join("").includes('"body": "d2luZG93IGJvZHk="'))).toBe(true);
   expect(submits()).toHaveLength(0);
@@ -846,7 +846,7 @@ it("preserves the captured environment when the returned draft is submitted from
 it("keeps a returned draft stale across editor round trips until explicit workspace review", async () => {
   await type(":calc 7");
   await act(async () => tree.root.findByType(Prompt).props.onGrow(":calc 7"));
-  await emit({ event: "session", generation: "g2" }); await environment("PROD");
+  await emit({ event: "session", workspace: null, generation: "g2" }); await environment("PROD");
   await act(async () => tree.root.findByType(EditScreen).props.onClose());
   expect(tree.root.findByType(Prompt).props.draft).toBe(":calc 7");
   await act(async () => tree.root.findByType(Prompt).props.onSubmit(":calc 7"));
@@ -1096,11 +1096,11 @@ it("retains aliases across workspace replacement and restores browser preference
   window.localStorage.getItem = key => saved.get(key) ?? null;
   await submit("/theme white");
   await submit("/alias twice = :calc { return 2 * (_); }");
-  await emit({ event: "session", generation: "other-workspace" });
+  await emit({ event: "session", workspace: null, generation: "other-workspace" });
   expect(prompts()[0]!.props.aliases).toEqual({ twice: ":calc { return 2 * (_); }" });
   act(() => tree.unmount());
   await act(async () => { tree = create(<SurfaceApp />); });
-  await emit({ event: "session", generation: "reopened" });
+  await emit({ event: "session", workspace: null, generation: "reopened" });
   await environment("DEV");
   expect(prompts()[0]!.props.aliases).toEqual({ twice: ":calc { return 2 * (_); }" });
   expect(tree.root.findByProps({ className: "wes-terminal surface-terminal surface-app" }).props["data-palette"]).toBe("white");
@@ -1175,7 +1175,7 @@ it("clears only the invoking viewport while retaining cells, pinned results and 
   expect(sessions[0]!.props.clearRequest).toEqual({ after: before[1].id, revision: 2 });
   expect(sessions[1]!.props.clearRequest).toEqual({ after: undefined, revision: 1 });
   expect(sessions[1]!.props.model.cells).toEqual([]);
-  await emit({ event: "session", generation: "new" });
+  await emit({ event: "session", workspace: null, generation: "new" });
   expect(tree.root.findAllByType(Session).every(item => item.props.clearRequest === undefined)).toBe(true);
 });
 
@@ -1263,7 +1263,7 @@ it("requires explicit context review after a secondary editor draft crosses a wo
   await from("/rsplit");
   await act(async () => prompts()[1]!.props.onDraft(":calc 9"));
   await act(async () => prompts()[1]!.props.onGrow(":calc 9"));
-  await emit({ event: "session", generation: "g2" }); await environment("PROD");
+  await emit({ event: "session", workspace: null, generation: "g2" }); await environment("PROD");
   await act(async () => tree.root.findByType(EditScreen).props.onClose());
   await act(async () => prompts()[1]!.props.onSubmit(":calc 9"));
   expect(submits()).toHaveLength(0);
@@ -1326,7 +1326,7 @@ it("persists terminal history identity with the open layout and retains it acros
   await act(async () => tree.unmount());
   expect(terminal).not.toHaveBeenCalled();
   await act(async () => { tree = create(<SurfaceApp />); });
-  await emit({ event: "session", generation: "g2" });
+  await emit({ event: "session", workspace: null, generation: "g2" });
   expect(tree.root.findByType(ShellTerminal).props.history).toBe(history);
   expect(terminal).not.toHaveBeenCalled();
 });
@@ -1372,7 +1372,7 @@ it("does not clear a queued command draft or publish its old error after workspa
   let closing!: Promise<void>;
   await act(async () => { closing = tree.root.findByType(ShellTerminal).props.onCommand("/close"); });
   await from("/rsplit");
-  await emit({ event: "session", generation: "replacement" });
+  await emit({ event: "session", workspace: null, generation: "replacement" });
   await act(async () => { finish(); await closing; });
   expect(prompts()[0]!.props.draft).toBe("/rsplit");
   expect(text()).not.toContain("Workspace changed; the pane change was discarded.");
@@ -1428,7 +1428,7 @@ it("includes acknowledged work from another session pane and refuses unknown spl
 it("never retargets a linked pane when the workspace generation changes and reuses a node ID", async () => {
   await emit(created("one"), { event: "planned", cell: "original", text: ":calc 1", nodes: ["one"], restored: true });
   await from("/rsplit related $one");
-  await emit({ event: "session", generation: "different-workspace" }, created("one"),
+  await emit({ event: "session", workspace: null, generation: "different-workspace" }, created("one"),
     { event: "planned", cell: "replacement", text: ":calc 2", nodes: ["one"], restored: true });
   expect(tree.root.findAllByType(ComponentPane)).toHaveLength(0);
   expect(text()).toContain("previous workspace session");
@@ -1576,7 +1576,7 @@ it("keeps terminal tab destinations within the issuing workspace", async () => {
   await paneSubmit("p1", "/tab xterm");
   const original = tree.root.findByType(ShellTerminal);
   await paneSubmit("p1", "/rsplitx other-work");
-  await emitWorkspace("other-work", { event: "session", generation: "g-other-work" }, env("PROD"));
+  await emitWorkspace("other-work", { event: "session", workspace: "other-work", generation: "g-other-work" }, env("PROD"));
   const api = vi.spyOn(Engine.prototype, "terminal").mockClear().mockResolvedValue({ target: null });
   await paneSubmit("p3", "/tab xterm pane:p2");
   expect(api).not.toHaveBeenCalled();
@@ -1605,7 +1605,7 @@ it("opens named workspaces without remounting existing prompts or terminals and 
   const originalPrompt = panePrompt("p1");
   await act(async () => originalPrompt.props.onDraft("unfinished original"));
   await paneSubmit("p1", "/bsplitx second");
-  await emitWorkspace("second", { event: "session", generation: "g-second" }, env("PROD"));
+  await emitWorkspace("second", { event: "session", workspace: "second", generation: "g-second" }, env("PROD"));
   expect(panePrompt("p1")).toBe(originalPrompt);
   expect(panePrompt("p1").props.draft).toBe("unfinished original");
   expect(tree.root.findByType(ShellTerminal)).toBe(shell);
@@ -1628,7 +1628,7 @@ it("opens named workspaces without remounting existing prompts or terminals and 
 it("inherits named ownership for screens, shells and empty splits and preserves it on close", async () => {
   mockWorkspaceOpen();
   await paneSubmit("p1", "/rsplit second");
-  await emitWorkspace("second", { event: "session", generation: "g-second" }, env("PROD"));
+  await emitWorkspace("second", { event: "session", workspace: "second", generation: "g-second" }, env("PROD"));
   await paneSubmit("p2", "/bsplit xterm");
   expect(tree.root.findByType(ShellTerminal).props.engine.binding).toBe("second");
   await act(async () => tree.root.findByType(ShellTerminal).props.onCommand("/lsplit /env"));
@@ -1652,7 +1652,7 @@ it("leaves the layout and draft usable after failed opens and ignores late opens
   let finish!: (response: Response) => void;
   open.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await paneSubmit("p1", "/rsplit delayed");
-  await emit({ event: "session", generation: "replacement" });
+  await emit({ event: "session", workspace: null, generation: "replacement" });
   await act(async () => finish(Response.json({ workspace: "delayed", generation: "g-delayed", identity: "identity-delayed" })));
   expect(tree.root.findByType(Split).props.state).toBe(before);
 });
@@ -1679,11 +1679,11 @@ it("opens a shared tab through the assistant bridge and preserves origin draft, 
   const originalPrompt = panePrompt("p1");
   await act(async () => originalPrompt.props.onDraft("unfinished user draft"));
   let reply: any;
-  await act(async () => { reply = await engine.assistantEditor.handle({ id: "tab-1", action: "tab", text: JSON.stringify({ workspace: "shared", pane: "p1", activate: false }), revision: null }); });
+  await act(async () => { reply = await engine.assistantUi.handle({ id: "tab-1", operation: { kind: "tab_open", workspace: "shared", pane: "p1", activate: false } }); });
   expect(reply.ok).toBe(true);
   expect(reply.layout.panes[0].tabs).toHaveLength(2);
   expect(tree.root.findByType(Split).props.state.panes[0].workspace).toBeUndefined();
-  await emitWorkspace("shared", { event: "session", generation: "g-shared" }, env("PROD"));
+  await emitWorkspace("shared", { event: "session", workspace: "shared", generation: "g-shared" }, env("PROD"));
   const tab = (workspace: string) => tree.root.findAllByProps({ role: "tab" }).find(node => node.children.join("") === workspace)!;
   await act(async () => tab("shared").props.onClick({ stopPropagation() {} }));
   const visible = () => tree.root.findByProps({ "data-pane-id": "p1" }).findAllByProps({ className: "workspace-tab-view" }).find(view => !view.props.hidden)!;
@@ -1693,7 +1693,7 @@ it("opens a shared tab through the assistant bridge and preserves origin draft, 
   expect(visible().findByType(Prompt)).toBe(originalPrompt);
   expect(originalPrompt.props.draft).toBe("unfinished user draft");
   expect(tree.root.findByType(ShellTerminal)).toBe(shell);
-  await act(async () => { reply = await engine.assistantEditor.handle({ id: "tab-2", action: "tab", text: JSON.stringify({ workspace: "shared", pane: "p2", activate: false }), revision: null }); });
+  await act(async () => { reply = await engine.assistantUi.handle({ id: "tab-2", operation: { kind: "tab_open", workspace: "shared", pane: "p2", activate: false } }); });
   expect(reply.ok).toBe(false);
   expect(reply.error).toContain("session pane");
   expect(open.mock.calls.filter(([, options]) => JSON.parse(String(options.body)).name === "shared")).toHaveLength(2);
@@ -1706,7 +1706,7 @@ it("refuses a late assistant tab open when its target pane changed", async () =>
   let finish!: (response: Response) => void;
   open.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   let pending!: Promise<any>;
-  await act(async () => { pending = engine.assistantEditor.handle({ id: "late-tab", action: "tab", text: JSON.stringify({ workspace: "late", pane: "p1", activate: true }), revision: null }) as Promise<any>; });
+  await act(async () => { pending = engine.assistantUi.handle({ id: "late-tab", operation: { kind: "tab_open", workspace: "late", pane: "p1", activate: true } }) as Promise<any>; });
   const split = tree.root.findByType(Split);
   await act(async () => split.props.onChange({ ...split.props.state, panes: split.props.state.panes.map((pane: { id: string }) => pane.id === "p1" ? { ...pane, title: "changed target" } : pane) }));
   await act(async () => finish(Response.json({ workspace: "late", generation: "g-late", identity: "identity-late" })));
@@ -1778,7 +1778,7 @@ it("does not resolve at capacity or create a pane after failed or outdated resol
   let finish!: (value: unknown) => void;
   terminal.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await from("/rsplit xterm");
-  await emit({ event: "session", generation: "replacement" });
+  await emit({ event: "session", workspace: null, generation: "replacement" });
   await act(async () => finish({ target: null }));
   expect(tree.root.findAllByType(ShellTerminal)).toHaveLength(0);
   await from("/split 4");
@@ -1908,7 +1908,7 @@ it("rejects identity-less open replies before changing the layout", async () => 
 it("withdraws an old workspace controller until each changed binding has been confirmed", async () => {
   const open = mockWorkspaceOpen();
   await paneSubmit("p1", "/rsplit second");
-  await emitWorkspace("second", {event:"session",generation:"g-second"}, env("DEV"));
+  await emitWorkspace("second", { event: "session", workspace: "second", generation:"g-second"}, env("DEV"));
   expect(tree.root.findByProps({"data-pane-id":"p2"}).findAllByType(Session)).toHaveLength(1);
   const originPrompt = panePrompt("p1");
   for (const identity of ["replacement-second", "identity-second"]) {
@@ -1963,7 +1963,7 @@ it("restores a cell's source in its workspace window and withdraws retired or re
   expect(Events.all.has("/events?workspace=source-lab")).toBe(true);
   const source = ':import spec file:"/synthetic/spec.json" as:synthetic';
   const restore = () => emit({ event: "planned", cell: "import-cell", text: source, nodes: [], restored: true });
-  await emit({ event: "session", generation: "source-g1" }, { event: "workspace-context", name: "source-lab", saved: [] });
+  await emit({ event: "session", workspace: "source-lab", generation: "source-g1" }, { event: "workspace-context", name: "source-lab", saved: [] });
   await restore();
   expect(tree.root.findByType(SourceView).props.source).toBe(source);
   expect(fetchValue).not.toHaveBeenCalled();
@@ -1972,7 +1972,7 @@ it("restores a cell's source in its workspace window and withdraws retired or re
   expect(tree.root.findByType(SourceView).props.source).toBe("");
   expect(lineText(tree.root.findByType(PeekScreen).props.subject)).toContain("no cell called import-cell");
   await restore();
-  await emit({ event: "session", generation: "source-g2" });
+  await emit({ event: "session", workspace: "source-lab", generation: "source-g2" });
   expect(tree.root.findByType(SourceView).props.source).toBe("");
   await restore();
   await emit({ event: "workspace-closed", workspace: "source-lab" });
@@ -1987,7 +1987,7 @@ it("shows stale summaries only in the footer and follows the focused workspace",
   expect(tree.root.findAllByProps({ className: "session-note" })).toHaveLength(0);
   await paneSubmit("p1", "/bsplitx second");
   expect(footer()).toBe("");
-  await emitWorkspace("second", { event: "session", generation: "g-second" }, env("DEV"),
+  await emitWorkspace("second", { event: "session", workspace: "second", generation: "g-second" }, env("DEV"),
     created("second-a"), created("second-b"),
     { event: "node", constructionComplete: false, node: "second-a", state: "stale" }, { event: "node", constructionComplete: false, node: "second-b", state: "stale" });
   expect(footer()).toContain("~ 2 results stale   /stale");
@@ -2014,7 +2014,7 @@ it("opens the focused workspace graph from the header without changing drafts", 
   expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#graph/), "_blank");
   expect(tree.root.findAllByType(GraphScreen)).toHaveLength(0);
   await paneSubmit("p1", "/bsplitx graph-lab");
-  await emitWorkspace("graph-lab", { event: "session", generation: "graph-g1" }, env("DEV"));
+  await emitWorkspace("graph-lab", { event: "session", workspace: "graph-lab", generation: "graph-g1" }, env("DEV"));
   await press();
   expect(window.open).toHaveBeenLastCalledWith("#graph?workspace=graph-lab", "_blank");
   vi.mocked(window.open).mockReturnValueOnce(null);
@@ -2095,7 +2095,7 @@ it("keeps a wide view on its original node after rebinding and refuses a replace
   expect(text()).toContain("stays with the original node");
   await from("/tab $orders");
   expect(panes().panes[0].tabs[1].value.node).toBe("new-node");
-  await emit({ event: "session", generation: "g2" }, created("old-node", { name: "orders" }), ready("old-node", "replacement-handle"));
+  await emit({ event: "session", workspace: null, generation: "g2" }, created("old-node", { name: "orders" }), ready("old-node", "replacement-handle"));
   expect(tree.root.findAllByType(OpenScreen)).toHaveLength(0);
   expect(text()).toContain("previous workspace session");
   expect(submits()).toHaveLength(0);
@@ -2142,7 +2142,7 @@ it("resolves and completes only the issuing workspace even when aliases overlap"
   await emit(created("origin-node", { name: "orders" }), created("origin-only", { name: "originOnly" }),
     { event: "planned", cell: "origin-cell", text: ":calc 1 > orders", nodes: ["origin-node"], restored: true });
   await paneSubmit("p1", "/rsplitx second");
-  await emitWorkspace("second", { event: "session", generation: "g-second" }, created("second-node", { name: "orders" }),
+  await emitWorkspace("second", { event: "session", workspace: "second", generation: "g-second" }, created("second-node", { name: "orders" }),
     { event: "planned", cell: "second-cell", text: ":calc 2 > orders", nodes: ["second-node"], restored: true });
   expect(panePrompt("p2").props.variables).toEqual(["orders"]);
   await paneSubmit("p2", "/goto originOnly");

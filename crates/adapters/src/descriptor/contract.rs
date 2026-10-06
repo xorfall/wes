@@ -1,5 +1,6 @@
 //! Versioned contracts use the existing type-package language; server metadata has no authority.
 use super::*;
+use wes_engine::imports::{ImportWarning, ImportWarningKind};
 mod auth;
 mod information;
 use crate::http::explicit::{Argument, Operation, Response};
@@ -148,7 +149,19 @@ pub(super) fn read(
     let mut authentication = Vec::new();
     let mut safety_information = Vec::new();
     let mut selected_operations = BTreeSet::new();
-    for (op, raw) in doc.operations.into_iter().zip(raw_ops) {
+    let mut undocumented_authentication = 0;
+    // Evidence is advisory only: it cannot choose credentials or authorize execution.
+    let undocumented_auth: BTreeSet<&str> = doc
+        .source
+        .as_ref()
+        .and_then(|source| source.pointer("/provenance/entries"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["basis"] == "unknown")
+        .filter_map(|entry| entry["target"].as_str())
+        .collect();
+    for (index, (op, raw)) in doc.operations.into_iter().zip(raw_ops).enumerate() {
         let _ = (
             &op.evidence,
             &op.auth,
@@ -159,6 +172,12 @@ pub(super) fn read(
         let operation_key = op.path.join(" ");
         selected_operations.insert(operation_key.clone());
         let selection = auth::select(raw, &op.path, auth_selection.get(&operation_key))?;
+        if op.auth.is_empty()
+            && op.auth_options.is_none()
+            && undocumented_auth.contains(format!("#/operations/{index}/auth").as_str())
+        {
+            undocumented_authentication += 1;
+        }
         authentication.push(selection.information);
         let mut responses = BTreeMap::new();
         for (status, kind) in op.responses {
@@ -294,11 +313,21 @@ pub(super) fn read(
     {
         return Err(DescriptorError("auth selection names an unknown operation"));
     }
-    let mut warnings = builder.hazards();
+    let mut warnings: Vec<ImportWarning> = builder
+        .hazards()
+        .into_iter()
+        .map(|message| ImportWarning::new(ImportWarningKind::QueryCredential, message))
+        .collect();
     for info in &authentication {
         if info["state"] == "selection-required" {
-            warnings.push(format!("Authentication choice required for {}; select its schemes in environment bind.auth",info["operation"].as_array().unwrap().iter().filter_map(|v|v.as_str()).collect::<Vec<_>>().join(" ")));
+            warnings.push(ImportWarning::new(ImportWarningKind::AuthenticationChoice, format!("Authentication choice required for {}; select its schemes in environment bind.auth",info["operation"].as_array().unwrap().iter().filter_map(|v|v.as_str()).collect::<Vec<_>>().join(" "))));
         }
+    }
+    for _ in 0..undocumented_authentication {
+        warnings.push(ImportWarning::new(
+            ImportWarningKind::AuthenticationUndocumented,
+            "Authentication is not documented in the source; no credentials are attached.",
+        ));
     }
     let authentication = crate::codec::decode_json_preserving(
         &serde_json::to_vec(&authentication)
@@ -309,7 +338,7 @@ pub(super) fn read(
         },
     )
     .map_err(|_| DescriptorError("auth metadata exceeds budget"))?;
-    warnings.extend(doc.diagnostics);
+    warnings.extend(doc.diagnostics.into_iter().map(ImportWarning::from));
     let information = Data::Record(IndexMap::from([
         ("authentication".into(), authentication),
         ("safety".into(), Data::List(safety_information)),
@@ -339,7 +368,10 @@ pub(super) fn read(
     if mode == wes_engine::imports::ImportMode::Live {
         for secret in description.secrets() {
             if !matches!(credentials.lookup(secret), Ok(Some(_))) {
-                warnings.push(format!("credential '{secret}' is not available"));
+                warnings.push(ImportWarning::new(
+                    ImportWarningKind::CredentialUnavailable,
+                    format!("credential '{secret}' is not available"),
+                ));
             }
         }
     }

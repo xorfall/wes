@@ -13,6 +13,7 @@ mod sandbox_definitions;
 pub mod scenarios;
 pub mod startup;
 pub mod telemetry;
+pub mod view_toolchain;
 pub mod web;
 pub mod work_history;
 pub mod workspace_deletion;

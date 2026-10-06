@@ -2,7 +2,9 @@
   "bundle": {
     "resources": {
       "../../tools/describe/wes-extract": null,
-      "../../tools/describe/wes-extract.exe": "wes-extract.exe"
+      "../../tools/describe/wes-extract.exe": "wes-extract.exe",
+      "../../target/release/wes-view-build": null,
+      "../../target/release/wes-view-build.exe": "wes-view-build.exe"
     }
   }
 }

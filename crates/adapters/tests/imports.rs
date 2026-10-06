@@ -288,7 +288,7 @@ fn url_import_rejects_invalid_locations_and_conflicting_arguments_without_io() {
     let request = ImportRequest::new("spec".into(), None, arguments).unwrap();
     assert_eq!(
         importer.capture(&request, 1024).unwrap_err(),
-        ImportError::InvalidRecipe
+        ImportError::ArgumentChoice("file, url".into())
     );
 }
 
@@ -562,7 +562,7 @@ fn ready_descriptors_require_a_bound_endpoint_and_never_restore_retired_formats(
     for mode in [ImportMode::Live, ImportMode::Replay] {
         assert!(matches!(
             importer.build(&ImportSnapshot::new(unbound.clone(), ready.clone()), mode),
-            Err(ImportError::Input(message)) if message == "descriptor requires an explicit endpoint or environment bind.endpoint; documented servers are not execution destinations"
+            Err(ImportError::MissingArgument(key)) if key == "endpoint"
         ));
         let retired = ImportRecipe::new("spec/json/v1".into(), r#"{"provider":"old","base":"https://old.invalid","auth":{"secret":"token"},"capabilities":[{"path":["get"],"http":{"method":"GET","path":"/"}}]}"#.into()).unwrap();
         assert!(matches!(

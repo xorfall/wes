@@ -13,7 +13,7 @@ use wes_adapters::{
     codec::Limits,
     credentials::{CredentialLimits, MemoryCredentials},
     http::HttpConfig,
-    imports::{ProcessImporter, SpecImporter},
+    imports::{OpenApiImporter, ProcessImporter, SpecImporter},
     inventory::FileInventory,
     journal::Durability,
     process::{ProcessConfig, TerminalHandover, shell},
@@ -113,6 +113,7 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
     let environment_base = base.clone();
     let documents = Arc::new(crate::api_library::ApiLibrary::new(home.clone()));
     let spec_documents = documents.clone();
+    let openapi_compiler = documents.clone();
     let describe_service = documents.describe_service(base.clone());
     let sources = Arc::new(crate::data_home::sources::Sources::new(home.clone()));
     let spec_sources = sources.clone();
@@ -204,6 +205,7 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
                                 material.clone(),
                             ))
                             .with_documents(documents.clone())
+                            .with_openapi(documents.clone())
                             .with_archive(sources.clone());
                     match &docker_candidates {
                         Some(paths) => loader.with_docker_candidates(paths.clone()),
@@ -222,6 +224,10 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
                 ],
             )?;
             workspace.register_importer("spec".into(), spec.clone())?;
+            workspace.register_importer(
+                "openapi".into(),
+                Arc::new(OpenApiImporter::new(spec.clone(), openapi_compiler.clone())),
+            )?;
             workspace.register_importer("process".into(), process.clone())?;
             workspace.register_importer(
                 "docker".into(),

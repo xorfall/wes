@@ -1,12 +1,12 @@
 import { TerminalUnavailable } from "./terminal-errors";
-import type { EditorRequest } from "./assistant-editor";
+import type { UiRequest } from "./assistant-ui";
 export interface CommandRequest { id: string; text: string; environment?: string | null }
-export interface TerminalFrame { command?: CommandRequest | null; editor?: EditorRequest | null; start: number; next: number; data: string; exit: number | null; problem: string | null; closed: boolean }
+export interface TerminalFrame { command?: CommandRequest | null; ui?: UiRequest | null; start: number; next: number; data: string; exit: number | null; problem: string | null; closed: boolean }
 interface OutputSink {
   poll(cursor: number, signal: AbortSignal): Promise<TerminalFrame>;
   write(bytes: Uint8Array): Promise<void>;
   trimmed(): void;
-  editor(request: EditorRequest): Promise<void>;
+  ui(request: UiRequest): Promise<void>;
   command?(request: CommandRequest): Promise<void>;
   ended(exit: number | null): void;
   problem(message: string): void;
@@ -37,13 +37,14 @@ export async function terminalOutput(sink: OutputSink, signal: AbortSignal): Pro
       operation = "render output";
       if (bytes.length) await sink.write(bytes);
       if (signal.aborted) return;
-      // Editor acknowledgement can fail independently. Do not replay already parsed bytes.
+      // A UI acknowledgement can fail independently. Do not replay already parsed bytes; a
+      // repeated request is answered from the broker's reply cache, never performed again.
       cursor = frame.next;
       operation = "pane command acknowledgement";
       if (frame.command) await sink.command?.(frame.command);
       if (signal.aborted) return;
-      operation = "editor acknowledgement";
-      if (frame.editor) await sink.editor(frame.editor);
+      operation = "UI acknowledgement";
+      if (frame.ui) await sink.ui(frame.ui);
       if (signal.aborted) return;
       sink.connection();
       if (frame.problem) sink.problem(frame.problem);

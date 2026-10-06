@@ -13,6 +13,9 @@ pub struct ObservedCell {
 
 #[derive(Clone, Debug)]
 pub struct SessionObservation {
+    /// Present only for successfully completed current nodes. Never derived from Value data.
+    pub completion_notices:
+        std::collections::BTreeMap<crate::graph::NodeId, crate::tasks::CompletionNotice>,
     /// Read-only live evidence handle; each get captures independently of this metadata snapshot.
     pub traces: crate::trace::Traces,
     pub interactive_providers: std::collections::BTreeMap<Option<String>, Vec<String>>,
@@ -51,6 +54,7 @@ pub struct SessionObservation {
     pub types: Vec<String>,
     pub views: wes_views::Catalogue,
     pub importers: Vec<String>,
+    pub importer_metadata: indexmap::IndexMap<String, crate::imports::ImporterMetadata>,
     pub importer_parameters: indexmap::IndexMap<String, Vec<wes_core::capability::Parameter>>,
     pub log: LogSnapshot,
     pub values: Option<ValueSnapshot>,
@@ -98,6 +102,18 @@ impl SessionObservation {
 impl Actor {
     pub(super) fn observation(&self) -> SessionObservation {
         SessionObservation {
+            completion_notices: self
+                .workspace
+                .runtime()
+                .graph()
+                .nodes()
+                .filter(|node| node.state() == crate::graph::NodeState::Ready)
+                .filter_map(|node| {
+                    node.payload()
+                        .completion_notice()
+                        .map(|notice| (node.id().clone(), notice))
+                })
+                .collect(),
             traces: self.workspace.traces.clone(),
             views: self.workspace.view_catalogue().clone(),
             types: crate::tasks::type_completion_names(self.workspace.contracts()),
@@ -205,6 +221,7 @@ impl Actor {
             catalogue: self.workspace.catalogue().clone(),
             templates: self.workspace.templates().clone(),
             importers: self.workspace.importer_names().map(str::to_owned).collect(),
+            importer_metadata: self.workspace.importer_metadata().clone(),
             importer_parameters: self.workspace.importer_parameters().clone(),
             log: self.log.snapshot(),
             values: self.values.as_ref().map(super::SessionValues::snapshot),

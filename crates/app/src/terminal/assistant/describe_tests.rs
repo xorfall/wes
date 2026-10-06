@@ -92,6 +92,15 @@ async fn describe_through_mcp_preserves_setup_errors_idempotency_and_authority()
     )
     .await;
     assert_eq!(result["nodes"][0]["state"], "ready", "{result}");
+    assert_eq!(result["nodes"][0]["completion"]["code"], "DSC000");
+    assert!(result["nodes"][0]["completion"]["message"].as_str().unwrap().contains("requested export"));
+    assert_eq!(result["nodes"][0]["completion"]["grantsChanged"], false);
+    let without_source = invoke(&terminal, app, "cell_read", json!({"cell":result["cell"]})).await;
+    assert!(without_source["nodes"][0].get("completion").is_none());
+    let shared = invoke(&terminal, app, "spec_list", json!({})).await;
+    assert!(shared["drafts"].as_array().unwrap().is_empty());
+    assert!(shared["visibility"].as_str().unwrap().contains("does not prove"));
+
     assert!(
         !result.to_string().contains("descriptorPath"),
         "private result leaked: {result}"

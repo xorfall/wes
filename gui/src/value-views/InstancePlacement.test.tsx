@@ -28,7 +28,7 @@ function fixture(){
   const applyViewQuery=vi.fn(),viewObservation=vi.fn(),scrollIntoView=vi.fn(),focus=vi.fn();
   // Every operation that could create a result or run work; placement must call none of them.
   const work={applyViewQuery,viewObservation,captureViewResult:vi.fn(),submit:vi.fn(),rerun:vi.fn(),cancel:vi.fn(),liveView:vi.fn()};
-  const engine={viewGeneration:()=>generation,watchViewFrame,...work} as unknown as Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>generation,watchViewFrame,...work} as unknown as Engine;
   const render=(referenceOnly=false)=><><InstanceView value={value()} engine={engine} mode="preview" display={{label:"$overview",referenceOnly}}/><InstanceView value={value()} engine={engine} mode="preview" display={{label:"$overview",referenceOnly:true}}/></>;
   let tree!:ReactTestRenderer;
   const mount=(referenceOnly=false)=>act(()=>{tree=create(render(referenceOnly),{createNodeMock:()=>({getBoundingClientRect:()=>({height:410}),scrollIntoView,focus})});});

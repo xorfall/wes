@@ -301,8 +301,14 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
         let m = map(node)?;
         let s = map(required(m, "source")?)?;
         let kind = text(required(s, "kind")?)?;
+        if kind == "openapi" && s.contains_key("sha256") {
+            return Err(error(
+                "ENV001",
+                "OpenAPI source.sha256 is not supported; pin the captured environment revision or import a converted Wes descriptor with source.sha256.",
+            ));
+        }
         let location = match kind {
-            "spec" => {
+            "spec" | "openapi" => {
                 let (field, value) = match (s.get("file"), s.get("url")) {
                     (Some(v), None) => ("file", v),
                     (None, Some(v)) => ("url", v),
@@ -351,7 +357,7 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
                     "HTTP transport must be internal or curl; custom mappings are not yet supported",
                 ));
             }
-            if kind != "spec" && !(kind == "builtin" && location == "http") {
+            if !matches!(kind, "spec" | "openapi") && !(kind == "builtin" && location == "http") {
                 return Err(error(
                     "ENV001",
                     "bind.transport is only supported for HTTP providers",
@@ -360,7 +366,7 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
         }
         let mut auth = BTreeMap::new();
         if let Some(node) = bind.get("auth") {
-            if kind != "spec" {
+            if !matches!(kind, "spec" | "openapi") {
                 return Err(error(
                     "ENV001",
                     "bind.auth is only supported for spec providers",

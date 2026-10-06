@@ -13,11 +13,49 @@ The Rust workspace contains eight crates:
 | app | CLI, web transport, terminal and agent interfaces |
 | desktop | Native Tauri shell hosting the application |
 
-`gui` is the React/TypeScript client. `tools/describe` converts API documentation
-into editable contracts. OpenAPI JSON can be converted without a model; prose
-extraction requires explicitly configured model access. Tests use saved synthetic
-answers instead of a live model. `tools/view-dev` is the isolated development
-harness for result views; `tools/view-package` builds independent React packages.
+`gui` is the React/TypeScript client. `tools/describe` deterministically converts
+supported OpenAPI 3.0/3.1 JSON/YAML into native Wes contracts; it does not use a
+model, interpret prose/HTML or fetch external references. `tools/view-dev` is the
+isolated development harness for result views; `tools/view-package` builds
+independent React packages.
+
+## API imports
+
+Use `:import spec` for a ready Wes JSON descriptor, or import supported OpenAPI
+directly:
+
+```wes
+:import openapi file:api.yaml endpoint:"http://localhost:8080" as:orders
+```
+
+Both importers require exactly one of `file:`/`url:` and an explicit `endpoint:`.
+Importer help and capture admission use the same registered metadata; required
+arguments are checked before input I/O. Environment packages also accept
+`source.kind: openapi`, with their destination supplied by `bind.endpoint`.
+Documented servers never select an execution destination. For OpenAPI sources,
+pin the captured environment revision. OpenAPI `source.sha256` is currently
+rejected rather than compared against a converted artifact; a ready Wes
+descriptor can still use `source.sha256` to pin its input bytes.
+
+Direct OpenAPI import invokes the same bundled/configured `wes-extract` converter
+as `:describe`, with partial conversion disabled. Unsupported documents fail
+without installing a provider; use `:describe` and `/spec` to inspect or revise
+them. Successful capture retains original UTF-8 input, its digest, the converted
+Wes descriptor and its digest in a versioned recipe. Replay and environment locks
+use that descriptor without source reads or compiler execution. Changes to the
+source require an explicit new import; replacement still requires `replace:true`.
+Imports never call API operations, grant credentials or enable external effects.
+Authentication choices, credential grants, output policy and execution targets
+remain governed by the existing environment and HTTP adapter rules.
+
+Import diagnostics expose producer-authored safe causes. `IMP007` identifies an
+unresolved authentication choice, `IMP008` an unavailable declared credential,
+`IMP009` query-based credential leakage risk, and `IMP010` undocumented
+authentication. `IMP002` remains an advisory whose detailed document/adapter text is not automatically public. Source access
+does not authorize exporting inferred private values or advisory text. MCP
+`validate` still checks syntax/admission, not eventual import or runtime success.
+
+## Building
 
 Use the pinned Rust toolchain and dependency lockfiles. Node.js 22+ and Go 1.26+
 are needed for the client and extraction helper. For local client development,

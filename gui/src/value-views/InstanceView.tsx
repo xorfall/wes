@@ -1,7 +1,7 @@
 import { InstanceInteractionHost } from "./interactive";
 import { attachSharedState } from "./shared-state";
 import { LocalCoordinators } from "./coordinated";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
 import { prepareSync } from "../presentation/prepare";
@@ -16,6 +16,7 @@ import { max_view_frame_instances } from "./limits";
 import { InstancePlacement,type InstanceDisplay } from "./InstancePlacement";
 import { displayIdentity } from "./displays";
 import { INPUT_RUN_DESCRIPTION, pinRefusal, referenceLabel } from "./pin";
+import { documentRenderStatus, frameRenderObservation, RenderObservationContext } from "../view-render-status";
 
 export const isViewInstance = (value:StoredValue) => value.type?.kind==="meta" && value.type.name==="ViewInstance";
 
@@ -78,7 +79,7 @@ export function presentFrame(frame:ViewFrame, context:Context, patches?:InputPat
       value={...value,type:{...value.type,fields},data};
     }
     const before=remaining;
-    const shown=module.present({path,type:value.type,data:value.data,context,slots,instanceKey:entry.instance,coordinated:isCoordinated},{
+    const shown=module.present({path,type:value.type,data:value.data,context,slots,instanceKey:entry.instance,inputRevision:entry.inputRevision,coordinated:isCoordinated},{
       remaining:()=>remaining,spend:n=>{remaining=Math.max(0,remaining-Math.max(0,n));},
       child:(name,type,data,options)=>{
         const child=present({prepared:prepareSync({type,data}),context:{...context,lines:remaining},registry:registryStore.get()}).root;
@@ -116,6 +117,8 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
   const id=typeof value.data==="object"&&value.data!==null&&"id" in value.data ? String(value.data.id):undefined;
   const instance=typeof value.data==="object"&&value.data!==null&&"instance" in value.data ? String(value.data.instance):undefined;
   const generation=engine?.viewGeneration();
+  const subscribeWorkspace=useCallback((changed:()=>void)=>engine?engine.onViewWorkspace(changed):()=>{},[engine]);
+  const workspace=useSyncExternalStore(subscribeWorkspace,()=>engine?.viewWorkspaceName());
   const [sample,setSample]=useState<FrameSample>({});
   const [attempt,setAttempt]=useState(0);
   const [controlProblem,setControlProblem]=useState<string>();
@@ -140,6 +143,9 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
     catch(error){return {problem:error instanceof Error?error.message:"View unavailable"};}
   },[sample.frame,patches.frame,mode,columns]);
   useEffect(()=>{if(sample.frame&&shown.node)onFrame?.(sample.frame);},[sample.frame,shown.node,onFrame]);
+  // Receipts are scoped by the actual workspace, generation and live frame entries. While the
+  // workspace identity is unknown nothing is observed: no receipt beats a wrongly scoped one.
+  const observation=useMemo(()=>workspace&&generation&&sample.frame?frameRenderObservation(documentRenderStatus,workspace,generation,sample.frame):undefined,[workspace,generation,sample.frame]);
   const frameRef=useRef(sample.frame);frameRef.current=sample.frame;
   const interactionKey=sample.frame?.instances.map(i=>`${i.id}:${i.instance}:${i.digest}:${JSON.stringify(i.members)}`).sort().join("|");
   const interactionHost=useMemo<React.ContextType<typeof InstanceInteractionHost>>(()=>{
@@ -219,7 +225,7 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
     {controlProblem && <p className="mono-warn" role="status">{controlProblem}</p>}
     {entries.filter(i=>!i.query).map(i=>i.inputProblem?<p className="mono-warn" key={i.id} role="status">{i.inputProblem}</p>:null)}{patches.problem && <p className="mono-warn" role="status">{patches.problem}</p>}{sample.problem||shown.problem
     ? <div><p className="mono-warn" role="status">{sample.problem??shown.problem}</p>{engine && sample.problem && <button className="cell-action" onClick={()=>setAttempt(old=>old+1)}>Reopen view</button>}</div>
-    : shown.node ? <InstanceInteractionHost.Provider value={interactionHost}><Presented node={shown.node}/></InstanceInteractionHost.Provider> : <p className="mono-faint" role="status">{sample.paused?"View paused while other visible views are active. It will open when space is available.":"Reading view…"}</p>}
+    : shown.node ? <InstanceInteractionHost.Provider value={interactionHost}><RenderObservationContext.Provider value={observation}><Presented node={shown.node}/></RenderObservationContext.Provider></InstanceInteractionHost.Provider> : <p className="mono-faint" role="status">{sample.paused?"View paused while other visible views are active. It will open when space is available.":"Reading view…"}</p>}
     {engine && root && <ReferenceFooter entry={root} following={following.length>0} active={active} controlling={controlling||unsettled}
       request={pinRequest?.revision===root.revision ? pinRequest.name : undefined} onObserve={()=>void observe()} onPin={()=>void pin(root)}/>}</div>;
 }

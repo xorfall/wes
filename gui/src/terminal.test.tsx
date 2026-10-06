@@ -33,7 +33,7 @@ it("terminal requests are generation/client scoped and are never automatically r
   const engine = new Engine(); engine.listen(() => {}, () => {});
   await expect(engine.terminal({ action: "start" })).rejects.toThrow("Wait");
   expect(fetch).not.toHaveBeenCalled();
-  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", generation: "g" }) });
+  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", workspace: null, generation: "g" }) });
   await expect(engine.terminal({ action: "start" })).rejects.toThrow("lost reply");
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0]![1].headers["X-Wes-Session"]).toBe("g");
@@ -54,7 +54,7 @@ it("terminal reads can abort and reject a body arriving after the workspace chan
   class Events { static current: Events; onmessage?: (e: { data: string }) => void; constructor() { Events.current = this; } close() {} }
   vi.stubGlobal("EventSource", Events);
   const engine = new Engine(); engine.listen(() => {}, () => {});
-  const session = (generation: string) => Events.current.onmessage?.({ data: JSON.stringify({ event: "session", generation }) });
+  const session = (generation: string) => Events.current.onmessage?.({ data: JSON.stringify({ event: "session", workspace: null, generation }) });
   session("old");
   const fetch = vi.fn().mockImplementation((_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(new Error("aborted")))));
   vi.stubGlobal("fetch", fetch);
@@ -69,7 +69,7 @@ it("distinguishes ended authority from retryable terminal transport failures", a
   class Events { static current: Events; onmessage?: (e: { data: string }) => void; constructor() { Events.current = this; } close() {} }
   vi.stubGlobal("EventSource", Events);
   const engine = new Engine(); engine.listen(() => {}, () => {});
-  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", generation: "g" }) });
+  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", workspace: null, generation: "g" }) });
   const fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 410 })
     .mockResolvedValueOnce({ ok: false, status: 503, text: async () => "Temporarily unavailable" });
   vi.stubGlobal("fetch", fetch);
@@ -85,7 +85,7 @@ it.each(["fetch", "body"])("classifies the actual deadline during %s without ret
   const deadline = new AbortController();
   vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
   const engine = new Engine(); engine.listen(() => {}, () => {});
-  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", generation: "g" }) });
+  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", workspace: null, generation: "g" }) });
   const blocked = () => new Promise((_resolve, reject) => deadline.signal.addEventListener("abort", () => reject(new DOMException("Fetch is aborted", "AbortError"))));
   const fetch = vi.fn().mockImplementation(() => stage === "fetch" ? blocked() : Promise.resolve({ ok: true, text: blocked }));
   vi.stubGlobal("fetch", fetch);
@@ -99,7 +99,7 @@ it("distinguishes an unexplained browser abort from a deadline", async () => {
   class Events { static current: Events; onmessage?: (e: { data: string }) => void; constructor() { Events.current = this; } close() {} }
   vi.stubGlobal("EventSource", Events);
   const engine = new Engine(); engine.listen(() => {}, () => {});
-  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", generation: "g" }) });
+  Events.current.onmessage?.({ data: JSON.stringify({ event: "session", workspace: null, generation: "g" }) });
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("Fetch is aborted", "AbortError")));
   await expect(engine.terminal({ action: "poll" })).rejects.toMatchObject({ code: "TERM_ABORTED", source: "Browser → terminal server", operation: "poll" });
 });

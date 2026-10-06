@@ -1,11 +1,12 @@
 import { TerminalUnavailable } from "./terminal-errors";
 import { afterEach, expect, it, vi } from "vitest";
 import { terminalOutput, type TerminalFrame } from "./terminal-output";
+import type { UiRequest } from "./assistant-ui";
 function frame(text = "", start = 0, closed = false): TerminalFrame {
   return { start, next: start + text.length, data: btoa(text), closed, exit: closed ? 0 : null, problem: null };
 }
 function sink() {
-  return { poll: vi.fn<(cursor: number, signal: AbortSignal) => Promise<TerminalFrame>>(), write: vi.fn<(bytes: Uint8Array) => Promise<void>>().mockResolvedValue(undefined), trimmed: vi.fn(), editor: vi.fn().mockResolvedValue(undefined), ended: vi.fn(), problem: vi.fn(), connection: vi.fn(), unavailable: vi.fn() };
+  return { poll: vi.fn<(cursor: number, signal: AbortSignal) => Promise<TerminalFrame>>(), write: vi.fn<(bytes: Uint8Array) => Promise<void>>().mockResolvedValue(undefined), trimmed: vi.fn(), ui: vi.fn().mockResolvedValue(undefined), ended: vi.fn(), problem: vi.fn(), connection: vi.fn(), unavailable: vi.fn() };
 }
 afterEach(() => vi.useRealTimers());
 it("drains backlog without a timer but never queues another frame before xterm acknowledges", async () => {
@@ -22,15 +23,17 @@ it("drains backlog without a timer but never queues another frame before xterm a
   expect(s.write.mock.calls.map(c => new TextDecoder().decode(c[0]))).toEqual(["one", "two"]);
   expect(s.ended).toHaveBeenCalledWith(0); expect(s.trimmed).not.toHaveBeenCalled();
 });
-it("retries reads at the consumed cursor after a lost editor acknowledgement without replaying bytes", async () => {
+it("retries reads at the consumed cursor after a lost UI acknowledgement without replaying bytes", async () => {
   vi.useFakeTimers(); const s = sink(); const controller = new AbortController();
-  const edit = { id: "edit", action: "read", text: null, revision: null };
-  s.poll.mockResolvedValueOnce({ ...frame("x"), editor: edit }).mockResolvedValueOnce({ ...frame("", 1, true), editor: edit });
-  s.editor.mockRejectedValueOnce(new Error("reply lost"));
+  const read: UiRequest = { id: "read", operation: { kind: "draft_read" } };
+  s.poll.mockResolvedValueOnce({ ...frame("x"), ui: read }).mockResolvedValueOnce({ ...frame("", 1, true), ui: read });
+  s.ui.mockRejectedValueOnce(new Error("reply lost"));
   const running = terminalOutput(s, controller.signal);
   await vi.advanceTimersByTimeAsync(250); await running;
   expect(s.poll.mock.calls.map(c => c[0])).toEqual([0, 1]);
-  expect(s.write).toHaveBeenCalledTimes(1); expect(s.editor).toHaveBeenCalledTimes(2);
+  expect(s.write).toHaveBeenCalledTimes(1); expect(s.ui).toHaveBeenCalledTimes(2);
+  expect(s.ui).toHaveBeenLastCalledWith(read);
+  expect(s.connection).toHaveBeenCalledWith(expect.any(Error), "UI acknowledgement");
 });
 it("reports trimming and drains final output before ending", async () => {
   const s = sink();

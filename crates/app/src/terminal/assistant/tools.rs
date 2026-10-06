@@ -47,6 +47,8 @@ struct Execution {
 )]
 enum Tool {
     ViewAuthoring(super::view_authoring::Read),
+    ViewToolchain(Empty),
+    ViewRenderStatus(RenderStatus),
     WorkspaceContext(Empty),
     WorkspaceOpen(WorkspaceOpen),
     WorkspaceSnapshot(Page),
@@ -66,6 +68,11 @@ enum Tool {
     SpecList(Page),
     SpecRead(super::spec::Read),
     SpecSave(super::spec::Save),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenderStatus {
+    name: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -425,6 +432,7 @@ fn report_bounded(
         let state = graph.graph.node(id).map(|n|n.state());
         let mut result = json!({"node":id.to_string(),"state":state.map(|s|format!("{s:?}").to_lowercase()),"run":graph.runs.get(id).map(ToString::to_string)});
         result["updatePending"] = json!(graph.input_updates.contains(id));
+        if let Some(completion)=crate::execution_status::public_completion(observation,id,cell.input.is_cooperative()&&cell.input.client()==execution.actor) { result["completion"]=completion; }
         if let Some(reason) = graph.stale_reasons.get(id) {
             result["staleReason"] = json!({"code":reason.code(),"message":reason.message()});
         }
@@ -614,6 +622,7 @@ async fn perform(
                 | Tool::SpecRead(_)
                 | Tool::SpecSave(_)
                 | Tool::ViewAuthoring(_)
+                | Tool::ViewToolchain(_)
         )
     {
         return Err(fail(
@@ -623,6 +632,12 @@ async fn perform(
     check_current(terminal, application, &current)?;
     match tool {
         Tool::ViewAuthoring(input) => Ok(super::view_authoring::read(input)),
+        Tool::ViewToolchain(_) => tokio::task::spawn_blocking(crate::view_toolchain::status)
+            .await
+            .map_err(|_| fail("Toolchain inventory unavailable.")),
+        Tool::ViewRenderStatus(input) => {
+            render_status(terminal, application, &current, &input.name).await
+        }
         Tool::SpecList(page) => {
             super::spec::list(terminal, application, page.offset, page.limit).await
         }
@@ -687,12 +702,22 @@ async fn perform(
             }
             Ok(result)
         }
-        Tool::LayoutRead(_) => ui_request(terminal, "layout", None).await,
+        Tool::LayoutRead(_) => {
+            ui_request(terminal, crate::terminal::ui::Operation::LayoutRead).await
+        }
         Tool::TabOpen(input) => {
             if input.pane.len() > 64 || input.pane.chars().any(char::is_control) {
                 return Err(fail("Invalid pane id."));
             }
-            ui_request(terminal, "tab", Some(json!({"pane":input.pane,"workspace":current.name.as_str(),"activate":input.activate}).to_string())).await
+            ui_request(
+                terminal,
+                crate::terminal::ui::Operation::TabOpen {
+                    pane: input.pane,
+                    workspace: current.name.as_str().into(),
+                    activate: input.activate,
+                },
+            )
+            .await
         }
         Tool::PaneCommand(input) => {
             commands::dispatch(terminal, input.command, Some(&terminal.assistant.actor)).await?;
@@ -760,7 +785,7 @@ async fn perform(
             let value = wes_engine::tasks::help_tree(
                 &call,
                 catalogue.unwrap_or(&empty),
-                &observation.importer_parameters,
+                &observation.importer_metadata,
                 &wes_engine::driver::CancellationToken::new(),
                 input.depth,
             )
@@ -943,37 +968,28 @@ async fn perform(
                 .map_err(|e| fail(&e.to_string()))?;
             Ok(json!({"cancellation_requested":true,"remote_effects_may_remain":true}))
         }
-        Tool::DraftRead(_) | Tool::DraftUpdate(_) => {
-            let (action, text, revision) = match tool {
-                Tool::DraftUpdate(input) => {
-                    if input.text.len() > 64 * 1024 || input.revision.len() > 128 {
-                        return Err(fail("Editor input exceeds its limit."));
-                    }
-                    ("update", Some(input.text), Some(input.revision))
-                }
-                _ => ("read", None, None),
-            };
-            let (id, reply) = terminal
-                .editor
-                .begin(action, text, revision)
-                .map_err(fail)?;
-            terminal.changed.notify_waiters();
-            let result = tokio::select! {
-                _=terminal.stopped.cancelled()=>Err(fail("Terminal ended before editor acknowledgement.")),
-                result=tokio::time::timeout(Duration::from_secs(10),reply)=>match result {Ok(Ok(value))=>Ok(value),_=>Err(fail("Editor did not acknowledge; read the draft before retrying."))}
-            };
-            terminal.editor.abandon(&id);
-            result
+        Tool::DraftRead(_) => ui_request(terminal, crate::terminal::ui::Operation::DraftRead).await,
+        Tool::DraftUpdate(input) => {
+            if input.text.len() > 64 * 1024 || input.revision.len() > 128 {
+                return Err(fail("Editor input exceeds its limit."));
+            }
+            ui_request(
+                terminal,
+                crate::terminal::ui::Operation::DraftUpdate {
+                    text: input.text,
+                    revision: input.revision,
+                },
+            )
+            .await
         }
     }
 }
 
 async fn ui_request(
     terminal: &TerminalSession,
-    action: &str,
-    text: Option<String>,
+    operation: crate::terminal::ui::Operation,
 ) -> Result<Value, BridgeReply> {
-    let (id, reply) = terminal.editor.begin(action, text, None).map_err(fail)?;
+    let (id, reply) = terminal.ui.begin(operation).map_err(fail)?;
     terminal.changed.notify_waiters();
     let result = tokio::select! {
         _ = terminal.stopped.cancelled() => Err(fail("Terminal ended before UI acknowledgement.")),
@@ -982,7 +998,7 @@ async fn ui_request(
             _ => Err(fail("UI did not acknowledge. Inspect layout before repeating.")),
         }
     };
-    terminal.editor.abandon(&id);
+    terminal.ui.abandon(&id);
     result
 }
 
@@ -990,11 +1006,17 @@ fn plan_summaries(observation: &SessionObservation, terminal: &TerminalSession) 
     json!(observation.environment_plans.iter().filter(|((actor,_),_)| actor == &terminal.assistant.actor).map(|((_,name),changes)| json!({"name":name,"changes":changes.iter().map(|c| json!({"environment":c.name,"added":c.before.is_none(),"before":c.before.map(|r|r.to_string()),"after":c.after.map(|r|r.to_string())})).collect::<Vec<_>>()})).collect::<Vec<_>>())
 }
 
+include!("render_status.rs");
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(unix)]
     include!("describe_tests.rs");
+    #[cfg(unix)]
+    include!("import_tests.rs");
+    #[cfg(unix)]
+    include!("render_status_tests.rs");
     #[cfg(unix)]
     include!("spec_tests.rs");
     #[cfg(unix)]

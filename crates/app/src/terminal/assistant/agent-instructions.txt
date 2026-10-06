@@ -1,9 +1,21 @@
 Wes workspace tools
 
-Custom Views: read view_authoring overview, then sdk/theme/layout/examples for the current
+Custom Views: read view_toolchain and view_authoring overview/types, then sdk/theme/layout/examples for the current
 authoring API and supported Wes design roles. Use value_read typed:true for public
 input contracts. Roles inherit the mounted client's theme; do not copy current
 font names or palette values. Discovery does not provision or run the compiler.
+View input must be a named Record contract; wrap a list/scalar in a typed field
+using a pure adapter. General types.yaml syntax also includes shapes unsupported
+at View boundaries; read the types topic before declaring input/output contracts.
+The optional toolkit is exported explicitly with --export-view-toolchain. It
+contains the matching native validator, SDK/compiler sources and a lockfile;
+Node.js 20+ and npm ci on the build host are still required. Inventory paths refer
+to the backend host, not a selected remote environment or an arbitrary terminal.
+Compilation/check/install does not prove a UI render. view_render_status reads
+only currently mounted live instances on the originating UI document. It never
+opens a view or executes sources. deliveryVerified is input acknowledgement,
+visualVerified stays false; linked-input freshness/nested members/other windows
+are not guaranteed. No UI/not mounted means unverified, not success.
 Declare all layout tiers with intentional min/preferred/max and placement.
 Dashboard owns weighted slots and responsive reflow; a View owns its inner frame.
 Use actual allocation width; preview is a bounded summary at natural height.
@@ -14,6 +26,9 @@ Obtain workspace_context first. Pass its workspace and context token to execute 
 next context returned by execution. Workspace state is shared; environment
 selection belongs to your connection. Use help to discover current syntax and
 provider contracts. Its depth option exposes bounded descendant signatures.
+Use help {command:"arguments"} or {command:"errors"}; command is a bare target
+path, not CLI source such as ":help arguments". Provider help takes provider plus
+tail, and includes command/usage placeholders. Never execute placeholders as values.
 For calculation functions use help {command:"calc",tail:["iter.matches"]};
 replace the tail with another listed operation to read positional arguments,
 return semantics, examples and prerequisites without running anything.
@@ -65,10 +80,28 @@ value is a last observation, not a current input for a new calculation. Refresh
 withdraws it. Retention through Keep is separate. :accumulate limit:1000 applies
 to a newly opened ordered stream and returns items plus a checkpoint.
 
+API contracts: help {command:"import",tail:["openapi"]} discovers direct deterministic
+OpenAPI 3.0/3.1 JSON/YAML import; tail:["spec"] is for a ready Wes JSON descriptor.
+Both need exactly one of file/url and an explicit endpoint. Documented servers are
+metadata, never execution destinations. Direct OpenAPI import does not run the
+service, grant credentials, fetch external refs or silently accept partial conversion.
+Unsupported documents should use :describe and user review in /spec.
+IMP007 means authentication choice is required; IMP008 means a declared credential
+is unavailable; IMP009 warns about query credentials; IMP010 means authentication
+is undocumented, not proven anonymous. IMP002 contains document or
+adapter advisories whose detailed text may be private. Read provider information
+through help/inspect for permitted details; never infer a warning's cause from its
+code alone or bypass a withheld result through a different tool.
+
 API contracts: :describe reads a file or URL and saves an editable draft revision.
 OpenAPI 3.0/3.1 JSON and YAML are converted deterministically. Prose and HTML
 are unsupported; no model configuration or key is needed. Describe results are
-private. An explicit new out path can produce a spec for a later :import, but
+private. Successful own/source-permitted execution can expose a payload-independent
+completion notice, but this does not grant output or draft access. An empty
+spec_list means no shared drafts are visible, not that no drafts were saved.
+Request user sharing of the chosen draft in /spec, then spec_list/spec_read;
+source ownership/source grants do not grant draft access. Do not export a refused
+private value to another path merely to bypass its egress policy. An explicit new out path can produce a spec for a later :import, but
 export never overwrites and describe never imports or calls the described service.
 Incomplete drafts remain editable; validation gates executable specs. exportError
 can accompany a successfully saved draft when export is unavailable.

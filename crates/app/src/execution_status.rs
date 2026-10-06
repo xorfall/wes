@@ -1,5 +1,21 @@
 use serde_json::{Value, json};
 
+/// Operation semantics, not inferred/private output metadata. Reading source is required
+/// because even the operation kind is withheld from a reader without source permission.
+pub(crate) fn public_completion(
+    observation: &wes_engine::session::SessionObservation,
+    node: &wes_engine::graph::NodeId,
+    source_permitted: bool,
+) -> Option<Value> {
+    if !source_permitted {
+        return None;
+    }
+    let notice = observation.completion_notices.get(node)?;
+    Some(
+        json!({"code":notice.code,"message":notice.message,"resultAccess":notice.result_access,"grantsChanged":notice.grants_changed}),
+    )
+}
+
 /// Shared bounded metadata for GUI and agent projections; no values or authority tokens.
 pub(crate) fn waiting_inputs<'a>(
     items: &[wes_engine::runtime::WaitingInput],

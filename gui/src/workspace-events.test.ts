@@ -24,8 +24,8 @@ it("preserves workspace binding and delivers observations without HTTP fetches o
   const receive = vi.fn(); events.onmessage = receive;
   const socket = Socket.all[0]!;
   expect(socket.url).toBe("ws://127.0.0.1:8765/events/socket?workspace=%C3%A7al%C4%B1%C5%9Fma+one");
-  socket.onmessage?.({data:JSON.stringify({sequence:0,events:[{event:'session',generation:'g'}]})});
-  expect(receive).toHaveBeenCalledWith({data:'{"event":"session","generation":"g"}'});
+  socket.onmessage?.({data:JSON.stringify({sequence:0,events:[{event:'session',workspace:null,generation:'g'}]})});
+  expect(receive).toHaveBeenCalledWith({data:'{"event":"session","workspace":null,"generation":"g"}'});
   expect(fetch).not.toHaveBeenCalled();
   events.close(); expect(socket.close).toHaveBeenCalledOnce();
 });

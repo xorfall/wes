@@ -22,7 +22,7 @@ function fixture() {
   const fetch = vi.fn().mockResolvedValue({ ok: true });
   vi.stubGlobal("window", { fetch });
   const engine = new Engine(); engine.listen(() => {}, () => {});
-  Events.current.emit({ event: "session", generation: "g" });
+  Events.current.emit({ event: "session", workspace: null, generation: "g" });
   return { engine, fetch };
 }
 
@@ -52,7 +52,7 @@ it("reports semantic diagnostics even when transport and preparation return succ
 it.each(["workspace", "disconnect"])("refuses stale outcomes on %s without automatically retrying", async kind => {
   const { engine, fetch } = fixture();
   const pending = engine.submitDocument("cell", ':package load source:""', "types: {}", "g");
-  if (kind === "workspace") Events.current.emit({ event: "session", generation: "other" });
+  if (kind === "workspace") Events.current.emit({ event: "session", workspace: null, generation: "other" });
   else Events.current.onerror?.();
   await expect(pending).rejects.toThrow(/changed|lost/);
   expect(fetch).toHaveBeenCalledOnce();

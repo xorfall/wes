@@ -43,7 +43,7 @@ pub(super) fn edit(
             let key = SourceKey::new(kind, location)?;
             let source = if kind == "docker" {
                 CapturedSource::new("docker/observe/v1", location)?
-            } else if kind == "spec" {
+            } else if matches!(kind.as_str(), "spec" | "openapi") {
                 loader.spec_source(&loader.files, &key)?
             } else if driver(&package.targets()[target]).namespace() == ProcessNamespace::Target {
                 CapturedSource::new("process/target/v1", location)?

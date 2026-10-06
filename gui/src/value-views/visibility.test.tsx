@@ -25,7 +25,7 @@ function fixture(count=20){
     return close;
   });
   const applyViewQuery=vi.fn(),viewObservation=vi.fn();
-  const engine={viewGeneration:()=>generation,watchViewFrame,applyViewQuery,viewObservation} as unknown as Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>generation,watchViewFrame,applyViewQuery,viewObservation} as unknown as Engine;
   const values:StoredValue[]=Array.from({length:count},(_,n)=>({type:{kind:"meta",name:"ViewInstance"},data:{id:`n${n}`,instance:`identity${n}`},provenance:{}}));
   const render=()=> <>{values.map((value,n)=><InstanceView key={n} value={value} engine={engine} mode="window"/>)}</>;
   let tree!:ReactTestRenderer;

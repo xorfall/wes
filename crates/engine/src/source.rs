@@ -794,13 +794,9 @@ async fn prepare_parsed_with_imports(
                     let applied = meta.command() == MetaCommand::ImportApply;
                     let request = if applied {
                         apply_import.take().map(Ok).unwrap_or_else(|| {
-                            imports.replay_applied_request().map_err(|error| {
-                                WorkspaceError::from(Diagnostic::error(
-                                    "IMP001",
-                                    span,
-                                    error.to_string(),
-                                ))
-                            })
+                            imports
+                                .replay_applied_request()
+                                .map_err(|error| WorkspaceError::from(error.diagnostic(span)))
                         })
                     } else {
                         meta.import_request()
@@ -828,7 +824,7 @@ async fn prepare_parsed_with_imports(
                             Err(ImportError::Cancelled) => return Err(SourceError::Cancelled),
                             Err(error) => {
                                 let mut errors = meta.diagnostics().to_vec();
-                                errors.push(Diagnostic::error("IMP001", span, error.to_string()));
+                                errors.push(error.diagnostic(span));
                                 Err(WorkspaceError::Rejected {
                                     diagnostics: errors,
                                     issues: vec![],

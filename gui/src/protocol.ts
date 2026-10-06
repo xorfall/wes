@@ -124,7 +124,8 @@ export type Event =
   | { readonly event: "workspace-context"; readonly name: string; readonly saved: readonly string[] }
   | { readonly event: "environments"; readonly managed: boolean; readonly default?: string | null; readonly enabled: Record<string, boolean>; readonly credentials: Record<string, Record<string, Record<string, string>>>; readonly revisions: Record<string, string>; readonly providers: Record<string, ProviderWire[]>; readonly clients: Record<string, EnvironmentContext> }
   | { readonly event: "node-environment"; readonly node: string; readonly environment: string; readonly revision: string; readonly target: string; readonly endpoint: string | null; readonly origin: string }
-  | { readonly event: "session"; readonly generation: string; readonly cells?: readonly string[] }
+  /** The greeting names its workspace and generation together; null while no workspace is open. */
+  | { readonly event: "session"; readonly workspace: string | null; readonly generation: string; readonly cells?: readonly string[] }
   | ({ readonly event: "execution-capacity" } & ExecutionCapacity)
   | { readonly event: "storage-warning"; readonly message: string }
   | { readonly event: "projection-unavailable"; readonly message: string }

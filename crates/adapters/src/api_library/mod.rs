@@ -134,7 +134,11 @@ pub fn validate_descriptor(bytes: &[u8]) -> Result<Vec<String>> {
         Some("http://127.0.0.1:1"),
     )
     .map_err(|e| error(e.0))?;
-    Ok(reading.warnings)
+    Ok(reading
+        .warnings
+        .into_iter()
+        .map(|warning| warning.message)
+        .collect())
 }
 
 /// Shared contract compiler resolves the environment's credential slots without reading values.

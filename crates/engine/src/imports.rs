@@ -7,6 +7,8 @@ use crate::{
 use indexmap::IndexMap;
 use std::{fmt, sync::Arc};
 use thiserror::Error;
+mod warnings;
+pub use warnings::{ImportWarning, ImportWarningKind};
 use wes_core::{
     Value,
     capability::{Parameter, ProviderDescription, Rule, RuleBasis, Sort},
@@ -25,10 +27,16 @@ fn max_entries() -> usize {
     wes_budgets::get("imports.entries") as usize
 }
 
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ImportError {
     #[error("{0}")]
     Input(&'static str),
+    #[error("Required import argument '{0}:' is missing. Read this importer's help.")]
+    MissingArgument(String),
+    #[error("Specify exactly one of these import arguments: {0}. Read this importer's help.")]
+    ArgumentChoice(String),
+    #[error("Import argument '{0}:' has an incompatible type. Read this importer's help.")]
+    ArgumentType(String),
     #[error("invalid importer kind, alias, format or argument name")]
     Name,
     #[error("import input or metadata exceeds its supported budget")]
@@ -49,6 +57,62 @@ pub enum ImportError {
     Worker,
     #[error("the import belongs to another input capture")]
     ForeignCapture,
+}
+
+impl ImportError {
+    /// These messages contain only producer-authored text or registered parameter names,
+    /// never source contents, runtime values, paths or credential material.
+    pub fn diagnostic(&self, span: wes_language::Span) -> wes_language::Diagnostic {
+        let message = self.to_string();
+        wes_language::Diagnostic::error("IMP001", span, &message).with_public_message(message)
+    }
+}
+
+/// One inert declaration used by help and by capture admission before any input I/O.
+#[derive(Clone, Debug, Default)]
+pub struct ImporterMetadata {
+    pub parameters: Vec<Parameter>,
+    pub exactly_one: Vec<Vec<String>>,
+    pub summary: Option<&'static str>,
+}
+impl ImporterMetadata {
+    pub fn validate(&self, request: &ImportRequest) -> Result<(), ImportError> {
+        for parameter in &self.parameters {
+            match request.arguments().get(&parameter.name) {
+                None if parameter.required => {
+                    return Err(ImportError::MissingArgument(parameter.name.clone()));
+                }
+                Some(value)
+                    if !value.shape().is_assignable_to(&parameter.shape)
+                        && parameter.shape != wes_core::Shape::Unknown =>
+                {
+                    // Literal imports are commonly represented with Unknown shape; validate
+                    // the actual materialized scalar without inferring or exporting its value.
+                    if wes_core::Value::new(
+                        parameter.shape.clone(),
+                        value.data().clone(),
+                        Default::default(),
+                    )
+                    .is_err()
+                    {
+                        return Err(ImportError::ArgumentType(parameter.name.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for keys in &self.exactly_one {
+            if keys
+                .iter()
+                .filter(|key| request.arguments().contains_key(*key))
+                .count()
+                != 1
+            {
+                return Err(ImportError::ArgumentChoice(keys.join(", ")));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Arguments are already analysed immutable values. `as` is represented only by the alias field.
@@ -190,7 +254,7 @@ pub struct ImportProduct {
     streams: Option<Arc<dyn crate::streams::StreamingInvoker>>,
     conversations: Option<Arc<dyn crate::conversations::InteractiveInvoker>>,
     environment_factory: Option<Arc<dyn EnvironmentFactory>>,
-    warnings: Vec<String>,
+    warnings: Vec<ImportWarning>,
     charge: u64,
 }
 /// Inert construction of ports that need the final captured environment and its live authority.
@@ -244,6 +308,17 @@ impl ImportProduct {
         invoker: Arc<dyn Invoker>,
         warnings: Vec<String>,
     ) -> Result<Self, ImportError> {
+        Self::new_with_warnings(
+            description,
+            invoker,
+            warnings.into_iter().map(ImportWarning::from).collect(),
+        )
+    }
+    pub fn new_with_warnings(
+        description: ProviderDescription,
+        invoker: Arc<dyn Invoker>,
+        warnings: Vec<ImportWarning>,
+    ) -> Result<Self, ImportError> {
         let charge = metadata_charge(&description, &warnings).ok_or(ImportError::Capacity)?;
         Ok(Self {
             description,
@@ -278,7 +353,7 @@ impl ImportProduct {
     pub fn invoker(&self) -> &Arc<dyn Invoker> {
         &self.invoker
     }
-    pub fn warnings(&self) -> &[String] {
+    pub fn warnings(&self) -> &[ImportWarning] {
         &self.warnings
     }
 }
@@ -299,9 +374,16 @@ impl fmt::Debug for ImportProduct {
 /// availability. Replay mode must not look them up; both may attach the handle for later invocation.
 pub trait Importer: Send + Sync + 'static {
     /// Inert input hints, captured once at registration. No I/O or execution; validation
-    /// remains the adapter's responsibility. `as` is supplied by the language itself.
+    /// of source contents remains adapter-owned; metadata rules are enforced before I/O.
+    /// `as` is supplied by the language itself.
     fn parameters(&self) -> Vec<Parameter> {
         Vec::new()
+    }
+    fn metadata(&self) -> ImporterMetadata {
+        ImporterMetadata {
+            parameters: self.parameters(),
+            ..Default::default()
+        }
     }
     fn capture(
         &self,
@@ -318,6 +400,7 @@ pub trait Importer: Send + Sync + 'static {
 pub struct Importers {
     entries: IndexMap<String, Arc<dyn Importer>>,
     parameters: IndexMap<String, Vec<Parameter>>,
+    metadata: IndexMap<String, ImporterMetadata>,
 }
 impl Importers {
     pub fn register(
@@ -332,13 +415,14 @@ impl Importers {
         if self.entries.len() >= max_entries() && !self.entries.contains_key(&kind) {
             return Err(ImportError::Capacity);
         }
-        let parameters = importer.parameters();
+        let metadata = importer.metadata();
+        let parameters = &metadata.parameters;
         if parameters.len() > 256 {
             return Err(ImportError::Capacity);
         }
         let mut names = std::collections::BTreeSet::new();
         let mut left = 64 * 1024;
-        for parameter in &parameters {
+        for parameter in parameters {
             valid_name(&parameter.name)?;
             if parameter.name == "as" || !names.insert(&parameter.name) {
                 return Err(ImportError::Name);
@@ -353,7 +437,24 @@ impl Importers {
                 text(&mut left, name).ok_or(ImportError::Capacity)?;
             }
         }
-        self.parameters.insert(kind.clone(), parameters);
+        if metadata.exactly_one.len() > 32 {
+            return Err(ImportError::Capacity);
+        }
+        for group in &metadata.exactly_one {
+            if group.len() < 2
+                || group.len() > 256
+                || group
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != group.len()
+                || group.iter().any(|name| !names.contains(name))
+            {
+                return Err(ImportError::Name);
+            }
+        }
+        self.parameters.insert(kind.clone(), parameters.clone());
+        self.metadata.insert(kind.clone(), metadata);
         Ok(self.entries.insert(kind, importer))
     }
     pub(crate) fn entry(&self, kind: &str) -> Option<Arc<dyn Importer>> {
@@ -364,6 +465,9 @@ impl Importers {
     }
     pub fn parameters(&self) -> &IndexMap<String, Vec<Parameter>> {
         &self.parameters
+    }
+    pub fn metadata(&self) -> &IndexMap<String, ImporterMetadata> {
+        &self.metadata
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -528,6 +632,11 @@ impl ImportCapture {
             .get(request.kind())
             .cloned()
             .ok_or(ImportError::UnknownImporter)?;
+        self.importers
+            .metadata
+            .get(request.kind())
+            .expect("registered metadata")
+            .validate(request)?;
         let index = if let Some(index) = self
             .entries
             .iter()
@@ -677,14 +786,17 @@ fn text(left: &mut u64, value: &str) -> Option<()> {
     *left = left.checked_sub(128 + value.len() as u64 * 6)?;
     Some(())
 }
-fn metadata_charge(description: &ProviderDescription, warnings: &[String]) -> Option<u64> {
+fn metadata_charge(description: &ProviderDescription, warnings: &[ImportWarning]) -> Option<u64> {
     let mut left = 16 * 1024 * 1024u64;
     if warnings.len() > 1000 || description.capabilities().len() > 10_000 {
         return None;
     }
     text(&mut left, description.name())?;
-    for value in description.secrets().iter().chain(warnings) {
+    for value in description.secrets() {
         text(&mut left, value)?;
+    }
+    for warning in warnings {
+        text(&mut left, &warning.message)?;
     }
     for cap in description.capabilities() {
         if let Some(resources) = &cap.resources {

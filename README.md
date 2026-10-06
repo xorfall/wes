@@ -43,6 +43,11 @@ import the generated operations. Run each command after the previous one finishe
 :import spec file:prom.json as:prom endpoint:"http://127.0.0.1:19092"
 ```
 
+For supported OpenAPI JSON/YAML, `:import openapi` combines conversion and import
+without an intermediate file. The endpoint remains explicit; use `:describe`
+when you want to inspect or edit the converted contract first. See the
+[direct import example](examples/openapi-import/).
+
 Now call the imported operation and continue with its result:
 
 ```text

@@ -25,6 +25,7 @@ or a PTY; their presence does not imply Windows support has been verified.
 | Demo | What it demonstrates | Check |
 | --- | --- | --- |
 | [Quickstart](quickstart/main.wes) | Named results and calculations over dependencies | `python3 examples/quickstart/check.py` |
+| [Direct OpenAPI import](openapi-import/) | JSON/YAML import, explicit destinations and frozen replay | `python3 examples/openapi-import/check.py` |
 | [API import](api-import/readme/) | OpenAPI → service contract → environment → typed HTTP response | `python3 examples/api-import/readme/check.py` |
 | [API workflow](api-workflow/) | Discover, import, call and transform a synthetic API | `python3 examples/api-workflow/check.py` |
 | [Prometheus workspace](prometheus-workspace/) | Import an API, query it, derive rows and continue with an AI agent | `python3 examples/prometheus-workspace/check.py` |

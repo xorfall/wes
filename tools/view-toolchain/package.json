@@ -1,0 +1,14 @@
+{
+  "name": "wes-view-toolchain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "compiler",
+    "sdk"
+  ],
+  "dependencies": {
+    "wes-view-package": "file:compiler",
+    "@wes/view-sdk": "file:sdk"
+  }
+}

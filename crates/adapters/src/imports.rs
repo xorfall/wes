@@ -1,4 +1,5 @@
 //! Concrete spec/process input capture. Construction never registers or executes a provider.
+pub(crate) mod openapi;
 mod remote;
 use crate::{
     descriptor,
@@ -6,6 +7,7 @@ use crate::{
     input_files::{InputFileError, InputFiles},
     process::{self, ProcessConfig},
 };
+pub use openapi::{OpenApiCompiler, OpenApiImporter};
 pub use remote::{read_url, validate_url as validate_spec_url};
 use std::{path::Path, sync::Arc};
 use wes_core::{Data, Primitive, Shape, capability::Parameter};
@@ -53,10 +55,12 @@ impl SpecImporter {
 }
 impl Importer for SpecImporter {
     fn parameters(&self) -> Vec<Parameter> {
-        SPEC_ARGUMENTS
-            .iter()
-            .map(|name| Parameter::new(*name, Shape::Primitive(Primitive::Text), false))
-            .collect()
+        http_metadata("Import a ready Wes JSON descriptor. Convert OpenAPI with :describe, or use :import openapi. Supply exactly one of file/url and an explicit endpoint; documented servers never select the execution destination.").parameters
+    }
+    fn metadata(&self) -> wes_engine::imports::ImporterMetadata {
+        http_metadata(
+            "Import a ready Wes JSON descriptor. Convert OpenAPI with :describe, or use :import openapi. Supply exactly one of file/url and an explicit endpoint; documented servers never select the execution destination.",
+        )
     }
     fn capture(
         &self,
@@ -118,7 +122,7 @@ impl Importer for SpecImporter {
         )
         .map_err(|error| ImportError::Input(error.0))?;
         let invoker = Arc::new(reading.invoker);
-        ImportProduct::new(reading.description, invoker.clone(), reading.warnings)
+        ImportProduct::new_with_warnings(reading.description, invoker.clone(), reading.warnings)
             .map(|product| product.with_streams(invoker))
     }
 }
@@ -126,18 +130,38 @@ const SPEC_ARGUMENTS: &[&str] = &["file", "url", "endpoint"];
 const PROCESS_ARGUMENT: &str = "bin";
 
 fn spec_argument(request: &ImportRequest) -> Result<(&str, &str), ImportError> {
-    if request.kind() != "spec"
+    http_argument(request, "spec")
+}
+fn http_metadata(summary: &'static str) -> wes_engine::imports::ImporterMetadata {
+    wes_engine::imports::ImporterMetadata {
+        parameters: SPEC_ARGUMENTS
+            .iter()
+            .map(|name| {
+                Parameter::new(
+                    *name,
+                    Shape::Primitive(Primitive::Text),
+                    *name == "endpoint",
+                )
+            })
+            .collect(),
+        exactly_one: vec![vec!["file".into(), "url".into()]],
+        summary: Some(summary),
+    }
+}
+fn http_argument<'a>(
+    request: &'a ImportRequest,
+    kind: &str,
+) -> Result<(&'static str, &'a str), ImportError> {
+    if request.kind() != kind
         || request
             .arguments()
             .keys()
             .any(|k| !SPEC_ARGUMENTS.contains(&k.as_str()))
-        || request.arguments().contains_key("file") == request.arguments().contains_key("url")
     {
         return Err(ImportError::InvalidRecipe);
     }
-    if request.arguments().contains_key("endpoint") {
-        text_argument(request, "endpoint")?;
-    }
+    http_metadata("").validate(request)?;
+    text_argument(request, "endpoint")?;
     let key = if request.arguments().contains_key("url") {
         "url"
     } else {

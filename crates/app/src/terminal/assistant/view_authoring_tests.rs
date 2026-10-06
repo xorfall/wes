@@ -23,7 +23,7 @@ async fn view_authoring_is_bounded_shared_product_context_without_execution_or_s
     ))
     .unwrap();
     assert_eq!(overview["content"], manifest);
-    for topic in ["overview", "sdk", "theme", "layout", "examples"] {
+    for topic in ["overview", "sdk", "theme", "layout", "examples", "types"] {
         let reply = invoke(&terminal, app, "view_authoring", json!({"topic":topic})).await;
         assert!(reply.to_string().len() < 64 * 1024);
         assert_eq!(reply["sdk"], wes_views::sdk_version());
@@ -55,6 +55,12 @@ async fn view_authoring_is_bounded_shared_product_context_without_execution_or_s
                 reply["content"]["declarations"],
                 include_str!("../../../../../packages/view-sdk/index.ts")
             ),
+            "types" => {
+                assert!(reply["content"]["inputRule"].as_str().unwrap().contains("Record"));
+                let source = reply["content"]["example"].as_str().unwrap();
+                wes_views::Package::parse(r#"{"name":"Forecast","id":"forecast","summary":"Synthetic input contract","renderer":"View.tsx","input":"ForecastInput","outputs":{}}"#,source).unwrap();
+                assert!(reply["content"]["viewBoundary"].as_str().unwrap().contains("Map"));
+            },
             "examples" => {
                 assert_eq!(reply["content"]["files"]["View.tsx"], include_str!("../../../../../tools/view-package/template/View.tsx"));
                 let example: Value = serde_json::from_str(reply["content"]["files"]["view.json"].as_str().unwrap()).unwrap();

@@ -58,8 +58,8 @@ it("keeps one acknowledged cell across repeats, including another pane's work, a
   const initial = sharedCellEvent([], planned);
   const repeated = sharedCellEvent(initial, { ...planned, cell: "repeated", repeatOf: "other-pane" });
   expect(repeated).toHaveLength(1); expect(repeated[0]!.lastRun).toBe("repeated");
-  expect(sharedCellEvent(repeated, { event: "session", generation: "another" })).toEqual([]);
-  expect(apply(emptyWorkspace, { event: "session", generation: "another" }).nodes).toEqual([]);
+  expect(sharedCellEvent(repeated, { event: "session", workspace: null, generation: "another" })).toEqual([]);
+  expect(apply(emptyWorkspace, { event: "session", workspace: null, generation: "another" }).nodes).toEqual([]);
 });
 
 it("retires shared work without removing another pane's surviving cell", () => {

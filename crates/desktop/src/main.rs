@@ -19,6 +19,9 @@ use windows::{Origin, SHELL, follows_navigation, requested_window};
 type Held = Mutex<Option<DesktopHost>>;
 
 fn main() {
+    if let Some(code) = wes::view_toolchain::entry() {
+        std::process::exit(i32::from(code));
+    }
     let tokio = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -57,6 +60,7 @@ fn main() {
             let resources = app.path().resource_dir().ok();
             if let Some(resources) = &resources {
                 wes::api_library::use_bundled_resources(resources.clone());
+                wes::view_toolchain::use_bundled_resources(resources.clone());
             }
             let site = site_directory(resources.as_deref());
             let host =

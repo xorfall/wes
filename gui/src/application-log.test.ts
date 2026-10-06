@@ -17,13 +17,13 @@ it("bounds records and fields, coalesces repeats, and notifies without retaining
 });
 it("attributes typed request errors and emits only real recovery, independently across panes", () => {
   const log = new ApplicationLog(), first = new TerminalDiagnostics(log), second = new TerminalDiagnostics(log);
-  const error = new TerminalRequestError("TERM_TIMEOUT", "Browser → terminal server", "editorreply", "Timed out", "Deadline expired");
-  first.connection("output", error, "editor acknowledgement", { workspace: "a", pane: "p1", terminal: "one" });
+  const error = new TerminalRequestError("TERM_TIMEOUT", "Browser → terminal server", "uireply", "Timed out", "Deadline expired");
+  first.connection("output", error, "UI acknowledgement", { workspace: "a", pane: "p1", terminal: "one" });
   second.error("write", new Error("Unconfirmed"), { workspace: "b", pane: "p2" }, "Check effects");
-  first.connection("output", error, "editor acknowledgement", { workspace: "a", pane: "p1" });
+  first.connection("output", error, "UI acknowledgement", { workspace: "a", pane: "p1" });
   first.connection("resize", undefined, "resize", {});
   expect(log.snapshot()).toHaveLength(2);
-  expect(log.snapshot()[0]).toMatchObject({ code: "TERM_TIMEOUT", operation: "editorreply", workspace: "a", terminal: "one" });
+  expect(log.snapshot()[0]).toMatchObject({ code: "TERM_TIMEOUT", operation: "uireply", workspace: "a", terminal: "one" });
   first.connection("output", undefined, "poll", { workspace: "a", pane: "p1" });
   first.connection("output", undefined, "poll", {});
   expect(log.snapshot()).toHaveLength(3);

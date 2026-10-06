@@ -5,7 +5,7 @@
   "identifier": "app.wesdesk.desktop",
   "build": {
     "beforeBuildCommand": {
-      "script": "npm run build",
+      "script": "node ../tools/desktop-build.mjs",
       "cwd": "../../gui"
     }
   },
@@ -17,7 +17,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -27,7 +29,8 @@
     ],
     "resources": {
       "../../gui/dist": "gui-dist",
-      "../../tools/describe/wes-extract": "wes-extract"
+      "../../tools/describe/wes-extract": "wes-extract",
+      "../../target/release/wes-view-build": "wes-view-build"
     }
   }
 }

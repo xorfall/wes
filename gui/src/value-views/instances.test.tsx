@@ -29,7 +29,7 @@ afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();});
 it("releases the old mount when the workspace generation changes even if a node ID repeats",()=>{
   let generation="first";
   const close=vi.fn(),watchViewFrame=vi.fn(()=>close);
-  const engine={viewGeneration:()=>generation,watchViewFrame} as unknown as import("../engine").Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>generation,watchViewFrame} as unknown as import("../engine").Engine;
   const value:import("../protocol").StoredValue={type:{kind:"meta",name:"ViewInstance"},data:{id:"id1",instance:"identity"},provenance:{}};
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={value} engine={engine} mode="window"/>);});
@@ -75,7 +75,7 @@ it("isolates identical timeline inputs in separate roots from a coordinator and 
     const previous=states.get(edit.owner)!,state={...previous,fields:edit.fields,outputs:edit.outputs,revision:String(BigInt(previous.revision)+1n)};
     states.set(edit.owner,state);listeners.get(edit.owner)?.forEach(listener=>listener({frame:state}));return {state,conflict:false};
   });
-  const engine={viewGeneration:()=>"session",watchViewFrame:(id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:frames[id]!});return ()=>{};},
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:frames[id]!});return ()=>{};},
     watchViewState:(id:string,_identity:string,_generation:string,listener:(sample:FrameSample<import("./shared-state").SharedState>)=>void)=>{const owner=id==="member"?"group":id,set=listeners.get(owner)??new Set();listeners.set(owner,set);set.add(listener);listener({frame:states.get(owner)!});return ()=>{set.delete(listener);};},commitViewState} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;act(()=>{tree=create(<>{[coordinator,member,standalone].map(entry=><InstanceView key={entry.id} value={{type:{kind:"meta",name:"ViewInstance"},data:{id:entry.id,instance:entry.instance},provenance:{}}} engine={engine} mode="window"/>)}</>);});
   const plots=()=>tree.root.findAllByProps({className:"timeline-svg"});
@@ -145,7 +145,7 @@ it("coordinates three compact plots by declared owner without leaking hover or s
     const previous=states.get(edit.owner)!,state={...previous,fields:edit.fields,outputs:edit.outputs,revision:String(BigInt(previous.revision)+1n)};
     states.set(edit.owner,state);listeners.get(edit.owner)?.forEach(listener=>listener({frame:state}));return {state,conflict:false};
   });
-  const engine={viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},
     watchViewState:(id:string,_identity:string,_generation:string,listener:(sample:FrameSample<import("./shared-state").SharedState>)=>void)=>{const owner=owners[id]!,set=listeners.get(owner)??new Set();listeners.set(owner,set);set.add(listener);listener({frame:states.get(owner)!});return ()=>{set.delete(listener);};},commitViewState} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;act(()=>{tree=create(<InstanceView value={{type:{kind:"meta",name:"ViewInstance"},data:{id:"board",instance:"board-identity"},provenance:{}}} engine={engine} mode="window"/>);});
   const plots=()=>tree.root.findAllByProps({className:"timeline-svg"});
@@ -295,7 +295,7 @@ it("renders the previous query result while running and starts work only on expl
   let current:ViewFrame={...base,instances:base.instances.map(i=>i.id==="card"?{...i,query:{environment:null,template:"Observe",mode:"finite" as const,adapter:null,source:"selection",output:"selection",trigger:"commit" as const,running:false}}:i)};
   let receive!:(sample:FrameSample)=>void;
   const applyViewQuery=vi.fn(async()=>{}),viewObservation=vi.fn(async()=>{}),close=vi.fn();
-  const engine={viewGeneration:()=>"session",watchViewFrame:vi.fn((_id,_identity,listener)=>{receive=listener;listener({frame:current});return close;}),applyViewQuery,viewObservation} as unknown as import("../engine").Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:vi.fn((_id,_identity,listener)=>{receive=listener;listener({frame:current});return close;}),applyViewQuery,viewObservation} as unknown as import("../engine").Engine;
   const value:import("../protocol").StoredValue={type:{kind:"meta",name:"ViewInstance"},data:{id:"board",instance:"board-identity"},provenance:{}};
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={value} engine={engine} mode="window"/>);});
@@ -311,7 +311,7 @@ it("renders the previous query result while running and starts work only on expl
   act(()=>tree.unmount());expect(close).toHaveBeenCalledOnce();
 });
 it("captures evidence through a normal engine command without starting a query",async()=>{
-  const captureViewResult=vi.fn(async()=>{}),applyViewQuery=vi.fn(),engine={viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:frame()});return ()=>{};},captureViewResult,applyViewQuery} as unknown as import("../engine").Engine;
+  const captureViewResult=vi.fn(async()=>{}),applyViewQuery=vi.fn(),engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:frame()});return ()=>{};},captureViewResult,applyViewQuery} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={{type:{kind:"meta",name:"ViewInstance"},data:{id:"board",instance:"board-identity"},provenance:{}}} engine={engine} mode="window"/>);});
   const button=tree.root.findAllByType("button").find(button=>button.children.includes("Save snapshot as result"))!;
@@ -321,7 +321,7 @@ it("captures evidence through a normal engine command without starting a query",
 });
 it("explains what a static view snapshot creates without inventing output ports",async()=>{
   const base=frame().instances[1]!,current:ViewFrame={root:base.id,instances:[base]};
-  const captureViewResult=vi.fn(async()=>{}),applyViewQuery=vi.fn(),engine={viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},captureViewResult,applyViewQuery} as unknown as import("../engine").Engine;
+  const captureViewResult=vi.fn(async()=>{}),applyViewQuery=vi.fn(),engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},captureViewResult,applyViewQuery} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={{type:{kind:"meta",name:"ViewInstance"},data:{id:base.id,instance:base.instance},provenance:{}}} engine={engine} mode="window"/>);});
   expect(tree.root.findByType("summary").children.join("")).toMatch(/snapshot/i);
@@ -343,7 +343,7 @@ it("starts and stops observation of committed results without applying a query o
   let current:ViewFrame={...base,instances:base.instances.map(i=>i.id==="card"?{...i,query:{environment:null,template:"Observe",mode:"finite" as const,adapter:null,source:"selection",output:"selection",trigger:"commit" as const,running:false}}:{...i,inputReference:{kind:"current" as const,node:"orders",port:"data" as const,fields:["body"],shownRun:"r1"}})};
   let receive!:(sample:FrameSample)=>void;
   const applyViewQuery=vi.fn(async()=>{}),viewObservation=vi.fn(async()=>{}),captureViewResult=vi.fn(async()=>{}),submit=vi.fn(async()=>{});
-  const engine={viewGeneration:()=>"session",watchViewFrame:vi.fn((_id,_identity,listener)=>{receive=listener;listener({frame:current});return ()=>{};}),applyViewQuery,viewObservation,captureViewResult,submit} as unknown as import("../engine").Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:vi.fn((_id,_identity,listener)=>{receive=listener;listener({frame:current});return ()=>{};}),applyViewQuery,viewObservation,captureViewResult,submit} as unknown as import("../engine").Engine;
   const value:import("../protocol").StoredValue={type:{kind:"meta",name:"ViewInstance"},data:{id:"board",instance:"board-identity"},provenance:{}};
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={value} engine={engine} mode="window"/>);});
@@ -373,7 +373,7 @@ it("holds Apply until the mounted selection has been confirmed",async()=>{
   const current:ViewFrame={root:"board",instances:[{...base.instances[0]!,members:{members:["choice","card"]}},selected,{...base.instances[1]!,query:{environment:null,template:"Observe",mode:"finite",adapter:null,source:"choice",output:"value",trigger:"manual",running:false}}]};
   const shared={owner:"choice",identity:"choice-identity",definitionRevision:"0",revision:"1",definition:"choice",digest:choice.digest,fields:{value:"a"},outputs:{value:"a"}};
   let confirm!:(value:unknown)=>void;
-  const engine={viewGeneration:()=>"session",watchViewFrame:(_id:unknown,_identity:unknown,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},watchViewState:(_id:unknown,_identity:unknown,_generation:unknown,listener:(sample:unknown)=>void)=>{listener({frame:shared});return ()=>{};},commitViewState:vi.fn(()=>new Promise(resolve=>{confirm=resolve;}))} as unknown as import("../engine").Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:unknown,_identity:unknown,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},watchViewState:(_id:unknown,_identity:unknown,_generation:unknown,listener:(sample:unknown)=>void)=>{listener({frame:shared});return ()=>{};},commitViewState:vi.fn(()=>new Promise(resolve=>{confirm=resolve;}))} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={{type:{kind:"meta",name:"ViewInstance"},data:{id:"board",instance:"board-identity"},provenance:{}}} engine={engine} mode="window"/>);});
   const apply=()=>tree.root.findAllByType("button").find(b=>b.children.includes("Apply"))!;
@@ -388,7 +388,7 @@ function referenceView(over:Partial<ViewFrame["instances"][number]>,pinViewInput
   let current:ViewFrame={root:"card",instances:[{...frame().instances[1]!,...over}]};
   let receive!:(sample:FrameSample)=>void;
   const viewObservation=vi.fn(async()=>{}),captureViewResult=vi.fn(async()=>{}),submit=vi.fn(async()=>{});
-  const engine={viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{receive=listener;listener({frame:current});return ()=>{};},
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{receive=listener;listener({frame:current});return ()=>{};},
     viewObservation,captureViewResult,submit,pinViewInput,watchViewInputs:()=>()=>{}} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={{type:{kind:"meta",name:"ViewInstance"},data:{id:"card",instance:"card-identity"},provenance:{}}} engine={engine} mode="window"/>);});
@@ -479,7 +479,7 @@ it("should_ScopeTheObservationStatusToMembers_When_ThePinnedRootHasCurrentMember
   const current:ViewFrame={...base,instances:base.instances.map(i=>i.id==="board"
     ?{...i,inputReference:{kind:"retained" as const,node:"board_pin",run:"r3",handle:"h3",origin:null}}
     :{...i,inputReference:{kind:"current" as const,node:"orders",port:"data" as const,fields:[],shownRun:"r1"},observing:true})};
-  const engine={viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},watchViewInputs:()=>()=>{}} as unknown as import("../engine").Engine;
+  const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},watchViewInputs:()=>()=>{}} as unknown as import("../engine").Engine;
   let tree!:ReturnType<typeof create>;
   // Act
   act(()=>{tree=create(<InstanceView value={{type:{kind:"meta",name:"ViewInstance"},data:{id:"board",instance:"board-identity"},provenance:{}}} engine={engine} mode="window"/>);});

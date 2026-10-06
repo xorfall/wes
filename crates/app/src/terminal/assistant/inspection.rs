@@ -27,6 +27,7 @@ pub(super) fn cell(
     let nodes: Vec<_> = reply.nodes.iter().take(32).map(|id| {
         let mut node = json!({"node":id.to_string(),"state":graph.graph.node(id).map(|n| format!("{:?}", n.state()).to_lowercase()),"run":graph.runs.get(id).map(ToString::to_string)});
         node["updatePending"] = json!(graph.input_updates.contains(id));
+        if let Some(completion)=crate::execution_status::public_completion(observation,id,source.is_some()) { node["completion"]=completion; }
         if let Some(reason) = graph.stale_reasons.get(id) {
             node["staleReason"] = json!({"code":reason.code(),"message":reason.message()});
         }
@@ -99,6 +100,45 @@ fn bounded(value: &wes_core::Value) -> Value {
 mod tests {
     use super::*;
     use wes_core::{Data, Primitive, Provenance, Shape};
+    #[test]
+    fn import_categories_keep_actionable_causes_without_exporting_private_advisories() {
+        use wes_engine::imports::{ImportError, ImportWarning, ImportWarningKind};
+        use wes_language::{Diagnostic, Span};
+        let mut items =
+            vec![ImportError::MissingArgument("endpoint".into()).diagnostic(Span::at(0))];
+        for kind in [
+            ImportWarningKind::Advisory,
+            ImportWarningKind::AuthenticationChoice,
+            ImportWarningKind::CredentialUnavailable,
+            ImportWarningKind::QueryCredential,
+        ] {
+            items.push(
+                ImportWarning::new(kind, "PRIVATE_CREDENTIAL_AND_OPERATION")
+                    .diagnostic(Span::at(0)),
+            );
+        }
+        items.push(Diagnostic::error("IMP004", Span::at(0), "PRIVATE_ALIAS"));
+        items.push(Diagnostic::error("ENV039", Span::at(0), "PRIVATE_ENDPOINT"));
+        let result = diagnostics(&items, None);
+        assert!(result[0]["message"].as_str().unwrap().contains("endpoint"));
+        assert_eq!(result[2]["code"], "IMP007");
+        assert!(result[2]["message"].as_str().unwrap().contains("bind.auth"));
+        assert_eq!(result[3]["code"], "IMP008");
+        assert_eq!(result[4]["code"], "IMP009");
+        assert!(
+            result[5]["message"]
+                .as_str()
+                .unwrap()
+                .contains("replace:true")
+        );
+        assert!(
+            result[6]["message"]
+                .as_str()
+                .unwrap()
+                .contains("No provider was called")
+        );
+        assert!(!result.to_string().contains("PRIVATE"));
+    }
     #[test]
     fn producer_explanations_survive_unknown_codes_without_private_detail_or_source() {
         use wes_language::{Diagnostic, Severity, Span};

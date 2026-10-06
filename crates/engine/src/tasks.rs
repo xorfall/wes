@@ -41,7 +41,27 @@ pub enum BoundTask {
     Query(BoundQuery),
     View(view::BoundView),
 }
+/// Producer-defined successful-completion semantics, separate from result contents
+/// and authority. Exposing this notice requires permission to read the source.
+#[derive(Clone, Debug)]
+pub struct CompletionNotice {
+    pub code: &'static str,
+    pub message: &'static str,
+    pub result_access: &'static str,
+    pub grants_changed: bool,
+}
 impl BoundTask {
+    pub fn completion_notice(&self) -> Option<CompletionNotice> {
+        match self {
+            Self::Describe(task) => Some(CompletionNotice {
+                code: "DSC000",
+                message: task.public_completion(),
+                result_access: "private",
+                grants_changed: false,
+            }),
+            _ => None,
+        }
+    }
     pub fn observational(&self) -> bool {
         matches!(
             self,

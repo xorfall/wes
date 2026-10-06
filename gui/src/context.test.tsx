@@ -38,6 +38,6 @@ it("clears workspace identity on session replacement and projection failure", ()
   const event = { event: "workspace-context", name: "research", saved: ["research", "demo"] } as const;
   const workspace = apply(emptyWorkspace, event);
   expect(workspace.identity).toEqual(event);
-  expect(apply(workspace, { event: "session", generation: "new" }).identity).toBeUndefined();
+  expect(apply(workspace, { event: "session", workspace: null, generation: "new" }).identity).toBeUndefined();
   expect(apply(workspace, { event: "projection-unavailable", message: "unavailable" }).identity).toBeUndefined();
 });

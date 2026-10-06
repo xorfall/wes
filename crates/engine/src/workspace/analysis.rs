@@ -57,15 +57,13 @@ pub(super) fn prepare_import(
     }
     let mut diagnostics = prepared.diagnostics;
     for warning in product.warnings() {
-        diagnostics.push(
-            Diagnostic::error("IMP002", prepared.span, warning).with_severity(Severity::Warning),
-        );
+        diagnostics.push(warning.diagnostic(prepared.span));
     }
     if providers.catalogue().provider(name).is_some() {
-        diagnostics.push(Diagnostic::error("IMP006",prepared.span,format!("provider '{name}' was replaced; existing nodes retain their captured invocation handles")).with_severity(Severity::Warning));
+        diagnostics.push(Diagnostic::error("IMP006",prepared.span,format!("provider '{name}' was replaced; existing nodes retain their captured invocation handles")).with_severity(Severity::Warning).with_public_message("An existing provider was replaced. Existing nodes retain their captured invocation handles."));
     }
     if wes_language::vocabulary::commands::is_command_root(name) {
-        diagnostics.push(Diagnostic::error("IMP005",prepared.span,format!("provider '{name}' conflicts with a meta-command name; import under an alias to use it")).with_severity(Severity::Warning));
+        diagnostics.push(Diagnostic::error("IMP005",prepared.span,format!("provider '{name}' conflicts with a meta-command name; import under an alias to use it")).with_severity(Severity::Warning).with_public_message("Provider name conflicts with a meta command. Import under another alias."));
     }
     Ok(PreparedChange {
         stamp: prepared.stamp,
@@ -156,7 +154,7 @@ pub(super) fn prepare_type_load(
                         artifact.package.manifest.name, artifact.digest
                     ),
                 )
-                .with_severity(Severity::Info),
+                .with_severity(Severity::Info).with_public_message("View package installed and validated. No source command was run; UI rendering has not been verified."),
             },
             diagnostics: prepared.diagnostics,
         });
@@ -657,7 +655,7 @@ impl Analysis<'_> {
                             task.target.clone().expect("resolved help target"),
                             self.catalogue(),
                         )
-                        .with_importers(self.importers.parameters())
+                        .with_importers(self.importers.metadata())
                         .map_err(|message| rejected("RES005", statement.span, message))?;
                         let typing = Arc::new(help.predicted_typing());
                         (BoundTask::Help(help), typing)

@@ -40,7 +40,7 @@ enum Action {
         request: String,
         error: Option<String>,
     },
-    EditorReply {
+    UiReply {
         id: String,
         request: String,
         result: serde_json::Value,
@@ -219,12 +219,12 @@ pub(super) async fn action(super::Scoped(shared): super::Scoped, request: Reques
                     manager.command_reply(&id, generation, client, &request, error)?;
                     Ok(json!({"accepted":true}))
                 }
-                Action::EditorReply {
+                Action::UiReply {
                     id,
                     request,
                     result,
                 } => {
-                    manager.editor_reply(&id, generation, client, &request, result)?;
+                    manager.ui_reply(&id, generation, client, &request, result)?;
                     Ok(json!({"accepted":true}))
                 }
                 Action::Forget { history } => {

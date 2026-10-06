@@ -520,7 +520,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
     })) }),
     open: async request => { await openTab(request.workspace, request.pane, request.activate, false); return uiLayout.current.read(); },
   };
-  useEffect(() => engine.assistantEditor.attachLayout({ read: () => uiLayout.current.read(), open: request => uiLayout.current.open(request) }), [engine]);
+  useEffect(() => engine.assistantUi.attachLayout({ read: () => uiLayout.current.read(), open: request => uiLayout.current.open(request) }), [engine]);
   const paneCommand = async (text: string, source: string, terminal = false, commandEnvironment?: string | null, sourceHistory?: string) => {
     const typed = read(text);
     if (terminal) requireTerminalTab(splitRef.current, source, sourceHistory);

@@ -35,7 +35,7 @@ function connect(binding="synthetic",generation="g"){
   vi.stubGlobal("EventSource",Events);
   vi.stubGlobal("window",{fetch:globalThis.fetch});
   const engine=new Engine(binding),off=engine.listen(()=>{},()=>{}),events=Events.current;
-  disposers.push(off);events.emit({event:"session",generation});return {engine,events};
+  disposers.push(off);events.emit({event:"session",workspace:null,generation});return {engine,events};
 }
 function draw(value:StoredValue){return present({prepared:prepareSync(value),registry:Registry.core(),context:{mode:"window",columns:80,lines:480,density:"normal",locale:"en-GB",timeZone:"UTC"}});}
 
@@ -97,7 +97,7 @@ it("rejects a result when the workspace changes during asset discovery",async()=
   const fetch=vi.fn(async(url:string)=>url.startsWith("/view-packages/")?await new Promise<Response>(resolve=>{finish=resolve;}):new Response(JSON.stringify(url.startsWith("/values/")?value:[definition])));
   vi.stubGlobal("fetch",fetch);const {engine,events}=connect();const reading=engine.fetch("reading");
   await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
-  events.emit({event:"session",generation:"new"});finish(new Response(JSON.stringify(asset)));
+  events.emit({event:"session",workspace:null,generation:"new"});finish(new Response(JSON.stringify(asset)));
   await expect(reading).rejects.toThrow("Workspace changed");expect(valueViewModules.named(definition.id,asset.digest)).toBeUndefined();
 });
 

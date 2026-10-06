@@ -10,6 +10,11 @@ export interface ViewInput {
   readonly context: Context;
   /** Stable host identity when rendered as an instance; absent for ordinary value views. */
   readonly instanceKey?: string;
+  /**
+   * The live frame entry's input revision: a host-side delivery label, never sent to the view and
+   * never derived from input values. Linked-input patches are not covered by it.
+   */
+  readonly inputRevision?: string;
   readonly coordinated?: boolean;
   /** Prepared child views supplied by the workspace host, never copied into the input value. */
   readonly slots?: Readonly<Record<string, readonly PresentationNode[]>>;
