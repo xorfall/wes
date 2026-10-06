@@ -245,8 +245,10 @@ in real-world use; security and performance require further review.
 TCP/IP and USB traffic capture, protocol analysis and binary-format inspection
 are planned extensions.
 
-Persistent formats may change without a migration path. macOS is the currently
-verified desktop build platform. Windows and Linux desktop builds are untested.
+Persistent formats may change without a migration path. Native builds and the
+full Rust test suite have been verified on macOS and Windows. Linux builds remain
+untested. Windows installer packaging has not been verified for the current
+revision.
 
 The project is licensed under [MIT](LICENSE). Bundled fonts retain their own
 licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
