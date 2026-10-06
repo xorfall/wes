@@ -133,7 +133,10 @@ impl InteractiveInvoker for ProcessConversation {
             match result {
                 Ok((status, stdout, stderr)) => {
                     if cancellation.is_cancelled() {
-                        child.cancel().await.map_err(|_| Failure::Cleanup.error())?;
+                        child
+                            .cancel()
+                            .await
+                            .map_err(|error| Failure::Cleanup(error).error())?;
                         return Err(InvocationError::Cancelled);
                     }
                     child.complete();
@@ -161,8 +164,8 @@ impl InteractiveInvoker for ProcessConversation {
                     .map_err(|_| Failure::Internal.error())
                 }
                 Err(reason) => {
-                    if child.cancel().await.is_err() {
-                        return Err(Failure::Cleanup.error());
+                    if let Err(error) = child.cancel().await {
+                        return Err(Failure::Cleanup(error).error());
                     }
                     if cancellation.is_cancelled() {
                         Err(InvocationError::Cancelled)

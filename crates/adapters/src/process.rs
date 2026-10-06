@@ -246,7 +246,10 @@ impl Invoker for ProcessInvoker {
             match captured {
                 Ok((status, stdout, stderr)) => {
                     if cancellation.is_cancelled() {
-                        child.cancel().await.map_err(|_| Failure::Cleanup.error())?;
+                        child
+                            .cancel()
+                            .await
+                            .map_err(|error| Failure::Cleanup(error).error())?;
                         return Err(InvocationError::Cancelled);
                     }
                     child.complete();
@@ -273,8 +276,8 @@ impl Invoker for ProcessInvoker {
                     // error (the process may have exited concurrently or be outside our privilege).
                     let reaped = child.cancel().await;
                     // A successful wait also resolves the signal-vs-natural-exit race.
-                    if reaped.is_err() {
-                        return Err(Failure::Cleanup.error());
+                    if let Err(error) = reaped {
+                        return Err(Failure::Cleanup(error).error());
                     }
                     if cancellation.is_cancelled() {
                         Err(InvocationError::Cancelled)
@@ -476,12 +479,16 @@ pub(crate) enum Failure {
     OutputLimit,
     Read,
     Wait,
-    Cleanup,
+    Cleanup(ownership::CleanupError),
     Cancelled,
     Internal,
 }
 impl Failure {
     pub(crate) fn error(self) -> InvocationError {
+        let cleanup = match &self {
+            Self::Cleanup(error) => Some(error.summary()),
+            _ => None,
+        };
         let (code, message) = match self {
             Self::Arguments => (
                 "PROC001",
@@ -495,7 +502,7 @@ impl Failure {
             Self::OutputLimit => ("PROC004", "Combined process output exceeds its byte budget"),
             Self::Read => ("PROC005", "Could not read a process output pipe"),
             Self::Wait => ("PROC006", "Could not observe the local process exit"),
-            Self::Cleanup => ("PROC007", "Could not confirm normal local process cleanup"),
+            Self::Cleanup(_) => ("PROC007", "Could not confirm normal local process cleanup"),
             Self::Cancelled => return InvocationError::Cancelled,
             Self::Internal => ("PROC008", "Process output construction failed"),
         };
@@ -503,7 +510,10 @@ impl Failure {
             ErrorValue::new(
                 ErrorId::new(Uuid::new_v4().to_string()).expect("UUID"),
                 code,
-                message,
+                cleanup.map_or_else(
+                    || message.to_owned(),
+                    |detail| format!("{message}: {detail}"),
+                ),
                 vec![],
                 None,
             )

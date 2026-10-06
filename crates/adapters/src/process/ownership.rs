@@ -4,6 +4,38 @@ use process_wrap::tokio::{ChildWrapper, CommandWrap};
 use std::{any::Any, io};
 use tokio::process::{Child, Command};
 
+#[derive(Debug)]
+pub(crate) struct CleanupError {
+    phase: &'static str,
+    source: io::Error,
+}
+impl CleanupError {
+    pub(super) fn summary(&self) -> String {
+        // Only host error classification is public; never copy arbitrary I/O error text.
+        match self.source.raw_os_error() {
+            Some(code) => format!("{}: {:?} (OS error {code})", self.phase, self.source.kind()),
+            None => format!("{}: {:?}", self.phase, self.source.kind()),
+        }
+    }
+}
+fn confirm_cleanup(signalled: io::Result<()>, reaped: io::Result<()>) -> Result<(), CleanupError> {
+    reaped.map_err(|source| CleanupError {
+        phase: "wait",
+        source,
+    })?;
+    // An already-empty Unix group needs no signal. Other refusals cannot claim cleanup.
+    #[cfg(unix)]
+    if let Err(error) = &signalled {
+        if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) {
+            return Ok(());
+        }
+    }
+    signalled.map_err(|source| CleanupError {
+        phase: "signal",
+        source,
+    })
+}
+
 pub(super) struct LocalChild {
     child: Box<dyn ChildWrapper>,
     completed: bool,
@@ -42,19 +74,10 @@ impl LocalChild {
         // No KillOnDrop wrapper: successful background effects keep their previous lifetime.
         self.completed = true;
     }
-    pub(super) async fn cancel(&mut self) -> io::Result<()> {
+    pub(super) async fn cancel(&mut self) -> Result<(), CleanupError> {
         let signalled = self.child.start_kill();
-        let reaped = self.child.wait().await;
-        reaped?;
-        // An already-empty Unix group needs no signal. Other refusals cannot claim cleanup.
-        #[cfg(unix)]
-        if let Err(error) = &signalled {
-            if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) {
-                self.completed = true;
-                return Ok(());
-            }
-        }
-        signalled?;
+        let reaped = self.child.wait().await.map(|_| ());
+        confirm_cleanup(signalled, reaped)?;
         self.completed = true;
         Ok(())
     }
@@ -144,6 +167,43 @@ mod tests {
         assert!(
             matches!(ended, Ok(0))
                 || matches!(ended, Err(ref error) if error.kind() == io::ErrorKind::ConnectionReset)
+        );
+    }
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+    #[test]
+    fn waiting_and_signalling_refusals_keep_their_phase_without_private_error_text() {
+        let error = confirm_cleanup(
+            Ok(()),
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "synthetic private text",
+            )),
+        )
+        .unwrap_err();
+        assert_eq!(error.summary(), "wait: Interrupted");
+        let error =
+            confirm_cleanup(Err(io::ErrorKind::PermissionDenied.into()), Ok(())).unwrap_err();
+        assert_eq!(error.summary(), "signal: PermissionDenied");
+        assert!(confirm_cleanup(Ok(()), Ok(())).is_ok());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn an_empty_group_requires_a_confirmed_wait() {
+        let absent = || {
+            Err(io::Error::from_raw_os_error(
+                rustix::io::Errno::SRCH.raw_os_error(),
+            ))
+        };
+        assert!(confirm_cleanup(absent(), Ok(())).is_ok());
+        assert_eq!(
+            confirm_cleanup(absent(), Err(io::ErrorKind::PermissionDenied.into()))
+                .unwrap_err()
+                .summary(),
+            "wait: PermissionDenied"
         );
     }
 }

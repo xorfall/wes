@@ -15,3 +15,5 @@
 /views/*/contract.ts
 /examples/view-packages/source/*/contract.ts
 /examples/**/example-echo.bin
+/crates/desktop/resources/wes-view-build
+/crates/desktop/resources/wes-view-build.exe

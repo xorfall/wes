@@ -264,10 +264,8 @@ async fn stdout_and_stderr_are_drained_concurrently_and_share_one_budget() {
             ..config
         },
     );
-    assert_eq!(
-        failure(invoke(cap, &invoker, IndexMap::new()).await).code(),
-        "PROC004"
-    );
+    let error = failure(invoke(cap, &invoker, IndexMap::new()).await);
+    assert_eq!(error.code(), "PROC004", "{}", error.message());
     assert!(fixture.lock_is_available());
 }
 

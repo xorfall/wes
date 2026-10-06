@@ -345,6 +345,9 @@ mod pty {
         }
     }
 }
+#[cfg(any(windows, test))]
+mod workers;
+
 #[cfg(windows)]
 mod pty {
     //! ConPTY offers only blocking pipes. One thread per direction keeps the shared terminal
@@ -354,8 +357,8 @@ mod pty {
     use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize};
     use std::{
         io::{Read, Write},
+        sync::atomic::Ordering,
         sync::mpsc,
-        thread::JoinHandle,
         time::Instant,
     };
 
@@ -399,14 +402,10 @@ mod pty {
         let (input, queued) = mpsc::sync_channel::<Vec<u8>>(INPUT_CHUNKS);
         let (produced, output) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHUNKS);
         let reply = input.clone();
-        let threads = vec![
-            std::thread::Builder::new()
-                .name("wes-conpty-output".into())
-                .spawn(move || read_output(reader, produced, reply))?,
-            std::thread::Builder::new()
-                .name("wes-conpty-input".into())
-                .spawn(move || write_input(writer, queued))?,
-        ];
+        let mut workers = workers::Workers::new()?;
+        let closing = workers.closing.clone();
+        workers.spawn("output", move || read_output(reader, produced, reply))?;
+        workers.spawn("input", move || write_input(writer, queued, closing))?;
         if cancellation.is_cancelled() {
             return Err(io::Error::other("Terminal launch authority ended"));
         }
@@ -423,7 +422,8 @@ mod pty {
             cursor: 0,
             eof: false,
             input: Some(input),
-            threads,
+            workers,
+            cleanup_attempted: false,
             remote,
             exited: None,
             ended: None,
@@ -436,13 +436,16 @@ mod pty {
         mut reader: Box<dyn Read + Send>,
         produced: mpsc::SyncSender<Vec<u8>>,
         reply: mpsc::SyncSender<Vec<u8>>,
-    ) {
+    ) -> io::Result<()> {
         let mut reply = Some(reply);
         let mut request = CursorRequest::default();
         let mut buffer = vec![0u8; CHUNK];
         loop {
             let n = match reader.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
+                Err(error) if pipe_closed(&error) => break,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
                 Ok(n) => n,
             };
             let (chunk, found) = request.filter(&buffer[..n]);
@@ -453,19 +456,78 @@ mod pty {
                 // The input queue must not be kept open by this thread once it cannot answer.
                 reply = None;
             }
-            if !chunk.is_empty() && produced.send(chunk).is_err() {
-                return;
+            if !chunk.is_empty() {
+                // Even after the receiver leaves, drain the pipe so closing the console can finish.
+                let _ = produced.send(chunk);
             }
         }
         let rest = request.finish();
         if !rest.is_empty() {
             let _ = produced.send(rest);
         }
+        Ok(())
     }
-    fn write_input(mut writer: Box<dyn Write + Send>, queued: mpsc::Receiver<Vec<u8>>) {
+    fn pipe_closed(error: &io::Error) -> bool {
+        matches!(error.raw_os_error(), Some(109 | 232))
+    }
+    fn write_input(
+        mut writer: Box<dyn Write + Send>,
+        queued: mpsc::Receiver<Vec<u8>>,
+        closing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> io::Result<()> {
         while let Ok(bytes) = queued.recv() {
-            if writer.write_all(&bytes).is_err() {
-                break;
+            if let Err(error) = writer.write_all(&bytes) {
+                if closing.load(Ordering::Acquire) && pipe_closed(&error) {
+                    return Ok(());
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+    #[cfg(test)]
+    mod io_tests {
+        use super::*;
+        struct Failed;
+        impl Read for Failed {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::PermissionDenied.into())
+            }
+        }
+        impl Write for Failed {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from_raw_os_error(109))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        #[test]
+        fn an_unexpected_read_failure_is_not_eof() {
+            let (produced, _) = mpsc::sync_channel(OUTPUT_CHUNKS);
+            let (reply, _) = mpsc::sync_channel(INPUT_CHUNKS);
+            assert_eq!(
+                read_output(Box::new(Failed), produced, reply)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::PermissionDenied
+            );
+            assert!(pipe_closed(&io::Error::from_raw_os_error(109)));
+            assert!(pipe_closed(&io::Error::from_raw_os_error(232)));
+            assert!(!pipe_closed(&io::Error::from_raw_os_error(5)));
+        }
+        #[test]
+        fn input_pipe_closure_is_normal_only_during_endpoint_close() {
+            for closing in [false, true] {
+                let (input, queued) = mpsc::sync_channel(INPUT_CHUNKS);
+                input.send(vec![1]).unwrap();
+                drop(input);
+                let result = write_input(
+                    Box::new(Failed),
+                    queued,
+                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(closing)),
+                );
+                assert_eq!(result.is_ok(), closing);
             }
         }
     }
@@ -477,7 +539,8 @@ mod pty {
         cursor: usize,
         eof: bool,
         input: Option<mpsc::SyncSender<Vec<u8>>>,
-        threads: Vec<JoinHandle<()>>,
+        workers: workers::Workers,
+        cleanup_attempted: bool,
         remote: bool,
         /// The shell has exited; its last output may still be on its way.
         exited: Option<(ExitStatus, Instant)>,
@@ -497,17 +560,16 @@ mod pty {
         /// Closing the console ends every process still attached to it and makes the output
         /// pipe report its end. Older systems do not return from the close until that pipe is
         /// read, so it runs beside the reader instead of in front of it.
-        fn close_console(&mut self) {
+        fn close_console(&mut self) -> io::Result<()> {
+            self.workers.begin_close();
             self.input.take();
             if let Some(master) = self.master.take() {
-                // A failed spawn drops the closure, and with it the console.
-                if let Ok(closing) = std::thread::Builder::new()
-                    .name("wes-conpty-close".into())
-                    .spawn(move || drop(master))
-                {
-                    self.threads.push(closing);
-                }
+                self.workers.spawn("close", move || {
+                    drop(master);
+                    Ok(())
+                })?;
             }
+            Ok(())
         }
         fn discard_until(&mut self, deadline: Instant) {
             self.pending.clear();
@@ -526,6 +588,10 @@ mod pty {
     }
     impl Read for Pty {
         fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.workers.check()?;
+            if bytes.is_empty() {
+                return Ok(0);
+            }
             if self.cursor == self.pending.len() {
                 if self.eof {
                     return Ok(0);
@@ -550,6 +616,7 @@ mod pty {
     }
     impl Write for Pty {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.workers.check()?;
             let input = self
                 .input
                 .as_ref()
@@ -574,6 +641,7 @@ mod pty {
             }
         }
         fn wait_ready(&mut self, _: bool, timeout: Duration) -> io::Result<()> {
+            self.workers.check()?;
             if self.cursor < self.pending.len() {
                 return Ok(());
             }
@@ -593,6 +661,7 @@ mod pty {
         }
         /// The exit is reported only once the output written before it has been read.
         fn try_exit(&mut self) -> io::Result<Option<TerminalExit>> {
+            self.workers.check()?;
             if self.ended.is_some() {
                 return Ok(self.ended);
             }
@@ -600,7 +669,7 @@ mod pty {
                 && let Some(status) = self.child.try_wait()?
             {
                 self.exited = Some((status, Instant::now() + DRAIN));
-                self.close_console();
+                self.close_console()?;
             }
             if let Some((status, deadline)) = &self.exited
                 && (self.drained() || Instant::now() >= *deadline)
@@ -616,7 +685,7 @@ mod pty {
                     None => match self.child.try_wait()? {
                         Some(status) => (status, false),
                         None => {
-                            self.close_console();
+                            self.close_console()?;
                             let deadline = Instant::now() + CLOSE_GRACE;
                             loop {
                                 self.discard_until(Instant::now() + Duration::from_millis(20));
@@ -639,21 +708,19 @@ mod pty {
                 };
                 self.ended = Some(self.exit(&status, forced));
             }
-            self.close_console();
-            self.discard_until(Instant::now() + DRAIN);
-            // A thread still inside a pipe call after the console has closed is left to end
-            // with that call; joining it here could hold the terminal worker indefinitely.
-            for thread in self.threads.drain(..) {
-                if self.eof || thread.is_finished() {
-                    let _ = thread.join();
-                }
-            }
+            self.close_console()?;
+            self.cleanup_attempted = true;
+            let deadline = Instant::now() + DRAIN;
+            self.discard_until(deadline);
+            self.workers.finish(deadline)?;
             Ok(self.ended.expect("recorded above"))
         }
     }
     impl Drop for Pty {
         fn drop(&mut self) {
-            let _ = self.shutdown();
+            if !self.cleanup_attempted {
+                let _ = self.shutdown();
+            }
         }
     }
 }
