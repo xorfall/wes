@@ -1,4 +1,4 @@
-//! Durable admission uses the same pure runner and original cumulative limits.
+//! Durable admission preserves captured pure semantics and cumulative granted bounds.
 use super::*;
 use crate::storage::datasets::{
     AnalysisCheckpoint, AnalysisDuration, AnalysisUsage, AnalysisWork, CapturedValue,
@@ -15,7 +15,7 @@ pub(super) struct Recipe {
     pub live: bool,
     pub step: String,
     pub finish: Option<String>,
-    pub settings: Settings,
+    pub settings: FrozenSettings,
     pub framing: Option<Profile>,
     pub identity: Identity,
 }
@@ -83,6 +83,81 @@ impl Runner {
         token: CancellationToken,
         span: Span,
     ) -> Result<PreparedResume, Failure> {
+        Self::prepare_attempt(
+            source,
+            follow,
+            reference,
+            checkpoint,
+            run,
+            pool,
+            services,
+            token,
+            span,
+            None,
+            Settings::capture(),
+        )
+    }
+    pub fn prepare_continue(
+        captured: crate::storage::datasets::DatasetContinuation,
+        requested: crate::scan::Totals,
+        basis: &str,
+        follow: bool,
+        run: String,
+        pool: &MemoryPool,
+        services: Option<Arc<dyn LocalServices>>,
+        token: CancellationToken,
+        span: Span,
+    ) -> Result<PreparedResume, Failure> {
+        let active = Settings::capture();
+        let review = ContinuationReview::new(
+            &captured.reference,
+            &captured.checkpoint,
+            &captured.status,
+            requested,
+            active,
+            span,
+        )?;
+        if review.basis != basis {
+            return Err(Failure::new(
+                "CAL004",
+                span,
+                "analysis continuation basis changed; review the current checkpoint again",
+            ));
+        }
+        if let Some(reason) = review.continue_reason {
+            return Err(Failure::new(
+                "CAL009",
+                span,
+                format!("analysis continuation refused: {}", reason.name()),
+            ));
+        }
+        Self::prepare_attempt(
+            captured.source,
+            follow,
+            captured.reference,
+            captured.checkpoint,
+            run,
+            pool,
+            services,
+            token,
+            span,
+            Some(requested),
+            active,
+        )
+    }
+    fn prepare_attempt(
+        source: Value,
+        follow: bool,
+        reference: wes_core::DatasetRef,
+        checkpoint: AnalysisCheckpoint,
+        run: String,
+        pool: &MemoryPool,
+        services: Option<Arc<dyn LocalServices>>,
+        token: CancellationToken,
+        span: Span,
+        raised: Option<crate::scan::Totals>,
+        active: Settings,
+    ) -> Result<PreparedResume, Failure> {
         let invalid = || {
             Failure::new(
                 "CAL004",
@@ -99,27 +174,11 @@ impl Runner {
         {
             return Err(invalid());
         }
-        let recipe: Recipe =
-            serde_json::from_str(&checkpoint.captured_program).map_err(|_| invalid())?;
-        if (follow && !recipe.live)
-            || recipe.version != 2
-            || recipe.live != checkpoint.followed_source.is_some()
-            || recipe.identity.analysis != checkpoint.analysis
-            || recipe.identity.profile_revision != checkpoint.profile_digest
-            || !recipe.settings.within(Settings::capture())
-        {
-            return Err(invalid());
-        }
-        let mut revision = Sha256::new();
-        for binding in [
-            &checkpoint.captured_program,
-            &checkpoint.source.digest,
-            &checkpoint.profile_digest,
-        ] {
-            revision.update((binding.len() as u64).to_le_bytes());
-            revision.update(binding.as_bytes());
-        }
-        if format!("sha256:{:x}", revision.finalize()) != checkpoint.task_revision {
+        let recipe = Recipe::load(&checkpoint, span)?;
+        let settings = recipe
+            .settings
+            .restore(raised.unwrap_or(checkpoint.budget.totals));
+        if (follow && !recipe.live) || !settings.within(active) {
             return Err(invalid());
         }
         let step = Transition::restore_program(&recipe.step, cap, span)?;
@@ -134,22 +193,46 @@ impl Runner {
             || step.context.digest() != checkpoint.context_schema.digest()
             || step.input.digest() != checkpoint.item_schema.digest()
             || step.output_contract.digest() != reference.schema_digest()
-            || checkpoint.work.limit != recipe.settings.limits.work
         {
             return Err(invalid());
         }
         let mut checkpoint = checkpoint;
-        if !checkpoint.duration.valid()
-            || checkpoint.duration.limit_ms != recipe.settings.duration.as_millis() as u64
+        let attempt = uuid::Uuid::new_v4().to_string();
+        if let Some(totals) = raised {
+            let old = checkpoint.budget.clone();
+            let work_grant = totals
+                .work
+                .checked_sub(old.totals.work)
+                .ok_or_else(invalid)?;
+            let budget = crate::storage::datasets::AnalysisBudget {
+                version: 1,
+                analysis: old.analysis.clone(),
+                issued_attempt: attempt.clone(),
+                previous: Some(old.digest()),
+                totals,
+                ceilings: active.totals(),
+                work_grant,
+                authorized_work: old
+                    .authorized_work
+                    .checked_add(work_grant)
+                    .ok_or_else(invalid)?,
+            };
+            checkpoint.usage.work_allowance = budget
+                .allowance_after(&old, checkpoint.usage.work_allowance, &attempt)
+                .ok_or_else(invalid)?;
+            checkpoint.budget = budget;
+        }
+        let (charged, spent_ms) =
+            crate::storage::datasets::charge_interruption(&checkpoint.work, &checkpoint.duration)
+                .ok_or_else(invalid)?;
+        if !checkpoint
+            .duration
+            .valid(checkpoint.budget.totals.duration_ms)
         {
             return Err(invalid());
         }
-        checkpoint.duration.spent_ms = checkpoint
-            .duration
-            .spent_ms
-            .checked_add(checkpoint.duration.outstanding_ms)
-            .ok_or_else(invalid)?;
-        if checkpoint.duration.spent_ms >= checkpoint.duration.limit_ms {
+        checkpoint.duration.spent_ms = spent_ms;
+        if checkpoint.duration.spent_ms >= checkpoint.budget.totals.duration_ms {
             return Err(Failure::new(
                 "CAL006",
                 span,
@@ -157,12 +240,8 @@ impl Runner {
             ));
         }
         checkpoint.duration.outstanding_ms =
-            checkpoint.duration.limit_ms - checkpoint.duration.spent_ms;
-        checkpoint.work.charged = checkpoint
-            .work
-            .charged
-            .checked_add(checkpoint.work.outstanding)
-            .ok_or_else(invalid)?;
+            checkpoint.budget.totals.duration_ms - checkpoint.duration.spent_ms;
+        checkpoint.work.charged = charged;
         let remaining = checkpoint
             .usage
             .work_allowance
@@ -175,7 +254,7 @@ impl Runner {
                     "original analysis work allowance is exhausted; resume cannot mint work",
                 )
             })?
-            .min(grant_cap(recipe.settings));
+            .min(grant_cap(settings));
         checkpoint.work.outstanding = remaining;
         checkpoint.work.granted = checkpoint
             .work
@@ -183,8 +262,9 @@ impl Runner {
             .checked_add(remaining)
             .ok_or_else(invalid)?;
         checkpoint.work.grants = checkpoint.work.grants.checked_add(1).ok_or_else(invalid)?;
+        checkpoint.stop = None;
         checkpoint.previous_attempt = Some(checkpoint.attempt.clone());
-        checkpoint.attempt = uuid::Uuid::new_v4().to_string();
+        checkpoint.attempt = attempt;
         checkpoint.run = run;
         let usage = Usage {
             work: checkpoint.work.charged,
@@ -196,7 +276,7 @@ impl Runner {
             output_records: reference.records(),
         };
         let ledger = Ledger::restored(
-            recipe.settings.limits,
+            settings.limits,
             pool,
             usage,
             checkpoint.usage.work_allowance,
@@ -234,7 +314,7 @@ impl Runner {
                 identity: recipe.identity,
                 control: None,
             },
-            recipe.settings,
+            settings,
             ledger,
             services,
             token,
@@ -254,6 +334,11 @@ impl Runner {
         runner.result_contract = result_contract_for_sink(&runner.step, true, span)?;
         runner.result_metadata = ValueMetadata::capture(&runner.result_contract);
         let request = crate::storage::datasets::DatasetResume {
+            kind: if raised.is_some() {
+                crate::storage::datasets::AnalysisAttemptKind::Continue
+            } else {
+                crate::storage::datasets::AnalysisAttemptKind::Resume
+            },
             previous: reference,
             transaction: uuid::Uuid::new_v4().to_string(),
             checkpoint,
@@ -267,7 +352,7 @@ impl Runner {
     pub fn checkpoint_seed(&self, source: CapturedValue) -> Result<AnalysisCheckpoint, Failure> {
         let limit = wes_budgets::get("scan.code.bytes") as usize;
         let recipe = Recipe {
-            version: 2,
+            version: 3,
             live: self.live,
             step: self.step.captured_program(limit, self.span)?,
             finish: self
@@ -275,7 +360,7 @@ impl Runner {
                 .as_ref()
                 .map(|t| t.captured_program(limit, self.span))
                 .transpose()?,
-            settings: self.settings,
+            settings: FrozenSettings::capture(self.settings),
             framing: self.source.profile().cloned(),
             identity: self.identity.clone(),
         };
@@ -301,14 +386,22 @@ impl Runner {
             revision.update((binding.len() as u64).to_le_bytes());
             revision.update(binding.as_bytes());
         }
+        let attempt = uuid::Uuid::new_v4().to_string();
+        let spent_ms = self.elapsed_ms();
         Ok(AnalysisCheckpoint {
+            stop: None,
+            budget: crate::storage::datasets::AnalysisBudget::initial(
+                self.identity.analysis.clone(),
+                attempt.clone(),
+                self.settings.totals(),
+                Settings::capture().totals(),
+            ),
             duration: AnalysisDuration {
-                limit_ms: self.settings.duration.as_millis() as u64,
-                spent_ms: self.elapsed_ms(),
-                outstanding_ms: 0,
+                spent_ms,
+                outstanding_ms: self.settings.totals().duration_ms - spent_ms,
             },
             analysis: self.identity.analysis.clone(),
-            attempt: uuid::Uuid::new_v4().to_string(),
+            attempt,
             previous_attempt: None,
             run: self.identity.analysis.clone(),
             task_revision: format!("sha256:{:x}", revision.finalize()),
@@ -328,7 +421,6 @@ impl Runner {
             next_ordinal: 0,
             decoder_carry: vec![],
             work: AnalysisWork {
-                limit: self.settings.limits.work,
                 granted: measured,
                 completed: measured,
                 charged: measured,
@@ -351,7 +443,10 @@ impl Runner {
     ) -> Result<(), Failure> {
         if checkpoint.analysis != self.identity.analysis
             || checkpoint.step_revision != self.step.revision()
-            || checkpoint.work.limit != self.settings.limits.work
+            || !checkpoint.budget.valid()
+            || checkpoint.budget.analysis != checkpoint.analysis
+            || checkpoint.budget.issued_attempt != checkpoint.attempt
+            || checkpoint.budget.totals != self.settings.totals()
             || checkpoint.work.outstanding != 0
             || checkpoint.next_position != 0
             || checkpoint.next_ordinal != 0
@@ -383,23 +478,30 @@ impl Runner {
             )
     }
     /// Returned grant is inert until the owner confirms its catalog publication.
-    pub fn durable_grant(&self) -> Result<DatasetAppend, Failure> {
+    pub fn durable_grant(&self) -> Result<DatasetAppend, Stop> {
         if !self.needs_durable_grant() {
-            return Err(self.durable_failure("scan does not need another work grant"));
+            return Err(stop(
+                self.durable_failure("scan does not need another work grant"),
+            ));
         }
         let mut checkpoint = self.durable.as_ref().unwrap().checkpoint.clone();
         checkpoint.followed_source = self.source.followed_source().cloned();
         checkpoint.duration.spent_ms = self.elapsed_ms();
         checkpoint.duration.outstanding_ms = checkpoint
-            .duration
-            .limit_ms
+            .budget
+            .totals
+            .duration_ms
             .saturating_sub(checkpoint.duration.spent_ms);
         if checkpoint.duration.outstanding_ms == 0 {
-            return Err(Failure::new(
-                "CAL006",
-                self.span,
-                "original analysis duration is exhausted",
-            ));
+            return Err(Stop {
+                failure: Failure::new(
+                    "CAL006",
+                    self.span,
+                    "analysis cumulative duration is exhausted",
+                ),
+                dimension: Some(Dimension::Duration),
+                source_span: None,
+            });
         }
         let remaining = self
             .ledger
@@ -407,15 +509,18 @@ impl Runner {
             .min(grant_cap(self.settings))
             .min(
                 checkpoint
+                    .budget
+                    .totals
                     .work
-                    .limit
                     .saturating_sub(checkpoint.work.charged),
             );
         if remaining == 0 {
-            return Err(Failure::new(
-                "CAL006",
+            return Err(refusal(
+                Refusal {
+                    dimension: Dimension::Work,
+                    limit: self.settings.limits.work,
+                },
                 self.span,
-                "scan cumulative work cap is exhausted; resume cannot mint work",
             ));
         }
         checkpoint.work.outstanding = remaining;
@@ -423,12 +528,12 @@ impl Runner {
             .work
             .granted
             .checked_add(remaining)
-            .ok_or_else(|| self.durable_failure("scan grant counter overflow"))?;
+            .ok_or_else(|| stop(self.durable_failure("scan grant counter overflow")))?;
         checkpoint.work.grants = checkpoint
             .work
             .grants
             .checked_add(1)
-            .ok_or_else(|| self.durable_failure("scan grant counter overflow"))?;
+            .ok_or_else(|| stop(self.durable_failure("scan grant counter overflow")))?;
         Ok(DatasetAppend {
             owner: Some(self.write_owner()),
             previous: self.dataset.clone().unwrap(),
@@ -499,7 +604,7 @@ impl Runner {
             return Ok(None);
         };
         let usage = candidate.usage;
-        let mut checkpoint = self.settled_checkpoint()?;
+        let mut checkpoint = self.settled_checkpoint(candidate.terminal)?;
         checkpoint.state = candidate.state.clone();
         checkpoint.next_position = candidate
             .range
@@ -521,7 +626,7 @@ impl Runner {
         };
         Ok(Some(checkpoint))
     }
-    fn settled_checkpoint(&self) -> Result<AnalysisCheckpoint, Failure> {
+    fn settled_checkpoint(&self, terminal: bool) -> Result<AnalysisCheckpoint, Failure> {
         let durable = self
             .durable
             .as_ref()
@@ -529,7 +634,11 @@ impl Runner {
         let mut checkpoint = durable.checkpoint.clone();
         checkpoint.followed_source = self.source.followed_source().cloned();
         checkpoint.duration.spent_ms = self.elapsed_ms();
-        checkpoint.duration.outstanding_ms = 0;
+        checkpoint.duration.outstanding_ms = if terminal {
+            0
+        } else {
+            checkpoint.budget.totals.duration_ms - checkpoint.duration.spent_ms
+        };
         let measured = self
             .ledger
             .usage()
@@ -559,7 +668,22 @@ impl Runner {
         if !matches!(self.phase, Phase::Stopped | Phase::Cancelled) {
             return Err(self.durable_failure("scan is not terminal"));
         }
-        let checkpoint = self.settled_checkpoint()?;
+        let mut checkpoint = self.settled_checkpoint(true)?;
+        use crate::storage::datasets::AnalysisStop;
+        checkpoint.stop = Some(if self.phase == Phase::Cancelled {
+            AnalysisStop::Cancelled
+        } else if let Some(dimension) = self
+            .stop
+            .as_ref()
+            .and_then(|s| s.dimension)
+            .filter(|d| AnalysisStop::cumulative(*d))
+        {
+            AnalysisStop::Cumulative(dimension)
+        } else if self.source.producer_status() == Some(false) {
+            AnalysisStop::IncompleteSource
+        } else {
+            AnalysisStop::Deterministic
+        });
         Ok(Some(DatasetAppend {
             owner: Some(self.write_owner()),
             previous: self.dataset.clone().unwrap(),

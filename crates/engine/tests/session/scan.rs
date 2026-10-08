@@ -1,4 +1,97 @@
 use super::*;
+
+#[tokio::test]
+async fn requested_scan_totals_are_literal_captured_and_keep_incomplete_evidence() {
+    let (base, calls) = workspace(None, None);
+    let (handle, task) = session::spawn(
+        base,
+        RecordingMode::Ephemeral,
+        no_files(),
+        NonZeroUsize::new(1).unwrap(),
+    )
+    .unwrap();
+    let reply = submit(&handle,"bounded",r#"
+:package load source:"types: {IntStep: {base: Record, fields: {state: Int, outputs: 'List<Int>'}}}"
+:def sum(state:Int, context:Int, item:Int) -> IntStep as :calc pure { return {state:state+item,outputs:[]}; }
+:calc { return [1,2,3]; } > raw
+:calc { return 10; } > amount
+:scan source:$raw transition:sum initial:0 context:0 profile:TypedRecords work:1000000 input:4096 records:2 output:8192 outputs:1 duration:5000 > bounded
+"#).await;
+    assert!(
+        !reply
+            .diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == wes_language::Severity::Error),
+        "{:?}",
+        reply.diagnostics
+    );
+    handle.wait_idle().await.unwrap();
+    let snapshot = handle.snapshot().await.unwrap();
+    let node = &snapshot.names["bounded"].node;
+    assert_eq!(
+        snapshot.execution.graph.node(node).unwrap().state(),
+        NodeState::Failed
+    );
+    let Data::Record(result) = snapshot.execution.evidence_values[node].value.data() else {
+        panic!("incomplete evidence")
+    };
+    assert_eq!(result["state"], Data::Int(3));
+    let Data::Record(receipt) = &result["receipt"] else {
+        panic!("receipt")
+    };
+    assert_eq!(receipt["inputRecords"], Data::Int(2));
+    assert_eq!(
+        receipt["exhausted"],
+        Data::Option(Some(Box::new(Data::Text("input_records".into()))))
+    );
+    let Data::Record(limits) = &receipt["limits"] else {
+        panic!("limits")
+    };
+    for (name, n) in [
+        ("work", 1000000),
+        ("inputCharge", 4096),
+        ("inputRecords", 2),
+        ("outputCharge", 8192),
+        ("outputRecords", 1),
+        ("durationMs", 5000),
+    ] {
+        assert_eq!(limits[name], Data::Int(n), "{name}");
+    }
+    let before = snapshot.execution.graph.len();
+    for (index, argument) in [
+        "work:$amount",
+        "input:$amount",
+        "records:$amount",
+        "output:$amount",
+        "outputs:$amount",
+        "duration:$amount",
+        "work:64000001",
+        "duration:86400001",
+        "records:0",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let reply = submit(&handle,&format!("refused-{index}"), &format!(":scan source:$raw transition:sum initial:0 context:0 profile:TypedRecords {argument} > refused")).await;
+        assert!(
+            reply
+                .diagnostics
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == wes_language::Severity::Error),
+            "{argument}: {:?}",
+            reply.diagnostics
+        );
+        assert_eq!(
+            handle.snapshot().await.unwrap().execution.graph.len(),
+            before,
+            "refusal must precede run admission: {argument}"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    stop(handle, task).await;
+}
 #[tokio::test]
 async fn finite_scan_is_one_run_with_captured_source_identity_and_normal_downstream_data() {
     let (base, calls) = workspace(None, None);

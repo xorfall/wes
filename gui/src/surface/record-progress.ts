@@ -4,7 +4,8 @@
  * One reading for the cell, `/open` and the inspector. Always three rows, so arriving counts, a
  * phase change or a withheld counter never move what is below them. Every figure is the engine's:
  * committed and read positions are said separately in the engine's unit; work is said against the
- * earned allowance and the fixed limit; held and output figures are conservative logical charges,
+ * allowance (input-earned, plus any explicitly authorized continuation credit) and the fixed limit;
+ * held and output figures are conservative logical charges,
  * never memory use or stored bytes. Nothing here is drawn from a guess, and no phase implies success.
  *
  * A recording uses the same three rows for its writer's latest acknowledged status: committed and
@@ -117,8 +118,9 @@ function positionRow(phase: Segment, c: RecordCounters): Segment[] {
 function recordsRow(c: RecordCounters): Segment[] {
   return [
     value(grouped(c.inputRecords)), label(" records in"), SEP, value(grouped(c.outputRecords)), label(" outputs"), SEP,
-    // Earned allowance grows with committed input; the cap is the run's fixed absolute limit.
-    label("work "), value(grouped(c.work)), label(" used of "), value(grouped(c.workAllowance)), label(" earned"),
+    // The allowance grows with committed input and, after an explicit continuation, may include
+    // authorized credit this progress does not separate; so it is not called earned. The cap is fixed.
+    label("work "), value(grouped(c.work)), label(" used of "), value(grouped(c.workAllowance)), label(" allowed"),
     SEP, label("cap "), value(grouped(c.workLimit)),
   ];
 }

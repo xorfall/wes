@@ -1085,10 +1085,13 @@ impl Workspace {
         if let BoundTask::Reconcile(reconcile) = &mut ticket.payload {
             reconcile.capture(self);
         }
+        if let BoundTask::ScanContinuation(preview) = &mut ticket.payload {
+            preview.capture(self);
+        }
         if let BoundTask::ScanExcerpt(excerpt) = &mut ticket.payload {
             excerpt.capture(self);
         }
-        if let BoundTask::ScanResume(resume) = &mut ticket.payload {
+        if let BoundTask::ScanAttempt(resume) = &mut ticket.payload {
             resume.capture(self);
         }
         if let BoundTask::Stream(op) = &mut ticket.payload {

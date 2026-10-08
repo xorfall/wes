@@ -674,7 +674,11 @@ impl DatasetStore {
                 return Err(DatasetError::Conflict);
             }
         }
-        self.check_successor(candidate, prior.as_ref())?;
+        self.check_successor(
+            candidate,
+            prior.as_ref(),
+            self.writes.get(&candidate.dataset),
+        )?;
         self.prepare_catalog()?;
         self.verify_manifest(candidate)?;
         let reference = self.files.publish_manifest(candidate, policy)?;
@@ -809,8 +813,20 @@ impl DatasetStore {
         &self,
         candidate: &Manifest,
         prior: Option<&(ObjectRef, Manifest)>,
+        witness: Option<&catalog::WriteWitness>,
     ) -> Result<(), DatasetError> {
         candidate.encode(self.limits.objects.manifest)?;
+        if prior.is_none_or(|(_, manifest)| manifest.checkpoint.is_none()) {
+            if let Some(reference) = &candidate.checkpoint {
+                let first = self.files.read_checkpoint(reference, &candidate.dataset)?;
+                if first.previous_attempt.is_some()
+                    || first.budget.previous.is_some()
+                    || first.budget.issued_attempt != first.attempt
+                {
+                    return Err(DatasetError::Conflict);
+                }
+            }
+        }
         if candidate.store != self.store_id()
             || candidate.requested
                 != match self.files.durability() {
@@ -864,58 +880,71 @@ impl DatasetStore {
                         && new.rejected >= old.rejected => {}
                 _ => return Err(DatasetError::Conflict),
             }
-            let continuation =
-                if let (Some(old), Some(new)) = (&previous.checkpoint, &candidate.checkpoint) {
-                    let old = self.files.read_checkpoint(old, &candidate.dataset)?;
-                    let new = self.files.read_checkpoint(new, &candidate.dataset)?;
-                    let resumed = new.attempt != old.attempt;
-                    if resumed {
-                        if !matches!(
-                            previous.lifecycle,
-                            Lifecycle::Open
-                                | Lifecycle::Incomplete
-                                | Lifecycle::Interrupted
-                                | Lifecycle::Cancelled
-                        ) || candidate.lifecycle != Lifecycle::Open
-                            || new.previous_attempt.as_deref() != Some(old.attempt.as_str())
-                            || new.run == old.run
-                            || new.next_position != old.next_position
-                            || new.next_ordinal != old.next_ordinal
-                            || new.output_end != old.output_end
-                            || new.state != old.state
-                            || new.decoder_carry != old.decoder_carry
-                            || new.followed_source != old.followed_source
-                            || new.duration.limit_ms != old.duration.limit_ms
-                            || old
-                                .duration
-                                .spent_ms
-                                .checked_add(old.duration.outstanding_ms)
-                                != Some(new.duration.spent_ms)
-                            || new.duration.limit_ms.checked_sub(new.duration.spent_ms)
-                                != Some(new.duration.outstanding_ms)
-                            || new.duration.outstanding_ms == 0
-                            || old.work.granted.checked_add(new.work.outstanding)
-                                != Some(new.work.granted)
-                            || old.work.grants.checked_add(1) != Some(new.work.grants)
-                            || new.work.completed != old.work.completed
-                            || new.usage != old.usage
-                            || old.work.charged.checked_add(old.work.outstanding)
-                                != Some(new.work.charged)
-                            || new.work.outstanding == 0
-                            || new.finish_applied
-                            || old.finish_applied
-                            || candidate.summary != previous.summary
-                            || candidate.index != previous.index
-                        {
-                            return Err(DatasetError::Conflict);
-                        }
-                    } else if new.run != old.run || new.previous_attempt != old.previous_attempt {
+            let continuation = if let (Some(old), Some(new)) =
+                (&previous.checkpoint, &candidate.checkpoint)
+            {
+                let old = self.files.read_checkpoint(old, &candidate.dataset)?;
+                let new = self.files.read_checkpoint(new, &candidate.dataset)?;
+                let resumed = new.attempt != old.attempt;
+                let kind = if witness.is_some_and(|w| {
+                    w.transaction == candidate.transaction
+                        && w.operation == catalog::WriteOperation::Continue
+                }) {
+                    wes_engine::storage::datasets::AnalysisAttemptKind::Continue
+                } else {
+                    wes_engine::storage::datasets::AnalysisAttemptKind::Resume
+                };
+                if resumed {
+                    if !matches!(
+                        previous.lifecycle,
+                        Lifecycle::Open
+                            | Lifecycle::Incomplete
+                            | Lifecycle::Interrupted
+                            | Lifecycle::Cancelled
+                    ) || candidate.lifecycle != Lifecycle::Open
+                        || new.previous_attempt.as_deref() != Some(old.attempt.as_str())
+                        || new.run == old.run
+                        || new.next_position != old.next_position
+                        || new.next_ordinal != old.next_ordinal
+                        || new.output_end != old.output_end
+                        || new.state != old.state
+                        || new.decoder_carry != old.decoder_carry
+                        || new.followed_source != old.followed_source
+                        || !(wes_engine::storage::datasets::AttemptAccounting {
+                            budget: &new.budget,
+                            work: &new.work,
+                            usage: &new.usage,
+                            duration: &new.duration,
+                        })
+                        .follows(
+                            &wes_engine::storage::datasets::AttemptAccounting {
+                                budget: &old.budget,
+                                work: &old.work,
+                                usage: &old.usage,
+                                duration: &old.duration,
+                            },
+                            &new.attempt,
+                            kind,
+                        )
+                        || new.stop.is_some()
+                        || (kind == wes_engine::storage::datasets::AnalysisAttemptKind::Continue
+                            && old.stop.is_some_and(|s| {
+                                !s.permits_raise(new.budget.totals, old.budget.totals)
+                            }))
+                        || new.finish_applied
+                        || old.finish_applied
+                        || candidate.summary != previous.summary
+                        || candidate.index != previous.index
+                    {
                         return Err(DatasetError::Conflict);
                     }
-                    resumed
-                } else {
-                    false
-                };
+                } else if new.run != old.run || new.previous_attempt != old.previous_attempt {
+                    return Err(DatasetError::Conflict);
+                }
+                resumed
+            } else {
+                false
+            };
             if previous.lifecycle != Lifecycle::Open
                 && (candidate.summary != previous.summary
                     || candidate.index != previous.index
@@ -941,13 +970,18 @@ impl DatasetStore {
                         || new.next_position < old.next_position
                         || new.next_ordinal < old.next_ordinal
                         || new.output_end < old.output_end
-                        || new.work.limit != old.work.limit
+                        || (!continuation && new.budget != old.budget)
+                        || (!continuation && old.stop.is_some() && new.stop != old.stop)
                         || new.work.granted < old.work.granted
                         || new.work.completed < old.work.completed
                         || new.work.charged < old.work.charged
                         || new.work.grants < old.work.grants
-                        || new.duration.limit_ms != old.duration.limit_ms
-                        || new.duration.spent_ms < old.duration.spent_ms
+                        || (!continuation
+                            && !new.duration.settles(
+                                &old.duration,
+                                new.budget.totals.duration_ms,
+                                candidate.lifecycle == Lifecycle::Open,
+                            ))
                         || new.usage.input_bytes < old.usage.input_bytes
                         || new.usage.output_bytes < old.usage.output_bytes
                         || new.usage.high_water_bytes < old.usage.high_water_bytes
@@ -1235,8 +1269,12 @@ impl DatasetStore {
                     })
                     .transpose()
                     .map_err(|_| DatasetError::StorageCorrupt)?;
-                self.check_successor(&manifest, prior_manifest.as_ref())
-                    .map_err(|_| DatasetError::StorageCorrupt)?;
+                self.check_successor(
+                    &manifest,
+                    prior_manifest.as_ref(),
+                    writes.get(&manifest.dataset),
+                )
+                .map_err(|_| DatasetError::StorageCorrupt)?;
                 roots.insert(change.dataset.clone(), change.clone());
                 if roots.len() > self.limits.datasets {
                     return Err(DatasetError::Limit("dataset roots"));
@@ -1651,6 +1689,28 @@ impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
         wes_engine::storage::StoreError,
     > {
         self.resume_owned(request).map_err(storage_error)
+    }
+    fn analysis_status(
+        &self,
+        reference: &DatasetRef,
+    ) -> Result<wes_engine::storage::datasets::AnalysisStatus, wes_engine::storage::StoreError>
+    {
+        self.read_exact(reference).map_err(storage_error)?;
+        let (head, manifest) = self
+            .root(reference.dataset())
+            .map_err(storage_error)?
+            .ok_or(wes_engine::storage::StoreError::DatasetMissing)?;
+        let head = descriptor(&head, &manifest).map_err(storage_error)?;
+        let active_writer = self
+            .active_writers
+            .lock()
+            .map_err(|_| wes_engine::storage::StoreError::DatasetCorrupt)?
+            .contains_key(reference.dataset());
+        Ok(wes_engine::storage::datasets::AnalysisStatus {
+            lifecycle: self.inspect(reference)?.lifecycle,
+            latest: head == *reference,
+            active_writer,
+        })
     }
     fn continuation(&self, run: &str) -> Result<DatasetRef, wes_engine::storage::StoreError> {
         let selection = wes_engine::storage::datasets::DatasetWriteSelection {

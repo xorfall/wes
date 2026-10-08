@@ -118,6 +118,35 @@ fn field<'a>(data: &'a Data, name: &str) -> &'a Data {
     &fields[name]
 }
 #[test]
+fn output_totals_do_not_rewrite_the_frozen_invocation_caps() {
+    for (dimension, records, bytes, body) in [
+        (
+            Dimension::OutputRecords,
+            1,
+            65536,
+            "return {state:state+1,outputs:['a','b']};",
+        ),
+        (
+            Dimension::OutputBytes,
+            100,
+            1,
+            "return {state:state+1,outputs:['a']};",
+        ),
+    ] {
+        let mut bounds = settings();
+        bounds.limits.output_records = records;
+        bounds.limits.output_bytes = bytes;
+        assert!(bounds.valid(), "per-record caps remain independent");
+        let done = run(
+            input(value(Data::List(vec![Data::Int(1)])), body, None),
+            bounds,
+        );
+        assert_eq!(done.progress.committed_position, 0);
+        assert_eq!(done.progress.usage.output_records, 0);
+        assert_eq!(done.stop.unwrap().dimension, Some(dimension));
+    }
+}
+#[test]
 fn receipt_separates_measured_work_and_absent_durable_attempts() {
     let done = run(
         input(
@@ -618,6 +647,105 @@ fn bounded_dataset_batches_publish_state_and_original_ranges_only_after_acknowle
 }
 
 #[test]
+fn finishing_outputs_follow_the_unpublished_input_batch_at_its_exact_boundary() {
+    let mut options = settings();
+    options.commit_records = 3;
+    let mut original = input(
+        value(Data::List(vec![Data::Int(1), Data::Int(2)])),
+        "return {state:state+item,outputs:[text(item)]};",
+        None,
+    );
+    original.finish = Some(transition(
+        ":def finish(state:Int, context:Int, end:Unknown) -> TextStep as :calc pure { return {state:state+100,outputs:['finish']}; }",
+        true,
+        &ContractRegistry::new(),
+    ));
+    let pool = MemoryPool::new(options.limits.memory_bytes).unwrap();
+    let mut runner = Runner::new(
+        original,
+        options,
+        &pool,
+        None,
+        CancellationToken::new(),
+        span(),
+    )
+    .unwrap();
+    let schema = runner.dataset_admission().unwrap().schema;
+    let reference = wes_core::DatasetRef::new(
+        uuid::Uuid::new_v4().to_string(),
+        uuid::Uuid::new_v4().to_string(),
+        1,
+        uuid::Uuid::new_v4().to_string(),
+        format!("sha256:{}", "1".repeat(64)),
+        100,
+        schema.digest().into(),
+        0,
+        1,
+    )
+    .unwrap();
+    runner.attach_dataset(reference.clone()).unwrap();
+    let mut committed = false;
+    for _ in 0..100_000 {
+        match runner.poll() {
+            Poll::Yield => {}
+            Poll::Commit => {
+                assert!(!committed, "the two inputs and finish must share one batch");
+                let request = runner.dataset_candidate().unwrap();
+                assert_eq!(runner.progress().committed_position, 0);
+                assert_eq!(
+                    request
+                        .rows
+                        .iter()
+                        .map(|row| (row.source_start, row.source_end))
+                        .collect::<Vec<_>>(),
+                    [(0, 1), (1, 2), (2, 2)],
+                    "finish output belongs to EOF, not the previous acknowledged boundary"
+                );
+                assert_eq!(
+                    request
+                        .rows
+                        .iter()
+                        .map(|row| row.value.data().clone())
+                        .collect::<Vec<_>>(),
+                    [
+                        Data::Text("1".into()),
+                        Data::Text("2".into()),
+                        Data::Text("finish".into())
+                    ]
+                );
+                assert_eq!(
+                    request.lifecycle,
+                    wes_engine::storage::datasets::DatasetLifecycle::Sealed
+                );
+                let acknowledged = wes_core::DatasetRef::new(
+                    reference.store().into(),
+                    reference.dataset().into(),
+                    2,
+                    uuid::Uuid::new_v4().to_string(),
+                    format!("sha256:{}", "2".repeat(64)),
+                    100,
+                    schema.digest().into(),
+                    3,
+                    1,
+                )
+                .unwrap();
+                runner.acknowledge_dataset(acknowledged).unwrap();
+                committed = true;
+            }
+            Poll::Terminal => break,
+            _ => panic!("inline sink needs no source I/O"),
+        }
+    }
+    assert!(committed);
+    let done = runner.into_completion().unwrap();
+    assert!(done.stop.is_none());
+    assert_eq!(done.progress.committed_position, 2);
+    assert_eq!(done.progress.usage.input_records, 2);
+    assert!(done.progress.finish_applied);
+    assert_eq!(field(done.value.data(), "state"), &Data::Int(103));
+}
+
+#[test]
 fn cancelling_an_unpublished_batch_discards_speculation_without_refunding_work() {
     let mut options = settings();
     options.commit_records = 3;
@@ -705,6 +833,9 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
     checkpoint.usage.input_bytes = 8;
     checkpoint.usage.output_bytes = 64;
     checkpoint.initial_digest = format!("sha256:{}", "2".repeat(64));
+    let interrupted = checkpoint.clone();
+    checkpoint.stop = Some(wes_engine::storage::datasets::AnalysisStop::Cancelled);
+    checkpoint.duration.outstanding_ms = 0;
     let used = checkpoint.work.charged;
     let allowance = checkpoint.usage.work_allowance;
     let reference = wes_core::DatasetRef::new(
@@ -720,6 +851,21 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
     )
     .unwrap();
     drop(runner);
+    assert!(
+        Runner::prepare_resume(
+            source.clone(),
+            false,
+            reference.clone(),
+            interrupted,
+            uuid::Uuid::new_v4().to_string(),
+            &pool,
+            None,
+            CancellationToken::new(),
+            span()
+        )
+        .is_err(),
+        "an unacknowledged active interval consumes the reserved duration"
+    );
     let mut exhausted = checkpoint.clone();
     exhausted.work.outstanding = allowance - used;
     exhausted.work.granted = allowance;

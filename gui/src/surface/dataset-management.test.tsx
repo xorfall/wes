@@ -263,7 +263,9 @@ describe("analysis continuation", () => {
     outstandingWork: some(1048576), durationChargedMs: 1200, durationOutstandingMs: some(500),
     heldCharge: 2000, highWaterCharge: 5000, finishApplied: false, sourceComplete: none,
     failureCode: none, failureMessage: none, exhausted: none, rejectedStart: none, rejectedEnd: none,
-    analysisId: "analysis-synthetic", attempt: some("synthetic-attempt-1"), previousAttempt: none, transitionRevision: "sha256:transition-synthetic", finishRevision: none,
+    analysisId: "analysis-synthetic", attempt: some("synthetic-attempt-1"), previousAttempt: none,
+    budgetDigest: some(`sha256:${"1".repeat(64)}`), budgetIssuedAttempt: some("synthetic-attempt-1"), budgetPrevious: none, authorizedWork: 0, workGrant: 0, durationOverrunMs: some(0),
+    transitionRevision: "sha256:transition-synthetic", finishRevision: none,
     profile: "TypedRecords", profileRevision: "sha256:profile-synthetic",
     sourceNode: some("node-synthetic"), sourceRun: some("run-synthetic"), sourceRevision: some(1), sourcePort: some("data"), sourcePath: [],
     durableResume: true,
@@ -299,7 +301,7 @@ describe("analysis continuation", () => {
   });
 
   it("names a missing durable checkpoint only as the reason for an engine refusal", () => {
-    const memory = { attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none };
+    const memory = { attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none, budgetDigest: none, budgetIssuedAttempt: none };
     expect(resumeRefusal(scanReceiptOf(result({ ...memory, durableResume: false }))!, node())).toBe("no durable checkpoint · nothing to resume from");
   });
 
@@ -344,6 +346,57 @@ describe("analysis continuation", () => {
     expect(button(bare, "resume analysis…").props.disabled).toBe(true);
     act(() => bare.unmount());
     expect(compose).not.toHaveBeenCalled();
+  });
+
+  it("prepares a read-only continuation review by node id beside resume, even when resume is refused", () => {
+    const { compose, value } = composer(["bounds"]);
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(<ComposeContext.Provider value={value}><ScanReceiptDetails value={result({ status: "stopped", durableResume: false, exhausted: some("work") })} node={node({ state: "failed" })} open /></ComposeContext.Provider>); });
+    expect(button(tree, "resume analysis…").props.disabled).toBe(true);
+    expect(compose).not.toHaveBeenCalled();
+    act(() => button(tree, "Review continuation…").props.onClick());
+    expect(compose.mock.calls).toEqual([[":scan continuation $n1 > bounds2"]]);
+    act(() => tree.unmount());
+  });
+
+  it.each([
+    ["a memory analysis", { attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none, budgetDigest: none, budgetIssuedAttempt: none }, {}, "no durable checkpoint · nothing to continue from"],
+    ["a complete analysis", { status: "complete", durableResume: false }, {}, "complete · nothing to continue"],
+    ["a running analysis", {}, { state: "running" as const }, "the analysis is still running"],
+    ["an id no command can name", {}, { id: "node-1" }, "the analysis has no node id a command can name"],
+  ])("refuses a review for %s and says why", (_, over, at, why) => {
+    const { compose, value } = composer();
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(<ComposeContext.Provider value={value}><ScanReceiptDetails value={result(over)} node={node(at)} open /></ComposeContext.Provider>); });
+    expect(button(tree, "Review continuation…").props.disabled).toBe(true);
+    expect(textOf(tree.root)).toContain(why);
+    act(() => button(tree, "Review continuation…").props.onClick());
+    expect(compose).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it("offers the same review in the Inspector's closed disclosure and Open's open one, and none without a session", () => {
+    for (const open of [false, true]) {
+      const { compose, value } = composer();
+      let tree!: ReactTestRenderer;
+      act(() => { tree = create(<ComposeContext.Provider value={value}><ScanReceiptDetails value={result()} node={node()} open={open} /></ComposeContext.Provider>); });
+      act(() => button(tree, "Review continuation…").props.onClick());
+      expect(compose.mock.calls).toEqual([[":scan continuation $n1 > bounds"]]);
+      act(() => tree.unmount());
+    }
+    let bare!: ReactTestRenderer;
+    act(() => { bare = create(<ScanReceiptDetails value={result()} node={node()} open />); });
+    expect(button(bare, "Review continuation…").props.disabled).toBe(true);
+    expect(textOf(bare.root)).toContain("reviewing continuation is prepared in the session");
+    act(() => bare.unmount());
+  });
+
+  it("draws nothing for a node whose access was withdrawn, even if a value is still passed", () => {
+    const { value } = composer();
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(<ComposeContext.Provider value={value}><ScanReceiptDetails value={result()} node={node({ accessWithdrawn: true })} open /></ComposeContext.Provider>); });
+    expect(tree.toJSON()).toBeNull();
+    act(() => tree.unmount());
   });
 
   it("draws no receipt, count or action once the value is withdrawn", () => {

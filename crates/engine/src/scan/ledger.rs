@@ -1,7 +1,8 @@
 //! Attempt-wide accounting. Releasing record scratch never replenishes work.
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Dimension {
     Work,
     WorkAllowance,

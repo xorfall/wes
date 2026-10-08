@@ -12,6 +12,8 @@
 :help calc
 :help scan
 :help scan resume
+:help scan continuation
+:help scan continue
 :help scan excerpt
 :help scan reconcile
 :help dataset

@@ -111,22 +111,12 @@ pub struct CheckpointBindings {
     pub captured_program: String,
     pub program_digest: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkLedger {
-    pub limit: u64,
-    /// Every admitted grant remains charged, including a grant interrupted by a crash.
-    pub granted: u64,
-    pub completed: u64,
-    /// Measured completed debit plus conservatively charged interrupted grants.
-    pub charged: u64,
-    /// Prepaid ceiling of the entered batch; a crash charges it in full once.
-    pub outstanding: u64,
-    pub grants: u64,
-}
+pub use wes_engine::storage::datasets::AnalysisWork as WorkLedger;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Checkpoint {
+    pub stop: Option<wes_engine::storage::datasets::AnalysisStop>,
+    pub budget: wes_engine::storage::datasets::AnalysisBudget,
     pub version: u16,
     pub store: String,
     pub dataset: String,
@@ -179,7 +169,7 @@ impl Checkpoint {
         Ok(checkpoint)
     }
     fn check(&self, limits: CheckpointLimits) -> Result<(), FormatError> {
-        if self.version != 2 {
+        if self.version != 3 {
             return Err(FormatError::Version);
         }
         if [
@@ -200,7 +190,16 @@ impl Checkpoint {
         {
             return Err(FormatError::Corrupt);
         }
-        if !self.duration.valid() {
+        if self.stop.is_some_and(|s| !s.valid())
+            || (self.stop.is_some() && self.lifecycle == Lifecycle::Open)
+            || !self.budget.valid()
+            || self.budget.analysis != self.analysis
+            || (self.previous_attempt.is_none() && self.budget.issued_attempt != self.attempt)
+            || !self.duration.reservation_valid(
+                self.budget.totals.duration_ms,
+                self.lifecycle == Lifecycle::Open,
+            )
+        {
             return Err(FormatError::Corrupt);
         }
         validate_source(&self.bindings.source)?;
@@ -260,7 +259,11 @@ impl Checkpoint {
         self.state.check(limits)?;
         self.context.check(limits)?;
         check_base64(&self.decoder_carry, limits.carry_bytes)?;
-        if self.next_position < self.bindings.source.start
+        if self.next_ordinal > self.budget.totals.input_records
+            || self.output_end > self.budget.totals.output_records
+            || self.usage.input_bytes > self.budget.totals.input_bytes
+            || self.usage.output_bytes > self.budget.totals.output_bytes
+            || self.next_position < self.bindings.source.start
             || self.next_position > self.bindings.source.end
             || self.work.completed > self.work.charged
             || self.work.charged > self.work.granted
@@ -268,13 +271,13 @@ impl Checkpoint {
                 .work
                 .charged
                 .checked_add(self.work.outstanding)
-                .is_none_or(|n| n > self.work.limit)
+                .is_none_or(|n| n > self.budget.totals.work)
             || self
                 .work
                 .charged
                 .checked_add(self.work.outstanding)
                 .is_none_or(|n| n > self.work.granted)
-            || self.usage.work_allowance > self.work.limit
+            || self.usage.work_allowance > self.budget.totals.work
             || self
                 .work
                 .charged

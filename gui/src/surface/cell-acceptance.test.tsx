@@ -259,7 +259,7 @@ describe("finite record analysis", () => {
     const said = text.join("\n");
     expect(said).toContain("incomplete · committed partial result, not a completed run");
     expect(said).toContain("stopped · committed through 10 of 100 bytes · read through 40 · read, not committed");
-    expect(said).toContain("3 records in · 2 outputs · work 900 used of 1,000 earned · cap 5,000");
+    expect(said).toContain("3 records in · 2 outputs · work 900 used of 1,000 allowed · cap 5,000");
     expect(said).toContain("logical charge · held 64 · high-water 96 of cap 4,096 · output 32 of cap 1,024");
     expect(said).not.toMatch(/no value · the run failed|stream stopped|restart|resume|dataset|KiB|MiB|RSS/i);
     expect(tree.root.findAllByType(ValueBlock)).toHaveLength(1);

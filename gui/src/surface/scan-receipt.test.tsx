@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { act, create } from "react-test-renderer";
 import { parseExactJson } from "../exact-json";
 import type { StoredValue } from "../protocol";
+import type { WorkspaceNode } from "../workspace";
 import { lineText } from "./MonoLine";
 import { receiptHeadline, receiptRows, scanReceiptOf } from "./scan-receipt";
-import { ScanReceiptDetails } from "./ScanReceiptDetails";
+import { reviewRefusal, ScanReceiptDetails } from "./ScanReceiptDetails";
 
 /*
  * Explicitly synthetic. The encoding follows the engine's ScanResult receipt as the value codec
@@ -14,13 +15,18 @@ import { ScanReceiptDetails } from "./ScanReceiptDetails";
  */
 const none = { kind: "none" };
 const some = (value: unknown) => ({ kind: "some", value });
+const BUDGET = `sha256:${"1".repeat(64)}`, PRIOR = `sha256:${"2".repeat(64)}`;
+/** A memory analysis: no durable attempt, so no bounds receipt and no explicit credit either. */
+const MEMORY = { attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none, budgetDigest: none, budgetIssuedAttempt: none };
 const receipt = (over: Record<string, unknown> = {}) => ({
   status: "stopped", position: 1, readPosition: 2, extent: 3, positionUnit: "records", inputChargeUnit: "logical_charge",
   inputCharge: 128, inputRecords: 1, outputCharge: 128, outputRecords: 1, work: 17100, measuredWork: 16000, workAllowance: 16524288,
   outstandingWork: some(1048576), durationChargedMs: 58912, durationOutstandingMs: some(1200),
   heldCharge: 2000, highWaterCharge: 5000, finishApplied: false, sourceComplete: none,
   failureCode: some("CAL005"), failureMessage: some("division by zero"), exhausted: none, rejectedStart: none, rejectedEnd: none,
-  analysisId: "analysis-synthetic", attempt: some("synthetic-attempt-2"), previousAttempt: some("synthetic-attempt-1"), transitionRevision: "sha256:transition-synthetic", finishRevision: none,
+  analysisId: "analysis-synthetic", attempt: some("synthetic-attempt-2"), previousAttempt: some("synthetic-attempt-1"),
+  budgetDigest: some(BUDGET), budgetIssuedAttempt: some("synthetic-attempt-1"), budgetPrevious: none, authorizedWork: 0, workGrant: 0, durationOverrunMs: some(0),
+  transitionRevision: "sha256:transition-synthetic", finishRevision: none,
   profile: "TypedRecords", profileRevision: "sha256:profile-synthetic",
   sourceNode: some("node-synthetic"), sourceRun: some("run-synthetic"), sourceRevision: some(1), sourcePort: some("data"), sourcePath: [],
   durableResume: false,
@@ -50,6 +56,11 @@ describe("the analysis receipt", () => {
     expect(rows).toContain("earned allowance 16,524,288 · absolute cap 64,000,000");
     expect(rows).toContain("duration charged 58,912 ms elapsed · prepaid reservation 1,200 ms · limit 60,000 ms");
     expect(rows).toContain("checkpoint attempt synthetic-attempt-2 · previous attempt synthetic-attempt-1");
+    // Ordinary Resume keeps the latest granted bounds receipt rather than issuing one, so its issuer
+    // (here the earlier attempt) differs from the checkpoint attempt.
+    expect(rows).toContain(`bounds receipt ${BUDGET} · issued by attempt synthetic-attempt-1 · previous bounds none`);
+    expect(rows).toContain("past the duration limit 0 ms measured · a cooperative limit, not preemption");
+    expect(rows.some(row => row.startsWith("explicitly authorized"))).toBe(false);
     expect(rows).toContain("logical held charge 2,000 · high-water 5,000 · cap 134,217,728 · not memory use or stored bytes");
     expect(rows).toContain("failure CAL005 · division by zero");
     expect(rows).toContain("source node-synthetic data · run run-synthetic · revision 1");
@@ -72,7 +83,8 @@ describe("the analysis receipt", () => {
 
   it.each([
     ["duration", "limit reached duration"],
-    ["work_allowance", "limit reached earned work allowance"],
+    ["work_allowance", "limit reached work allowance"],
+    ["record_outputs", "limit reached per-record outputs"],
     ["work", "limit reached work absolute cap"],
     ["synthetic_future_dimension", "limit reached synthetic_future_dimension"],
   ])("names the exhausted dimension %s in words, and an unlisted one as written", (dimension, row) => {
@@ -80,13 +92,14 @@ describe("the analysis receipt", () => {
   });
 
   it("says a memory analysis has no attempt, no predecessor and no reservation, never zero or an invented one", () => {
-    const memory = scanResult({ state: 1, outputs: [1], receipt: receipt({
-      attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none }) });
+    const memory = scanResult({ state: 1, outputs: [1], receipt: receipt(MEMORY) });
     const read = scanReceiptOf(memory)!;
     expect(read).toMatchObject({ attempt: undefined, previousAttempt: undefined, outstandingWork: undefined, durationOutstandingMs: undefined,
+      budgetDigest: undefined, budgetIssuedAttempt: undefined, budgetPrevious: undefined, authorizedWork: "0", workGrant: "0",
       measuredWork: "16000", durationChargedMs: "58912" });
     const rows = said(memory);
     expect(rows).toContain("checkpoint attempt none · previous attempt none");
+    expect(rows).toContain("bounds receipt none · issued by attempt none · previous bounds none");
     expect(rows).toContain("durable checkpoint none");
     expect(rows).toContain("work charged 17,100 · measured 16,000 · prepaid reservation none");
     expect(rows).toContain("duration charged 58,912 ms elapsed · prepaid reservation none · limit 60,000 ms");
@@ -111,8 +124,8 @@ describe("the analysis receipt", () => {
     expect(scanReceiptOf(value)?.extent).toBe("9223372036854775807");
   });
 
-  it("reads the new work and duration counts exactly up to the largest u64", () => {
-    const max = "18446744073709551615";
+  it("reads the new work and duration counts exactly up to the largest native Int", () => {
+    const max = "9223372036854775807";
     const wire = JSON.stringify(receipt())
       .replace('"measuredWork":16000', `"measuredWork":${max}`)
       .replace('"outstandingWork":{"kind":"some","value":1048576}', `"outstandingWork":{"kind":"some","value":${max}}`)
@@ -120,13 +133,59 @@ describe("the analysis receipt", () => {
       .replace('"durationOutstandingMs":{"kind":"some","value":1200}', `"durationOutstandingMs":{"kind":"some","value":${max}}`);
     const value = scanResult({ state: 1, outputs: [1], receipt: parseExactJson(wire) });
     expect(scanReceiptOf(value)).toMatchObject({ measuredWork: max, outstandingWork: max, durationChargedMs: max, durationOutstandingMs: max });
-    expect(said(value)).toContain("duration charged 18,446,744,073,709,551,615 ms elapsed · prepaid reservation 18,446,744,073,709,551,615 ms · limit 60,000 ms");
-    const over = parseExactJson(wire.replace(`"measuredWork":${max}`, '"measuredWork":18446744073709551616'));
-    expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: over }))).toBeUndefined();
+    expect(said(value)).toContain("duration charged 9,223,372,036,854,775,807 ms elapsed · prepaid reservation 9,223,372,036,854,775,807 ms · limit 60,000 ms");
+  });
+
+  // The receipt is a native record of `Int`s (signed 64-bit): a wider transport counter is not one of them.
+  it.each([
+    ["a plain count", '"measuredWork":16000', "measuredWork"],
+    ["an optional count", '"outstandingWork":{"kind":"some","value":1048576}', "outstandingWork"],
+    ["a captured limit", '"durationMs":60000', "durationMs"],
+  ])("gives no summary for %s one past the native Int, or at the largest u64", (_, field, name) => {
+    const at = (digits: string) => field.replace(/\d+(?=\}?$)/, digits);
+    for (const digits of ["9223372036854775808", "18446744073709551615"]) {
+      const wire = JSON.stringify(receipt()).replace(field, at(digits));
+      expect(wire).toContain(`${digits}`);
+      expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: parseExactJson(wire) })), name).toBeUndefined();
+    }
+  });
+
+  it("stops calling the allowance input-earned once a continuation authorized work explicitly", () => {
+    const continued = scanResult({ state: 1, outputs: [1], receipt: receipt({
+      budgetIssuedAttempt: some("synthetic-attempt-2"), budgetPrevious: some(PRIOR), authorizedWork: 3000000, workGrant: 1000000 }) });
+    const rows = said(continued);
+    expect(rows).toContain("work allowance 16,524,288 (earned and explicitly authorized) · absolute cap 64,000,000");
+    expect(rows).toContain("explicitly authorized work 3,000,000 in all · latest grant 1,000,000");
+    expect(rows).toContain(`bounds receipt ${BUDGET} · issued by attempt synthetic-attempt-2 · previous bounds ${PRIOR}`);
+    expect(rows.some(row => row.startsWith("earned allowance"))).toBe(false);
+    // Charged, measured and reserved work stay three separate facts.
+    expect(rows).toContain("work charged 17,100 · measured 16,000 · prepaid reservation 1,048,576");
+  });
+
+  it("names a raise of another total, with no work credit, as authorized work zero", () => {
+    const rows = said(scanResult({ state: 1, outputs: [1], receipt: receipt({ budgetPrevious: some(PRIOR) }) }));
+    expect(rows).toContain("earned allowance 16,524,288 · absolute cap 64,000,000");
+    expect(rows).toContain("explicitly authorized work 0 in all · latest grant 0");
+  });
+
+  it("says an unmeasured overrun as none, never as zero", () => {
+    expect(said(scanResult({ state: 1, outputs: [1], receipt: receipt({ durationOverrunMs: none }) })))
+      .toContain("past the duration limit none · a cooperative limit, not preemption");
+  });
+
+  it("reads the new credit and overrun counts exactly beyond a JavaScript number", () => {
+    const big = "9223372036854775807";
+    const wire = JSON.stringify(receipt({ budgetPrevious: some(PRIOR), authorizedWork: 1, workGrant: 1, durationOverrunMs: some(1) }))
+      .replace('"authorizedWork":1', `"authorizedWork":${big}`).replace('"workGrant":1', `"workGrant":${big}`)
+      .replace('"durationOverrunMs":{"kind":"some","value":1}', `"durationOverrunMs":{"kind":"some","value":${big}}`);
+    const value = scanResult({ state: 1, outputs: [1], receipt: parseExactJson(wire) });
+    expect(scanReceiptOf(value)).toMatchObject({ authorizedWork: big, workGrant: big, durationOverrunMs: big });
+    expect(said(value)).toContain("explicitly authorized work 9,223,372,036,854,775,807 in all · latest grant 9,223,372,036,854,775,807");
   });
 
   const without = (field: string) => Object.fromEntries(Object.entries(receipt()).filter(([key]) => key !== field));
-  it.each(["attempt", "previousAttempt", "measuredWork", "outstandingWork", "durationChargedMs", "durationOutstandingMs"])(
+  it.each(["attempt", "previousAttempt", "measuredWork", "outstandingWork", "durationChargedMs", "durationOutstandingMs",
+    "budgetDigest", "budgetIssuedAttempt", "budgetPrevious", "authorizedWork", "workGrant", "durationOverrunMs"])(
     "gives no summary when the mandatory %s is missing", (field) => {
       expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: without(field) }))).toBeUndefined();
     });
@@ -144,6 +203,19 @@ describe("the analysis receipt", () => {
     ["a negative reserved duration", { durationOutstandingMs: some(-1) }],
     ["an Option for the measured work", { measuredWork: some(16000) }],
     ["an unknown Option kind", { durationOutstandingMs: { kind: "unknown" } }],
+    ["a bare bounds digest", { budgetDigest: BUDGET }],
+    ["a non-canonical bounds digest", { budgetDigest: some(`sha256:${"A".repeat(64)}`) }],
+    ["a non-canonical previous bounds digest", { budgetPrevious: some("sha256:short") }],
+    ["authorized work as an Option", { authorizedWork: some(0) }],
+    ["a grant as decimal text", { workGrant: "0" }],
+    ["a negative overrun", { durationOverrunMs: some(-1) }],
+    ["a bare overrun number", { durationOverrunMs: 0 }],
+    ["a bounds receipt without a durable attempt", { ...MEMORY, budgetDigest: some(BUDGET) }],
+    ["an issuer without a durable attempt", { ...MEMORY, budgetIssuedAttempt: some("synthetic-attempt-1") }],
+    ["a durable attempt without its bounds receipt", { budgetDigest: none }],
+    ["previous bounds without a durable attempt", { ...MEMORY, budgetPrevious: some(PRIOR) }],
+    ["explicit credit on a first bounds receipt", { authorizedWork: 5, workGrant: 5 }],
+    ["a latest grant above the cumulative credit", { budgetPrevious: some(PRIOR), authorizedWork: 1, workGrant: 2 }],
   ])("gives no summary for %s", (_, over) => {
     expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: receipt(over) }))).toBeUndefined();
   });
@@ -176,5 +248,15 @@ describe("the analysis receipt", () => {
     expect(details).toHaveLength(1);
     expect(details[0]!.props.open).toBe(false);
     act(() => tree.unmount());
+  });
+
+  it("refuses a continuation review while a ready analysis's own run is still open", () => {
+    const read = scanReceiptOf(stopped)!;
+    const settled: WorkspaceNode = { id: "node_synthetic", name: "synthetic", run: "run-synthetic", command: ":calc { return 1; }",
+      dependsOn: [], state: "ready", provenance: {}, cautions: [], kept: true };
+    const open: WorkspaceNode = { ...settled, openLifetime: { run: "run-synthetic" } };
+    expect(reviewRefusal(read, open)).toBe("the analysis is still running");
+    // The same durable checkpoint is reviewable once the engine closes that run's lifetime.
+    expect(reviewRefusal(read, settled)).toBeUndefined();
   });
 });

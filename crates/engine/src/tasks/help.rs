@@ -416,6 +416,12 @@ fn describe(spec: &CommandSpec) -> Data {
                 ),
             ),
             (
+                "totals",
+                text(
+                    "Optional literal positive integer totals work:, input:, records:, output:, outputs: and duration: request smaller limits under the active operating ceilings. duration is cumulative milliseconds; input and output are cumulative charge, records and outputs are cumulative counts. Omitted totals use the active ceiling. Held memory, per-record framing/scratch/output caps, earning rate and code stay independently captured. References and reactive changes cannot enlarge these limits. Initial startup credit is clipped once to the requested work total; ordinary Resume preserves that captured budget. Reducing an output total does not reduce the independent per-record cap.",
+                ),
+            ),
+            (
                 "receipt",
                 text(
                     "Receipt work is cumulative charged work; measuredWork excludes conservatively charged interrupted grants. attempt and previousAttempt identify real durable checkpoints and are absent for memory sinks. outstandingWork and durationOutstandingMs are acknowledged reservations, not known lost work or an ETA. durationChargedMs includes conservatively charged interrupted intervals. Exhausted dimensions distinguish duration, absolute work and earned work_allowance. durableResume is conservative owner evidence under every original bound, not a guarantee based on one remaining counter; deterministic record/framing/callback failures require a new analysis rather than an automatic retry.",
@@ -424,7 +430,7 @@ fn describe(spec: &CommandSpec) -> Data {
             (
                 "result",
                 text(
-                    "ScanResult contains state, outputs and receipt. Only fully validated candidates advance state, accepted input position and outputs together. A dataset sink waits for the shared catalog acknowledgement and captures its source, pure program, schemas and cumulative budget. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. Opening a Dataset or restoring a workspace never restarts analysis or a producer. :scan resume $analysis creates an explicit continuation from its retained checkpoint; it never reruns the original source or adopts edited code. :scan resume $analysis follow:true explicitly requests continued waiting for a captured EventLog epoch; without follow it reads only the captured checkpoint extent and remains incomplete. Original work and input-earned allowance remain cumulative; crashed outstanding work is charged in full.",
+                    "ScanResult contains state, outputs and receipt. Only fully validated candidates advance state, accepted input position and outputs together. A dataset sink waits for the shared catalog acknowledgement and captures its source, pure program, schemas and cumulative budget. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. Opening a Dataset or restoring a workspace never restarts analysis or a producer. :scan resume $analysis creates an explicit continuation from its retained checkpoint; it never reruns the original source or adopts edited code. :scan resume $analysis follow:true explicitly requests continued waiting for a captured EventLog epoch; without follow it reads only the captured checkpoint extent and remains incomplete. Work and input-earned allowance remain cumulative; crashed outstanding work is charged in full. Resume retains the latest granted bounds. To request larger totals, first read :scan continuation, then explicitly submit :scan continue with its reviewed basis.",
                 ),
             ),
             (
@@ -616,6 +622,36 @@ fn describe(spec: &CommandSpec) -> Data {
                 ),
             ),
         ]))
+    } else if matches!(
+        spec.command,
+        MetaCommand::ScanContinuation | MetaCommand::ScanContinue
+    ) {
+        Some(fields([
+            (
+                "preview",
+                text(
+                    ":scan continuation $analysis records:1000 > bounds reads the owned checkpoint and source without reconciliation, execution or storage reservation. Optional work/input/records/output/outputs/duration are literal positive totals; omissions keep prior totals. Current and issuance ceilings are labelled separately.",
+                ),
+            ),
+            (
+                "apply",
+                text(
+                    ":scan continue $analysis basis:\"sha256:PREVIEW\" records:1000 > continued rechecks the latest whole owned analysis, preview basis, active policy and captured source. The basis binds all six requested totals; changing any request requires a fresh preview. All six totals must stay unchanged or increase, with at least one real increase and the blocking cumulative dimension raised. No lowering, copied authority, parser/code change or external producer replay.",
+                ),
+            ),
+            (
+                "accounting",
+                text(
+                    "Measured work, charged work, unconfirmed work and duration reservations stay separate. Conservative interruption charge happens once. A work increase supplies exactly its delta as explicit allowance; other increases supply no work. Prior committed input credit is never recalculated. Deterministic callback/framing/per-record failures and incomplete recorded sources cannot be repaired by raising totals.",
+                ),
+            ),
+            (
+                "duration",
+                text(
+                    "Duration is a cooperative monotonic execution limit, not hard preemption or a process wall-clock promise. An active checkpoint reserves the whole remaining duration; after a crash its unconfirmed interval is charged conservatively. If no active ceiling headroom remains, Continue refuses. durationOverrunMs reports measured lateness; original completed work remains separate from unknown reservations.",
+                ),
+            ),
+        ]))
     } else if spec.command == MetaCommand::ScanResume {
         Some(fields([
             (
@@ -633,7 +669,7 @@ fn describe(spec: &CommandSpec) -> Data {
             (
                 "limits",
                 text(
-                    "Original input/output totals, earned work allowance and absolute work limit remain cumulative. Interrupted prepaid work is charged once before a new grant. No fresh startup allowance is granted; exhausted limits require a new explicitly reviewed analysis. An unconfirmed write is never automatically retried.",
+                    "Latest granted input/output totals, input-earned and explicitly authorized work allowance, and absolute work limit remain cumulative. Interrupted prepaid work is charged once before a new grant. No fresh startup allowance is granted; exhausted totals can be raised explicitly through a reviewed :scan continue under active ceilings. An unconfirmed write is never automatically retried.",
                 ),
             ),
         ]))

@@ -1,6 +1,251 @@
 use super::*;
 use tokio::sync::mpsc;
 
+#[tokio::test]
+async fn reviewed_continuation_raises_only_the_owned_cumulative_bounds_without_replaying_inputs() {
+    use wes_core::Data;
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let session = fixture.app.current().unwrap().session;
+    assert_eq!(fixture.source(&generation, "bounded-analysis", r#"
+:package load source:"types: {IntStep: {base: Record, fields: {state: Int, outputs: 'List<Int>'}}}"
+:def step(state:Int, context:Int, item:Int) -> IntStep as :calc pure { return {state:state+item,outputs:[item]}; }
+:def finish(state:Int, context:Int, end:Unknown) -> IntStep as :calc pure { return {state:state+1,outputs:[]}; }
+:calc pure { return range(260).map(i=>i+1); } > raw
+:scan source:$raw transition:step finish:finish initial:0 context:0 profile:TypedRecords sink:dataset records:129 duration:30000 > analysis
+"#).await, 202);
+    session.wait_idle().await.unwrap();
+    let original = session.snapshot().await.unwrap();
+    let original_node = original.names["analysis"].node.clone();
+    let value = &original.execution.evidence_values[&original_node].value;
+    let Data::Record(data) = value.data() else {
+        panic!("analysis result")
+    };
+    let Data::Dataset(reference) = &data["outputs"] else {
+        panic!("dataset output")
+    };
+    let reference = reference.as_ref().clone();
+    assert_eq!(reference.records(), 128);
+    let before = fixture
+        .worker
+        .dataset_checkpoint(reference.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        before.stop,
+        Some(wes_engine::storage::datasets::AnalysisStop::Cumulative(
+            wes_engine::scan::ledger::Dimension::InputRecords
+        ))
+    );
+    let catalog_path = fixture.root.path().join("datasets/catalog/active");
+    let catalog = std::fs::read(&catalog_path).unwrap();
+    for (name, args, reason) in [
+        ("unchanged", "", "unchanged"),
+        ("lowered", "records:260 outputs:1", "lowered"),
+        ("wrongDimension", "duration:30001", "ineffective_raise"),
+        ("above", "work:64000001", "above_ceiling"),
+        ("bounds", "records:260", ""),
+    ] {
+        assert_eq!(
+            fixture
+                .source(
+                    &generation,
+                    name,
+                    &format!(":scan continuation $analysis {args} > {name}")
+                )
+                .await,
+            202
+        );
+        session.wait_idle().await.unwrap();
+        let snapshot = session.snapshot().await.unwrap();
+        let Data::Record(preview) = snapshot.execution.values[&snapshot.names[name].node].data()
+        else {
+            panic!("preview")
+        };
+        assert_eq!(preview["canContinue"], Data::Bool(reason.is_empty()));
+        assert_eq!(
+            preview["continueReason"],
+            Data::Option((!reason.is_empty()).then(|| Box::new(Data::Text(reason.into()))))
+        );
+        assert_eq!(preview["node"], Data::Text(original_node.as_str().into()));
+        assert_eq!(
+            preview["chargedAfterInterruption"],
+            Data::Int(before.work.charged as i64)
+        );
+        assert_eq!(
+            preview["allowanceAfter"],
+            Data::Int(before.usage.work_allowance as i64 + i64::from(name == "above"))
+        );
+        assert_eq!(
+            std::fs::read(&catalog_path).unwrap(),
+            catalog,
+            "preview must not reconcile, write or reserve"
+        );
+    }
+    let snapshot = session.snapshot().await.unwrap();
+    let Data::Record(preview) = snapshot.execution.values[&snapshot.names["bounds"].node].data()
+    else {
+        panic!("preview")
+    };
+    let Data::Text(basis) = &preview["basis"] else {
+        panic!("basis")
+    };
+    let basis = basis.to_string();
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "bad-basis",
+                &format!(
+                    ":scan continue $analysis basis:\"sha256:{}\" records:260 > wrong",
+                    "0".repeat(64)
+                )
+            )
+            .await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let refused = session.snapshot().await.unwrap();
+    assert!(
+        refused
+            .execution
+            .errors
+            .contains_key(&refused.names["wrong"].node)
+    );
+    assert_eq!(std::fs::read(&catalog_path).unwrap(), catalog);
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "unreviewed-total",
+                &format!(":scan continue $analysis basis:\"{basis}\" records:261 > unreviewed")
+            )
+            .await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let refused = session.snapshot().await.unwrap();
+    assert!(
+        refused
+            .execution
+            .errors
+            .contains_key(&refused.names["unreviewed"].node)
+    );
+    assert_eq!(
+        std::fs::read(&catalog_path).unwrap(),
+        catalog,
+        "a basis only guards the exact requested totals that were reviewed"
+    );
+    assert_eq!(fixture.source(&generation,"replace-live-definition",":def step(state:Int, context:Int, item:Int) -> IntStep as :calc pure { return {state:999,outputs:[999]}; }").await,202);
+    let apply = format!(":scan continue $analysis basis:\"{basis}\" records:260 > continued");
+    assert_eq!(fixture.source(&generation, "continue", &apply).await, 202);
+    session.wait_idle().await.unwrap();
+    let continued = session.snapshot().await.unwrap();
+    let Data::Record(result) =
+        continued.execution.values[&continued.names["continued"].node].data()
+    else {
+        panic!("continued result")
+    };
+    assert_eq!(
+        result["state"],
+        Data::Int(33931),
+        "captured step and finish, never current definitions"
+    );
+    let Data::Dataset(next) = &result["outputs"] else {
+        panic!("continued dataset")
+    };
+    assert_eq!(next.records(), 260);
+    let next = next.as_ref().clone();
+    let after = fixture
+        .worker
+        .dataset_checkpoint(next.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.budget.totals.input_records, 260);
+    assert_eq!(after.budget.previous, Some(before.budget.digest()));
+    assert_eq!(after.budget.authorized_work, 0);
+    assert_eq!(after.budget.work_grant, 0);
+    assert_eq!(
+        after.previous_attempt.as_deref(),
+        Some(before.attempt.as_str())
+    );
+    assert_eq!(after.analysis, before.analysis);
+    assert_eq!(after.source, before.source);
+    assert_eq!(after.task_revision, before.task_revision);
+    assert_eq!(after.captured_program, before.captured_program);
+    assert!(
+        after.work.charged >= before.work.charged && after.work.completed >= before.work.completed
+    );
+    assert!(after.finish_applied);
+    assert_eq!(after.duration.outstanding_ms, 0);
+    let mut from = 0;
+    while from < next.records() {
+        let page = fixture
+            .worker
+            .dataset_page(
+                next.clone(),
+                wes_engine::storage::datasets::PageRequest {
+                    from,
+                    rows: 100,
+                    bytes: 65536,
+                    segments: 8,
+                    work: None,
+                },
+            )
+            .await
+            .unwrap();
+        for row in page.rows {
+            assert_eq!(row.value.data(), &Data::Int(row.ordinal as i64 + 1));
+        }
+        assert!(page.next > from);
+        from = page.next;
+    }
+    assert_eq!(
+        fixture
+            .worker
+            .dataset_page(
+                reference.clone(),
+                wes_engine::storage::datasets::PageRequest {
+                    from: 0,
+                    rows: 100,
+                    bytes: 65536,
+                    segments: 8,
+                    work: None
+                }
+            )
+            .await
+            .unwrap()
+            .reference,
+        reference
+    );
+    let committed = std::fs::read(&catalog_path).unwrap();
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "double-apply",
+                &apply.replace("continued", "duplicate")
+            )
+            .await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let rejected = session.snapshot().await.unwrap();
+    assert!(
+        rejected
+            .execution
+            .errors
+            .contains_key(&rejected.names["duplicate"].node)
+    );
+    assert_eq!(std::fs::read(&catalog_path).unwrap(), committed);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    drop(events);
+    fixture.close().await;
+}
+
 mod recording_gate {
     use wes_core::DatasetRef;
     use wes_engine::storage::{StoreError, ValueHandle, datasets::*};
@@ -605,6 +850,22 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         .await
         .unwrap()
         .unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    let recording = snapshot.names["recording"].node.clone();
+    // Browser state is a current projection, not an exhaustive event history.
+    // Observe the real setup while creation is gated before cancelling it.
+    loop {
+        let event = events.next().await;
+        if event["node"] == recording.as_str() && event["event"] == "ready" {
+            let setup = session.snapshot().await.unwrap();
+            let wes_core::Data::Record(fields) = setup.execution.values[&recording].data() else {
+                panic!("recording setup must be a record");
+            };
+            assert!(fields.contains_key("sourceNode") && fields.contains_key("remainingMs"));
+            assert!(!fields.contains_key("dataset"));
+            break;
+        }
+    }
     assert_eq!(
         fixture
             .source(&generation, "cancel-before-dispatch", ":cancel $logs")
@@ -612,9 +873,7 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         202
     );
     release.send(()).unwrap();
-    let snapshot = session.snapshot().await.unwrap();
-    let recording = snapshot.names["recording"].node.clone();
-    let mut ready = 0;
+    let mut ready = 1;
     loop {
         let event = events.next().await;
         if event["node"] == recording.as_str() {
@@ -1062,6 +1321,21 @@ async fn dataset_analysis_commits_its_captured_state_and_pages_through_the_owned
         .unwrap()
         .unwrap();
     assert_eq!(checkpoint.next_ordinal, 3);
+    assert!(checkpoint.budget.valid());
+    assert_eq!(checkpoint.budget.analysis, checkpoint.analysis);
+    assert_eq!(checkpoint.budget.issued_attempt, checkpoint.attempt);
+    assert_eq!(checkpoint.budget.previous, None);
+    let recipe: Value = serde_json::from_str(&checkpoint.captured_program).unwrap();
+    assert_eq!(recipe["version"], 3);
+    assert!(
+        recipe["settings"].get("limits").is_none(),
+        "totals do not bind semantic identity"
+    );
+    assert!(recipe["settings"].get("duration").is_none());
+    assert_eq!(
+        recipe["settings"]["memory_bytes"],
+        wes_engine::scan::Settings::capture().limits.memory_bytes
+    );
     assert_eq!(checkpoint.next_position, 3);
     assert_eq!(checkpoint.work.outstanding, 0);
     assert_eq!(checkpoint.work.charged, checkpoint.work.completed);
@@ -1505,6 +1779,12 @@ async fn explicit_resume_uses_saved_pure_code_and_preserves_failed_coverage() {
         .unwrap()
         .unwrap();
     assert_eq!(after.previous_attempt, Some(before.attempt));
+    assert_eq!(
+        after.budget, before.budget,
+        "ordinary Resume cannot issue another budget"
+    );
+    assert_eq!(after.captured_program, before.captured_program);
+    assert_eq!(after.task_revision, before.task_revision);
     assert_eq!(after.step_revision, before.step_revision);
     assert_eq!(after.source, before.source);
     assert_eq!(after.usage.work_allowance, before.usage.work_allowance);

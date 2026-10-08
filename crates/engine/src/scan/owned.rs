@@ -41,6 +41,9 @@ impl OwnedAnalysis {
             policy: Default::default(),
         })
     }
+    pub(super) fn node_id(&self) -> &str {
+        self.source.node.as_str()
+    }
     pub(super) fn policy(&self) -> FlowPolicy {
         self.policy.clone()
     }
@@ -59,7 +62,7 @@ impl OwnedAnalysis {
                     .ok_or("Analysis is no longer present in this workspace")?;
                 if !matches!(
                     node.payload(),
-                    BoundTask::Scan(_) | BoundTask::ScanResume(_)
+                    BoundTask::Scan(_) | BoundTask::ScanAttempt(_)
                 ) {
                     return Err(
                         "Select an original owned scan analysis, not an arbitrary stored value",

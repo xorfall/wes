@@ -73,10 +73,22 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         summary: "Read captured original evidence: :scan excerpt $analysis from:0 limit:100 > excerpt. Text/Bytes use byte offsets; record sources use ordinals and allow at most 100 rows. No producer runs.",
     },
     CommandPath {
+        path: &["scan", "continuation"],
+        operation: ScanContinuation,
+        short: None,
+        summary: "Review captured bounds without execution: :scan continuation $analysis records:1000 > bounds. Reads current policy and conservative interrupted debits; never reconciles or runs a producer.",
+    },
+    CommandPath {
+        path: &["scan", "continue"],
+        operation: ScanContinue,
+        short: None,
+        summary: "Continue with explicitly raised totals: :scan continue $analysis basis:\"sha256:PREVIEW\" records:1000 > continued. Rechecks current head, captured semantics and policy; prior debits never reset.",
+    },
+    CommandPath {
         path: &["scan", "resume"],
         operation: ScanResume,
         short: None,
-        summary: "Continue an owned incomplete analysis: :scan resume $analysis > continued. Uses its captured input, pure code and original cumulative limits; never reruns its external producer.",
+        summary: "Continue an owned incomplete analysis: :scan resume $analysis > continued. Uses its captured input, pure code and latest granted cumulative limits; never reruns its external producer.",
     },
     CommandPath {
         path: &["dataset", "page"],

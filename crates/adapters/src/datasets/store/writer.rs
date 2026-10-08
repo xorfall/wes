@@ -367,7 +367,11 @@ impl DatasetStore {
             .read_analysis_checkpoint(&request.previous)?
             .ok_or(DatasetError::Conflict)?;
         let new = &request.checkpoint;
-        if !new.resumes(&old)
+        use wes_engine::storage::datasets::AnalysisAttemptKind;
+        let active = wes_engine::scan::Settings::capture().totals();
+        if (request.kind == AnalysisAttemptKind::Continue
+            && (!new.budget.totals.within(active) || new.budget.ceilings != active))
+            || !new.continues(&old, request.kind)
             || manifest
                 .origins
                 .iter()
@@ -391,7 +395,10 @@ impl DatasetStore {
             &manifest.dataset,
             Some(&request.previous),
             manifest.kind,
-            catalog::WriteOperation::Resume,
+            match request.kind {
+                AnalysisAttemptKind::Resume => catalog::WriteOperation::Resume,
+                AnalysisAttemptKind::Continue => catalog::WriteOperation::Continue,
+            },
         )?;
         manifest.previous = Some(previous);
         manifest.generation = manifest

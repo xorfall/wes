@@ -85,7 +85,9 @@ impl DatasetStore {
             limits,
         )?;
         let checkpoint = Checkpoint {
-            version: 2,
+            stop: state.stop,
+            budget: state.budget.clone(),
+            version: 3,
             store: manifest.store.clone(),
             dataset: manifest.dataset.clone(),
             analysis: state.analysis.clone(),
@@ -124,7 +126,6 @@ impl DatasetStore {
             output_end: manifest.summary.end,
             decoder_carry: STANDARD.encode(&state.decoder_carry),
             work: WorkLedger {
-                limit: state.work.limit,
                 granted: state.work.granted,
                 completed: state.work.completed,
                 charged: state.work.charged,
@@ -160,6 +161,8 @@ impl DatasetStore {
             .context
             .value(&context_schema, self.limits.objects.checkpoint)?;
         Ok(Some(AnalysisCheckpoint {
+            stop: saved.stop,
+            budget: saved.budget,
             analysis: saved.analysis,
             attempt: saved.attempt,
             previous_attempt: saved.previous_attempt,
@@ -187,7 +190,6 @@ impl DatasetStore {
                 .decode(saved.decoder_carry)
                 .map_err(|_| DatasetError::StorageCorrupt)?,
             work: AnalysisWork {
-                limit: saved.work.limit,
                 granted: saved.work.granted,
                 completed: saved.work.completed,
                 charged: saved.work.charged,

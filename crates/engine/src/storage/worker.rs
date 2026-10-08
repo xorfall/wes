@@ -164,7 +164,9 @@ trait OwnedStorage {
         let source = source.with_provenance(source.provenance().clone().with_policy(&info.policy));
         value_charge(&source, u64::from(limit) / 2)
             .ok_or(StoreError::Limit("checkpoint source"))?;
+        let status = self.datasets()?.analysis_status(&reference)?;
         Ok(super::datasets::DatasetContinuation {
+            status,
             reference,
             checkpoint,
             source,
@@ -889,6 +891,17 @@ impl StoreWorker {
         .await?
         .wait()
         .await
+    }
+    /// Bounded joined read, with no reconciliation, reservation or write admission.
+    pub async fn dataset_analysis_read(
+        &self,
+        run: String,
+    ) -> Result<super::datasets::DatasetContinuation, StoreError> {
+        let limit = self.limits.bytes.get();
+        self.request_owner(limit, move |owner| owner.captured_analysis(&run, limit))
+            .await?
+            .wait()
+            .await
     }
     /// Read only the owned analysis's protected input. Range strings and ownership
     /// are selected by the workspace, not by a raw dataset or value-handle literal.

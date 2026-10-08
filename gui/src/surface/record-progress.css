@@ -44,3 +44,29 @@
 }
 .wes-terminal .scan-receipt > summary .mono-line { flex: 1 1 auto; min-width: 0; }
 .wes-terminal .scan-receipt > summary:focus-visible { outline: var(--stroke-thin) solid var(--mono-ref); outline-offset: 2px; }
+
+/*
+ * Continuation bounds: each total's facts, then its editable request beneath. Everything wraps inside
+ * the disclosure, so a 320 px Inspector never scrolls sideways and a long number never widens it.
+ */
+.wes-terminal .scan-continuation-bounds { display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; margin-top: var(--space-sm); }
+.wes-terminal .scan-continuation-bound { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wes-terminal .scan-continuation-edit {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--space-sm); min-width: 0;
+  font-size: var(--type-mono-size); line-height: var(--type-mono-leading);
+}
+.wes-terminal .scan-continuation-input {
+  box-sizing: border-box; flex: 1 1 14ch; min-width: 0; max-width: 24ch;
+  padding: 0 var(--space-sm);
+  font-family: var(--type-mono-family); font-size: var(--type-mono-size); font-variant-numeric: tabular-nums;
+  color: var(--mono-ink); background: var(--surface);
+  border: var(--stroke-thin) solid var(--line); border-radius: var(--radius-sm);
+}
+.wes-terminal .scan-continuation-input:focus-visible { outline: var(--stroke-rail) solid var(--mono-meta); outline-offset: 1px; }
+.wes-terminal .scan-continuation-input[aria-invalid="true"] { border-color: var(--mono-bad); }
+/* The review's subordinate facts: one closed row after the actions, wrapping like the rows above. */
+.wes-terminal .scan-continuation-more { min-width: 0; margin-top: var(--space-sm); }
+.wes-terminal .scan-continuation-more > summary { display: flex; align-items: baseline; min-width: 0; cursor: pointer; }
+.wes-terminal .scan-continuation-more > summary .mono-line { flex: 1 1 auto; min-width: 0; }
+.wes-terminal .scan-continuation-more > summary:focus-visible { outline: var(--stroke-thin) solid var(--mono-ref); outline-offset: 2px; }
+.wes-terminal .scan-receipt .management-actions > .value-line { flex: 1 1 16ch; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -15,31 +15,38 @@ use std::sync::Arc;
 use wes_core::{Data, flow::FlowPolicy};
 use wes_language::{Diagnostic, Span};
 #[derive(Clone)]
-pub struct BoundResume {
+pub struct BoundAttempt {
     selection: OwnedAnalysis,
     services: Option<Arc<dyn LocalServices>>,
     span: Span,
     live: bool,
+    raise: Option<(super::bounds::RequestedBounds, String)>,
 }
-impl std::fmt::Debug for BoundResume {
+impl std::fmt::Debug for BoundAttempt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BoundResume")
+        f.debug_struct("BoundAttempt")
             .field("selection", &self.selection)
             .finish_non_exhaustive()
     }
 }
-impl BoundResume {
+impl BoundAttempt {
     pub(crate) fn bind(
         task: MetaTask,
         services: Option<Arc<dyn LocalServices>>,
         span: Span,
     ) -> Result<Self, Diagnostic> {
         let selection = OwnedAnalysis::bind(&task, span)?;
-        if task.inputs.keys().any(|key| key != "follow") {
+        let raised = task.spec.command == wes_language::vocabulary::MetaCommand::ScanContinue;
+        if task.inputs.keys().any(|key| {
+            key != "follow"
+                && !(raised
+                    && (key == "basis"
+                        || super::bounds::RequestedBounds::NAMES.contains(&key.as_str())))
+        }) {
             return Err(Diagnostic::error(
                 "CAL009",
                 span,
-                "Resume preserves captured inputs and limits; overrides require a new analysis",
+                "Resume preserves captured inputs and granted limits; use :scan continuation and :scan continue to review an explicit increase",
             ));
         }
         let live = match task.inputs.get("follow") {
@@ -62,12 +69,54 @@ impl BoundResume {
                 ));
             }
         };
+        let raise = if raised {
+            let Some(Input::Literal(value)) = task.inputs.get("basis") else {
+                return Err(Diagnostic::error(
+                    "CAL009",
+                    span,
+                    "Continue requires literal basis: from the current continuation preview",
+                ));
+            };
+            let Data::Text(basis) = value.data() else {
+                return Err(Diagnostic::error(
+                    "CAL009",
+                    span,
+                    "Continue basis: must be a literal digest",
+                ));
+            };
+            if basis.len() != 71
+                || !basis.starts_with("sha256:")
+                || !basis[7..]
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(Diagnostic::error(
+                    "CAL009",
+                    span,
+                    "Continue basis: must be a canonical sha256 digest",
+                ));
+            }
+            Some((
+                super::bounds::RequestedBounds::parse(&task, span)?,
+                basis.to_string(),
+            ))
+        } else {
+            None
+        };
         Ok(Self {
+            raise,
             selection,
             services,
             span,
             live,
         })
+    }
+    pub(crate) fn command(&self) -> wes_language::vocabulary::MetaCommand {
+        if self.raise.is_some() {
+            wes_language::vocabulary::MetaCommand::ScanContinue
+        } else {
+            wes_language::vocabulary::MetaCommand::ScanResume
+        }
     }
     pub(crate) fn live(&self) -> bool {
         self.live
@@ -100,13 +149,31 @@ impl BoundResume {
             if token.is_cancelled() {
                 return super::bound::failed(Failure::cancelled(self.span)).into();
             }
-            let captured = match worker.dataset_continuation(issued).await {
+            let captured = match if self.raise.is_some() {
+                worker.dataset_analysis_read(issued).await
+            } else {
+                worker.dataset_continuation(issued).await
+            } {
                 Ok(c) => c,
                 Err(e) => return fail(e.to_string()).into(),
             };
             let span = self.span;
             let cancel = token.clone();
             let prepared = tokio::task::spawn_blocking(move || {
+                if let Some((requested, basis)) = self.raise {
+                    let totals = requested.requested(captured.checkpoint.budget.totals);
+                    return Runner::prepare_continue(
+                        captured,
+                        totals,
+                        &basis,
+                        self.live,
+                        run,
+                        &pool,
+                        self.services,
+                        cancel,
+                        span,
+                    );
+                }
                 Runner::prepare_resume(
                     captured.source,
                     self.live,
