@@ -20,7 +20,7 @@ import httpResponse from "./core/http-response.yaml?raw";
 import processOutput from "./core/process-output.yaml?raw";
 
 /** The kinds this client can draw from an entry. Anything else is an unknown kind. */
-export const ENTRY_KINDS: readonly (Kind | "http")[] = ["table", "fields", "items", "text", "line", "process", "http"];
+export const ENTRY_KINDS: readonly (Kind | "http" | "log")[] = ["table", "fields", "items", "text", "line", "process", "http", "log"];
 const OFFERS: readonly OfferName[] = ["http", "source", "copy", "trace"];
 const UNITS = ["ns", "us", "ms", "s"] as const;
 export type TimeUnit = (typeof UNITS)[number];
@@ -32,6 +32,27 @@ export type Format =
   | { readonly kind: "size"; readonly unit: "bytes" }
   /** A type expression; drawn whole it opens one field per line. */
   | { readonly kind: "type" };
+
+/**
+ * How a list of records reads as a log. Every role names a field; nothing is guessed from field names.
+ * `key` is the row identity, in order — the fields that make a row the same row across samples (for a
+ * log artifact and its ordinal, both). `time` is an Instant, or an integer counted in `timeUnit` since
+ * the Unix epoch. `stream` names the channel a row came from; `level` its severity, drawn as a warning
+ * when it is `error` or `warning`. `scope` starts a labelled block whenever its value changes (a CI
+ * step). `group` names a fold: rows sharing its value form one block that can be folded to its first
+ * row. `flags` are Bool fields shown by name on their row when true.
+ */
+export interface LogMapping {
+  readonly key: readonly string[];
+  readonly text: string;
+  readonly time?: string;
+  readonly timeUnit?: TimeUnit;
+  readonly stream?: string;
+  readonly level?: string;
+  readonly scope?: string;
+  readonly group?: string;
+  readonly flags: readonly string[];
+}
 
 export interface EntryOffer {
   readonly kind: OfferName;
@@ -58,8 +79,10 @@ export interface Entry {
   readonly applies: readonly ("record" | "list")[];
   /** Declared fields, `name → type` as `describeType` writes it. */
   readonly fields: Readonly<Record<string, string>>;
-  readonly kind: Kind | "http";
+  readonly kind: Kind | "http" | "log";
   readonly columns?: readonly string[];
+  /** Present when `kind` is `log`. */
+  readonly log?: LogMapping;
   readonly formats: Readonly<Record<string, Format>>;
   readonly offers: readonly EntryOffer[];
   /** Version 2: tones by field value, cell styles and rules, applied over the type's own tones. */
@@ -87,6 +110,28 @@ function names(value: unknown, what: string): string[] {
     throw new Error(`${what} must be a list of names`);
   }
   return value as string[];
+}
+
+function logMapping(value: unknown): LogMapping {
+  if (!isObject(value)) throw new Error("a log entry needs mapping with key and text");
+  const field = (role: string, required = false): string | undefined => {
+    const name = value[role];
+    if (name === undefined && !required) return undefined;
+    if (typeof name !== "string" || name === "") throw new Error(`mapping ${role} must name a field`);
+    return name;
+  };
+  const key = typeof value.key === "string" ? [value.key] : names(value.key, "mapping key");
+  if (key.length === 0) throw new Error("mapping key must name at least one field");
+  const unit = value.timeUnit;
+  if (unit !== undefined && !UNITS.includes(unit as TimeUnit)) throw new Error("mapping timeUnit must be ns, us, ms or s");
+  const known = new Set(["key", "text", "time", "timeUnit", "stream", "level", "scope", "group", "flags"]);
+  for (const role of Object.keys(value)) if (!known.has(role)) throw new Error(`unknown mapping role: ${role}`);
+  const optional = (role: string) => { const name = field(role); return name === undefined ? {} : { [role]: name }; };
+  return {
+    key, text: field("text", true)!, flags: value.flags === undefined ? [] : names(value.flags, "mapping flags"),
+    ...optional("time"), ...(unit !== undefined ? { timeUnit: unit as TimeUnit } : {}),
+    ...optional("stream"), ...optional("level"), ...optional("scope"), ...optional("group"),
+  } as LogMapping;
 }
 
 function format(name: string, value: unknown): Format {
@@ -250,6 +295,9 @@ export function parseEntry(text: string, origin: string): Entry {
   const kind = data.present.kind;
   if (typeof kind !== "string" || !ENTRY_KINDS.includes(kind as Kind | "http")) throw new Error(`unknown kind: ${String(kind)}`);
   const columns = data.present.columns === undefined ? undefined : names(data.present.columns, "columns");
+  const log = kind === "log" ? logMapping(data.present.mapping) : undefined;
+  if (log && !applies.includes("list")) throw new Error("a log entry applies to lists");
+  if (!log && data.present.mapping !== undefined) throw new Error("mapping is only for kind: log");
   const formats: Record<string, Format> = {};
   if (data.present.formats !== undefined) {
     if (!isObject(data.present.formats)) throw new Error("formats must map a field name to a formatter");
@@ -278,11 +326,12 @@ export function parseEntry(text: string, origin: string): Entry {
   const declared = Object.keys(fields);
   if (declared.length > 0) {
     const toned = [...Object.keys(tones ?? {}), ...Object.keys(styles ?? {}), ...(ruled ?? []).flatMap((rule) => ["cell" in rule.target ? rule.target.cell : rule.field, rule.field])];
-    for (const name of [...(columns ?? []), ...Object.keys(formats), ...toned]) {
+    const mapped = log ? [...log.key, log.text, ...[log.time, log.stream, log.level, log.scope, log.group].filter((name): name is string => name !== undefined), ...log.flags] : [];
+    for (const name of [...(columns ?? []), ...Object.keys(formats), ...toned, ...mapped.map((path) => path.split(".")[0]!)]) {
       if (!declared.includes(name)) throw new Error(`field ${name} is not declared in fields`);
     }
   }
-  return { origin, type: data.type, applies: applies as ("record" | "list")[], fields, kind: kind as Kind | "http", ...(columns ? { columns } : {}), formats, offers, ...(tones ? { tones } : {}), ...(styles ? { styles } : {}), ...(ruled ? { rules: ruled } : {}) };
+  return { origin, type: data.type, applies: applies as ("record" | "list")[], fields, kind: kind as Kind | "http" | "log", ...(columns ? { columns } : {}), ...(log ? { log } : {}), formats, offers, ...(tones ? { tones } : {}), ...(styles ? { styles } : {}), ...(ruled ? { rules: ruled } : {}) };
 }
 
 /** The type name an unparsable file claims, for its notice. Best effort, never trusted. */
@@ -382,6 +431,12 @@ export class Registry {
       if (keys.every((name) => name in data) && (record ? fieldsMatch(entry, record) : true)) return { entry, list: false };
     }
     return undefined;
+  }
+
+  /** The log mapping a list value's entry declares, if its entry is a valid `kind: log`. */
+  logMapping(type: TypeShape | undefined, data?: unknown): LogMapping | undefined {
+    const matched = this.match(type, data);
+    return matched?.list && matched.entry.kind === "log" ? matched.entry.log : undefined;
   }
 
   /** What the tail says about a rejected entry for this type: `presentation x.yaml: unknown kind: y`. */

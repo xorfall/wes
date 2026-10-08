@@ -274,6 +274,56 @@ fn editor_directory_does_not_allow_files_links_or_unidentified_adoption() {
 }
 
 #[test]
+fn presentation_entries_survive_reopening_an_owned_data_home() {
+    let temp = root();
+    let home = temp.path().join("presentation-home");
+    let opened = DataHome::open(&home).unwrap();
+    let identity = opened.identity.id.clone();
+    let directory = home.join("presentations");
+    fs::create_dir(&directory).unwrap();
+    let entry = directory.join("log.yaml");
+    let content = "version: 1\ntype: SyntheticLog\n";
+    fs::write(&entry, content).unwrap();
+    drop(opened);
+    let reopened = DataHome::open(&home).unwrap();
+    assert_eq!(reopened.identity.id, identity);
+    assert_eq!(fs::read_to_string(entry).unwrap(), content);
+}
+
+#[test]
+fn presentation_directory_rejects_files_links_and_unidentified_adoption() {
+    let temp = root();
+    let home = temp.path().join("file-home");
+    drop(DataHome::open(&home).unwrap());
+    fs::write(home.join("presentations"), "preserve").unwrap();
+    assert!(DataHome::open(&home).is_err());
+    assert_eq!(
+        fs::read_to_string(home.join("presentations")).unwrap(),
+        "preserve"
+    );
+
+    let unidentified = temp.path().join("unidentified");
+    fs::create_dir_all(unidentified.join("presentations")).unwrap();
+    assert!(DataHome::open(&unidentified).is_err());
+    assert!(!unidentified.join("identity.json").exists());
+
+    #[cfg(unix)]
+    {
+        let home = temp.path().join("linked-home");
+        drop(DataHome::open(&home).unwrap());
+        let outside = temp.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep.yaml"), "preserve").unwrap();
+        std::os::unix::fs::symlink(&outside, home.join("presentations")).unwrap();
+        assert!(DataHome::open(&home).is_err());
+        assert_eq!(
+            fs::read_to_string(outside.join("keep.yaml")).unwrap(),
+            "preserve"
+        );
+    }
+}
+
+#[test]
 fn unrelated_corrupt_linked_and_legacy_occupied_roots_are_rejected() {
     let temp = root();
     let unrelated = temp.path().join("unrelated");
