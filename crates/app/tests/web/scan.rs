@@ -605,6 +605,22 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         .await
         .unwrap()
         .unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    let recording = snapshot.names["recording"].node.clone();
+    // Browser state is a current projection, not an exhaustive event history.
+    // Observe the real setup while creation is gated before cancelling it.
+    loop {
+        let event = events.next().await;
+        if event["node"] == recording.as_str() && event["event"] == "ready" {
+            let setup = session.snapshot().await.unwrap();
+            let wes_core::Data::Record(fields) = setup.execution.values[&recording].data() else {
+                panic!("recording setup must be a record");
+            };
+            assert!(fields.contains_key("sourceNode") && fields.contains_key("remainingMs"));
+            assert!(!fields.contains_key("dataset"));
+            break;
+        }
+    }
     assert_eq!(
         fixture
             .source(&generation, "cancel-before-dispatch", ":cancel $logs")
@@ -612,9 +628,7 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         202
     );
     release.send(()).unwrap();
-    let snapshot = session.snapshot().await.unwrap();
-    let recording = snapshot.names["recording"].node.clone();
-    let mut ready = 0;
+    let mut ready = 1;
     loop {
         let event = events.next().await;
         if event["node"] == recording.as_str() {
