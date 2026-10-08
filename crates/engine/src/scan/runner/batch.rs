@@ -10,6 +10,12 @@ impl Runner {
             .as_ref()
             .map_or(self.state_charge, |c| c.state_charge)
     }
+    pub(super) fn working_position(&self) -> u64 {
+        self.candidate
+            .as_ref()
+            .and_then(|candidate| candidate.range)
+            .map_or(self.committed_position, |(_, end, _)| end)
+    }
     pub(super) fn working_provenance(&self) -> &Provenance {
         self.candidate
             .as_ref()

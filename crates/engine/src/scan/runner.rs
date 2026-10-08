@@ -1368,7 +1368,8 @@ impl Runner {
             .map_err(|error| refusal(error, self.span))?;
         let output_ranges = vec![
             range.map_or(
-                (self.committed_position, self.committed_position),
+                // Finish may share a batch with inputs not yet acknowledged by storage.
+                (self.working_position(), self.working_position()),
                 |(start, end, _)| (start, end)
             );
             outputs.len()
