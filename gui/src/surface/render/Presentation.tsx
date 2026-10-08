@@ -151,7 +151,7 @@ function Table({ node, props }: { node: Extract<PresentationNode, { kind: "table
   return <div className="table-view">
     {node.inspection?.mode==="window" && <div className="table-inspection-tabs" role="tablist" aria-label="Table inspection">{["rows","row","columns"].map(name=><button key={name} role="tab" aria-selected={tab===name} className="cell-action" onClick={()=>setTab(name)}>{name}</button>)}</div>}
     <div hidden={tab!=="rows"}>
-    <TableGrid rowKeys={rowKeys?.every(key=>key!==undefined) ? rowKeys as string[] : undefined} columns={node.columns} rows={node.rows.map((row) => row.map(segments))} total={node.total}
+    <TableGrid rowKeys={rowKeys?.every(key=>key!==undefined) ? rowKeys as string[] : undefined} columns={node.columns} rows={node.rows.map((row) => row.map(segments))} styles={node.styles} tints={node.tints} total={node.total}
     sort={node.sort} onSelect={node.inspection ? row=>select(node.inspection!.rows[row]!.index) : undefined} selected={node.inspection?.rows.findIndex(row=>row.index===selected)}
     onSort={props.onSort ? column=>props.onSort!(node.path,node.columns[column]!.name) : undefined}
     labels={node.columns.map((column) => column.label)} pinned={!arrangement.unpinned}
@@ -171,7 +171,7 @@ function Table({ node, props }: { node: Extract<PresentationNode, { kind: "table
     }} />
     </div>
     {node.inspection && <div hidden={tab!=="row"} className="table-row-inspector" role="tabpanel" aria-label="Selected table row">
-      {inspected ? <><p className="mono-dim">{node.path}/{inspected.index} · row {inspected.index+1}{node.inspection.whole ? "" : " · in the read part"}</p><JsonTree data={inspected.value} type={node.inspection.type} mode="window"/></> : <p className="mono-dim">Select a row in rows.</p>}
+      {inspected ? <><p className="mono-dim">{node.path}/{inspected.index} · row {inspected.index+1}{node.inspection.whole ? "" : " · in the read part"}</p><JsonTree data={inspected.value} type={node.inspection.type} mode="window" declared={node.inspection.declared}/></> : <p className="mono-dim">Select a row in rows.</p>}
     </div>}
     <div hidden={tab!=="columns"} role="tabpanel" aria-label="Table columns">{arrangement.columns.map(name=><p key={name}><span className="json-key">{name}</span> · {arrangement.hidden.includes(name) ? "hidden" : "shown"}</p>)}</div>
   </div>;

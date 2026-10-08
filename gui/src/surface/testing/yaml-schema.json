@@ -805,7 +805,7 @@
       "kind": "object",
       "fields": {
         "version": {
-          "schema": "version",
+          "schema": "contract.version",
           "required": false
         },
         "types": {
@@ -817,6 +817,39 @@
           "required": false
         }
       }
+    },
+    "contract.version": {
+      "kind": "scalar",
+      "type": "Int",
+      "choices": [
+        "1",
+        "2"
+      ]
+    },
+    "contract.display": {
+      "kind": "object",
+      "fields": {
+        "enumTones": {
+          "schema": "contract.enumTones",
+          "required": true
+        }
+      }
+    },
+    "contract.enumTones": {
+      "kind": "map",
+      "values": "contract.enumTone"
+    },
+    "contract.enumTone": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "ok",
+        "warn",
+        "bad",
+        "dim",
+        "meta",
+        "ink"
+      ]
     },
     "contract.types": {
       "kind": "map",
@@ -835,6 +868,10 @@
         },
         "enum": {
           "schema": "contract.enum",
+          "required": false
+        },
+        "display": {
+          "schema": "contract.display",
           "required": false
         },
         "min": {
@@ -893,7 +930,8 @@
             "minLength",
             "maxLength",
             "pattern",
-            "description"
+            "description",
+            "display"
           ]
         },
         {
@@ -906,7 +944,8 @@
             "enum",
             "min",
             "max",
-            "description"
+            "description",
+            "display"
           ]
         },
         {
@@ -919,7 +958,8 @@
             "enum",
             "min",
             "max",
-            "description"
+            "description",
+            "display"
           ]
         },
         {
@@ -930,7 +970,8 @@
           "allowed": [
             "base",
             "enum",
-            "description"
+            "description",
+            "display"
           ]
         },
         {

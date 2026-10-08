@@ -292,6 +292,7 @@ pub struct Value {
     provenance: Arc<Provenance>,
     // Live authority is process-local and is never encoded by data/storage codecs.
     authority: Option<Arc<str>>,
+    metadata: Option<Arc<crate::contracts::metadata::ValueMetadata>>,
 }
 
 impl Value {
@@ -305,6 +306,7 @@ impl Value {
             data: Arc::new(data),
             provenance: Arc::new(provenance),
             authority: None,
+            metadata: None,
         })
     }
     pub fn management(kind: crate::MetaType, projection: Data, authority: String) -> Self {
@@ -315,6 +317,29 @@ impl Value {
     }
     pub fn management_authority(&self) -> Option<&str> {
         self.authority.as_deref()
+    }
+    /// Constant-time equality of a captured immutable snapshot, for read revalidation.
+    pub fn same_snapshot(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.shape, &other.shape)
+            && Arc::ptr_eq(&self.data, &other.data)
+            && Arc::ptr_eq(&self.provenance, &other.provenance)
+            && match (&self.metadata, &other.metadata) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
+            && self.authority == other.authority
+    }
+    pub fn metadata(&self) -> Option<&crate::contracts::metadata::ValueMetadata> {
+        self.metadata.as_deref()
+    }
+    pub fn with_metadata(
+        &self,
+        metadata: Option<crate::contracts::metadata::ValueMetadata>,
+    ) -> Self {
+        let mut value = self.clone();
+        value.metadata = metadata.map(Arc::new);
+        value
     }
     pub fn shape(&self) -> &Shape {
         &self.shape
@@ -333,6 +358,7 @@ impl Value {
             data: Arc::clone(&self.data),
             provenance: Arc::new(provenance.with_policy(self.provenance.policy())),
             authority: self.authority.clone(),
+            metadata: self.metadata.clone(),
         }
     }
 
@@ -348,6 +374,7 @@ impl Value {
             data: Arc::clone(&self.data),
             provenance: Arc::clone(&self.provenance),
             authority: self.authority.clone(),
+            metadata: self.metadata.clone(),
         })
     }
 }

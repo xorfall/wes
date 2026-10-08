@@ -13,7 +13,7 @@ fn native_option_preserves_nested_presence_and_neutral_policy() {
         let bytes = encode_value(&value, Limits::default()).unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["version"],
-            1
+            2
         );
         assert_eq!(
             decode_value(&bytes, Limits::default()).unwrap().value,
@@ -24,7 +24,7 @@ fn native_option_preserves_nested_presence_and_neutral_policy() {
     let bytes = encode_value(&original, Limits::default()).unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["version"],
-        1
+        2
     );
     assert_eq!(
         decode_value(&bytes, Limits::default()).unwrap().value,

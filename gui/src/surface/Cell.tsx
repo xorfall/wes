@@ -105,6 +105,8 @@ export interface CellBlock {
   /** `ProcessOutput · 94 ms` — the node's own facts; drawn only when a cell has several blocks. */
   readonly header?: readonly Segment[];
   readonly type?: TypeShape;
+  /** The contract metadata captured with the value, if any; shown in the type popup. */
+  readonly meta?: import("../value-meta").ValueMeta;
   readonly typeLabel?: string;
   readonly duration?: string;
   readonly view?: CellView;
@@ -435,7 +437,7 @@ export function Cell({ streamOutput = false, streamSource = false, pipeline = fa
             onFocus={() => setTarget(block.key)} onClick={event => {setTarget(block.key); if(event.metaKey && !(event.target as HTMLElement)?.closest?.("button,a,input,.result-type-popover,.result-resize"))actions.peek?.(block.identity?.glyph === "failed" ? "error" : "value",node);}}>
             <header className="result-header" aria-label={`Result ${block.identity?.label ?? block.key}`}>
               {block.identity && <span className="result-name" title={block.identity.label} aria-label={`${block.identity.label}, ${block.identity.glyph}`}><MonoLine segments={[GLYPH[block.identity.glyph],{text:` ${block.identity.label}`,role:"mono-ref",variableName:block.identity.label.startsWith("$") ? block.identity.label : undefined}]} /></span>}
-              <div className="result-typeline"><ResultType shape={block.hasValue === false ? undefined : block.type} label={block.typeLabel} identity={block.identity?.label ?? block.key} omitFieldCount={/\bfields\b/.test(lineText(block.header ?? []))} onOpenChange={open => setTypePopup(was => open ? block.key : was === block.key ? undefined : was)}/>
+              <div className="result-typeline"><ResultType shape={block.hasValue === false ? undefined : block.type} meta={block.hasValue === false ? undefined : block.meta} label={block.typeLabel} identity={block.identity?.label ?? block.key} omitFieldCount={/\bfields\b/.test(lineText(block.header ?? []))} onOpenChange={open => setTypePopup(was => open ? block.key : was === block.key ? undefined : was)}/>
               {block.hasValue !== false && <ResultFacts header={block.header} duration={block.duration}/>}</div>
               <div className="result-controls">
                 {block.stream && <StreamControls/>}

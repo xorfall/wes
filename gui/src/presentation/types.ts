@@ -51,6 +51,9 @@ export interface Context {
   readonly sorts?: ReadonlyMap<string,{readonly column:string;readonly descending:boolean}>;
 }
 
+/** Contract metadata and the declaration path where a nested tree starts, for its declared tones. */
+export interface Declared { readonly meta: import("../value-meta").ValueMeta; readonly at: string }
+
 /** The colour a run means. Renderers map tones to design-system roles. */
 export type Tone = "ink" | "dim" | "faint" | "literal" | "param" | "ref" | "ok" | "warn" | "bad" | "meta" | "provider";
 
@@ -139,15 +142,18 @@ export interface TableArrangement {
 
 export type PresentationNode =
   | (Base & { readonly kind: "line"; readonly runs: readonly Run[] })
-  | (Base & { readonly kind: "fields"; readonly rows: readonly FieldRow[]; readonly nameWidth: number; readonly tree?: {readonly type: import("../protocol").TypeShape; readonly data: unknown; readonly mode: Mode} })
+  | (Base & { readonly kind: "fields"; readonly rows: readonly FieldRow[]; readonly nameWidth: number; readonly tree?: {readonly type: import("../protocol").TypeShape; readonly data: unknown; readonly mode: Mode; readonly declared?: Declared} })
   | (Base & {
       readonly kind: "table"; readonly columns: readonly Column[];
       /** One entry per row, one entry per shown column: the cell's runs, already cut to the column's width. */
       readonly rows: readonly (readonly (readonly Run[])[])[];
+      /** Per cell, a declared style; per row, a declared background tint. Absent when none is declared. */
+      readonly styles?: readonly (readonly ("badge" | undefined)[])[];
+      readonly tints?: readonly (Tone | undefined)[];
       /** Structural cell disclosures; the compact runs above remain the table summary. */
       readonly details?: readonly (readonly (PresentationNode | undefined)[])[];
       readonly offset: number; readonly total: number;
-      readonly inspection?: {readonly type: import("../protocol").TypeShape; readonly mode:Mode; readonly whole:boolean; readonly rows:readonly {readonly index:number;readonly value:unknown}[]};
+      readonly inspection?: {readonly type: import("../protocol").TypeShape; readonly mode:Mode; readonly whole:boolean; readonly declared?: Declared; readonly rows:readonly {readonly index:number;readonly value:unknown}[]};
       readonly arrangement: TableArrangement;
       readonly sort?:{readonly column:string;readonly descending:boolean};
     })

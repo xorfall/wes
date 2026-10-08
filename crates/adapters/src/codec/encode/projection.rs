@@ -35,7 +35,12 @@ pub fn encode_selection(
         ));
     }
     let pointer = selection.select.as_deref().unwrap_or("");
-    let (data, shape) = select(value, pointer)?;
+    let (data, shape, path) = select(value, pointer)?;
+    let meta = if typed {
+        value.metadata().and_then(|m| m.project(&path))
+    } else {
+        None
+    };
     let paging = selection.offset.is_some() || selection.limit.is_some();
     if selection.shape_only && paging {
         return Err(invalid("shape_only cannot be combined with offset/limit."));
@@ -65,10 +70,14 @@ pub fn encode_selection(
     } else {
         (BorrowedData::One(data), None)
     };
+    let available = limits
+        .nodes
+        .checked_sub(meta.as_ref().map_or(0, |m| m.nodes()))
+        .ok_or(CodecError::Work)?;
     let nodes = if !selection.shape_only || typed {
-        check_shape(Some(shape), limits.nodes, 0)?
+        check_shape(Some(shape), available, 0)?
     } else {
-        limits.nodes
+        available
     };
     if selection.shape_only {
         if matches!(data, Data::Iter(_)) {
@@ -80,6 +89,8 @@ pub fn encode_selection(
         struct Summary<'a> {
             #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
             shape: Option<ShapeJson<'a>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            meta: Option<wes_core::contracts::metadata::ValueMetadata>,
             kind: &'static str,
             #[serde(skip_serializing_if = "Option::is_none")]
             length: Option<usize>,
@@ -101,6 +112,7 @@ pub fn encode_selection(
         return write(
             &Summary {
                 shape: typed.then_some(ShapeJson(shape)),
+                meta: meta.as_ref().and_then(|m| m.wire()),
                 kind,
                 length,
             },
@@ -143,6 +155,7 @@ pub fn encode_selection(
         shape: &'a Shape,
         value: &'a Value,
         typed: bool,
+        meta: Option<&'a wes_core::contracts::metadata::ValueMetadata>,
         page: Option<Page>,
     }
     impl Serialize for Projected<'_> {
@@ -155,6 +168,7 @@ pub fn encode_selection(
                         shape: self.shape,
                         data: self.body,
                         provenance: self.value.provenance(),
+                        meta: self.meta,
                     },
                 )?;
             } else {
@@ -172,6 +186,7 @@ pub fn encode_selection(
             shape,
             value,
             typed,
+            meta: meta.as_ref(),
             page,
         },
         limits,
@@ -186,14 +201,18 @@ struct Page {
     next_offset: Option<usize>,
 }
 
-fn select<'a>(value: &'a Value, pointer: &str) -> Result<(&'a Data, &'a Shape), CodecError> {
+fn select<'a>(
+    value: &'a Value,
+    pointer: &str,
+) -> Result<(&'a Data, &'a Shape, String), CodecError> {
     if pointer.len() > 2048 {
         return Err(invalid("select exceeds 2048 bytes."));
     }
     let mut data = value.data();
     let mut shape = value.shape();
+    let mut path = String::new();
     if pointer.is_empty() {
-        return Ok((data, shape));
+        return Ok((data, shape, path));
     }
     let tail = pointer.strip_prefix('/').ok_or_else(|| {
         invalid("select must be a JSON Pointer, e.g. /body/items/0; empty selects the root.")
@@ -217,6 +236,7 @@ fn select<'a>(value: &'a Value, pointer: &str) -> Result<(&'a Data, &'a Shape), 
         }
         match data {
             Data::Record(fields) => {
+                path.push_str(&wes_core::contracts::metadata::field_segment(&segment));
                 data = fields.get(&segment).ok_or_else(|| {
                     invalid(&format!(
                         "No field at select segment {} ({segment:?}).",
@@ -229,6 +249,7 @@ fn select<'a>(value: &'a Value, pointer: &str) -> Result<(&'a Data, &'a Shape), 
                 };
             }
             Data::List(items) => {
+                path.push_str("/e");
                 if segment.is_empty()
                     || !segment.bytes().all(|b| b.is_ascii_digit())
                     || (segment.len() > 1 && segment.starts_with('0'))
@@ -255,5 +276,5 @@ fn select<'a>(value: &'a Value, pointer: &str) -> Result<(&'a Data, &'a Shape), 
             }
         }
     }
-    Ok((data, shape))
+    Ok((data, shape, path))
 }

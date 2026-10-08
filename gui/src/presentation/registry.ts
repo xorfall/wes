@@ -13,7 +13,7 @@ import { budget } from "../limits/policy";
  * last valid entry from the same file stays active. Nothing here changes a node's state, error,
  * privacy or authority, and an offer grants nothing.
  */
-import { parse } from "yaml";
+import { type Document, isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { describeType, type TypeShape } from "../protocol";
 import type { Kind, OfferName } from "./types";
 import httpResponse from "./core/http-response.yaml?raw";
@@ -58,6 +58,20 @@ export interface EntryOffer {
   readonly kind: OfferName;
 }
 
+/** A tone a declaration may name; `inherit` only as a field map's fallback. */
+export type DeclaredTone = import("../value-meta").Tone;
+export type CellStyle = "plain" | "badge";
+/** A field's tones by exact value spelling, and what other values take. */
+export interface FieldTones { readonly cases: Readonly<Record<string, DeclaredTone>>; readonly otherwise: DeclaredTone | "inherit" }
+/** One bounded predicate over a row's own scalar field: equality or membership, nothing else. */
+export interface Rule {
+  readonly field: string;
+  readonly values: readonly string[];
+  readonly target: { readonly cell: string } | { readonly row: true };
+  readonly tone?: DeclaredTone;
+  readonly style?: CellStyle;
+}
+
 export interface Entry {
   /** Where it came from: `core`, `home:<file>`. */
   readonly origin: string;
@@ -71,6 +85,10 @@ export interface Entry {
   readonly log?: LogMapping;
   readonly formats: Readonly<Record<string, Format>>;
   readonly offers: readonly EntryOffer[];
+  /** Version 2: tones by field value, cell styles and rules, applied over the type's own tones. */
+  readonly tones?: Readonly<Record<string, FieldTones>>;
+  readonly styles?: Readonly<Record<string, CellStyle>>;
+  readonly rules?: readonly Rule[];
 }
 
 export interface EntryProblem {
@@ -141,12 +159,127 @@ function format(name: string, value: unknown): Format {
  * One entry from YAML text. Throws with a message a person can act on; the caller keeps the last
  * valid entry and reports the message.
  */
+const MAX_RULES = 64, MAX_CASES = 64, MAX_ALIASES = 16;
+const STYLES: readonly CellStyle[] = ["plain", "badge"];
+const TONE_NAMES: readonly string[] = ["ok", "warn", "bad", "dim", "meta", "ink"];
+/** A scalar as the exact spelling values are matched by; large numbers must be quoted. */
+function spelling(value: unknown, what: string): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  throw new Error(`${what} must be text, a boolean or a safe integer; quote larger or decimal numbers`);
+}
+/**
+ * Case keys and rule values as written. Parsed data has already re-spelled an unquoted number or
+ * null (`1.50` → `1.5`, a large integer rounded, `~` → an empty key), so they are checked in the
+ * source of the document the data came from. Every node on the way, keys included, is read through
+ * its alias: an alias spells what its anchored node spells, and the walk has a fixed depth, so a
+ * cyclic alias ends at a container where a scalar is required and is refused.
+ */
+function writtenSpellings(doc: Document, text: string): void {
+  const deref = (node: unknown): unknown => isAlias(node) ? node.resolve(doc) : node;
+  const key = (node: unknown): string => {
+    const it = deref(node);
+    if (!isScalar(it)) throw new Error("presentation keys must be names");
+    return String(it.value);
+  };
+  // The value the data took for `name`: the last pair, as in the converted data.
+  const child = (node: unknown, name: string): unknown => {
+    const map = deref(node);
+    if (!isMap(map)) return undefined;
+    let found: unknown;
+    for (const pair of map.items) if (key(pair.key) === name) found = pair.value ?? null;
+    return deref(found);
+  };
+  const exact = (raw: unknown, what: string): string => {
+    const node = deref(raw);
+    if (isScalar(node) && (typeof node.value === "string" || typeof node.value === "boolean")) return String(node.value);
+    const written = isScalar(node) && node.range ? text.slice(node.range[0], node.range[1]) : undefined;
+    if (isScalar(node) && typeof node.value === "number" && Number.isSafeInteger(node.value) && written === String(node.value)) return written;
+    throw new Error(`${what} must be text, a boolean or a safe integer; quote larger or decimal numbers`);
+  };
+  const present = child(doc.contents, "present");
+  const tones = child(present, "tones");
+  if (isMap(tones)) for (const field of tones.items) {
+    const name = key(field.key), cases = child(field.value, "cases"), seen = new Set<string>();
+    if (isMap(cases)) for (const pair of cases.items) {
+      const spelled = exact(pair.key, `tone case for ${name}`);
+      if (seen.has(spelled)) throw new Error(`tones for ${name} name ${spelled} twice`);
+      seen.add(spelled);
+    }
+  }
+  const ruled = child(present, "rules");
+  if (isSeq(ruled)) ruled.items.forEach((rule, at) => {
+    const when = child(rule, "when");
+    const equals = child(when, "equals"), listed = child(when, "in");
+    if (equals !== undefined) exact(equals, `rule ${at + 1} value`);
+    if (isSeq(listed)) for (const item of listed.items) exact(item, `rule ${at + 1} value`);
+  });
+}
+function tone(value: unknown, what: string, inherit = false): DeclaredTone | "inherit" {
+  if (typeof value === "string" && (TONE_NAMES.includes(value) || (inherit && value === "inherit"))) return value as DeclaredTone | "inherit";
+  throw new Error(`${what} must be one of ${[...TONE_NAMES, ...(inherit ? ["inherit"] : [])].join(", ")}`);
+}
+function only(value: Record<string, unknown>, keys: readonly string[], what: string) {
+  for (const key of Object.keys(value)) if (!keys.includes(key)) throw new Error(`unknown ${what} key: ${key}`);
+}
+function fieldTones(value: unknown): Record<string, FieldTones> {
+  if (!isObject(value)) throw new Error("tones must map a field name to its cases");
+  const out: Record<string, FieldTones> = {};
+  for (const [name, spec] of Object.entries(value)) {
+    if (!isObject(spec) || !isObject(spec.cases)) throw new Error(`tones for ${name} need cases`);
+    only(spec, ["cases", "otherwise"], "tones");
+    const cases: Record<string, DeclaredTone> = Object.create(null);
+    const entries = Object.entries(spec.cases);
+    if (entries.length === 0 || entries.length > MAX_CASES) throw new Error(`tones for ${name} need 1 to ${MAX_CASES} cases`);
+    for (const [key, case_] of entries) cases[key] = tone(case_, `tone for ${name} ${key}`) as DeclaredTone;
+    out[name] = { cases, otherwise: spec.otherwise === undefined ? "inherit" : tone(spec.otherwise, `otherwise for ${name}`, true) };
+  }
+  return out;
+}
+function cellStyles(value: unknown): Record<string, CellStyle> {
+  if (!isObject(value)) throw new Error("styles must map a field name to a style");
+  const out: Record<string, CellStyle> = {};
+  for (const [name, style] of Object.entries(value)) {
+    if (!STYLES.includes(style as CellStyle)) throw new Error(`style for ${name} must be plain or badge`);
+    out[name] = style as CellStyle;
+  }
+  return out;
+}
+function rules(value: unknown): Rule[] {
+  if (!Array.isArray(value) || value.length > MAX_RULES) throw new Error(`rules must be a list of at most ${MAX_RULES}`);
+  return value.map((raw, at) => {
+    const what = `rule ${at + 1}`;
+    if (!isObject(raw) || !isObject(raw.when) || !isObject(raw.target)) throw new Error(`${what} needs when and target`);
+    only(raw, ["when", "target", "tone", "style"], "rule");
+    only(raw.when, ["field", "equals", "in"], "when");
+    if (typeof raw.when.field !== "string" || raw.when.field === "") throw new Error(`${what} must name a field`);
+    if ((raw.when.equals === undefined) === (raw.when.in === undefined)) throw new Error(`${what} takes exactly one of equals or in`);
+    const listed = raw.when.in === undefined ? [raw.when.equals] : raw.when.in;
+    if (!Array.isArray(listed) || listed.length === 0 || listed.length > MAX_CASES) throw new Error(`${what}: in must list 1 to ${MAX_CASES} values`);
+    const values = listed.map((item) => spelling(item, `${what} value`));
+    only(raw.target, ["cell", "row"], "target");
+    const row = raw.target.row === true && raw.target.cell === undefined;
+    const cell = typeof raw.target.cell === "string" && raw.target.cell !== "" && raw.target.row === undefined;
+    if (!row && !cell) throw new Error(`${what} targets either one cell or the row`);
+    if (raw.tone === undefined && raw.style === undefined) throw new Error(`${what} must set a tone or a style`);
+    if (row && raw.style !== undefined) throw new Error(`${what}: a row rule tints the row and takes no style`);
+    if (raw.style !== undefined && !STYLES.includes(raw.style as CellStyle)) throw new Error(`${what}: style must be plain or badge`);
+    return { field: raw.when.field, values, target: row ? { row: true as const } : { cell: raw.target.cell as string },
+      ...(raw.tone !== undefined ? { tone: tone(raw.tone, `${what} tone`) as DeclaredTone } : {}),
+      ...(raw.style !== undefined ? { style: raw.style as CellStyle } : {}) };
+  });
+}
+
 export function parseEntry(text: string, origin: string): Entry {
   if (new TextEncoder().encode(text).length > max_entry_bytes()) throw new Error("entry exceeds its configured byte budget");
-  // `yaml` builds plain data; no tags that construct objects or run code are enabled.
-  const data: unknown = parse(text, { schema: "core", customTags: [], maxAliasCount: 16 });
+  // `yaml` builds plain data; no tags that construct objects or run code are enabled. The data and
+  // the written spellings come from this one document, and converting it enforces the alias budget.
+  const doc = parseDocument(text, { schema: "core", customTags: [] });
+  if (doc.errors.length > 0) throw doc.errors[0];
+  const data: unknown = doc.toJS({ maxAliasCount: MAX_ALIASES });
   if (!isObject(data)) throw new Error("entry must be a mapping");
-  if (data.version !== 1) throw new Error(`unsupported version: ${String(data.version)}`);
+  if (data.version !== 1 && data.version !== 2) throw new Error(`unsupported version: ${String(data.version)}`);
   if (typeof data.type !== "string" || data.type === "") throw new Error("type must name a record type, or * for a record matched by its fields");
   const applies = data.applies === undefined ? ["record", "list"] : names(data.applies, "applies");
   if (!applies.every((item) => item === "record" || item === "list")) throw new Error("applies takes record and list");
@@ -180,17 +313,25 @@ export function parseEntry(text: string, origin: string): Entry {
       });
     }
   }
+  const declares = (key: string) => (data.present as Record<string, unknown>)[key] !== undefined;
+  if (data.version === 1 && (declares("tones") || declares("styles") || declares("rules"))) throw new Error("tones, styles and rules need version: 2");
+  if (declares("tones") || declares("rules")) writtenSpellings(doc, text);
+  const tones = declares("tones") ? fieldTones(data.present.tones) : undefined;
+  const styles = declares("styles") ? cellStyles(data.present.styles) : undefined;
+  const ruled = declares("rules") ? rules(data.present.rules) : undefined;
+  if ((tones || styles || ruled) && kind !== "table") throw new Error("tones, styles and rules are for kind: table");
   // A structural entry has no name to match on, so its fields are the whole of its match.
   if (data.type === "*" && Object.keys(fields).length === 0) throw new Error("a * entry must declare the fields it matches");
   // A format or column naming a field the entry did not declare cannot be checked against the wire.
   const declared = Object.keys(fields);
   if (declared.length > 0) {
+    const toned = [...Object.keys(tones ?? {}), ...Object.keys(styles ?? {}), ...(ruled ?? []).flatMap((rule) => ["cell" in rule.target ? rule.target.cell : rule.field, rule.field])];
     const mapped = log ? [...log.key, log.text, ...[log.time, log.stream, log.level, log.scope, log.group].filter((name): name is string => name !== undefined), ...log.flags] : [];
-    for (const name of [...(columns ?? []), ...Object.keys(formats), ...mapped.map((path) => path.split(".")[0]!)]) {
+    for (const name of [...(columns ?? []), ...Object.keys(formats), ...toned, ...mapped.map((path) => path.split(".")[0]!)]) {
       if (!declared.includes(name)) throw new Error(`field ${name} is not declared in fields`);
     }
   }
-  return { origin, type: data.type, applies: applies as ("record" | "list")[], fields, kind: kind as Kind | "http" | "log", ...(columns ? { columns } : {}), ...(log ? { log } : {}), formats, offers };
+  return { origin, type: data.type, applies: applies as ("record" | "list")[], fields, kind: kind as Kind | "http" | "log", ...(columns ? { columns } : {}), ...(log ? { log } : {}), formats, offers, ...(tones ? { tones } : {}), ...(styles ? { styles } : {}), ...(ruled ? { rules: ruled } : {}) };
 }
 
 /** The type name an unparsable file claims, for its notice. Best effort, never trusted. */

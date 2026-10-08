@@ -107,7 +107,7 @@ impl ContractRegistry {
         let imported = incoming.load(yaml)?;
         for (name, contract) in &imported {
             if let Some(existing) = self.contracts.get(name) {
-                if !existing.is_subtype_of(contract) || !contract.is_subtype_of(existing) {
+                if existing.digest() != contract.digest() {
                     return Err(ContractError {
                         code: "TYP004",
                         message: format!("conflicting imported type: {name}"),
@@ -130,6 +130,26 @@ impl ContractRegistry {
     }
     fn load_inner(&mut self, yaml: &str) -> Result<IndexMap<String, Arc<Contract>>, ContractError> {
         let root = package::read(yaml)?;
+        let fields = mapping(&root)?;
+        let version = match fields.get("version") {
+            None => 1,
+            Some(Node::Scalar(ScalarKind::Int, value)) if matches!(value.as_str(), "1" | "2") => {
+                value.parse::<u32>().expect("checked version")
+            }
+            _ => return Err(problem("unsupported type-package version")),
+        };
+        if let Some(Node::Mapping(types)) = fields.get("types") {
+            for (name, definition) in types {
+                if let Node::Mapping(definition) = definition
+                    && let Some(display) = definition.get("display")
+                {
+                    display_syntax(display, version, name)?;
+                }
+                crate::package_schema::declarations()
+                    .validate("contract.type", definition)
+                    .map_err(|issue| problem(format!("{name}: {}", issue.message)))?;
+            }
+        }
         crate::package_schema::declarations()
             .validate("contract.package", &root)
             .map_err(|issue| ContractError {
@@ -137,11 +157,6 @@ impl ContractRegistry {
                 message: issue.message,
             })?;
         let root = mapping(&root)?;
-        if let Some(version) = root.get("version")
-            && !matches!(version, Node::Scalar(ScalarKind::Int, value) if value == "1")
-        {
-            return Err(problem("unsupported type-package version"));
-        }
         let definitions = mapping(required(root, "types")?)?;
         if definitions.len() > 1000 {
             return Err(problem("a package may define at most 1000 types"));
@@ -163,6 +178,7 @@ impl ContractRegistry {
             definitions,
             staged: IndexMap::new(),
             resolving: BTreeSet::new(),
+            version,
         };
         for name in definitions.keys() {
             resolver.find(name)?;
@@ -253,6 +269,7 @@ struct Resolver<'a> {
     definitions: &'a Mapping,
     staged: Definitions,
     resolving: BTreeSet<String>,
+    version: u32,
 }
 impl Resolver<'_> {
     fn find(&mut self, name: &str) -> Result<Arc<Contract>, ContractError> {
@@ -309,10 +326,18 @@ impl Resolver<'_> {
         let next = Arc::new(Contract {
             name: name.into(),
             kind,
+            display: display(&parent, &limits, definition, self.version, name)?,
             limits,
+            base_digest: Some(parent.digest().into()),
+            digest: Default::default(),
         });
         if !next.is_subtype_of(&parent) {
             return Err(problem(format!("{name} weakens its base contract")));
+        }
+        if !super::metadata::display_fits(&next) {
+            return Err(problem(format!(
+                "{name}: display enumTones exceeds the descriptor byte budget"
+            )));
         }
         for item in &next.limits.enumeration {
             if !next.issues(item).is_empty() {
@@ -520,6 +545,9 @@ fn contract(name: &str, kind: Kind) -> Arc<Contract> {
         name: name.into(),
         kind,
         limits: Limits::default(),
+        display: Default::default(),
+        base_digest: None,
+        digest: Default::default(),
     })
 }
 
@@ -566,4 +594,73 @@ fn unknown(name: &str) -> ContractError {
 }
 fn problem(message: impl Into<String>) -> ContractError {
     ContractError::declaration(message)
+}
+
+fn display_syntax(node: &Node, version: u32, name: &str) -> Result<(), ContractError> {
+    let context = |error: ContractError| problem(format!("{name} display: {}", error.message));
+    if version != 2 {
+        return Err(problem(format!(
+            "{name}: display requires type-package version 2"
+        )));
+    }
+    let fields = mapping(node).map_err(context)?;
+    if fields.len() != 1 || !fields.contains_key("enumTones") {
+        return Err(problem(format!("{name}: display requires only enumTones")));
+    }
+    let tones = mapping(&fields["enumTones"]).map_err(context)?;
+    if tones.len() > 64 {
+        return Err(problem(format!(
+            "{name}: enumTones may contain at most 64 cases"
+        )));
+    }
+    for (member, tone) in tones {
+        if tone.text().ok().and_then(super::EnumTone::parse).is_none() {
+            return Err(problem(format!(
+                "{name} member {member:?}: unknown enum tone; expected ok, warn, bad, dim, meta or ink"
+            )));
+        }
+    }
+    Ok(())
+}
+fn display(
+    parent: &Contract,
+    limits: &Limits,
+    definition: &Mapping,
+    version: u32,
+    name: &str,
+) -> Result<super::ContractDisplay, ContractError> {
+    let domain: BTreeSet<_> = limits
+        .enumeration
+        .iter()
+        .filter_map(crate::capability::enum_spelling)
+        .collect();
+    let mut result = parent.display.clone();
+    result
+        .enum_tones
+        .retain(|member, _| domain.contains(member));
+    if let Some(node) = definition.get("display") {
+        display_syntax(node, version, name)?;
+        if domain.is_empty() {
+            return Err(problem(format!(
+                "{name}: enumTones requires a scalar enum contract"
+            )));
+        }
+        for (member, tone) in mapping(&mapping(node)?["enumTones"])? {
+            if !domain.contains(member) {
+                return Err(problem(format!(
+                    "{name} member {member:?}: tone case is outside the full effective enum; use exact scalar spelling"
+                )));
+            }
+            result.enum_tones.insert(
+                member.clone(),
+                super::EnumTone::parse(tone.text()?).expect("checked syntax"),
+            );
+        }
+    }
+    if result.enum_tones.len() > 64 {
+        return Err(problem(format!(
+            "{name}: effective enumTones exceeds 64 cases"
+        )));
+    }
+    Ok(result)
 }

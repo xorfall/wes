@@ -193,3 +193,67 @@ fn projection_never_consumes_lazy_recipes_and_preserves_unknown_root_policy() {
             .contains("cannot be exported")
     );
 }
+
+#[test]
+fn typed_reads_rebase_schema_paths_preserve_pages_and_shape_only_and_check_root_policy() {
+    use wes_core::contracts::{ContractRegistry, boundary};
+    let mut r = ContractRegistry::new();
+    r.load("types: {S: {base: Text, enum: [ready, failed]}, R: {base: Record, fields: {'a/b~': S}}, Box: {base: Record, fields: {rows: 'List<R>'}}}").unwrap();
+    let raw = Value::new(
+        Shape::Unknown,
+        Data::Record(
+            [(
+                "rows".into(),
+                Data::List(vec![Data::Record(
+                    [("a/b~".into(), Data::Text("ready".into()))].into(),
+                )]),
+            )]
+            .into(),
+        ),
+        Provenance::default(),
+    )
+    .unwrap();
+    let v = boundary::checked_result(&r.resolve("Box").unwrap(), &raw, &|| false).unwrap();
+    let read = |v: &Value, selection: Json, typed| -> Json {
+        serde_json::from_slice(
+            &encode_selection(
+                v,
+                &serde_json::from_value(selection).unwrap(),
+                typed,
+                Limits::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let page = read(&v, json!({"select":"/rows","offset":1,"limit":1}), true);
+    assert_eq!(page["value"]["data"]["value"], json!([]));
+    assert_eq!(
+        page["value"]["meta"]["fields"]["/e/f:a~1b~0"]["members"],
+        json!(["ready", "failed"])
+    );
+    assert_eq!(page["value"]["meta"]["contract"]["name"], "List<R>");
+    let one = read(&v, json!({"select":"/rows/0/a~1b~0"}), true);
+    assert_eq!(one["value"]["meta"]["contract"]["name"], "S");
+    let summary = read(&v, json!({"select":"/rows","shape_only":true}), true);
+    assert_eq!(summary["meta"], page["value"]["meta"]);
+    assert!(
+        read(&v, json!({"select":"/rows","shape_only":true}), false)
+            .get("meta")
+            .is_none()
+    );
+    for policy in [
+        wes_core::flow::FlowPolicy::default().private(),
+        wes_core::flow::FlowPolicy::default().unknown(),
+    ] {
+        let hidden = v.with_provenance(Provenance::default().with_policy(&policy));
+        let err = encode_selection(
+            &hidden,
+            &serde_json::from_value(json!({"select":"/absent"})).unwrap(),
+            true,
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, wes_adapters::codec::CodecError::Export(_)));
+    }
+}

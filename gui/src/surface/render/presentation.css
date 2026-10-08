@@ -53,6 +53,11 @@
 .wes-terminal .value-table-cell .mono-literal { color:var(--mono-ink); }
 .wes-terminal .value-table-numeric { text-align:right; }
 .wes-terminal .value-table-head .value-table-cell { position:sticky; top:0; z-index:3; background:var(--head); color:var(--mono-dim); font-weight:400; }
+/* Declared row tints: background only, so the text keeps its own tone; hover and selection still win. */
+.wes-terminal .table-row-tint-ok .value-table-cell { background:color-mix(in srgb,var(--mono-ok) 10%,var(--sheet)); }
+.wes-terminal .table-row-tint-warn .value-table-cell { background:color-mix(in srgb,var(--mono-warn) 12%,var(--sheet)); }
+.wes-terminal .table-row-tint-bad .value-table-cell { background:color-mix(in srgb,var(--mono-bad) 10%,var(--sheet)); }
+.wes-terminal .table-row-tint-dim .value-table-cell,.wes-terminal .table-row-tint-meta .value-table-cell { background:color-mix(in srgb,var(--mono-dim) 8%,var(--sheet)); }
 .wes-terminal .value-table-row:hover .value-table-cell { background:color-mix(in srgb,var(--mono-meta) 7%,var(--sheet)); }
 .wes-terminal .table-row-selected .value-table-cell { background:color-mix(in srgb,var(--mono-meta) 12%,var(--sheet)); }
 .wes-terminal .value-table-key { position:sticky; left:0; z-index:2; font-weight:600; }
@@ -156,3 +161,12 @@
 
 .wes-terminal .value-table-cell>.value-toggle-inline { display:inline-flex; margin-right:.4ch; }
 .wes-terminal .value-table-detail-section>.mono-line { white-space:pre-wrap; overflow-wrap:anywhere; }
+/* A declared badge keeps the value's text and tone and adds a shape: a dashed border for warnings. */
+.wes-terminal .value-badge { display:inline-block; padding:0 5px; border:1px solid var(--line); border-radius:3px; line-height:1.35; }
+.wes-terminal .value-badge:has(.mono-ok) { border-color:var(--mono-ok); }
+.wes-terminal .value-badge:has(.mono-bad) { border-color:var(--mono-bad); }
+.wes-terminal .value-badge:has(.mono-warn) { border-color:var(--mono-warn); border-style:dashed; }
+@media (forced-colors: active) {
+  .wes-terminal .value-badge { border-color:CanvasText; }
+  .wes-terminal .table-row-tint .value-table-cell { outline:1px solid CanvasText; outline-offset:-1px; }
+}

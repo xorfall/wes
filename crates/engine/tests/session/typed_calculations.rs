@@ -279,3 +279,75 @@ async fn sort_selectors_reject_provider_calls_before_any_effect_is_dispatched() 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     stop(handle, task).await;
 }
+
+#[tokio::test]
+async fn captured_metadata_survives_identity_and_projections_but_not_transformations() {
+    let (handle, task, calls) = start().await;
+    let package = "types: {S: {base: Text, enum: [ready, failed]}, Row: {base: Record, fields: {status: S, optional: 'Option<S>'}}}";
+    handle
+        .submit(
+            input("metadata-package", ":package load source:\"\"")
+                .with_document(Some(package.into()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let result = submit(
+        &handle,
+        "metadata-values",
+        r#"
+:def rows() -> List<Row> as :calc pure { return [{status:'ready', optional:some('ready')}]; }
+rows > declared
+:calc { return $declared; } > identity
+:calc { return $declared[0].status; } > scalar
+:calc { return $declared[0]['status']; } > indexedField
+:calc { return $declared[0].optional.unwrapOr('failed'); } > unwrapped
+:calc { return $declared[0]; } > row
+:calc { return $declared[0].status + ''; } > joined
+:calc { return {status:$declared[0].status}; } > rebuilt
+:calc { return $declared.map(x=>x); } > mapped
+:calc { return $declared.reduce((a,x)=>a,$declared); } > reduced
+:type check "ready" as:S > checked
+:calc { return []; } > unknownEmpty
+:def empty() -> List<Row> as :calc pure { return []; }
+empty > declaredEmpty
+"#,
+    )
+    .await;
+    assert!(
+        !result
+            .diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == wes_language::Severity::Error),
+        "{:?}",
+        result.diagnostics
+    );
+    handle.wait_idle().await.unwrap();
+    let snapshot = handle.snapshot().await.unwrap();
+    let v = |name: &str| {
+        snapshot
+            .execution
+            .values
+            .get(&snapshot.names[name].node)
+            .unwrap_or_else(|| panic!("{name}: {:?}", snapshot.execution.errors))
+    };
+    assert_eq!(v("identity").metadata(), v("declared").metadata());
+    for name in ["scalar", "indexedField", "unwrapped", "checked"] {
+        let m = serde_json::to_value(v(name).metadata().unwrap()).unwrap();
+        assert_eq!(m["contract"]["name"], "S", "{name}");
+        assert_eq!(
+            m["fields"][""]["members"],
+            serde_json::json!(["ready", "failed"])
+        );
+    }
+    let projected = wes_engine::plan::project_value(v("row"), &["status".into()]).unwrap();
+    assert_eq!(projected.metadata(), v("scalar").metadata());
+    for name in ["joined", "rebuilt", "mapped", "reduced", "unknownEmpty"] {
+        assert!(v(name).metadata().is_none(), "{name}");
+    }
+    let empty = serde_json::to_value(v("declaredEmpty").metadata().unwrap()).unwrap();
+    assert_eq!(empty["fields"]["/e/f:status"]["total"], 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    stop(handle, task).await;
+}

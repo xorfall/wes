@@ -259,6 +259,7 @@ impl Machine {
                         let item = Item::Typed(
                             Arc::new(Item::from_data(&data, &mut self.budget, span, 0)?),
                             frame.cursor.source_shape.clone(),
+                            None,
                         );
                         self.work.push(Work::Iter(IterWork::Stage(frame, 0, item)));
                     }

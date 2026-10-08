@@ -12,7 +12,11 @@ pub(super) enum Item {
     Scalar(Arc<Data>),
     Iter(Arc<super::iteration::Pipeline>),
     IterNamespace,
-    Typed(Arc<Item>, Arc<Shape>),
+    Typed(
+        Arc<Item>,
+        Arc<Shape>,
+        Option<Arc<wes_core::contracts::metadata::ValueMetadata>>,
+    ),
     List(Arc<Vec<Item>>),
     Record(Arc<IndexMap<String, Item>>),
     Option(Option<Arc<Item>>),
@@ -59,27 +63,47 @@ impl Item {
     }
     pub fn untyped(&self) -> &Self {
         match self {
-            Self::Typed(item, _) => item.untyped(),
+            Self::Typed(item, _, _) => item.untyped(),
             _ => self,
         }
     }
     pub fn typed(self, shape: Shape) -> Self {
-        Self::Typed(Arc::new(self.untyped().clone()), Arc::new(shape))
+        Self::Typed(Arc::new(self.untyped().clone()), Arc::new(shape), None)
+    }
+    pub fn metadata(&self) -> Option<&wes_core::contracts::metadata::ValueMetadata> {
+        if let Self::Typed(_, _, m) = self {
+            m.as_deref()
+        } else {
+            None
+        }
+    }
+    pub fn annotated(self, meta: Option<wes_core::contracts::metadata::ValueMetadata>) -> Self {
+        if let Self::Typed(item, shape, _) = self {
+            Self::Typed(item, shape, meta.map(Arc::new))
+        } else if meta.is_some() {
+            Self::Typed(Arc::new(self), Arc::new(Shape::Unknown), meta.map(Arc::new))
+        } else {
+            self
+        }
+    }
+    pub fn project_annotation(&self, value: Self, path: &str) -> Self {
+        value.annotated(self.metadata().and_then(|m| m.project(path)))
     }
     pub fn project_field_shape(&self, value: Self, name: &str) -> Self {
-        if let Self::Typed(_, shape) = self
+        let value = if let Self::Typed(_, shape, _) = self
             && let Shape::Record(record) = shape.as_ref()
             && let Some(field) = record.field(name)
         {
             value.typed(field.clone())
         } else {
             value
-        }
+        };
+        self.project_annotation(value, &wes_core::contracts::metadata::field_segment(name))
     }
     pub fn output_shape(&self, data: &Data) -> Shape {
         match self {
-            Self::Typed(_, declared) if **declared == Shape::Unknown => shape(data, 0),
-            Self::Typed(_, shape) => shape.as_ref().clone(),
+            Self::Typed(_, declared, _) if **declared == Shape::Unknown => shape(data, 0),
+            Self::Typed(_, shape, _) => shape.as_ref().clone(),
             Self::List(items) => {
                 let Data::List(values) = data else {
                     unreachable!()

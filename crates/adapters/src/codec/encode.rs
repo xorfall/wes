@@ -19,6 +19,8 @@ pub fn encode_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError
     }
     let nodes = limits
         .nodes
+        .checked_sub(value.metadata().map_or(0, |m| m.nodes()))
+        .ok_or(CodecError::Work)?
         .checked_sub(value.provenance().facts().len())
         .and_then(|left| left.checked_sub(value.provenance().cautions().len()))
         .ok_or(CodecError::Work)?;
@@ -33,6 +35,8 @@ pub fn encode_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError
 pub fn encode_display_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError> {
     let nodes = limits
         .nodes
+        .checked_sub(value.metadata().map_or(0, |m| m.nodes()))
+        .ok_or(CodecError::Work)?
         .checked_sub(value.provenance().facts().len())
         .ok_or(CodecError::Work)?;
     check(
@@ -47,6 +51,12 @@ pub fn encode_display_value(value: &Value, limits: Limits) -> Result<Vec<u8>, Co
             object.serialize_field("type", &ShapeJson(self.0.shape()))?;
             object.serialize_field("provenance", self.0.provenance().facts())?;
             object.serialize_field("data", &DataJson(self.0.data(), JsonDataMode::Value))?;
+            if let Some(meta) = self.0.metadata() {
+                meta.validate().map_err(serde::ser::Error::custom)?;
+                if let Some(wire) = meta.wire() {
+                    object.serialize_field("meta", &wire)?;
+                }
+            }
             object.end()
         }
     }
@@ -201,7 +211,8 @@ fn check_at(
         match data {
             Data::Iter(iter) => {
                 remaining = remaining
-                    .checked_sub(iter.source().provenance().facts().len())
+                    .checked_sub(iter.source().metadata().map_or(0, |m| m.nodes()))
+                    .and_then(|left| left.checked_sub(iter.source().provenance().facts().len()))
                     .and_then(|left| left.checked_sub(iter.source().provenance().cautions().len()))
                     .ok_or(CodecError::Work)?;
                 remaining = check_at(
@@ -300,6 +311,7 @@ struct Stored<'a> {
     shape: &'a Shape,
     data: BorrowedData<'a>,
     provenance: &'a wes_core::Provenance,
+    meta: Option<&'a wes_core::contracts::metadata::ValueMetadata>,
 }
 impl<'a> From<&'a Value> for Stored<'a> {
     fn from(value: &'a Value) -> Self {
@@ -307,6 +319,7 @@ impl<'a> From<&'a Value> for Stored<'a> {
             shape: value.shape(),
             data: BorrowedData::One(value.data()),
             provenance: value.provenance(),
+            meta: value.metadata(),
         }
     }
 }
@@ -397,6 +410,15 @@ impl Serialize for Stored<'_> {
             },
         )?;
         object.serialize_field("data", &BorrowedJson(self.data, true))?;
+        if let Some(meta) = self.meta {
+            meta.validate().map_err(serde::ser::Error::custom)?;
+            if let Some(wire) = meta.wire() {
+                object.serialize_field("meta", &wire)?;
+            }
+            if meta.needs_projection_snapshot() {
+                object.serialize_field("metaProjection", meta)?;
+            }
+        }
         object.end()
     }
 }

@@ -164,7 +164,7 @@ export function cellBlocks(input: OutputInput): CellBlock[] {
     if(failure && (failure.length || report))blocks.push({key:`${node.id}:failure`,zone:"run",open:true,content:failureContent});
     // A lone failed job has no result: its record is in the run zone and no empty result card follows.
     if (failure && !live && lifted) return;
-    blocks.push({ key: node.id, stream: live && input.generation ? {engine:input.engine,generation:input.generation,node} : undefined, identity: view, row: view.row, header: headerOf(value), type: value ? presentationType(value) : undefined, typeLabel: view.type,
+    blocks.push({ key: node.id, stream: live && input.generation ? {engine:input.engine,generation:input.generation,node} : undefined, identity: view, row: view.row, header: headerOf(value), type: value ? presentationType(value) : undefined, meta: value?.meta, typeLabel: view.type,
       // A lone node's duration is the run summary's; only stages carry their own.
       duration: several && view.durationMs !== undefined ? formatExecutionDuration(view.durationMs) : undefined, view: arrangement.view, height: arrangement.rows, hasValue: live || resultAccess(node).current && node.state !== "failed" && node.state !== "skipped" && !(node.state === "cancelled" && !node.stopped) && Boolean(value || node.streamOutput), status: <>{node.private && <span className="mono-warn">Private · memory only</span>}{cell.streamOutput ? undefined : status}</>, open: opens(node, at), content: failure && !live ? <p className="mono-faint">no value · the run failed</p> : content });
   });

@@ -6,12 +6,12 @@ import { typeLine } from "../presentation/type-shape";
 import { compactType, typeOutline, typeOutlineSegments } from "./result-type";
 
 /** Disclosure is anchored to the result, independent of execution and value inspection. */
-export function ResultType({ shape, label, identity, omitFieldCount = false, onOpenChange }: { shape?: TypeShape; label?: string; identity: string; omitFieldCount?: boolean; onOpenChange?: (opened: boolean) => void }) {
+export function ResultType({ shape, meta, label, identity, omitFieldCount = false, onOpenChange }: { shape?: TypeShape; meta?: import("../value-meta").ValueMeta; label?: string; identity: string; omitFieldCount?: boolean; onOpenChange?: (opened: boolean) => void }) {
   const anchor = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), dialog = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(40), id = useId();
   const [opened, setOpened] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 8, width: 480 });
-  const full = shape ? typeOutline(shape) : label;
+  const full = shape ? typeOutline(shape, meta) : label;
   const close = (restore = false) => { setOpened(false); onOpenChange?.(false); if (restore) trigger.current?.focus({ preventScroll: true }); };
   useLayoutEffect(() => {
     const element = anchor.current;
@@ -109,7 +109,7 @@ export function ResultType({ shape, label, identity, omitFieldCount = false, onO
         }
       }}>
       <div className="result-type-title"><span>Type · {identity}</span><button type="button" className="cell-action" onClick={() => { void navigator.clipboard?.writeText(shape ? typeLine(shape) : label ?? "").catch(() => undefined); }}>copy type</button><button type="button" className="cell-action" aria-label="Close full type" onClick={() => close(true)}>close</button></div>
-      <pre tabIndex={0} aria-label="Type structure">{shape ? typeOutlineSegments(shape).map((segment, at) => <span key={at} className={segment.role}>{segment.text}</span>) : full}</pre>
+      <pre tabIndex={0} aria-label="Type structure">{shape ? typeOutlineSegments(shape, meta).map((segment, at) => <span key={at} className={segment.role}>{segment.text}</span>) : full}</pre>
     </div>, portal)}
   </div>;
 }
