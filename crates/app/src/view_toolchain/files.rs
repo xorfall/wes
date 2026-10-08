@@ -33,6 +33,10 @@ pub(super) const FILES: &[(&str, &str)] = &[
         include_str!("../../../../packages/view-sdk/values.ts"),
     ),
     (
+        "sdk/datasets.ts",
+        include_str!("../../../../packages/view-sdk/datasets.ts"),
+    ),
+    (
         "sdk/time.ts",
         include_str!("../../../../packages/view-sdk/time.ts"),
     ),
