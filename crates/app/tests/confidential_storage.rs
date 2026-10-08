@@ -99,6 +99,20 @@ async fn confidential_http_derivation_and_dataset_analysis_survive_without_repla
         snapshot.execution.errors
     );
     submit(&session, ":calc pure { return $response.body; } > raw").await;
+    submit(
+        &session,
+        ":calc pure { return {view:'metric',value:length($raw)}; } > restrictedMetric",
+    )
+    .await;
+    submit(
+        &session,
+        ":view create Metric input:$restrictedMetric > restrictedView",
+    )
+    .await;
+    let viewed = session.snapshot().await.unwrap();
+    let view = &viewed.names["restrictedView"].node;
+    assert!(viewed.execution.values.contains_key(view));
+    assert!(session.view_frame(view.clone()).await.is_err());
     submit(&session,r#":scan source:$raw transition:capture initial:"" context:0 profile:TypedRecords sink:dataset > analysis"#).await;
     let snapshot = session.snapshot().await.unwrap();
     let raw = snapshot.names["raw"].node.clone();

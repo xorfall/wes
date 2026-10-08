@@ -65,6 +65,17 @@ impl Store {
     }
     pub fn interaction(&self, handle: &Handle) -> Result<(Snapshot, InteractionState), Error> {
         let owner = self.interaction_owner(handle)?;
+        // A coordinator's public state can observe every member's input. Check
+        // the complete owned frame, including separately opened children.
+        if self.frame(&owner)?.instances.iter().any(|instance| {
+            instance
+                .input
+                .as_ref()
+                .and_then(Input::value)
+                .is_some_and(|v| !public_input(v))
+        }) {
+            return Err(Error::Interaction);
+        }
         let instance = self.instance(&owner)?;
         if instance.snapshot.definition.manifest.interaction.is_none() {
             return Err(Error::Interaction);
@@ -76,6 +87,7 @@ impl Store {
         handle: &Handle,
         edit: InteractionEdit,
     ) -> Result<InteractionState, Error> {
+        self.interaction(handle)?;
         let owner = self.interaction_owner(handle)?;
         let instance = self.instance(&owner)?;
         if owner.id != edit.owner || owner.identity.as_ref() != edit.identity {

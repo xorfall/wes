@@ -123,6 +123,13 @@ impl Input {
     }
 }
 
+/// View interaction and definition checkpoints are public channels. Encrypted
+/// result storage does not grant permission to copy its contents into them.
+pub(crate) fn public_input(value: &Value) -> bool {
+    let policy = value.provenance().policy();
+    !policy.is_confidential() && !policy.is_unknown()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub instances: usize,
@@ -971,12 +978,11 @@ impl crate::workspace::Workspace {
                         return Err("Retained input work was removed".into());
                     }
                 }
-                if input
-                    .value
-                    .as_ref()
-                    .is_some_and(|v| v.provenance().policy().is_private())
-                {
-                    return Err("Private input is not available to a public view".into());
+                if input.value.as_ref().is_some_and(|v| !public_input(v)) {
+                    return Err(
+                        "Confidential or unclassified input is not available to a public view"
+                            .into(),
+                    );
                 }
                 if let Some(source) = input.source() {
                     instance.input_delivery = if self.has_stream_source(&source.output.node) {
@@ -999,11 +1005,11 @@ impl crate::workspace::Workspace {
                         && self
                             .runtime()
                             .value_of(&source.output.node)
-                            .is_some_and(|v| v.provenance().policy().is_private()))
+                            .is_some_and(|v| !public_input(v)))
                         || matches!(self.runtime().output(&source.output), OutputState::Available(v)
-                        if v.provenance().policy().is_private())
+                        if !public_input(&v))
                     {
-                        return Err("View source is now private".into());
+                        return Err("View source is now confidential or unclassified".into());
                     }
                 }
             }

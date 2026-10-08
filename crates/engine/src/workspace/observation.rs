@@ -48,13 +48,13 @@ impl Workspace {
             .ok_or_else(|| invalid("View query input must have an explicit type"))?;
         if input.shape().contains_meta()
             || !input.data().is_storable_snapshot()
-            || input.provenance().policy().is_private()
+            || !crate::views::public_input(&input)
             || crate::value_size::value_charge(&input, 64 * 1024).is_none()
             || !input.shape().is_assignable_to(&contract.shape())
             || !contract.issues(input.data()).is_empty()
         {
             return Err(invalid(
-                "View query input is private, over budget, or does not satisfy its parameter contract",
+                "View query input is confidential, unclassified, over budget, or does not satisfy its parameter contract",
             ));
         }
         // Only a validated registry name enters source. The payload stays native and immutable.
@@ -412,6 +412,24 @@ mod tests {
             )
             .unwrap(),
         ] {
+            assert!(
+                parent
+                    .observation_workspace("Identity", input, &caller())
+                    .is_err()
+            );
+        }
+        use wes_core::flow::{FlowPolicy, Residence};
+        for policy in [
+            FlowPolicy::default().confidential(Residence::Temporary),
+            FlowPolicy::default().confidential(Residence::Retainable),
+            FlowPolicy::default().unknown(),
+        ] {
+            let input = Value::new(
+                Shape::Primitive(Primitive::Text),
+                Data::Text("restricted query argument".into()),
+                Provenance::default().with_policy(&policy),
+            )
+            .unwrap();
             assert!(
                 parent
                     .observation_workspace("Identity", input, &caller())

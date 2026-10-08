@@ -397,6 +397,86 @@ fn output_links_validate_types_writers_and_cycles() {
 }
 
 #[test]
+fn restricted_members_cannot_publish_public_interaction_state() {
+    use wes_core::flow::{FlowPolicy, Residence};
+    use wes_engine::views::{EventEmission, InteractionEdit};
+    let package = Arc::new(wes_views::Package::parse(
+        r#"{"name":"Selector","id":"selector","summary":"Typed selection","renderer":"View.tsx","input":"Input","outputs":{"selection":{"type":"Int","mode":"state","shared":true},"picked":{"type":"Int","mode":"event","shared":true}},"interaction":{"protocol":"Selection","state":"Input","event":"Input","sharedFields":["selection"]},"slots":{"members":{"accepts":["Selector"],"protocol":"Selection","max":2,"default":true,"coordinates":true}}}"#,
+        "types: {Input: {base: Record, fields: {selection: Int}}}",
+    ).unwrap());
+    for policy in [
+        FlowPolicy::default(),
+        FlowPolicy::default().private(),
+        FlowPolicy::default().confidential(Residence::Temporary),
+        FlowPolicy::default().confidential(Residence::Retainable),
+        FlowPolicy::default().unknown(),
+    ] {
+        let restricted = policy.is_confidential() || policy.is_unknown();
+        let mut store = Store::new([package.clone()], Limits::default()).unwrap();
+        let input = Value::new(
+            package.input().shape(),
+            Data::Record([("selection".into(), Data::Int(17))].into()),
+            Provenance::default().with_policy(&policy),
+        )
+        .unwrap();
+        let child = store
+            .create(
+                id("child"),
+                "Selector",
+                &package.digest,
+                Some(Input::constant(input)),
+            )
+            .unwrap();
+        let parent = store
+            .create(id("parent"), "Selector", &package.digest, None)
+            .unwrap();
+        store.connect(&child, &parent, None, 0).unwrap();
+        let owner = store.read(&parent).unwrap();
+        let edit = InteractionEdit {
+            owner: owner.id,
+            identity: owner.identity.to_string(),
+            definition_revision: owner.revision,
+            revision: 0,
+            fields: [("selection".into(), Data::Int(17))].into(),
+            outputs: [("selection".into(), Data::Int(17))].into(),
+            events: vec![EventEmission {
+                port: "picked".into(),
+                data: Data::Int(17),
+            }],
+        };
+        if restricted {
+            assert!(store.interaction(&parent).is_err());
+            assert!(store.interaction(&child).is_err());
+            assert!(matches!(
+                store.commit_interaction(&child, edit),
+                Err(Error::Interaction)
+            ));
+            assert!(store.output(&parent, "selection").is_err());
+            assert!(store.output(&child, "picked").is_err());
+            store.bind(&child, 1, None).unwrap();
+            let (_, state) = store.interaction(&parent).unwrap();
+            assert_eq!(state.revision, 0);
+            assert!(state.fields.is_empty());
+            assert!(state.outputs.is_empty());
+            assert_eq!(
+                store.output(&child, "picked").unwrap().data(),
+                &Data::List(vec![])
+            );
+        } else {
+            store.commit_interaction(&child, edit).unwrap();
+            assert_eq!(
+                store.output(&parent, "selection").unwrap().data(),
+                &Data::Int(17)
+            );
+            assert_eq!(
+                store.output(&child, "picked").unwrap().data(),
+                &Data::List(vec![Data::Int(17)])
+            );
+        }
+    }
+}
+
+#[test]
 fn event_windows_preserve_duplicates_reject_partial_commits_and_report_eviction() {
     use wes_engine::views::{EventEmission, InteractionEdit};
     let source=Arc::new(wes_views::Package::parse(r#"{"name":"Selector","id":"selector","summary":"Event selection","renderer":"View.tsx","input":"Input","outputs":{"picked":{"type":"Int","mode":"event","shared":true}},"interaction":{"protocol":"Selection","state":"Input","event":"Input","sharedFields":["selection"]}}"#,"types: {Input: {base: Record, fields: {selection: Int}}}").unwrap());
