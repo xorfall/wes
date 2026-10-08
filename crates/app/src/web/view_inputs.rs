@@ -20,7 +20,7 @@ pub(super) async fn read(
     let Ok(node) = NodeId::new(node) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Ok(_permit) = shared.reads.clone().try_acquire_owned() else {
+    let Ok(_permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let Ok(patches) = current

@@ -72,6 +72,7 @@
     "allocation": "context.allocation supplies actual iframe CSS-pixel width/height and measured columns/rows; preferred is not a guarantee. The iframe height follows natural content under the tier cap, not the parent dashboard slot height. Do not use allocation.height to set whole-view height: that creates a measurement feedback loop. Use width for responsive geometry and bounded plot heights for content.",
     "containment": "Reflow chrome, wrap long text, and keep overflow inside the View below min. Do not create sideways page scroll or hide unreachable controls. Nested slots have one parent viewport; avoid another whole-view resize grip.",
     "authority": "Resize, tier, theme and dashboard placement changes preserve identity/state and never execute or replay sources.",
+    "focus": "context.active is true while the reader's focus is inside this presentation (its frame or one of its host slots) and the application has focus; ancestors of a focused slot are active too, siblings and a portalled inspection mirror are separate presentations. It is for appearance only: it arrives asynchronously and may skip intermediate transitions, and false never means hidden, suspended or unauthorized. Keep selections when it turns false and render them as inactive. Never decide what a click means from it: make choosing idempotent (choosing the chosen item does nothing) and clear through an explicit control or Escape.",
     "acceptance": [
       "preferred width and spare-space alignment",
       "narrow and below-min host widths",

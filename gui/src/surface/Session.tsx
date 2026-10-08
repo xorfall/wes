@@ -122,6 +122,9 @@ export function Session({
   const scrollback = useRef<HTMLDivElement>(null);
   const grown = useRef(0);
   const sent = useRef(pinned);
+  const followingNow = useRef(following);
+  followingNow.current = following;
+  const watchCells = useRef<() => void>();
 
   const clearMark = useRef<HTMLDivElement | null>(null);
   const clearTail = useRef<HTMLDivElement | null>(null);
@@ -166,6 +169,31 @@ export function Session({
     if (!asked && active && box.contains(active) && active.closest("[data-cell]")) return;
     if (shouldFollow(asked, box.scrollTop, box.clientHeight, before)) box.scrollTop = box.scrollHeight;
   });
+
+  /*
+   * Cells also grow without this component rendering: a View frame reports its height after it
+   * draws, a live block fills in. The height the next render compares against must be the height the
+   * reader actually saw, or a render caused by nothing but focus reads a stale, shorter scrollback as
+   * "the reader was at the bottom" and jumps there. The same question, asked of the height before the
+   * growth, also lets such growth be followed while the reader is at the bottom.
+   */
+  useEffect(() => {
+    const box = scrollback.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const before = grown.current, now = box.scrollHeight;
+      if (now === before) return;
+      grown.current = now;
+      if (!followingNow.current) return;
+      const active = box.ownerDocument?.activeElement;
+      if (active && box.contains(active) && active.closest("[data-cell]")) return;
+      if (shouldFollow(false, box.scrollTop, box.clientHeight, before)) box.scrollTop = now;
+    });
+    watchCells.current = () => { for (const child of Array.from(box.children ?? [])) observer.observe(child); };
+    watchCells.current();
+    return () => { watchCells.current = undefined; observer.disconnect(); };
+  }, []);
+  useLayoutEffect(() => watchCells.current?.());
 
   /*
    * A `/clear` moves the viewport on its own — asked explicitly, the same way pressing ⏎ is — so it

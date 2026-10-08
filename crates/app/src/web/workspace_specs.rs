@@ -50,7 +50,7 @@ pub(super) async fn read(Scoped(shared): Scoped, request: Request) -> Response {
                 .into_response();
         }
     };
-    let Ok(permit) = shared.reads.clone().try_acquire_owned() else {
+    let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if current.session.check_retirement_access().await.is_err() {

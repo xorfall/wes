@@ -60,7 +60,7 @@ pub(super) async fn read(
     let Ok(node) = NodeId::new(node) else {
         return problem(StatusCode::BAD_REQUEST, "withdrawn", "Invalid node.");
     };
-    let Ok(permit) = shared.reads.clone().try_acquire_owned() else {
+    let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return problem(
             StatusCode::SERVICE_UNAVAILABLE,
             "busy",

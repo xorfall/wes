@@ -172,6 +172,15 @@ cargo test -p wes-engine --test source view_packages --locked
 cargo test -p wes --test web view_packages --locked
 ```
 
+Display and interaction routes share FIFO read admission with a 500 ms wait,
+keeping the configured encoder concurrency unchanged. Web tests leave two large
+synthetic stored-value bodies unread, then burst frame, live-display, input-overlay
+and interaction reads across three shipped Timeline instances and check a viewport
+commit remains visible. They also cover commits during concurrent display reads.
+Admission unit tests cover FIFO ordering, timeout, disconnected waiters and
+shutdown. A 503 remains a refusal before interaction mutation; unknown commit
+outcomes are never replayed.
+
 Rust inline tests remain next to the behavior they protect; integration suites
 exercise public boundaries. GUI tests cover session projection and interaction,
 while Go tests cover extraction, evidence and contract validation. Recorded

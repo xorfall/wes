@@ -498,6 +498,28 @@ describe("what the scrollback follows", () => {
     act(() => tree.unmount());
   });
 
+  it("should_StayWhereTheReaderIs_When_ARenderFollowsGrowthThatCameWithoutOne", () => {
+    let grew: () => void = () => {};
+    vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { grew = callback; } observe() {} disconnect() {} });
+    const node = { ...box(), children: [{}], contains: () => false, ownerDocument: { activeElement: undefined } };
+    const tree = show(node, { pinned: 0 });
+    node.scrollTop = 300;
+    /* A View frame reports its height after it draws: the scrollback grows with no render. */
+    node.scrollHeight = 1200;
+    act(() => grew());
+    expect(node.scrollTop).toBe(1200);
+    /* The reader scrolls up to read, then a render caused only by focus must not take them down. */
+    node.scrollTop = 700;
+    again(tree, { pinned: 0 });
+    expect(node.scrollTop).toBe(700);
+    /* Growth while reading above the bottom is not followed either. */
+    node.scrollHeight = 1500;
+    act(() => grew());
+    expect(node.scrollTop).toBe(700);
+    act(() => tree.unmount());
+    vi.unstubAllGlobals();
+  });
+
   it("should_NotJumpAtAll_When_FollowingIsOff", () => {
     const node = box();
     const tree = show(node, { pinned: 0, following: false });

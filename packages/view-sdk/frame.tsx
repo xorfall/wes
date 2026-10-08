@@ -12,7 +12,7 @@ const MAX_INPUT=authoring.runtimeLimits.inputBytes, MAX_EVENT=authoring.runtimeL
 export function startFrame(view:Renderer) {
   let port:MessagePort|undefined,input:unknown,state:unknown=null,revision=0,sequence=0,acknowledged=0,ready=false,pending=false;
   let slots:Record<string,readonly {key:string;height:number}[]>={},root:ReturnType<typeof createRoot>;
-  let context:{mode:"preview"|"expanded"|"window";instance:string|null;coordinated?:boolean;inspectionOnly?:boolean;inspectionOutlet?:boolean;inspectionActive?:boolean}={mode:"window",instance:null};
+  let context:{mode:"preview"|"expanded"|"window";instance:string|null;coordinated?:boolean;inspectionOnly?:boolean;inspectionOutlet?:boolean;inspectionActive?:boolean;active?:boolean}={mode:"window",instance:null};
   const queue:unknown[]=[];
   const send=(value:unknown,limit=MAX_EVENT)=>{const text=stringifyExactJson(value);if(text.length>limit)throw new Error("Frame message budget");port?.postMessage(text);};
   const fail=()=>{queue.length=0;pending=true;try{send({kind:"error",message:"View renderer failed. Close and reopen to retry."});}catch{}};
@@ -63,7 +63,7 @@ export function startFrame(view:Renderer) {
         if(update.kind==="render"){
           input=update.input;sequence=update.sequence;slots=update.slots??{};
           if(update.context){if(!["preview","expanded","window"].includes(update.context.mode)||(update.context.instance!==null&&typeof update.context.instance!=="string")||(update.context.coordinated!==undefined&&typeof update.context.coordinated!=="boolean"))throw new Error("Invalid View context");
-            for(const key of ["inspectionOnly","inspectionOutlet","inspectionActive"] as const)if(update.context[key]!==undefined && typeof update.context[key]!=="boolean")throw new Error("Invalid inspection context");
+            for(const key of ["inspectionOnly","inspectionOutlet","inspectionActive","active"] as const)if(update.context[key]!==undefined && typeof update.context[key]!=="boolean")throw new Error("Invalid inspection context");
             context=update.context;document.getElementById("root")!.dataset.mode=context.mode;}
           if(!ready){state=view.initial?.(input)??null;ready=true;send({kind:"ready",state,outputs:view.outputs?.(state)??{},digest:view.definition.digest,inspectable:!!view.Inspection});}
           if(update.state!==undefined){state=update.state;revision=update.revision??revision;}
@@ -84,6 +84,7 @@ export function startFrame(view:Renderer) {
   window.addEventListener("message",connect);
   document.addEventListener("pointerdown",()=>{try{send({kind:"focus"});}catch{fail();}},true);
   document.addEventListener("focusin",()=>{try{send({kind:"focus"});}catch{fail();}});
+  window.addEventListener("focus",()=>{try{send({kind:"focus"});}catch{fail();}});
   window.addEventListener("error",fail);window.addEventListener("unhandledrejection",fail);
   window.addEventListener("scroll",geometry,{passive:true,capture:true});
   window.addEventListener("resize",()=>{if(ready)paint();geometry();});

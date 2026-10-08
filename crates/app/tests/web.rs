@@ -14,6 +14,8 @@ mod multi_workspaces;
 mod presentations;
 #[path = "web/publication.rs"]
 mod publication;
+#[path = "web/read_admission.rs"]
+mod read_admission;
 #[path = "web/repeat.rs"]
 mod repeat;
 #[path = "web/retention.rs"]

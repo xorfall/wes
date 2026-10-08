@@ -20,7 +20,7 @@ pub(super) async fn read(
     {
         return StatusCode::CONFLICT.into_response();
     }
-    let Ok(permit) = shared.reads.clone().try_acquire_owned() else {
+    let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let catalogue = match current.session.view_catalogue().await {
