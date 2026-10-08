@@ -1,0 +1,24 @@
+types:
+  # Row contract of the analysis's Dataset. These declarations must resolve exactly like the
+  # example's own types, because a Dataset input is accepted only when its committed schema
+  # digest equals this element's digest.
+  CiId: {base: Text, minLength: 1, maxLength: 1024}
+  CiOrdinal: {base: Int, min: 1}
+  CiDigest: {base: Text, pattern: '^[0-9a-f]{64}$'}
+  LogArtifactKey:
+    base: Record
+    fields: {run: CiId, attempt: CiOrdinal, job: CiId, origin: CiId, digest: CiDigest}
+  CiLogLine:
+    base: Record
+    fields: {artifact: LogArtifactKey, ordinal: CiOrdinal, job: CiId, jobName: 'Option<Text>', step: 'Option<Text>', stepName: 'Option<Text>', time: 'Option<Instant>', raw: Text, text: Text, level: 'Option<Text>', group: 'Option<Int>', byteStart: Int, byteEnd: Int, delimiterEnd: Int}
+  CiLogState:
+    base: Record
+    fields: {group: 'Option<Int>', job: Text, step: Text}
+  # The part of the engine's ScanReceipt this View reads. The receipt carries more; undeclared
+  # fields are not read.
+  CiRecordsReceipt:
+    base: Record
+    fields: {status: Text, position: Int, readPosition: Int, extent: Int, positionUnit: Text, inputRecords: Int, outputRecords: Int, finishApplied: Bool, sourceComplete: 'Option<Bool>', failureCode: 'Option<Text>', failureMessage: 'Option<Text>', exhausted: 'Option<Text>'}
+  CiRecords:
+    base: Record
+    fields: {state: CiLogState, outputs: 'Dataset<CiLogLine>', receipt: CiRecordsReceipt}

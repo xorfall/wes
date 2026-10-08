@@ -1,0 +1,53 @@
+// One native frame, one pure transition. Wes owns framing, positions and the paged sink.
+:def NormalizeCiRecord(state: CiLogState, context: CiLogContext, item: CiLogFrame) -> CiLogStep as :calc pure {
+  const raw = item.text;
+  const ordinal = context.first + item.ordinal;
+  const artifact = context.artifact;
+  const jobs = context.jobs;
+  let group = state.group;
+  let previousJob = state.job;
+  let previousStep = state.step;
+  check('CiAccepted', length(raw) <= 8192);
+  const parts = iter.captures(raw, "^([^\\t]+)\\t([^\\t]+)\\t(.*)$").take(1).collect();
+  check('CiAccepted', length(parts) == 1);
+  const name = unwrapOr(parts[0].groups[0], '');
+  const stepName = unwrapOr(parts[0].groups[1], '');
+  const matched = jobs.filter(job => job.name == name);
+  check('CiAccepted', length(matched) == 1);
+  const job = matched[0];
+  check('CiAccepted', job.run.runId == artifact.run && job.run.attempt == artifact.attempt);
+  check('CiAccepted', artifact.job == 'all-failed-jobs' || artifact.job == job.id);
+  let payload = unwrapOr(parts[0].groups[2], '');
+  // Accept terminal escape bytes and the printable escape notation in log envelopes.
+  const clean = iter.regexSplit(payload, "(?:\\x1b|\\^\\[)\\[[0-?]*[ -/]*[@-~]").collect().join('');
+  const timed = iter.captures(clean, "^\\x{FEFF}?([0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+Z) (.*)$").take(1).collect();
+  let at = none;
+  let message = clean;
+  if (length(timed) == 1) {
+    at = some(instant(unwrapOr(timed[0].groups[0], '')));
+    message = unwrapOr(timed[0].groups[1], '');
+  }
+  if (previousJob != job.id || previousStep != stepName) { group = none; }
+  previousJob = job.id;
+  previousStep = stepName;
+  const markers = iter.captures(message, "^(?:##\\[(group|endgroup|error|warning)\\]|(\\s*npm warn))").take(1).collect();
+  let marker = '';
+  if (length(markers) == 1) {
+    marker = unwrapOr(markers[0].groups[0], 'warning');
+  }
+  if (marker == 'group') { group = some(ordinal); }
+  const lineGroup = group;
+  if (marker == 'endgroup') { group = none; }
+  let level = none;
+  if (marker == 'error' || marker == 'warning') { level = some(marker); }
+  let step = none;
+  let displayStepName = none;
+  if (stepName != 'UNKNOWN STEP') {
+    const steps = job.steps.filter(row => row.name == stepName);
+    check('CiAccepted', length(steps) == 1);
+    step = some(steps[0].id);
+    displayStepName = some(steps[0].name);
+  }
+  const line = {artifact: artifact, ordinal: ordinal, job: job.id, jobName: some(job.name), step: step, stepName: displayStepName, time: at, raw: raw, text: message, level: level, group: lineGroup, byteStart: item.start, byteEnd: item.end, delimiterEnd: item.delimiterEnd};
+  return {state: {group: group, job: previousJob, step: previousStep}, outputs: [line]};
+}

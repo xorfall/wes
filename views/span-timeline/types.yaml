@@ -1,0 +1,33 @@
+version: 1
+types:
+  SpanTimelineKind: {base: Text, enum: [span-timeline]}
+  SpanKey: {base: Text, minLength: 1, maxLength: 256}
+  SpanText: {base: Text, maxLength: 2048}
+  SpanStatus: {base: Text, enum: [success, failure, cancelled, skipped, running, unknown]}
+  Span:
+    base: Record
+    fields:
+      id: SpanKey
+      label: SpanText
+      status: SpanStatus
+      start: Instant
+      end: 'Option<Instant>'
+  SpanLimit:
+    base: Record
+    fields: {at: Instant, label: SpanText, source: SpanText}
+  SpanLane:
+    base: Record
+    fields:
+      id: SpanKey
+      label: SpanText
+      status: SpanStatus
+      note: 'Option<SpanText>'
+      spans: 'List<Span>'
+      limits: 'List<SpanLimit>'
+  SpanTimeline:
+    base: Record
+    fields:
+      view: SpanTimelineKind
+      title: SpanText
+      range: Interval
+      lanes: 'List<SpanLane>'

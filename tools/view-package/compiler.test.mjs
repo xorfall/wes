@@ -161,6 +161,122 @@ test("a Dataset may not leave a View through interaction state, and the page API
   await assert.rejects(build(fresh.source,fresh.output),error=>error.diagnostics?.some(d=>d.file==="View.tsx"&&d.code.startsWith("TS")));
 });
 
+/*
+ * The CI investigation's CiRecords View (examples/ci-investigation/record-view), built from an
+ * isolated temporary copy so no generated contract.ts lands in the example directory. Its row
+ * contract is the analysis's own CiLogLine closure, CiDigest's pattern included: a Dataset input is
+ * accepted only when the committed schema digest equals this element's digest.
+ */
+const ciRecords=fileURLToPath(new URL("../../examples/ci-investigation/record-view/",import.meta.url));
+const CI_DIGEST_PATTERN="^[0-9a-f]{64}$";
+function ciRecordsCopy(t) {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"wes-ci-records-"));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const source=path.join(root,"source");fs.cpSync(ciRecords,source,{recursive:true});
+  fs.rmSync(path.join(source,"contract.ts"),{force:true});
+  return {source,output:path.join(root,"ci-records.wes-view.json")};
+}
+
+test("CiRecords builds natively with the analysis's exact row contract, its pattern preserved",async t=>{
+  const {source,output}=ciRecordsCopy(t);
+  const result=await build(source,output);
+  assert.equal(result.ok,true);
+  const definition=result.definition;
+  assert.equal(definition.name,"CiRecords");
+  assert.deepEqual(definition.outputs,{});
+  assert.equal(definition.interaction,null);
+  const fields=definition.contracts[definition.input].fields;
+  assert.deepEqual(Object.keys(fields).sort(),["outputs","receipt","state"]);
+  const outputs=definition.contracts[fields.outputs.type];
+  assert.deepEqual({kind:outputs.kind,element:outputs.element},{kind:"dataset",element:"CiLogLine"});
+  assert.equal(Object.values(definition.contracts).filter(schema=>schema.kind==="dataset").length,1);
+  const line=definition.contracts.CiLogLine;
+  assert.deepEqual(Object.keys(line.fields).sort(),["artifact","ordinal","job","jobName","step","stepName","time","raw","text","level","group","byteStart","byteEnd","delimiterEnd"].sort());
+  for(const span of ["byteStart","byteEnd","delimiterEnd"])assert.deepEqual(line.fields[span],{type:"Int",optional:false});
+  assert.equal(definition.contracts.LogArtifactKey.fields.digest.type,"CiDigest");
+  // The native identity of the row contract keeps its pattern; the browser host never evaluates it.
+  assert.deepEqual(definition.contracts.CiDigest.constraints.patterns,[CI_DIGEST_PATTERN]);
+  assert.deepEqual({min:definition.contracts.CiOrdinal.constraints.min,minLength:definition.contracts.CiId.constraints.minLength,maxLength:definition.contracts.CiId.constraints.maxLength},{min:"1",minLength:1,maxLength:1024});
+  const artifact=JSON.parse(fs.readFileSync(output,"utf8"));
+  assert.equal(artifact.definition,definition.digest);
+  assert.match(artifact.javascript,/dataset-read/);
+  assert.match(artifact.javascript,/\/outputs/);
+  assert.doesNotMatch(artifact.javascript,/\/view-datasets\/|\/datasets\//);
+  assert.ok(!fs.existsSync(path.join(ciRecords,"contract.ts")));
+});
+
+test("CiRecords generates its exact contract types and keeps the pattern in the generated definition",async t=>{
+  const {source,output}=ciRecordsCopy(t);
+  assert.equal((await build(source,output)).ok,true);
+  const generated=fs.readFileSync(path.join(source,"contract.ts"),"utf8");
+  assert.match(generated,/import type \{ DatasetRef \} from "@wes\/view-sdk";/);
+  assert.match(generated,/= DatasetRef<T\d+>;/);
+  assert.ok(generated.includes(JSON.stringify(CI_DIGEST_PATTERN)));
+  assert.doesNotMatch(generated,/gui\/src|\.\.\//);
+  assert.ok(!fs.existsSync(path.join(ciRecords,"contract.ts")));
+});
+
+test("CiRecords' row names do not admit a direct pattern input or a writable Dataset port",async t=>{
+  const direct=ciRecordsCopy(t);
+  const types=path.join(direct.source,"types.yaml");
+  fs.writeFileSync(types,fs.readFileSync(types,"utf8").replace("fields: {state: CiLogState, outputs: 'Dataset<CiLogLine>', receipt: CiRecordsReceipt}",
+    "fields: {state: CiLogState, outputs: 'Dataset<CiLogLine>', receipt: CiRecordsReceipt, digest: CiDigest}"));
+  await assert.rejects(build(direct.source,direct.output),error=>error.diagnostics?.some(d=>d.code==="VIEW_CONTRACT"&&/Pattern-constrained view inputs/.test(d.message)));
+  assert.equal(fs.existsSync(direct.output),false);
+  const writable=ciRecordsCopy(t);
+  const view=path.join(writable.source,"view.json");
+  fs.writeFileSync(view,JSON.stringify({...JSON.parse(fs.readFileSync(view,"utf8")),interaction:{protocol:"CiRecordsHold",state:"CiRecords",event:"CiLogState",sharedFields:[]}},null,2));
+  await assert.rejects(build(writable.source,writable.output),error=>error.diagnostics?.some(d=>d.code==="VIEW_CONTRACT"&&/read-only input port/.test(d.message)));
+  assert.equal(fs.existsSync(writable.output),false);
+});
+
+/*
+ * The shipped ExecutionComparison View, built from an isolated copy. Its standalone types repeat the
+ * investigation recipe's InvestigationComparison exactly, so its input closure needs no other package.
+ */
+const executionComparison=fileURLToPath(new URL("../../views/execution-comparison/",import.meta.url));
+const recipeTypes=fileURLToPath(new URL("../../examples/ci-investigation/investigation-types.yaml",import.meta.url));
+
+test("ExecutionComparison builds standalone, read-only, with the recipe's exact comparison type",async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"wes-execution-comparison-"));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const source=path.join(root,"source");fs.cpSync(executionComparison,source,{recursive:true});
+  fs.rmSync(path.join(source,"contract.ts"),{force:true});
+  const output=path.join(root,"execution-comparison.wes-view.json");
+  const result=await build(source,output);
+  assert.equal(result.ok,true,JSON.stringify(result));
+  const definition=result.definition;
+  assert.equal(definition.name,"ExecutionComparison");
+  assert.equal(definition.id,"execution-comparison");
+  assert.equal(definition.input,"ExecutionComparisonReport");
+  assert.deepEqual(definition.outputs,{});
+  assert.equal(definition.interaction,null);
+  assert.deepEqual(Object.keys(definition.contracts[definition.input].fields).sort(),["comparisons","title"]);
+  const comparison=definition.contracts.InvestigationComparison.fields;
+  assert.deepEqual(Object.fromEntries(Object.entries(comparison).map(([name,field])=>[name,field.type])),{
+    subject:"InvestigationKey",baseline:"InvestigationKey",target:"InvestigationKey",inputComparable:"Bool",environmentComparable:"Option<Bool>",
+    targetExercised:"Bool",hypothesis:"Text",rationale:"Text",regressionRuledOut:"Bool"});
+  assert.deepEqual({minLength:definition.contracts.InvestigationKey.constraints.minLength,maxLength:definition.contracts.InvestigationKey.constraints.maxLength},{minLength:1,maxLength:1024});
+  // The package's declarations are the recipe's own, line for line.
+  const recipe=fs.readFileSync(recipeTypes,"utf8");
+  const own=fs.readFileSync(path.join(executionComparison,"types.yaml"),"utf8").split("\n");
+  const key=own.find(line=>line.startsWith("  InvestigationKey:"));
+  const fields=own[own.indexOf("  InvestigationComparison:")+2];
+  for(const line of [key,fields])assert.ok(line&&recipe.split("\n").includes(line),line);
+  // Read-only by declaration: no Dataset anywhere in its contracts, so the host grants it no page reads.
+  assert.ok(!Object.values(definition.contracts).some(schema=>schema.kind==="dataset"));
+  const artifact=JSON.parse(fs.readFileSync(output,"utf8"));
+  assert.equal(artifact.definition,definition.digest);
+  // The compiled bundle carries the shared SDK/frame code for every View, so its text is not checked.
+  // What this package itself authors must not reach a read helper, the network or the host.
+  const authored=fs.readFileSync(path.join(executionComparison,"View.tsx"),"utf8");
+  const imports=[...authored.matchAll(/^import\s+(?:[^;]*?\sfrom\s+)?"([^"]+)"/gm)].map(match=>match[1]).sort();
+  assert.deepEqual(imports,["./contract","./view.css","@wes/view-sdk"]);
+  assert.match(authored,/^import \{defineView\} from "@wes\/view-sdk";$/m);
+  assert.doesNotMatch(authored,/context\.datasets|\.page\(|fetch\(|XMLHttpRequest|WebSocket|\bwindow\.|import\(/);
+  assert.doesNotMatch(fs.readFileSync(path.join(source,"contract.ts"),"utf8"),/gui\/src|\.\.\//);
+});
+
 test("installed bin symlinks execute the same machine-readable CLI",t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),"wes-view-bin-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const bin=path.join(root,"wes-view-package");fs.symlinkSync(fileURLToPath(new URL("./index.mjs",import.meta.url)),bin);

@@ -1,0 +1,65 @@
+{
+  "name": "ExecutionComparison",
+  "id": "execution-comparison",
+  "input": "ExecutionComparisonReport",
+  "summary": "Compare executions of one target: whether it ran in both, whether input and environment are known to match, and the stated hypothesis.",
+  "renderer": "View.tsx",
+  "outputs": {},
+  "interaction": null,
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 32,
+        "rows": 4
+      },
+      "preferred": {
+        "columns": 80,
+        "rows": 8
+      },
+      "max": {
+        "columns": 320,
+        "rows": 12
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 40,
+        "rows": 10
+      },
+      "preferred": {
+        "columns": 96,
+        "rows": 20
+      },
+      "max": {
+        "columns": 320,
+        "rows": 28
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 48,
+        "rows": 16
+      },
+      "preferred": {
+        "columns": 120,
+        "rows": 32
+      },
+      "max": {
+        "columns": 512,
+        "rows": 120
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    }
+  }
+}

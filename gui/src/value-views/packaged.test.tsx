@@ -17,7 +17,7 @@ const invalid:Input={view:"metric",seconds:1};void invalid;
 
 it("ships domain Views through compiled artifact adapters, with no retired default definitions",()=>{
   const names=valueViewModules.get().flatMap(v=>v.definition?[v.definition.name]:[]).sort();
-  expect(names).toEqual(["Choice","Dashboard","Histogram","Metric","Timeline","TimelineGroup"]);
+  expect(names).toEqual(["Choice", "Dashboard", "ExecutionComparison", "FailureSummary", "Histogram", "LogExcerpt", "Metric", "SpanTimeline", "Timeline", "TimelineGroup"]);
   expect(valueViewModules.named("http-response")).toBeUndefined();
   expect(valueViewModules.named("http")!.definition).toBeUndefined();
   for(const module of valueViewModules.get().filter(v=>v.definition)) {

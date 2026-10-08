@@ -38,11 +38,11 @@ def commands(suite, plan, model):
                 (ROOT, ["node", "--test", "tools/view-toolchain/export.test.mjs"])]
     if suite == "examples":
         scripts = ["quickstart", "api-import/readme", "editable-api-draft", "schema-provenance",
-                   "api-workflow", "prometheus-workspace", "terminal", "assistant", "view-packages", "view-instances", "openapi-import"]
+                   "api-workflow", "prometheus-workspace", "terminal", "assistant", "view-packages", "view-instances", "openapi-import", "ci-investigation"]
         result = []
         for name in scripts:
             argv = ["python3", f"examples/{name}/check.py"]
-            if name in {"view-packages", "view-instances"}:
+            if name in {"view-packages", "view-instances", "ci-investigation"}:
                 argv += ["--binary", str(ROOT / "target/debug/wes")]
             result.append((ROOT, argv))
         result.insert(6, (ROOT, ["python3", "examples/prometheus-workspace/run.py", "--check"]))

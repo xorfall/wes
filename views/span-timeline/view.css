@@ -1,0 +1,26 @@
+.span-timeline { display:grid; gap:var(--space-sm); min-width:0; }
+.span-timeline-title { margin:0; font-size:13px; font-weight:600; overflow-wrap:anywhere; }
+.span-timeline-scroll { overflow-x:auto; min-width:0; }
+.span-timeline-grid { display:grid; grid-template-columns:minmax(14ch,24ch) minmax(320px,1fr); min-width:0; }
+.span-timeline-axis { position:relative; height:1.4em; border-bottom:1px solid var(--line); grid-column:2; }
+.span-timeline-tick { position:absolute; top:0; transform:translateX(-50%); font-size:11px; white-space:nowrap; }
+.span-timeline-lane { display:contents; }
+.span-timeline-label { padding:4px 8px 4px 0; min-width:0; border-bottom:1px dashed var(--line); }
+.span-timeline-label>span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.span-timeline-label>small { display:inline-block; font-size:11px; }
+.span-timeline-track { position:relative; min-height:2.2em; border-bottom:1px dashed var(--line); }
+.span-timeline-span { position:absolute; top:22%; height:56%; min-width:2px; border:1px solid currentColor; border-radius:2px; background:color-mix(in srgb,currentColor 22%,transparent); box-sizing:border-box; }
+.span-timeline-span[data-open] { border-right-style:dashed; background:repeating-linear-gradient(135deg,color-mix(in srgb,currentColor 24%,transparent) 0 6px,transparent 6px 10px); }
+.span-timeline-span[data-status=skipped] { background:transparent; border-style:dashed; }
+.span-timeline-limit { position:absolute; top:0; bottom:0; border-left:1.5px dashed currentColor; opacity:.75; }
+.span-timeline-limit>span { position:absolute; top:0; left:3px; font-size:10.5px; white-space:nowrap; background:var(--surface); }
+.span-timeline-note { position:absolute; inset:0 auto 0 0; display:flex; align-items:center; font-size:12px; padding-left:4px; }
+.span-timeline-empty { margin:0; }
+button.span-timeline-span { padding:0; font:inherit; cursor:pointer; }
+/* Keyboard focus is not a choice: a thin dotted ring, distinct from the chosen span's solid one. */
+.span-timeline-span:focus-visible { outline:1px dotted var(--primary); outline-offset:1px; }
+.span-timeline-span[aria-current=true] { outline:2px solid currentColor; outline-offset:1px; z-index:1; }
+.span-timeline-detail { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.span-timeline[data-active=false] .span-timeline-span[aria-current=true] { outline-style:dashed; }
+.span-timeline[data-active=false] .span-timeline-detail { opacity:.6; }
+.span-timeline-clear { padding:0 6px; font:inherit; font-size:11px; line-height:1.4; }

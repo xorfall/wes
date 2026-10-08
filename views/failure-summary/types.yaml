@@ -1,0 +1,56 @@
+version: 1
+types:
+  FailureSummaryKind: {base: Text, enum: [failure-summary]}
+  FailureKey: {base: Text, minLength: 1, maxLength: 1024}
+  FailureText: {base: Text, maxLength: 8192}
+  FailureLine: {base: Int, min: 1}
+  FailureKind: {base: Text, enum: [test, build, dependency, invocation, infrastructure, timeout, cancellation, unknown]}
+  FailureConfidence: {base: Text, enum: [observed, inferred, uncertain]}
+  FailureEdgeKind: {base: Text, enum: [wraps, reports, caused_by, blocked_by]}
+  FailureArtifact:
+    base: Record
+    fields: {run: FailureKey, attempt: FailureLine, job: FailureKey, origin: FailureKey, digest: FailureKey}
+  FailureEvidence:
+    base: Record
+    fields: {artifact: FailureArtifact, from: FailureLine, to: FailureLine}
+  FailureExcerptLine:
+    base: Record
+    fields: {ordinal: FailureLine, text: FailureText, level: 'Option<FailureText>'}
+  FailureExcerpt: {base: 'List<FailureExcerptLine>', maxItems: 64}
+  FailureItem:
+    base: Record
+    fields:
+      id: FailureKey
+      kind: FailureKind
+      title: FailureText
+      detail: FailureText
+      location: 'Option<FailureText>'
+      job: FailureKey
+      step: 'Option<FailureText>'
+      evidence: 'Option<FailureEvidence>'
+      excerpt: FailureExcerpt
+      confidence: FailureConfidence
+  FailureEdge:
+    base: Record
+    fields: {from: FailureKey, to: FailureKey, kind: FailureEdgeKind, confidence: FailureConfidence}
+  FailureRead:
+    base: Record
+    fields: {artifact: FailureArtifact, from: FailureLine, to: FailureLine, scope: FailureText, complete: Bool}
+  FailureNotRead:
+    base: Record
+    fields: {job: FailureKey, origin: FailureText, reason: FailureText}
+  FailureCoverage:
+    base: Record
+    fields: {read: 'List<FailureRead>', notRead: 'List<FailureNotRead>'}
+  FailureSummary:
+    base: Record
+    fields:
+      view: FailureSummaryKind
+      title: FailureText
+      failures: 'List<FailureItem>'
+      edges: 'List<FailureEdge>'
+      originating: 'List<FailureKey>'
+      coverage: FailureCoverage
+  FailureSelection:
+    base: Record
+    fields: {failure: 'Option<FailureKey>', evidence: 'Option<FailureEvidence>'}

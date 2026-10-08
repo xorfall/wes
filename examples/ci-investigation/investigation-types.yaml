@@ -1,0 +1,56 @@
+version: 1
+types:
+  InvestigationAccepted: {base: Bool, enum: [true]}
+  InvestigationKey: {base: Text, minLength: 1, maxLength: 1024}
+  InvestigationText: {base: Text, maxLength: 8192}
+  InvestigationDigest: {base: Text, pattern: '^[0-9a-f]{64}$'}
+  InvestigationEnvelope: {base: Text, enum: [plain, tabbed]}
+  InvestigationAvailability: {base: Text, enum: [available, not_yet_available, forbidden, expired, missing]}
+  InvestigationArtifact:
+    base: Record
+    fields: {run: InvestigationKey, attempt: Int, job: InvestigationKey, origin: InvestigationKey, digest: InvestigationDigest}
+  InvestigationContext:
+    base: Record
+    fields: {provider: InvestigationKey, run: InvestigationKey, attempt: Int, artifact: InvestigationArtifact, envelope: InvestigationEnvelope, jobName: Text, stepName: Text, constraint: 'Option<InvestigationConstraint>'}
+  InvestigationConstraint:
+    base: Record
+    fields: {metric: Text, unit: Text, comparator: Text, threshold: Decimal, source: Text}
+  InvestigationTransportSample:
+    base: Record
+    fields: {transport: Text, keys: Int, median_ms: Decimal, p95_ms: Decimal, max_ms: Decimal}
+  InvestigationTransportSamples:
+    base: Record
+    fields: {before: InvestigationTransportSample, after: InvestigationTransportSample}
+  InvestigationFrame:
+    base: Record
+    fields: {ordinal: Int, text: Text, start: Int, end: Int, delimiterEnd: Int}
+  InvestigationState:
+    base: Record
+    fields: {lines: Int, lastOrdinal: Int, outsideScope: Int, recognized: Int, outer: 'Option<Text>', tapTitle: Text, pending: Text, pendingFrom: Int, pendingByte: Int, lastByte: Int, finished: Bool}
+  InvestigationMeasurement:
+    base: Record
+    fields: {metric: Text, value: Decimal, unit: Text, comparator: 'Option<Text>', threshold: 'Option<Decimal>', baseline: 'Option<Decimal>', constraintSource: 'Option<Text>'}
+  InvestigationObservation:
+    base: Record
+    fields: {id: InvestigationKey, artifact: InvestigationArtifact, kind: Text, format: Text, title: InvestigationText, from: Int, to: Int, byteStart: Int, byteEnd: Int, parent: 'Option<Text>', measurement: 'Option<InvestigationMeasurement>', confidence: Text}
+  InvestigationStep:
+    base: Record
+    fields: {state: InvestigationState, outputs: 'List<InvestigationObservation>'}
+  InvestigationExecution:
+    base: Record
+    fields: {provider: InvestigationKey, run: InvestigationKey, attempt: Int, inputDigest: InvestigationDigest, target: InvestigationKey, targetOutcome: Text, environmentDigest: 'Option<InvestigationDigest>', availability: InvestigationAvailability}
+  InvestigationComparison:
+    base: Record
+    fields: {subject: InvestigationKey, baseline: InvestigationKey, target: InvestigationKey, inputComparable: Bool, environmentComparable: 'Option<Bool>', targetExercised: Bool, hypothesis: Text, rationale: Text, regressionRuledOut: Bool}
+  ExecutionComparisonReport:
+    base: Record
+    fields: {title: Text, comparisons: 'List<InvestigationComparison>'}
+  InvestigationEvidenceContext:
+    base: Record
+    fields: {artifact: InvestigationArtifact, first: Int, envelope: InvestigationEnvelope, jobName: Text, stepName: Text, title: Text, focusFrom: Int, focusTo: Int}
+  InvestigationEvidenceStep:
+    base: Record
+    fields: {state: Int, outputs: 'List<LogExcerptRow>'}
+  InvestigationTask:
+    base: Record
+    fields: {id: InvestigationKey, job: InvestigationKey, label: Text, status: SpanStatus, start: 'Option<Instant>', end: 'Option<Instant>', declaredLimit: 'Option<Duration>', limitSource: 'Option<Text>'}
