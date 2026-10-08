@@ -3,6 +3,7 @@ import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
 import { httpTrace, HttpInspection } from "./HttpInspection";
 import { ValueBlock } from "../surface/render/ValueBlock";
+import type { StoredIdentity } from "../surface/render/dataset-source";
 
 /**
  * The existing typed result rendering, reusable outside a cell.
@@ -11,9 +12,9 @@ import { ValueBlock } from "../surface/render/ValueBlock";
  * chart dispatch, the same refusal to pretend a private or missing value is readable. This wraps
  * that dispatch around one fetched value so panels never reimplement it.
  */
-export function ValueView({ value, cacheKey, engine }: { readonly value: StoredValue; readonly cacheKey?: string; readonly engine?: Engine }) {
+export function ValueView({ value, cacheKey, engine, stored, name }: { readonly value: StoredValue; readonly cacheKey?: string; readonly engine?: Engine; readonly stored?: StoredIdentity; readonly name?: string }) {
   if (httpTrace(value.data)) return <HttpInspection data={value.data} />;
-  return <ValueBlock engine={engine} value={value} cacheKey={cacheKey ?? `view:${keyOf(value)}`} mode="window" inCell={false} />;
+  return <ValueBlock engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} cacheKey={cacheKey ?? `view:${keyOf(value)}`} mode="window" inCell={false} />;
 }
 
 /** Identity for values drawn outside a cell, where no handle names them. */

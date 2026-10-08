@@ -13,9 +13,12 @@ import { MonoLine, type Segment } from "../MonoLine";
 import { couldNotDraw } from "../open-model";
 import { evidenceLabel } from "../record-progress";
 import { RecordProgress } from "../RecordProgress";
+import { RecordingControls } from "../RecordingControls";
+import { LocalReconciliationControls } from "../LocalReconciliationControls";
 import { ScanReceiptDetails } from "../ScanReceiptDetails";
 import { leaving, Screen } from "../Screen";
 import { ValueView } from "../../views/Result";
+import { useStoredGate, WITHDRAWN_TITLE, type StoredIdentity } from "../render/dataset-source";
 
 /**
  * `result`, `json`, `details` — and the name of any registered view, which is why this is not a
@@ -88,8 +91,12 @@ class Drawn extends Component<{ readonly tab: OpenTab; readonly children: ReactN
   }
 }
 
-export function OpenScreen({ top, subject, tab, onTab, json, viewing, value, details, readStatus, live, onClose, chrome = "full" }: OpenProps) {
+export function OpenScreen({ top, subject: given, tab, onTab, json, viewing, value: read, details, readStatus, live, onClose, chrome = "full" }: OpenProps) {
   useSyncExternalStore(valueViewModules.subscribe, valueViewModules.get, valueViewModules.get);
+  // Once the stored result is withdrawn nothing drawn from it stays: not the value, its JSON, its
+  // facts, its type in the subject or any view of it. The tab strip and controls stay in place.
+  const { value, withdrawn } = useStoredGate(read, viewing?.stored, viewing?.node);
+  const subject = withdrawn ? withdrawnSubject(viewing?.node) : given;
   const views = viewing ? viewsFor(viewing) : [];
   const tabs = tabsFor(views);
   // An address can name a view this result turned out not to admit; the result is always there.
@@ -137,25 +144,35 @@ export function OpenScreen({ top, subject, tab, onTab, json, viewing, value, det
         {evidenceLabel(viewing?.node) && <MonoLine segments={[{ text: evidenceLabel(viewing?.node)!, role: "mono-warn" }]} />}
         {/* The same three rows on every tab; details is where they are drawn whole, with the receipt. */}
         <RecordProgress node={viewing?.node} full={showing === "details"} />
-        <Drawn tab={showing} key={showing}>
+        <RecordingControls node={viewing?.node} />
+        <LocalReconciliationControls node={viewing?.node} />
+        {withdrawn ? <p className="mono-warn" role="status">{WITHDRAWN_TITLE}</p> : <Drawn tab={showing} key={showing}>
           {showing !== "details" && readStatus}
-          {showing === "result" && (live ?? <OpenResult value={value} engine={viewing?.engine} />)}
+          {showing === "result" && (live ?? <OpenResult value={value} engine={viewing?.engine} stored={viewing?.stored} name={viewing?.node?.name} />)}
           {showing === "json" && (value ? <ReadableJson value={value} /> : <pre className="inspection-text open-json" tabIndex={0}>{json ?? ""}</pre>)}
           {view && viewing && <view.Draw subject={viewing} />}
-          {showing === "details" && <ScanReceiptDetails value={value} open />}
+          {showing === "details" && <ScanReceiptDetails value={value} open {...(viewing?.node ? { node: viewing.node } : {})} />}
           {showing === "details" && (details ?? []).map((line, at) => <MonoLine key={at} segments={line} />)}
           {showing === "details" && value && <EncodedData value={value} />}
-        </Drawn>
+        </Drawn>}
       </div>
     </Screen>
   );
 }
 
+/** The subject of a withdrawn result: which result it is, and nothing its value told. */
+function withdrawnSubject(node: ViewSubject["node"]): Segment[] {
+  return [
+    ...(node ? [{ text: node.name ? `$${node.name}` : node.id, role: "mono-ref" as const }, { text: "  ·  ", role: "mono-faint" as const }] : []),
+    { text: WITHDRAWN_TITLE, role: "mono-warn" },
+  ];
+}
+
 /** The result, as the result: the table it is, and the whole value under a disclosure. */
-function OpenResult({ value, engine }: Pick<OpenProps, "value"> & {engine?: import("../../engine").Engine}) {
+function OpenResult({ value, engine, stored, name }: Pick<OpenProps, "value"> & {engine?: import("../../engine").Engine; stored?: StoredIdentity; name?: string}) {
   const [complete, setComplete] = useState(false);
   return <>
-    {value && <ValueView engine={engine} value={value} />}
+    {value && <ValueView engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} />}
     {value && <details onToggle={event => setComplete(event.currentTarget.open)}><summary>complete value</summary>{complete && <ReadableJson value={value} />}</details>}
   </>;
 }

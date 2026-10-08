@@ -412,13 +412,19 @@ fn describe(spec: &CommandSpec) -> Data {
             (
                 "admission",
                 text(
-                    "One finite analysis is one task and one run, with fresh calculation scratch per record, cumulative work and separate retained-output limits. budget:Investigation, mode:complete and sink:memory are the implemented choices; omitted values use those defaults. Settings are captured before execution. Held and output charges are conservative logical accounting, not RSS or encoded wire sizes.",
+                    "One finite analysis is one task and one run, with fresh calculation scratch per record, cumulative work and separate retained-output limits. mode:complete is finite by default with budget:Investigation. follow:true uses budget:LiveAnalysis and requires sink:dataset, profile:TypedRecords and a recorded EventLog prefix; it never starts or subscribes to its producer. Following waits only for committed extensions of the same epoch; both budgets have finite captured ceilings. sink:memory produces a bounded List; sink:dataset requires an owned durable store and produces a typed paged Dataset. The default sink is memory. Settings are captured before execution. Held and output charges are conservative logical accounting, not RSS or encoded wire sizes.",
+                ),
+            ),
+            (
+                "receipt",
+                text(
+                    "Receipt work is cumulative charged work; measuredWork excludes conservatively charged interrupted grants. attempt and previousAttempt identify real durable checkpoints and are absent for memory sinks. outstandingWork and durationOutstandingMs are acknowledged reservations, not known lost work or an ETA. durationChargedMs includes conservatively charged interrupted intervals. Exhausted dimensions distinguish duration, absolute work and earned work_allowance. durableResume is conservative owner evidence under every original bound, not a guarantee based on one remaining counter; deterministic record/framing/callback failures require a new analysis rather than an automatic retry.",
                 ),
             ),
             (
                 "result",
                 text(
-                    "ScanResult contains state, outputs and receipt. Only fully validated candidates atomically advance state, accepted input position and outputs. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. No automatic restart, durable checkpoint or resume is available.",
+                    "ScanResult contains state, outputs and receipt. Only fully validated candidates advance state, accepted input position and outputs together. A dataset sink waits for the shared catalog acknowledgement and captures its source, pure program, schemas and cumulative budget. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. Opening a Dataset or restoring a workspace never restarts analysis or a producer. :scan resume $analysis creates an explicit continuation from its retained checkpoint; it never reruns the original source or adopts edited code. :scan resume $analysis follow:true explicitly requests continued waiting for a captured EventLog epoch; without follow it reads only the captured checkpoint extent and remains incomplete. Original work and input-earned allowance remain cumulative; crashed outstanding work is charged in full.",
                 ),
             ),
             (
@@ -428,6 +434,207 @@ fn describe(spec: &CommandSpec) -> Data {
 :def collect(state:Int, context:Int, item:Unknown) -> TextStep as :calc pure { return {state:state+1,outputs:[item.text]}; }
 :scan source:"first\nsecond" transition:collect initial:0 context:0 profile:LinesUtf8 > analysis"#,
                 )]),
+            ),
+        ]))
+    } else if spec.command == MetaCommand::DatasetRetention {
+        Some(fields([
+            (
+                "selection",
+                text(
+                    "Use :dataset retention $shownPrefix basis:\"sha256:ANCHOR\" > retention to preview this exact typed Dataset prefix. The literal basis must match the selected owned result at run entry; inspect its actual reference first. No raw descriptor grants access.",
+                ),
+            ),
+            (
+                "cost",
+                text(
+                    "totalBytes counts distinct immutable proof/schema/index/segment/checkpoint objects and captured source payloads transitively. sharedBytes is already independently retained storage at this catalog revision; exclusiveBytes is the remainder. Repeated aliases count once. capturedSourceBytes discloses the included source payloads. The holding result/container and catalog journal are excluded; descriptor or segment-data bytes alone are not this cost.",
+                ),
+            ),
+            (
+                "limits",
+                text(
+                    "This bounded metadata read never Keeps, reserves quota or starts a producer. It returns no partial estimate on traversal, corruption, uncertainty or withdrawal. Shared/exclusive are not future reclaimable disk: roots and commit proofs can change, and actual Keep rechecks current authority and quotas. Preview each named captured prefix before keeping a larger holding result.",
+                ),
+            ),
+        ]))
+    } else if spec.command == MetaCommand::DatasetSnapshot {
+        Some(fields([
+            (
+                "selection",
+                text(
+                    "Select a typed Dataset result or field and constrain its captured anchor: :dataset snapshot $holding.dataset basis:\"sha256:ANCHOR\" generation:\"N\" digest:\"sha256:SHOWN\" > shownPrefix. Replace placeholders with exact identities from an actual successful Dataset read. Raw descriptors grant no authority.",
+                ),
+            ),
+            (
+                "identity",
+                text(
+                    "The shared store checks the anchor basis at run entry, committed ancestry, exact target digest, captured schema and the anchor's own recording epoch or analysis attempt. A newer attempt does not substitute its head: old same-attempt evidence remains capturable if still readable. Changed anchors, cross-attempt targets and current withdrawal refuse.",
+                ),
+            ),
+            (
+                "retention",
+                text(
+                    "The result is the exact typed immutable prefix, including same-record-count sealing or coverage commits. It never runs a producer or automatically Keeps an open prefix. Keep or Pin is a separate action; descriptor encoding bytes are not total retained Dataset cost. A prefix lifecycle means later committed generations exist, not that a writer is active.",
+                ),
+            ),
+        ]))
+    } else if matches!(
+        spec.command,
+        MetaCommand::DatasetPage | MetaCommand::DatasetInspect
+    ) {
+        Some(fields([
+            (
+                "selection",
+                text(
+                    "Select an owned Dataset result, including a record field: :dataset page $analysis.outputs from:0 limit:100 > page. This explicit read can inspect incomplete evidence without treating the original failed run as success.",
+                ),
+            ),
+            (
+                "range",
+                text(
+                    "from: is a literal canonical unsigned decimal ordinal; limit: is 1–100. Reads use fixed committed extent identity, bounded encoded bytes and physical segments. Read page.next for continuation; extentExhausted means only this selected prefix is exhausted, never that an external producer completed.",
+                ),
+            ),
+            (
+                "result",
+                text(
+                    "Page rows form an ordinary bounded List with the pinned full row contract and captured metadata. Inspect reports lifecycle, exact string counts, schema digest and established persistence. Dataset is not implicitly collected or converted to List.",
+                ),
+            ),
+            (
+                "authority",
+                text(
+                    "Workspace ownership is checked at worker entry; same-home committed identity and current withdrawal are checked by the shared storage owner before and after paging. Reads never resume a scan, start a producer or issue provider calls.",
+                ),
+            ),
+        ]))
+    } else if matches!(
+        spec.command,
+        MetaCommand::DatasetPlanDelete | MetaCommand::DatasetDelete | MetaCommand::DatasetCollect
+    ) {
+        Some(fields([
+            (
+                "review",
+                text(
+                    "Use :dataset plan-delete $analysis.outputs > deletion to inspect affected reference roots, protected bytes and active readers/writers. A live DatasetDeletePlan carries process-local permission; storage and display codecs omit it. Restored or copied projections cannot authorize deletion.",
+                ),
+            ),
+            (
+                "apply",
+                text(
+                    "Use :dataset delete $deletion references:true protected:true only after reviewing the plan. Approvals must be literal booleans. Active readers and writers block deletion; stop their owners explicitly. Changed roots, expiry after five minutes, home close or prior use require a new plan. Management requires an authorized user session and is never automatically repeated.",
+                ),
+            ),
+            (
+                "cleanup",
+                text(
+                    "The catalog withdraws access before physical cleanup. Other shared objects stay reachable. Reclaimed/shared/pending bytes are reported separately, including files still open on a platform. :dataset collect explicitly retries owned unreachable-object cleanup without running a source or analysis. Unknown root evidence refuses destructive deletion.",
+                ),
+            ),
+        ]))
+    } else if matches!(
+        spec.command,
+        MetaCommand::DatasetRecord
+            | MetaCommand::DatasetRecordingStatus
+            | MetaCommand::DatasetStopRecording
+            | MetaCommand::DatasetDiscardRecording
+    ) {
+        Some(fields([
+            (
+                "attachment",
+                text(
+                    "The default one-submit launch is provider stream > logs | :dataset record > recording: its native plan prepares the writer before source dispatch, never once per event. @hold declares a streaming source without running it. :dataset record source:$logs from:start > recording prepares a process-local setup; :refresh $logs admits its source with the writer installed before the first event. After the source and recording have joined, refresh the original recording to prepare the next source run; that preparation alone never dispatches it. Setup expires within dataset.intent.ttl.ms; :dataset discard $recording releases only an unused setup. from:next attaches at the next admission of an already running source. Earlier display-window events are excluded. It never starts or reruns the source and requires the source's complete captured inline element contract.",
+                ),
+            ),
+            (
+                "lifetime",
+                text(
+                    "One recording owns one logical run and separate bounded live capacity. It does not hold ordinary operation concurrency while waiting. :dataset recording-status $recording > status reads the latest acknowledged status; Before attachment Status returns RecordingSetup (sourceNode, phase, remainingMs), with no dataset or source run. Once a writer is acknowledged, status.dataset is a frozen Dataset prefix. Recording progress separates accepted and committed events and is not a disk receipt. Status, Discard and Stop accept literal run: with the owned run UUID to refuse an action if the selected node now owns another run.",
+                ),
+            ),
+            (
+                "budget",
+                text(
+                    "Recording uses budget:Capture by default. The closed Capture profile captures the configured dataset.writer.records, dataset.writer.bytes and dataset.writer.work bounds when the recording definition is admitted, including an unused held-source setup. These cumulative bounds do not reset during attachment or while recording. A full budget visibly stops recording incomplete; it does not cancel or retry the producer. Prepare another recording explicitly to capture a new interval.",
+                ),
+            ),
+            (
+                "stop",
+                text(
+                    ":dataset stop $recording > stopped stops intake, drains accepted work and joins physical writes. The original recording run returns its terminal descriptor. Repeated Stop targets that same owned run. The source remains open; use :cancel on the source separately. Recorded data remains protected until explicit reviewed deletion.",
+                ),
+            ),
+            (
+                "authority",
+                text(
+                    "Control requires the original recording node and exact process-local run, never a UUID or copied descriptor. Restored results allow retained-prefix reads only. Writer errors and unknown acknowledgements never replay a source. A setup is process-local, bound to the exact held source definition and consumed once. Discard refuses an attaching or attached writer. Required launch preparation failure prevents source dispatch; optional held-source recording failures affect only their recording. A launch refresh requires fresh setup rather than reusing the consumed intent. Live scan reads committed Dataset extensions, never the source subscription.",
+                ),
+            ),
+        ]))
+    } else if matches!(
+        spec.command,
+        MetaCommand::ScanReconcile | MetaCommand::DatasetReconcile
+    ) {
+        Some(fields([
+            (
+                "selection",
+                text(
+                    "Select original whole work after physical join; copies, fields and raw UUIDs grant no recovery authority. Bare :dataset reconcile repairs only the owned store after its writers stop; it reports no data counts or producer outcome.",
+                ),
+            ),
+            (
+                "evidence",
+                text(
+                    "The receipt concerns only the latest durably admitted local Dataset mutation. Committed or absent does not establish the producer or whole execution outcome; missing owner evidence stays unknown.",
+                ),
+            ),
+            (
+                "recovery",
+                text(
+                    "Reconciliation runs behind entered storage jobs, verifies the catalog and synchronizes recovery. It never retries a producer or resumes an analysis.",
+                ),
+            ),
+        ]))
+    } else if spec.command == MetaCommand::ScanExcerpt {
+        Some(fields([
+            (
+                "selection",
+                text(
+                    ":scan excerpt $analysis from:0 limit:100 > excerpt reads only the original protected input of a whole owned scan analysis. Copies, fields and UUIDs confer no source access. It never starts a producer or resumes computation.",
+                ),
+            ),
+            (
+                "range",
+                text(
+                    "Text/Bytes offsets and limits count original bytes. Text ranges must end on UTF-8 boundaries. List/Dataset offsets count records; limit is at most 100. The selected captured extent stays fixed. An excerpt holds at most 65536 charged record bytes; an oversized first record refuses, otherwise next identifies the unread suffix.",
+                ),
+            ),
+            (
+                "identity",
+                text(
+                    "captureDigest identifies the original encoded captured Value, not a digest of the displayed slice or raw artifact bytes. from/next/extent are exact decimal strings. Missing or withdrawn evidence refuses; a summary is never used to reconstruct it. A live EventLog uses the analysis checkpoint's acknowledged source prefix.",
+                ),
+            ),
+        ]))
+    } else if spec.command == MetaCommand::ScanResume {
+        Some(fields([
+            (
+                "selection",
+                text(
+                    ":scan resume $analysis > continued requires a whole owned scan analysis with an acknowledged run. The checkpoint and protected selected input must exist in the same home. Arbitrary stored values and raw UUIDs confer no continuation authority.",
+                ),
+            ),
+            (
+                "execution",
+                text(
+                    "A new explicit attempt uses the retained pure code, full schemas, context, state and accepted source position. Source acquisition and accepted output are not replayed; editing the live definition does not alter this continuation. A completed or active writer cannot be resumed.",
+                ),
+            ),
+            (
+                "limits",
+                text(
+                    "Original input/output totals, earned work allowance and absolute work limit remain cumulative. Interrupted prepaid work is charged once before a new grant. No fresh startup allowance is granted; exhausted limits require a new explicitly reviewed analysis. An unconfirmed write is never automatically retried.",
+                ),
             ),
         ]))
     } else {

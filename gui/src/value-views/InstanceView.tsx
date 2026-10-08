@@ -17,6 +17,7 @@ import { InstancePlacement,type InstanceDisplay } from "./InstancePlacement";
 import { displayIdentity } from "./displays";
 import { INPUT_RUN_DESCRIPTION, pinRefusal, referenceLabel } from "./pin";
 import { documentRenderStatus, frameRenderObservation, RenderObservationContext } from "../view-render-status";
+import { frameBindings, ViewDatasetContext } from "./view-datasets";
 
 export const isViewInstance = (value:StoredValue) => value.type?.kind==="meta" && value.type.name==="ViewInstance";
 
@@ -166,6 +167,8 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
       return ()=>{close();closeLocal();setSettled(old=>{const next={...old};delete next[entry.id];return next;});};
     };
   },[interactionKey,engine,generation]);
+  // Dataset reads of a member are bound to exactly the frame drawn here: its root, instance and revisions.
+  const datasetBindings=useMemo(()=>sample.frame&&engine&&instance&&generation?frameBindings(sample.frame,instance,engine,generation):undefined,[sample.frame,engine,instance,generation]);
   const following=sample.frame?.instances.filter(i=>i.inputReference.kind==="current")??[];
   const queries=sample.frame?.instances.filter(i=>!!i.query)??[];
   const active=following.some(i=>i.observing);
@@ -225,7 +228,7 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
     {controlProblem && <p className="mono-warn" role="status">{controlProblem}</p>}
     {entries.filter(i=>!i.query).map(i=>i.inputProblem?<p className="mono-warn" key={i.id} role="status">{i.inputProblem}</p>:null)}{patches.problem && <p className="mono-warn" role="status">{patches.problem}</p>}{sample.problem||shown.problem
     ? <div><p className="mono-warn" role="status">{sample.problem??shown.problem}</p>{engine && sample.problem && <button className="cell-action" onClick={()=>setAttempt(old=>old+1)}>Reopen view</button>}</div>
-    : shown.node ? <InstanceInteractionHost.Provider value={interactionHost}><RenderObservationContext.Provider value={observation}><Presented node={shown.node}/></RenderObservationContext.Provider></InstanceInteractionHost.Provider> : <p className="mono-faint" role="status">{sample.paused?"View paused while other visible views are active. It will open when space is available.":"Reading view…"}</p>}
+    : shown.node ? <ViewDatasetContext.Provider value={datasetBindings}><InstanceInteractionHost.Provider value={interactionHost}><RenderObservationContext.Provider value={observation}><Presented node={shown.node}/></RenderObservationContext.Provider></InstanceInteractionHost.Provider></ViewDatasetContext.Provider> : <p className="mono-faint" role="status">{sample.paused?"View paused while other visible views are active. It will open when space is available.":"Reading view…"}</p>}
     {engine && root && <ReferenceFooter entry={root} following={following.length>0} active={active} controlling={controlling||unsettled}
       request={pinRequest?.revision===root.revision ? pinRequest.name : undefined} onObserve={()=>void observe()} onPin={()=>void pin(root)}/>}</div>;
 }

@@ -2,6 +2,7 @@
 
 pub mod capability;
 pub mod contracts;
+mod dataset;
 pub mod environments;
 mod failure;
 pub mod flow;
@@ -12,6 +13,7 @@ mod provenance;
 mod shape;
 mod temporal;
 mod value;
+pub use dataset::{DatasetRef, InvalidDataset};
 
 pub use failure::{ErrorId, ErrorValue, InvalidError, ValidationIssue};
 pub use provenance::Provenance;

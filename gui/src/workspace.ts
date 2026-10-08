@@ -19,6 +19,8 @@ export interface WorkspaceNode {
   readonly staleReason?: import("./protocol").StaleReason;
   /** `creation` input edges order one construction; absent until the engine announces the node. */
   readonly dependencyLifetime?: import("./protocol").DependencyLifetime;
+  /** The engine's own statement that a captured node's current run took its inputs; see `inputsCaptured`. */
+  readonly inputsCaptured?: true;
   /** The engine's statement that a creation-lifetime node finished constructing. */
   readonly constructionComplete?: boolean;
   /** The engine's statement that newer committed input waits for this calculation; never inferred. */
@@ -69,7 +71,39 @@ export interface WorkspaceNode {
    * cannot say is that asking again might be asking twice.
    */
   readonly doubt?: Doubt;
+  /**
+   * The engine withdrew access to this node's result. Its value, handle and every value-derived
+   * fact are gone; only a later run's own new result is readable again.
+   */
+  readonly accessWithdrawn?: true;
+  /**
+   * The recording commands the engine said this node's admitted writer accepts, bound to the run it
+   * said it for. It offers a reviewed command only; any other run, or a withdrawal, has none.
+   */
+  readonly recordingControl?: import("./protocol").RecordingControl & { readonly run: string };
+  /**
+   * The local reconciliation the engine said this node's original run accepts, bound to that run.
+   * It offers a reviewed command only; another run, a later announcement without it, or a
+   * withdrawal has none.
+   */
+  readonly reconciliationControl?: import("./protocol").ReconciliationControl & { readonly run: string };
+  /**
+   * Present only while the engine says this node's owned run (a recording or a followed scan) is
+   * still open, bound to that run. Its value stays an immutable acknowledged prefix; nothing here
+   * reads it again or grants any action. Withdrawal, a terminal state or another run clears it.
+   */
+  readonly openLifetime?: { readonly run: string };
 }
+
+/** A recording control as the engine stated it for one exact run, or nothing. */
+const recordingControlOf = (event: Extract<import("./protocol").Event, { event: "created" }>) =>
+  event.recordingControl && typeof event.run === "string" && event.run !== "" ? { ...event.recordingControl, run: event.run } : undefined;
+/** A reconciliation control as the engine stated it for one exact original run, or nothing. */
+const reconciliationControlOf = (event: Extract<import("./protocol").Event, { event: "created" }>) =>
+  event.reconciliationControl && typeof event.run === "string" && event.run !== "" ? { ...event.reconciliationControl, run: event.run } : undefined;
+/** An open lifetime as the engine stated it for one exact run; false, null or no run is none. */
+const openLifetimeOf = (event: Extract<import("./protocol").Event, { event: "created" }>) =>
+  event.lifetimeActive === true && typeof event.run === "string" && event.run !== "" ? { run: event.run } : undefined;
 
 export interface Evidence {
   readonly kind: import("./protocol").EvidenceKind;
@@ -228,8 +262,10 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         return change(workspace, event.node, node => ({ ...node, name: event.name || undefined, errorNames:event.errorNames,
           // Progress belongs to one run; a new run never inherits an older run's counters.
           ...(node.progress && node.progress.run !== (event.run ?? undefined) ? { progress: undefined } : {}),
-          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, dependencyLifetime: event.dependencyLifetime, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
-          repeatable: event.repeatable, startedAt: event.startedAt ?? undefined }));
+          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, dependencyLifetime: event.dependencyLifetime, inputsCaptured: event.inputsCaptured === true || undefined, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
+          repeatable: event.repeatable, startedAt: event.startedAt ?? undefined,
+          // Replaced by every announcement: absent or null now means no controls, whatever was said before.
+          recordingControl: recordingControlOf(event), reconciliationControl: reconciliationControlOf(event), openLifetime: openLifetimeOf(event) }));
       }
       return {
         ...workspace,
@@ -248,11 +284,15 @@ export function apply(workspace: Workspace, event: Event): Workspace {
             streamSource: event.streamSource === true,
             dependsOn: event.dependsOn,
             dependencyLifetime: event.dependencyLifetime,
+            ...(event.inputsCaptured === true ? { inputsCaptured: true as const } : {}),
             state: "pending",
             traced: event.traced, interactive: event.interactive,
             provenance: {},
             cautions: [],
             kept: false,
+            ...(recordingControlOf(event) ? { recordingControl: recordingControlOf(event) } : {}),
+            ...(reconciliationControlOf(event) ? { reconciliationControl: reconciliationControlOf(event) } : {}),
+            ...(openLifetimeOf(event) ? { openLifetime: openLifetimeOf(event) } : {}),
           },
         ],
       };
@@ -264,6 +304,8 @@ export function apply(workspace: Workspace, event: Event): Workspace {
       }
       return change(workspace, event.node, (node) => ({ ...node, state: event.state, waiting:event.waiting,
         staleReason: event.state === "stale" ? event.staleReason : undefined,
+        // A new run's own state ends the withdrawal notice; it brings no old value back.
+        accessWithdrawn: event.state === "stale" ? node.accessWithdrawn : undefined,
         updatePending: event.updatePending === true || undefined,
         constructionComplete: event.constructionComplete || undefined,
         ...(node.evidence ? { handle: undefined, bytes: undefined, kept: false } : {}),
@@ -275,9 +317,17 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         ...(event.state === "skipped" ? { handle: undefined, bytes: undefined, kept: false } : {}),
       }));
 
+    case "result-access":
+      // Arrives before the node's stale state. Drop what the value told us; keep the node, its
+      // command and its actions. Nothing reruns.
+      return change(workspace, event.node, node => ({ ...node, accessWithdrawn: true, handle: undefined, bytes: undefined,
+        type: undefined, provenance: {}, cautions: [], kept: false, retention: undefined, publication: undefined, evidence: undefined, progress: undefined,
+        recordingControl: undefined, reconciliationControl: undefined, openLifetime: undefined }));
+
     case "node-progress":
-      // Lossy status for the exact current run only: a late report from an older run is not this run's.
-      return change(workspace, event.node, node => event.run !== null && node.run === event.run
+      // Lossy status for the exact current run only: a late report from an older run is not this run's,
+      // and a withdrawn result's run reports nothing until a new run's own state ends the withdrawal.
+      return change(workspace, event.node, node => event.run !== null && node.run === event.run && !node.accessWithdrawn
         ? { ...node, progress: { run: event.run, value: event.progress } } : node);
 
     case "evidence":
@@ -298,12 +348,15 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         cautions: event.cautions,
         kept: event.kept,
         retention: event.retention,
+        accessWithdrawn: undefined,
         private: event.private,
         // An incomplete analysis is still a failure; its record is the engine's, beside the partial value.
         failure: event.event === "evidence" && event.kind === "incomplete" ? event.reason ?? event.error?.message : undefined,
         failureRecord: event.event === "evidence" && event.kind === "incomplete" ? event.error : undefined,
         cancellation: undefined,
         doubt: undefined,
+        // Ready keeps an open lifetime (a usable prefix of a run still open); evidence is terminal.
+        ...(event.event === "evidence" ? { openLifetime: undefined } : {}),
       }));
 
     case "keeping":
@@ -335,6 +388,8 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         failureRecord: event.error,
         cancellation: undefined,
         handle: undefined, bytes: undefined, kept: false,
+        // A terminal state ends the run's lifetime whatever the last announcement said.
+        openLifetime: undefined,
       }));
 
     case "cancelled":
@@ -344,6 +399,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         publication: undefined,
         cancellation: { code: event.code, reason: event.reason },
         handle: undefined, bytes: undefined, kept: false,
+        openLifetime: undefined,
       }));
 
     case "dropped": {
@@ -426,6 +482,15 @@ export function updatePendingStatus(node: WorkspaceNode): string | undefined {
 /** A node whose input edges only ordered its one construction, which has succeeded. */
 export function constructed(node: WorkspaceNode): boolean {
   return node.dependencyLifetime === "creation" && node.constructionComplete === true;
+}
+
+/**
+ * A captured-input node (an analysis) whose current run has actually taken its inputs at guarded
+ * entry, as the engine states it: later producer updates then no longer make it out of date. A run
+ * identity alone proves nothing — a spawned run that has not entered has one.
+ */
+export function inputsCaptured(node: WorkspaceNode): boolean {
+  return node.dependencyLifetime === "captured" && node.inputsCaptured === true;
 }
 
 /** No inference from retry history or private result metadata. */

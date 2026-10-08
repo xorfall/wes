@@ -44,6 +44,7 @@ impl Item {
                 Data::Record(_) => "Record",
                 Data::Option(_) => "Option",
                 Data::Iter(_) => "Iter",
+                Data::Dataset(_) => "Dataset",
             },
             Self::List(_) => "List",
             Self::Record(_) => "Record",
@@ -302,6 +303,7 @@ pub(super) fn shape(data: &Data, depth: usize) -> Shape {
     }
     match data {
         Data::Iter(iter) => Shape::Iter(Box::new(iter.item_shape().clone())),
+        Data::Dataset(_) => Shape::Dataset(Box::new(Shape::Unknown)),
         Data::List(items) => {
             let first = items
                 .first()

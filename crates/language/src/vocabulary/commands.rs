@@ -13,6 +13,96 @@ pub struct CommandPath {
 use MetaCommand::*;
 pub const COMMAND_PATHS: &[CommandPath] = &[
     CommandPath {
+        path: &["scan", "reconcile"],
+        operation: ScanReconcile,
+        short: None,
+        summary: "Recover the exact latest local write of original owned analysis: :scan reconcile $analysis > receipt. This never reruns its producer or reports the whole execution successful.",
+    },
+    CommandPath {
+        path: &["dataset", "reconcile"],
+        operation: DatasetReconcile,
+        short: None,
+        summary: "Recover original recording with :dataset reconcile $recording > receipt, or repair the owned local store with :dataset reconcile > recovery. Stop and join writers first; neither form replays sources or establishes their outcomes.",
+    },
+    CommandPath {
+        path: &["dataset", "record"],
+        operation: DatasetRecord,
+        short: None,
+        summary: "Launch with provider stream > logs | :dataset record > recording, or prepare a held or physically joined source with from:start and refresh it explicitly; from:next attaches to an active source. Setup never starts a producer. Stop and source Cancel are separate.",
+    },
+    CommandPath {
+        path: &["dataset", "recording-status"],
+        operation: DatasetRecordingStatus,
+        short: None,
+        summary: "Read the original owned recording: :dataset recording-status $recording > status. Unused setup has no dataset; an acknowledged writer returns status.dataset as an immutable committed prefix. Reading never acquires a source.",
+    },
+    CommandPath {
+        path: &["dataset", "stop"],
+        operation: DatasetStopRecording,
+        short: None,
+        summary: "Drain and join recording: :dataset stop $recording > stopped. Repeat targets the same owned run; the source continues and recorded data stays protected.",
+    },
+    CommandPath {
+        path: &["dataset", "discard"],
+        operation: DatasetDiscardRecording,
+        short: None,
+        summary: "Discard an unused prepared setup: :dataset discard $recording. No producer is started or cancelled; attached writers require Stop.",
+    },
+    CommandPath {
+        path: &["dataset", "plan-delete"],
+        operation: DatasetPlanDelete,
+        short: None,
+        summary: "Review deletion: :dataset plan-delete $analysis.outputs > deletion. Live authority expires after five minutes; restoring the projection grants no permission.",
+    },
+    CommandPath {
+        path: &["dataset", "delete"],
+        operation: DatasetDelete,
+        short: None,
+        summary: "Apply a reviewed plan: :dataset delete $deletion references:true protected:true. Active readers and writers block deletion; it never cancels them.",
+    },
+    CommandPath {
+        path: &["dataset", "collect"],
+        operation: DatasetCollect,
+        short: None,
+        summary: "Collect unreachable owned dataset objects explicitly. Read/write leases and every declared reference root remain protected.",
+    },
+    CommandPath {
+        path: &["scan", "excerpt"],
+        operation: ScanExcerpt,
+        short: None,
+        summary: "Read captured original evidence: :scan excerpt $analysis from:0 limit:100 > excerpt. Text/Bytes use byte offsets; record sources use ordinals and allow at most 100 rows. No producer runs.",
+    },
+    CommandPath {
+        path: &["scan", "resume"],
+        operation: ScanResume,
+        short: None,
+        summary: "Continue an owned incomplete analysis: :scan resume $analysis > continued. Uses its captured input, pure code and original cumulative limits; never reruns its external producer.",
+    },
+    CommandPath {
+        path: &["dataset", "page"],
+        operation: DatasetPage,
+        short: None,
+        summary: "Read a bounded typed page: :dataset page $analysis.outputs from:0 limit:100 > page. from is an exact decimal ordinal; the selected extent stays fixed.",
+    },
+    CommandPath {
+        path: &["dataset", "retention"],
+        operation: DatasetRetention,
+        short: None,
+        summary: "Preview exact prefix storage: :dataset retention $shownPrefix basis:\"sha256:ANCHOR\" > retention. Includes captured sources and current sharing; excludes holding-value/container bytes. Never Keeps or reserves storage.",
+    },
+    CommandPath {
+        path: &["dataset", "snapshot"],
+        operation: DatasetSnapshot,
+        short: None,
+        summary: "Capture an exact shown prefix: :dataset snapshot $holding.dataset basis:\"sha256:ANCHOR\" generation:\"N\" digest:\"sha256:SHOWN\" > shownPrefix. Read identity is rechecked; Keep is separate.",
+    },
+    CommandPath {
+        path: &["dataset", "inspect"],
+        operation: DatasetInspect,
+        short: None,
+        summary: "Inspect the selected committed Dataset: :dataset inspect $analysis.outputs > info. Reading never resumes an analysis or starts a producer.",
+    },
+    CommandPath {
         path: &["view", "query"],
         operation: ViewQuery,
         short: None,

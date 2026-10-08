@@ -19,6 +19,8 @@ use tokio::{
     task::JoinHandle,
 };
 use wes_core::{ErrorValue, Provenance, Value};
+pub(crate) mod archive;
+pub(crate) const MAX_ARCHIVES: usize = 4;
 pub(crate) mod delivery;
 mod window;
 pub use window::Limits;
@@ -81,12 +83,14 @@ struct State {
     problem: Option<ErrorValue>,
     rejected: u64,
     sequence: u64,
+    archives: Vec<Arc<archive::Branch>>,
 }
 struct Shared {
     state: Mutex<State>,
     cancellation: CancellationToken,
     changed: Notify,
     delivery: Option<Arc<delivery::Sender>>,
+    archive_ingress: Arc<delivery::Sender>,
     attribution: Provenance,
 }
 impl Shared {
@@ -134,6 +138,9 @@ impl StreamSink {
             return Err(StreamError::Capacity);
         };
         state.rejected = count;
+        for branch in &state.archives {
+            branch.close(archive::End::Rejected);
+        }
         if shared.delivery.is_some() {
             state.problem = Some(RuntimeCode::ExecutionFailed.error("The ordered stream rejected a provider event; processing stopped without silent loss.", None));
             shared.cancellation.cancel();
@@ -148,9 +155,11 @@ impl StreamSink {
         let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
         let value =
             value.with_provenance(value.provenance().clone().inheriting(&shared.attribution));
+        let has_archive = !shared.state().archives.is_empty();
         let credit = shared
             .delivery
             .as_ref()
+            .or(has_archive.then_some(&shared.archive_ingress))
             .map(|d| d.reserve(&value))
             .transpose();
         self.admit(&shared, value, credit)
@@ -160,7 +169,12 @@ impl StreamSink {
         let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
         let value =
             value.with_provenance(value.provenance().clone().inheriting(&shared.attribution));
-        let credit = match &shared.delivery {
+        let has_archive = !shared.state().archives.is_empty();
+        let credit = match shared
+            .delivery
+            .as_ref()
+            .or(has_archive.then_some(&shared.archive_ingress))
+        {
             Some(delivery) => delivery
                 .reserve_wait(&value, &shared.cancellation)
                 .await
@@ -187,6 +201,12 @@ impl StreamSink {
             let credit = credit?;
             let sequence = state.sequence.checked_add(1).ok_or(StreamError::Capacity)?;
             state.window.push(value.clone())?;
+            if let Some(credit) = credit.as_ref() {
+                for branch in &state.archives {
+                    branch.deliver(sequence, &value, credit);
+                }
+                state.archives.retain(|b| b.is_accepting());
+            }
             if let (Some(delivery), Some(credit)) = (&shared.delivery, credit) {
                 delivery
                     .channel
@@ -217,8 +237,28 @@ pub struct StreamHandle {
     cancellation: CancellationToken,
     snapshots: watch::Receiver<Arc<Snapshot>>,
     events: Arc<Mutex<Option<tokio::sync::mpsc::Receiver<delivery::Event>>>>,
+    owner: Weak<Shared>,
 }
 impl StreamHandle {
+    pub(crate) fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation.clone()
+    }
+    /// Attach at the next admission boundary; rolling history cannot supply earlier events.
+    pub(crate) fn attach_archive(&self, branch: Arc<archive::Branch>) -> Result<(), StreamError> {
+        let owner = self.owner.upgrade().ok_or(StreamError::Closed)?;
+        let mut state = owner.state();
+        state.archives.retain(|branch| branch.is_accepting());
+        if state.finished
+            || owner.cancellation.is_cancelled()
+            || state.archives.len() >= MAX_ARCHIVES
+        {
+            return Err(StreamError::Closed);
+        }
+        let next = state.sequence.checked_add(1).ok_or(StreamError::Capacity)?;
+        branch.attach(next)?;
+        state.archives.push(branch);
+        Ok(())
+    }
     pub(crate) fn take_events(&self) -> Option<tokio::sync::mpsc::Receiver<delivery::Event>> {
         self.events
             .lock()
@@ -238,10 +278,29 @@ impl StreamHandle {
 }
 #[must_use = "retain and join the stream's physical lifetime"]
 pub struct StreamTask {
+    cancel_on_drop: bool,
     cancellation: CancellationToken,
     task: Option<JoinHandle<()>>,
 }
 impl StreamTask {
+    pub(crate) fn joined(cancellation: CancellationToken, task: JoinHandle<()>) -> Self {
+        Self {
+            cancel_on_drop: true,
+            cancellation,
+            task: Some(task),
+        }
+    }
+    pub(crate) fn after_join(mut self, cleanup: impl FnOnce() + Send + 'static) -> Self {
+        let original = self.task.take().expect("owned source lifetime");
+        let cancellation = self.cancellation.clone();
+        self.cancel_on_drop = false;
+        let task = tokio::spawn(async move {
+            let result = original.await;
+            cleanup();
+            result.expect("source lifetime terminated unexpectedly");
+        });
+        Self::joined(cancellation, task)
+    }
     pub async fn join(mut self) -> Result<(), tokio::task::JoinError> {
         self.task.take().expect("owned stream task").await
     }
@@ -255,7 +314,9 @@ impl Drop for StreamTask {
         // Losing the external join handle must not leave an unobserved subscription running forever.
         // Request cancellation; the lifetime task still joins the provider instead of aborting it.
         // Only awaited join/shutdown is a completion acknowledgement to the embedding owner.
-        self.cancellation.cancel();
+        if self.cancel_on_drop {
+            self.cancellation.cancel();
+        }
     }
 }
 
@@ -280,9 +341,41 @@ pub(crate) fn spawn_with_delivery(
     parent: CancellationToken,
     budget: Option<delivery::Budget>,
 ) -> Result<(StreamHandle, StreamTask), StreamError> {
+    spawn_with_archives(
+        call,
+        invoker,
+        attribution,
+        limits,
+        parent,
+        budget,
+        None,
+        vec![],
+    )
+}
+pub(crate) fn spawn_with_archives(
+    call: Call,
+    invoker: Arc<dyn StreamingInvoker>,
+    attribution: Provenance,
+    limits: Limits,
+    parent: CancellationToken,
+    budget: Option<delivery::Budget>,
+    archive_budget: Option<delivery::Budget>,
+    archives: Vec<Arc<archive::Branch>>,
+) -> Result<(StreamHandle, StreamTask), StreamError> {
     if !call.capability.streaming {
         return Err(StreamError::Invalid);
     }
+    if archives.len() > MAX_ARCHIVES {
+        return Err(StreamError::Invalid);
+    }
+    for branch in &archives {
+        branch.attach(1)?;
+    }
+    let (archive_ingress, _) = delivery::Sender::new(
+        archive_budget
+            .or_else(|| budget.clone())
+            .unwrap_or_default(),
+    );
     let (delivery, events) = match budget {
         Some(budget) => {
             let (send, receive) = delivery::Sender::new(budget);
@@ -310,13 +403,16 @@ pub(crate) fn spawn_with_delivery(
             problem: None,
             rejected: 0,
             sequence: 0,
+            archives,
         }),
         cancellation: cancellation.clone(),
         changed: Notify::new(),
         delivery,
+        archive_ingress,
         attribution,
     });
     let sink = StreamSink(Arc::downgrade(&shared));
+    let owner = Arc::downgrade(&shared);
     let (publish, snapshots) = watch::channel(initial);
     let token = cancellation.clone();
     let task = tokio::spawn(async move {
@@ -353,6 +449,8 @@ pub(crate) fn spawn_with_delivery(
                             Err(_) => Phase::Failed(RuntimeCode::ExecutionFailed.error("The stream provider terminated unexpectedly.", None)),
                         }};
                         state.dirty = true;
+                        let phase = state.phase.clone();
+                        for branch in state.archives.drain(..) { branch.finish(&phase); }
                     }
                     publish_window(&shared, &run, &publish).await;
                     break;
@@ -374,8 +472,10 @@ pub(crate) fn spawn_with_delivery(
             cancellation: cancellation.clone(),
             snapshots,
             events: Arc::new(Mutex::new(events)),
+            owner,
         },
         StreamTask {
+            cancel_on_drop: true,
             cancellation,
             task: Some(task),
         },

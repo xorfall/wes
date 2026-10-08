@@ -9,6 +9,7 @@ pub mod conversations;
 pub mod credentials;
 pub mod driver;
 pub mod environments;
+pub mod eventlog;
 pub mod execution;
 pub mod graph;
 pub mod history;

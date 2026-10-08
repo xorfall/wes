@@ -163,12 +163,16 @@ pub enum DependencyLifetime {
     #[default]
     Continuous,
     Creation,
+    /// Capture arguments once at guarded executor entry. Structural ownership
+    /// and permission reachability remain; later input values do not replace them.
+    Captured,
 }
 impl DependencyLifetime {
     pub fn name(self) -> &'static str {
         match self {
             Self::Continuous => "continuous",
             Self::Creation => "creation",
+            Self::Captured => "captured",
         }
     }
 }
@@ -291,6 +295,11 @@ pub enum Effect<T> {
         deadline: Option<Deadline>,
     },
     StreamClosing(Run),
+    /// An owned non-source lifetime acknowledged its first usable value.
+    LifetimeReady {
+        run: Run,
+        deadline: Option<Deadline>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -369,6 +378,7 @@ struct Entry {
     activation: Option<OutputRef>,
     dependency_lifetime: DependencyLifetime,
     creation_complete: bool,
+    inputs_captured: bool,
     restored: bool,
     refresh_pending: bool,
     // Coalesces observation windows while a finite pure calculation owns its captured inputs.
@@ -396,6 +406,8 @@ impl Entry {
         self.restored = true;
         self.value_run = run.clone();
         self.evidence = None;
+        self.inputs_captured =
+            self.dependency_lifetime == DependencyLifetime::Captured && run.is_some();
         self.last_run = run;
         self.value = None;
         self.error = None;
@@ -451,6 +463,7 @@ impl Entry {
             activation: None,
             dependency_lifetime: DependencyLifetime::Continuous,
             creation_complete: false,
+            inputs_captured: false,
             restored: false,
             refresh_pending: false,
             input_update_pending: false,
@@ -473,6 +486,8 @@ enum WorkKind {
     Opening,
     Open,
     Closing,
+    LifetimeOpening,
+    LifetimeOpen,
 }
 
 /// Not Clone: duplicating a live runtime would duplicate publication authority.
@@ -567,10 +582,10 @@ impl<T: Clone> Runtime<T> {
     }
     pub fn is_idle(&self) -> bool {
         self.stream_budget.is_idle()
-            && self
-                .leases
-                .values()
-                .all(|lease| lease.kind == WorkKind::Open && self.is_active(&lease.run))
+            && self.leases.values().all(|lease| {
+                matches!(lease.kind, WorkKind::Open | WorkKind::LifetimeOpen)
+                    && self.is_active(&lease.run)
+            })
     }
     /// No outstanding physical execution, including open or cancelled subscriptions.
     pub fn is_drained(&self) -> bool {
@@ -694,7 +709,7 @@ impl<T: Clone> Runtime<T> {
             if let (Some(value), Some(run)) = (&entry.value, &entry.value_run)
                 && !value.provenance().policy().is_private()
                 && !value.provenance().policy().is_unknown()
-                && value.data().is_materialized()
+                && value.data().is_storable_snapshot()
             {
                 entry.evidence = Some(EvidenceValue {
                     value: value.clone(),
@@ -802,6 +817,11 @@ impl<T: Clone> Runtime<T> {
             .get(node)
             .is_some_and(|entry| entry.creation_complete)
     }
+    pub fn inputs_captured(&self, node: &NodeId) -> bool {
+        self.entries
+            .get(node)
+            .is_some_and(|entry| entry.inputs_captured)
+    }
     /// Currency propagation differs from structural ownership/control reachability.
     fn currency_downstream(&self, root: &NodeId) -> Result<IndexSet<NodeId>, GraphError> {
         if self.graph.node(root).is_none() {
@@ -814,7 +834,7 @@ impl<T: Clone> Runtime<T> {
                 queue.extend(
                     self.graph
                         .dependents_of(&next)
-                        .filter(|id| !self.construction_complete(id))
+                        .filter(|id| !self.construction_complete(id) && !self.inputs_captured(id))
                         .cloned(),
                 );
             }
@@ -1043,6 +1063,11 @@ impl<T: Clone> Runtime<T> {
             return false;
         }
         lease.entered = true;
+        let entry = self
+            .entries
+            .get_mut(run.node())
+            .expect("entered execution owner");
+        entry.inputs_captured = entry.dependency_lifetime == DependencyLifetime::Captured;
         true
     }
     /// Stream designation is captured at the same guarded entry as the physical lease.
@@ -1056,6 +1081,23 @@ impl<T: Clone> Runtime<T> {
         }
         true
     }
+    pub fn enter_lifetime(&mut self, run: &Run) -> bool {
+        if !self.enter(run) {
+            return false;
+        }
+        self.leases.get_mut(run.node()).expect("entered lease").kind = WorkKind::LifetimeOpening;
+        true
+    }
+    /// A committed descriptor can be consumed while its separate physical owner remains active.
+    /// This does not turn it into a subscription or give it ordered event delivery.
+    pub fn lifetime_value(
+        &mut self,
+        run: &Run,
+        value: Value,
+        now: Duration,
+    ) -> Option<Vec<Effect<T>>> {
+        self.publish_open_value(run, value, now, false)
+    }
     /// Only an entered, still-current stream can publish. Its physical lease remains owned until
     /// complete(), even though an open stream no longer makes ordinary idle waits block forever.
     pub fn stream_window(
@@ -1064,22 +1106,36 @@ impl<T: Clone> Runtime<T> {
         value: Value,
         now: Duration,
     ) -> Option<Vec<Effect<T>>> {
+        self.publish_open_value(run, value, now, true)
+    }
+    fn publish_open_value(
+        &mut self,
+        run: &Run,
+        value: Value,
+        now: Duration,
+        source: bool,
+    ) -> Option<Vec<Effect<T>>> {
         if self.closed || !self.is_active(run) {
             return None;
         }
+        let (opening_kind, open_kind) = if source {
+            (WorkKind::Opening, WorkKind::Open)
+        } else {
+            (WorkKind::LifetimeOpening, WorkKind::LifetimeOpen)
+        };
         let lease = self.leases.get_mut(run.node())?;
         if lease.run != *run
             || !lease.entered
-            || !matches!(lease.kind, WorkKind::Opening | WorkKind::Open)
+            || (lease.kind != opening_kind && lease.kind != open_kind)
         {
             return None;
         }
-        let opening = lease.kind == WorkKind::Opening;
+        let opening = lease.kind == opening_kind;
         if let Err(error) = self.admit_value(run.node(), &value) {
             return Some(self.cancel_with(run.node(), error, now));
         }
         let lease = self.leases.get_mut(run.node()).expect("validated lease");
-        lease.kind = WorkKind::Open;
+        lease.kind = open_kind;
         let entry = self.entries.get_mut(run.node()).expect("active entry");
         entry.value = Some(value.clone());
         entry.value_run = Some(run.id.clone());
@@ -1093,9 +1149,16 @@ impl<T: Clone> Runtime<T> {
             if entry.timeout.is_none() {
                 attempt.budget = None;
             }
-            effects.push(Effect::StreamReady {
-                run: run.clone(),
-                deadline: attempt.deadline(),
+            effects.push(if source {
+                Effect::StreamReady {
+                    run: run.clone(),
+                    deadline: attempt.deadline(),
+                }
+            } else {
+                Effect::LifetimeReady {
+                    run: run.clone(),
+                    deadline: attempt.deadline(),
+                }
             });
         }
         self.transition(run.node(), NodeState::Ready, &mut effects);
@@ -1108,7 +1171,9 @@ impl<T: Clone> Runtime<T> {
                 now,
             ));
         }
-        effects.extend(self.advance_ordered(run.node(), now));
+        if source {
+            effects.extend(self.advance_ordered(run.node(), now));
+        }
         Some(effects)
     }
     fn stream_dependents(&mut self, node: &NodeId, now: Duration) -> Vec<Effect<T>> {
@@ -1839,6 +1904,25 @@ impl<T: Clone> Runtime<T> {
         }
         effects
     }
+    pub(crate) fn withdraw(&mut self, node: &NodeId) -> Vec<Effect<T>> {
+        let mut effects = Vec::new();
+        if let Some(run) = self.revoke(node) {
+            effects.push(Effect::Cancel(run));
+        }
+        self.private_charges.shift_remove(node);
+        let Some(entry) = self.entries.get_mut(node) else {
+            return effects;
+        };
+        entry.value = None;
+        entry.evidence = None;
+        entry.actual_typing = None;
+        entry.progress = None;
+        entry.error = None;
+        entry.automatic_pause = Some(StaleReason::ResultWithdrawn);
+        entry.stale_reason = entry.automatic_pause;
+        self.transition(node, NodeState::Stale, &mut effects);
+        effects
+    }
     /// No terminal branch handlers are launched during shutdown.
     pub fn close(&mut self) -> Vec<Effect<T>> {
         if self.closed {
@@ -2090,6 +2174,10 @@ impl<T: Clone> Runtime<T> {
             entry.active = Some(attempt);
             entry.evidence = None;
             entry.last_run = Some(run.id.clone());
+            // A queued refresh has not captured its new ticket at guarded entry.
+            // Previous historical inputs must not shield this pending run from
+            // an intervening producer update.
+            entry.inputs_captured = false;
             entry.progress = None;
             entry.stream_start = None;
             entry.stream_counts = None;
@@ -2773,5 +2861,100 @@ mod creation_tests {
             NodeState::Ready
         );
         assert!(restored.refresh(&created, Duration::ZERO).is_err());
+    }
+}
+
+#[cfg(test)]
+mod captured_inputs_tests {
+    use super::*;
+    fn value(n: i64) -> Value {
+        Value::new(
+            wes_core::Shape::Primitive(wes_core::Primitive::Int),
+            wes_core::Data::Int(n),
+            Default::default(),
+        )
+        .unwrap()
+    }
+    fn tickets<T: Clone>(effects: Vec<Effect<T>>) -> Vec<RunTicket<T>> {
+        effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::Spawn(ticket) => Some(ticket),
+                _ => None,
+            })
+            .collect()
+    }
+    #[test]
+    fn captured_input_updates_do_not_cancel_current_analysis_but_ownership_stays_structural() {
+        let mut runtime = Runtime::new();
+        let traits = ExecutionTraits {
+            pure: false,
+            repeatable: false,
+            bounded: true,
+        };
+        let source = runtime.add((), [], traits).unwrap();
+        let analysis = runtime
+            .add((), [OutputRef::data(source.clone())], traits)
+            .unwrap();
+        runtime.install_dependency_lifetime(&analysis, DependencyLifetime::Captured);
+        let source_ticket = tickets(runtime.start(Duration::ZERO)).remove(0);
+        assert!(runtime.enter_lifetime(&source_ticket.run));
+        let analysis_ticket = tickets(
+            runtime
+                .lifetime_value(&source_ticket.run, value(0), Duration::ZERO)
+                .unwrap(),
+        )
+        .remove(0);
+        assert!(runtime.enter_lifetime(&analysis_ticket.run));
+        runtime
+            .lifetime_value(&analysis_ticket.run, value(0), Duration::ZERO)
+            .unwrap();
+        let effects = runtime.complete(
+            &source_ticket.run,
+            Outcome::Produced(value(1)),
+            Duration::from_secs(1),
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect,Effect::Cancel(run) if run == &analysis_ticket.run))
+        );
+        assert!(runtime.is_executing(&analysis));
+        assert!(runtime.inputs_captured(&analysis));
+        assert!(
+            runtime
+                .graph()
+                .downstream(&source)
+                .unwrap()
+                .contains(&analysis)
+        );
+        runtime.complete(
+            &analysis_ticket.run,
+            Outcome::Produced(value(7)),
+            Duration::from_secs(2),
+        );
+        assert_eq!(runtime.value_of(&analysis), Some(&value(7)));
+        assert!(!runtime.construction_complete(&analysis));
+        let refreshed =
+            tickets(runtime.refresh(&analysis, Duration::from_secs(3)).unwrap()).remove(0);
+        assert!(!runtime.inputs_captured(&analysis));
+        assert!(runtime.enter_lifetime(&refreshed.run));
+        assert_eq!(refreshed.inputs[&source].data(), value(1).data());
+        runtime.complete(
+            &refreshed.run,
+            Outcome::Produced(value(8)),
+            Duration::from_secs(4),
+        );
+        let queued = tickets(runtime.refresh(&analysis, Duration::from_secs(5)).unwrap()).remove(0);
+        let effects = runtime.refresh(&source, Duration::from_secs(6)).unwrap();
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect,Effect::Cancel(run) if run == &queued.run))
+        );
+        assert!(
+            !runtime.enter_lifetime(&queued.run),
+            "a queued refresh cannot enter with obsolete inputs"
+        );
     }
 }

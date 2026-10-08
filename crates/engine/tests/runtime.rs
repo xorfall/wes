@@ -650,6 +650,8 @@ fn a_long_closed_branch_propagates_without_recursion_or_executor_calls() {
     assert_eq!(observations(&effects).len(), 10_001);
 }
 
+#[path = "runtime/lifetimes.rs"]
+mod lifetimes;
 #[path = "runtime/streams.rs"]
 mod streams;
 

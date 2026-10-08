@@ -63,6 +63,108 @@ impl ContractRegistry {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Build an isolated lookup from complete validated schemas, never ambient packages.
+    /// Conflicting names refuse restoration instead of replacing a captured declaration.
+    pub fn from_resolved(bundles: &[super::ResolvedContractBundle]) -> Result<Self, ContractError> {
+        // Each bundle is independently validated. Intern their complete DAGs
+        // before publishing a lookup so shared declarations remain shared after
+        // restoration, including children retained by different bundle roots.
+        fn intern(
+            contract: &Arc<Contract>,
+            resolved: &mut std::collections::BTreeMap<String, Arc<Contract>>,
+            remaining: &mut usize,
+            depth: usize,
+        ) -> Result<Arc<Contract>, ContractError> {
+            if depth > 128 || *remaining == 0 {
+                return Err(problem("resolved contract lookup exceeds its budget"));
+            }
+            *remaining -= 1;
+            if let Some(shared) = resolved.get(contract.digest()) {
+                return Ok(shared.clone());
+            }
+            let mut captured = contract.as_ref().clone();
+            captured.kind = match contract.kind() {
+                Kind::List(c) => Kind::List(intern(c, resolved, remaining, depth + 1)?),
+                Kind::Option(c) => Kind::Option(intern(c, resolved, remaining, depth + 1)?),
+                Kind::Iter(c) => Kind::Iter(intern(c, resolved, remaining, depth + 1)?),
+                Kind::Dataset(c) => Kind::Dataset(intern(c, resolved, remaining, depth + 1)?),
+                Kind::Map(a, b) => Kind::Map(
+                    intern(a, resolved, remaining, depth + 1)?,
+                    intern(b, resolved, remaining, depth + 1)?,
+                ),
+                Kind::Union(a, b) => Kind::Union(
+                    intern(a, resolved, remaining, depth + 1)?,
+                    intern(b, resolved, remaining, depth + 1)?,
+                ),
+                Kind::Record(fields) => Kind::Record(
+                    fields
+                        .iter()
+                        .map(|(name, field)| {
+                            Ok((
+                                name.clone(),
+                                super::ContractField {
+                                    contract: intern(
+                                        &field.contract,
+                                        resolved,
+                                        remaining,
+                                        depth + 1,
+                                    )?,
+                                    optional: field.optional,
+                                },
+                            ))
+                        })
+                        .collect::<Result<_, ContractError>>()?,
+                ),
+                other => other.clone(),
+            };
+            let shared = Arc::new(captured);
+            resolved.insert(shared.digest().into(), shared.clone());
+            Ok(shared)
+        }
+        let mut resolved = std::collections::BTreeMap::new();
+        let mut remaining = 65_536;
+        let mut registry = Self::new();
+        let mut pending = bundles
+            .iter()
+            .map(|b| Ok((intern(b.root(), &mut resolved, &mut remaining, 0)?, 0usize)))
+            .collect::<Result<Vec<_>, ContractError>>()?;
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some((contract, depth)) = pending.pop() {
+            if depth > 128 || visited.len() > 65536 {
+                return Err(problem("resolved contract lookup exceeds its budget"));
+            }
+            if !visited.insert(contract.digest().to_owned()) {
+                continue;
+            }
+            if let Some(existing) = registry.contracts.get(contract.name()) {
+                if existing.digest() != contract.digest() {
+                    return Err(problem("conflicting captured contract name"));
+                }
+            } else {
+                registry
+                    .contracts
+                    .insert(contract.name().into(), contract.clone());
+            }
+            match contract.kind() {
+                Kind::List(inner)
+                | Kind::Option(inner)
+                | Kind::Iter(inner)
+                | Kind::Dataset(inner) => pending.push((inner.clone(), depth + 1)),
+                Kind::Map(left, right) | Kind::Union(left, right) => {
+                    pending.push((left.clone(), depth + 1));
+                    pending.push((right.clone(), depth + 1));
+                }
+                Kind::Record(fields) => {
+                    pending.extend(fields.values().map(|f| (f.contract.clone(), depth + 1)))
+                }
+                _ => {}
+            }
+            if pending.len() > 65536 {
+                return Err(problem("resolved contract lookup exceeds its budget"));
+            }
+        }
+        Ok(registry)
+    }
     pub fn snapshot(&self) -> &IndexMap<String, Arc<Contract>> {
         &self.contracts
     }
@@ -369,6 +471,7 @@ fn resolve(
         (super::Constructor::List, [element]) => Kind::List(resolve(element, names)?),
         (super::Constructor::Option, [element]) => Kind::Option(resolve(element, names)?),
         (super::Constructor::Iter, [element]) => Kind::Iter(resolve(element, names)?),
+        (super::Constructor::Dataset, [element]) => Kind::Dataset(resolve(element, names)?),
         (super::Constructor::Union, [a, b]) => Kind::Union(resolve(a, names)?, resolve(b, names)?),
         (super::Constructor::Map, [key, value]) => {
             let key = resolve(key, names)?;
@@ -563,6 +666,10 @@ fn builtin(shape: &crate::Shape, contracts: &Definitions) -> Arc<Contract> {
         crate::Shape::Iter(element) => {
             contract(&shape.to_string(), Kind::Iter(builtin(element, contracts)))
         }
+        crate::Shape::Dataset(element) => contract(
+            &shape.to_string(),
+            Kind::Dataset(builtin(element, contracts)),
+        ),
         crate::Shape::Option(element) => contract(
             &shape.to_string(),
             Kind::Option(builtin(element, contracts)),

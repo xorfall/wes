@@ -15,6 +15,7 @@ pub use tokio_util::sync::CancellationToken;
 use wes_core::{ErrorValue, Value, capability::Typing};
 pub(crate) mod conversations;
 mod io;
+pub mod lifetime;
 pub mod progress;
 pub use conversations::ConversationEvent;
 mod capacity;
@@ -107,8 +108,23 @@ pub trait Executor<T>: Send + Sync + 'static {
     ) -> ExecutionFuture {
         self.execute(ticket, cancellation)
     }
+    /// A lifetime may publish acknowledged values without completing or releasing its physical owner.
+    fn execute_lifetime(
+        &self,
+        ticket: RunTicket<T>,
+        cancellation: CancellationToken,
+        progress: progress::Reporter,
+        _values: lifetime::Reporter,
+    ) -> ExecutionFuture {
+        self.execute_reporting(ticket, cancellation, progress)
+    }
     /// Resource classification must describe the captured payload, without performing I/O.
     fn streaming(&self, _payload: &T) -> bool {
+        false
+    }
+    /// A joined non-stream lifetime reserves live capacity but does not occupy ordinary
+    /// operation concurrency while waiting. It still returns one finite terminal receipt.
+    fn lifetime(&self, _payload: &T) -> bool {
         false
     }
     fn interactive(&self, _payload: &T) -> bool {
@@ -149,6 +165,7 @@ pub struct Snapshot<T> {
     pub stale_reasons: IndexMap<NodeId, crate::runtime::StaleReason>,
     pub input_updates: IndexSet<NodeId>,
     pub creation_inputs: IndexMap<NodeId, bool>,
+    pub captured_inputs: IndexMap<NodeId, bool>,
     pub graph: DependencyGraph<T>,
     pub values: IndexMap<NodeId, Value>,
     pub evidence_values: IndexMap<NodeId, crate::runtime::EvidenceValue>,
@@ -493,6 +510,7 @@ impl<T: Clone> Snapshot<T> {
         let mut stale_reasons = IndexMap::new();
         let mut input_updates = IndexSet::new();
         let mut creation_inputs = IndexMap::new();
+        let mut captured_inputs = IndexMap::new();
         let mut waiting_inputs = IndexMap::new();
         let mut values = IndexMap::new();
         let mut evidence_values = IndexMap::new();
@@ -508,6 +526,9 @@ impl<T: Clone> Snapshot<T> {
             }
             if runtime.dependency_lifetime(node.id()) == Some(DependencyLifetime::Creation) {
                 creation_inputs.insert(node.id().clone(), runtime.construction_complete(node.id()));
+            }
+            if runtime.dependency_lifetime(node.id()) == Some(DependencyLifetime::Captured) {
+                captured_inputs.insert(node.id().clone(), runtime.inputs_captured(node.id()));
             }
             if runtime.input_update_pending(node.id()) {
                 input_updates.insert(node.id().clone());
@@ -547,6 +568,7 @@ impl<T: Clone> Snapshot<T> {
             stale_reasons,
             input_updates,
             creation_inputs,
+            captured_inputs,
             graph,
             values,
             evidence_values,

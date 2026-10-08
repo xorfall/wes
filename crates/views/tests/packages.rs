@@ -5,6 +5,60 @@ fn manifest() -> serde_json::Value {
     serde_json::json!({"name":"Badge","id":"badge","summary":"Show a label and count.","renderer":"View.tsx","input":"Badge","outputs":{},"interaction":null})
 }
 #[test]
+fn dataset_is_read_only_even_when_an_output_reuses_the_input_contract_name() {
+    let types = "types: {Badge: {base: Record, fields: {rows: 'Dataset<Int>'}}, State: {base: Record, fields: {count: Int}}}";
+    let mut m = manifest();
+    let package = Package::parse(&m.to_string(), types).unwrap();
+    let contracts = &package.description()["contracts"];
+    assert_eq!(contracts["Dataset<Int>"]["kind"], "dataset");
+    m["interaction"] = serde_json::json!({"protocol":"State","state":"State","event":"State"});
+    m["outputs"] = serde_json::json!({"rows":{"type":"Badge","mode":"state"}});
+    assert!(
+        Package::parse(&m.to_string(), types)
+            .unwrap_err()
+            .contains("read-only input")
+    );
+    m["outputs"] = serde_json::json!({});
+    for port in ["state", "event"] {
+        let mut candidate = m.clone();
+        candidate["interaction"][port] = serde_json::json!("Badge");
+        assert!(
+            Package::parse(&candidate.to_string(), types)
+                .unwrap_err()
+                .contains("read-only input")
+        );
+    }
+}
+#[test]
+fn dataset_rows_preserve_native_patterns_without_admitting_browser_authored_values() {
+    let types = "types: {Token: {base: Text, pattern: '^[a-z]{3}$'}, Badge: {base: Record, fields: {rows: 'Dataset<Token>'}}, State: {base: Record, fields: {count: Int}}}";
+    let mut m = manifest();
+    let p = Package::parse(&m.to_string(), types).unwrap();
+    assert_eq!(
+        p.description()["contracts"]["Token"]["constraints"]["patterns"],
+        serde_json::json!(["^[a-z]{3}$"])
+    );
+    // The same named declaration is read-only only beneath Dataset. Reuse in
+    // a writable port or an ordinary input must still fail before execution.
+    m["outputs"] = serde_json::json!({"chosen":{"type":"Token","mode":"state"}});
+    m["interaction"] = serde_json::json!({"protocol":"State","state":"State","event":"State"});
+    assert!(
+        Package::parse(&m.to_string(), types)
+            .unwrap_err()
+            .contains("Pattern-constrained")
+    );
+    m["outputs"] = serde_json::json!({});
+    let mixed = types.replace(
+        "rows: 'Dataset<Token>'",
+        "rows: 'Dataset<Token>', direct: Token",
+    );
+    assert!(
+        Package::parse(&m.to_string(), &mixed)
+            .unwrap_err()
+            .contains("Pattern-constrained")
+    );
+}
+#[test]
 fn independent_package_uses_wes_contracts_without_a_named_parser_branch() {
     let p = Package::parse(&manifest().to_string(), TYPES).unwrap();
     let mut registry = ContractRegistry::new();

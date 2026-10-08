@@ -5,6 +5,7 @@ pub mod budgets;
 pub mod credential_store;
 pub mod credential_vault;
 pub mod data_home;
+mod dataset_reads;
 mod execution_status;
 mod file_snapshot;
 pub mod retention;
@@ -306,11 +307,23 @@ async fn open_backend(
     )
     .map_err(SessionError::from)?;
     let initial = config.initial.clone();
-    let (files, saved, selected) = tokio::task::spawn_blocking(move || {
+    let dataset_publication = config
+        .storage
+        .as_ref()
+        .and_then(|storage| storage.worker.retained_dataset_publication());
+    let (files, saved, selected, collection_warning) = tokio::task::spawn_blocking(move || {
         let mut files = create()?;
-        if files.capabilities().automatic_cleanup {
-            files.collect_unused()?;
+        if let Some(publication) = dataset_publication {
+            files.set_retained_dataset_publication(publication)?;
         }
+        let collection_warning = if files.capabilities().automatic_cleanup {
+            files
+                .collect_unused()
+                .err()
+                .map(|error| format!("Workspace cleanup is pending: {error}"))
+        } else {
+            None
+        };
         let names = files.names()?;
         // Fresh homes get the explicit configured initial name. A deletion tombstone
         // means absence is intentional, including after deleting the final workspace.
@@ -319,7 +332,12 @@ async fn open_backend(
         } else {
             names.first().cloned().map(|name| (name, false))
         };
-        Ok::<_, BackendError>((files, Arc::<[WorkspaceName]>::from(names), selected))
+        Ok::<_, BackendError>((
+            files,
+            Arc::<[WorkspaceName]>::from(names),
+            selected,
+            collection_warning,
+        ))
     })
     .await
     .map_err(|_| ApplicationError::Worker)??;
@@ -333,7 +351,7 @@ async fn open_backend(
     let (management, requests) = mpsc::channel(16);
     let (deletions, delete_requests) = mpsc::channel(16);
     let terminals = Arc::new(Mutex::new(Vec::new()));
-    let cleanup_warning = Arc::new(Mutex::new(None));
+    let cleanup_warning = Arc::new(Mutex::new(collection_warning));
     let handle = ApplicationHandle {
         capacity: capacity.subscribe(),
         current: selected_session,

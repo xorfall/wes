@@ -1,5 +1,5 @@
 import { withValidMeta } from "./value-meta";
-import { validDisplayMetadata, DisplayReadError, type DisplayRead, type DisplayMetadata } from "./live-view-reader";
+import { validDisplayMetadata, DisplayReadError, liveReader, type DisplayRead, type DisplayMetadata } from "./live-view-reader";
 import {ValuePackages} from "./value-views/external/discovery";
 import {bindValueViews,builtinValueViews} from "./value-views/registry";
 import {loadFramePackages} from "./value-views/external/load";
@@ -19,11 +19,19 @@ import { TerminalUnavailable, TerminalRequestError } from "./terminal-errors";
 import { EngineRefusal, SUBMISSION_OUTCOME_HEADER, recordEngineFailure, recordExecutionFailure, requestOperation } from "./engine-diagnostics";
 import { StorageError, storageError } from "./storage-error";
 import { AssistantUi } from "./assistant-ui";
-import { ResultReader } from "./result-reader";
+import { ResultReader, ResultWithdrawnError } from "./result-reader";
+import { datasetWithdrawals } from "./surface/render/dataset-source";
+import { DatasetReadError, datasetFailure, datasetQuery, decodeDatasetHead, decodeDatasetRead, extendsReference, type DatasetPosition, type DatasetRead } from "./dataset-read";
+import type { DatasetReference } from "./presentation/dataset";
+import type { ViewDatasetBinding } from "./value-views/view-datasets";
 import { workspaceHeaders, workspaceName } from "./workspace-binding";
 import type { Event, Request, StoredValue, Suggested, SavedHistoryPage } from "./protocol";
 
 export type Connection = "connecting" | "connected" | "reconnecting";
+/** Stored handles remembered per node for access notices: current plus a few recent runs. */
+const HANDLES_PER_NODE = 4;
+/** Largest dataset reply read, as the server bounds it. */
+const DATASET_REPLY_BYTES = 1024 * 1024;
 
 export interface SandboxObservation {
   readonly name: string; readonly generation: string; readonly reference: string | null;
@@ -81,7 +89,10 @@ export class Engine {
     this.observedWorkspace = name;
     if (this.viewWorkspaceName() !== before) this.workspaceListeners.forEach(listener => listener());
   }
-  private readonly results = new ResultReader(() => this.generation, () => this.timeout, () => this.binding);
+  // A server refusal of a withdrawn handle reaches the same shared gate as an access notice, so
+  // headers, peeks and windows holding the value drop it even without a notice.
+  private readonly results = new ResultReader(() => this.generation, () => this.timeout, () => this.binding,
+    (handle, generation) => { if (generation) datasetWithdrawals.withdrawMany([handle], generation); });
   constructor(readonly binding?: string, client?: string) {
     if (binding !== undefined && !workspaceName(binding)) throw new Error("Invalid workspace binding");
     if (client !== undefined) this.client = client;
@@ -204,6 +215,7 @@ export class Engine {
     source.onmessage = (message) => {
       try {
         const event = decodeEvent(parseExactJson(message.data));
+        const previousGeneration = this.generation;
         if (event.event === "session") {
           for (const waiter of this.documentWaiters.values()) if (waiter.generation !== event.generation) waiter.reject(new Error("Workspace changed while submitting the document; inspect its original workspace before retrying."));
         }
@@ -243,6 +255,13 @@ export class Engine {
         if (event.event === "evidence" && event.kind === "incomplete" && event.error)
           recordExecutionFailure({ event: "failed", node: event.node, reason: event.reason ?? event.error.message, error: event.error }, logContext);
         if (["session","ready","evidence","failed","cancelled","dropped","work-retired","workspace-closed"].includes(event.event)) this.viewFrames.invalidate();
+        // Access first: every cache is cleared before any consumer hears of the event or the stale
+        // state that follows it, so nothing can draw or resurrect the withdrawn value in between.
+        if (event.event === "session" && event.generation !== previousGeneration) this.nodeHandles.clear();
+        if (event.event === "session") datasetWithdrawals.withdrawMany(this.results.withdrawnHandles(), event.generation);
+        if (event.event === "ready" || event.event === "evidence") this.rememberHandle(event.node, event.handle);
+        if (event.event === "dropped") for (const node of event.nodes) this.nodeHandles.delete(node);
+        if (event.event === "result-access") this.withdrawAccess(event.node);
         if (event.event !== "vocabulary") onEvent(event);
         if ((event.event === "environments" || event.event === "vocabulary") && this.vocabulary) {
           const context = this.environmentContext();
@@ -503,8 +522,102 @@ export class Engine {
     let modules=builtinValueViews;
     try { modules=await this.valuePackages.modules(value); } catch { /* Renderer failure leaves the stored data readable. */ }
     if(generation!==this.generation)throw new Error("Workspace changed; the result read was discarded.");
+    if(this.results.isWithdrawn(handle))throw new ResultWithdrawnError();
     bindValueViews(value,modules);
     return value;
+  }
+  /**
+   * Reads one bounded page (or, without a position, only the lifecycle) of the Dataset at `select`
+   * inside the stored result `handle`, for the exact session `generation`. A busy refusal the
+   * server marks retryable is retried as the same read; nothing else is. A reply that arrives after
+   * the session changed is dropped, never returned.
+   */
+  async readDataset(handle: string, generation: string, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal): Promise<DatasetRead> {
+    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, {}, generation, datasetQuery(select, position, position ? limit : undefined),
+      raw => decodeDatasetRead(raw, expected, position ? limit : undefined), signal);
+  }
+  /**
+   * Inspects the current committed head of the Dataset at `select` inside the stored result
+   * `handle`: the same EventLog epoch or analysis attempt as the result's own snapshot `original`,
+   * never another attempt. The reply must extend both `original` and `shown`, the newest head this
+   * reader already drew. It starts no work; a reader asks for it only after an explicit Follow.
+   */
+  async readDatasetHead(handle: string, generation: string, original: DatasetReference, shown: DatasetReference, select: string, signal: AbortSignal): Promise<DatasetRead> {
+    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, {}, generation, datasetQuery(select, undefined, undefined, { kind: "head" }),
+      raw => decodeDatasetHead(raw, original, shown), signal);
+  }
+  /**
+   * Reads one page of `extent`, a head this reader already inspected for the stored result
+   * `handle`. The server checks it is still a committed extension of the result's own snapshot under
+   * current authority; the reply must name exactly that extent.
+   */
+  async readDatasetExtent(handle: string, generation: string, original: DatasetReference, extent: DatasetReference, select: string, position: DatasetPosition, limit: number, signal: AbortSignal): Promise<DatasetRead> {
+    if (!extendsReference(extent, original)) throw new DatasetReadError("invalid", 0, "DATASET_EXTENT_INVALID", "The shown snapshot is not an extension of this result; nothing was read.", false);
+    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, {}, generation, datasetQuery(select, position, limit, { kind: "extent", reference: extent }),
+      raw => decodeDatasetRead(raw, extent, limit), signal);
+  }
+  /**
+   * Reads the Dataset at `select` inside one drawn View member's input, for exactly the frame the
+   * host drew: its root and instance, the member, and that member's render and input revisions.
+   * The server resolves the member's own input; nothing here names a dataset, path or URL of the
+   * View's choosing, and nothing observes, refreshes or runs a source.
+   */
+  async readViewDataset(binding: ViewDatasetBinding, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal): Promise<DatasetRead> {
+    const path = `/view-datasets/${[binding.root, binding.rootInstance, binding.member].map(encodeURIComponent).join("/")}`;
+    // View reads are always the frozen input: the View route refuses head and extent reads.
+    return this.datasetGet(path, { "X-Wes-View-Revision": binding.revision, "X-Wes-Input-Revision": binding.inputRevision },
+      binding.generation, datasetQuery(select, position, position ? limit : undefined), raw => decodeDatasetRead(raw, expected, position ? limit : undefined), signal);
+  }
+  /** One bounded dataset GET: exact session, at most 1 MiB of reply, retry only a retryable busy. */
+  private async datasetGet(path: string, extra: Record<string, string>, generation: string, query: string, decode: (raw: unknown) => DatasetRead | undefined, signal: AbortSignal): Promise<DatasetRead> {
+    const changed = () => new DatasetReadError("session", 409, "DATASET_SESSION_CHANGED", "Workspace changed; the dataset read was discarded.", false);
+    const delays = [150, 400, 900];
+    for (let attempt = 0; ; attempt++) {
+      if (generation !== this.generation) throw changed();
+      const response = await fetch(`${path}?${query}`, {
+        headers: this.headers({ ...extra, "X-Wes-Session": generation }), cache: "no-store", signal: AbortSignal.any([signal, AbortSignal.timeout(this.timeout)]),
+      });
+      if (generation !== this.generation) throw changed();
+      if (response.ok) {
+        const text = await response.text();
+        if (new TextEncoder().encode(text).length > DATASET_REPLY_BYTES) throw new DatasetReadError("limit", response.status, "DATASET_REPLY_LIMIT", "The dataset reply exceeds its 1 MiB budget; nothing from it is drawn.", false);
+        const decoded = decode(parseExactJson(text));
+        if (generation !== this.generation) throw changed();
+        if (!decoded) throw new DatasetReadError("invalid", response.status, "DATASET_REPLY_INVALID", "The dataset reply does not match the shown snapshot; nothing from it is drawn.", false);
+        return decoded;
+      }
+      const failure = await datasetFailure(response);
+      if (generation !== this.generation) throw changed();
+      if (failure.kind !== "busy" || !failure.retryable || attempt >= delays.length) throw failure;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, delays[attempt]);
+        signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+      });
+    }
+  }
+  /**
+   * The stored handles this client was told each node published, newest last and a few per node:
+   * the only association between a node-scoped access notice and the values already read for it.
+   */
+  private readonly nodeHandles = new Map<string, string[]>();
+  private rememberHandle(node: string, handle: string) {
+    const known = (this.nodeHandles.get(node) ?? []).filter(it => it !== handle);
+    this.nodeHandles.set(node, [...known, handle].slice(-HANDLES_PER_NODE));
+  }
+  /**
+   * Withdraws `node`'s result here: its known handles are refused from now on (a reply in flight is
+   * dropped), marked withdrawn for every surface drawing a stored identity, its held displays are
+   * dropped and every open view frame is read afresh. Nothing reruns and nothing is read again for
+   * the node itself; a later run's new handle is unaffected.
+   */
+  private withdrawAccess(node: string) {
+    const handles = this.nodeHandles.get(node) ?? [];
+    for (const handle of handles) this.results.withdraw(handle);
+    if (this.generation) datasetWithdrawals.withdrawMany(handles, this.generation);
+    this.nodeHandles.delete(node);
+    liveReader(this).withdraw(node);
+    this.valuePackages.invalidate();
+    this.viewFrames.purge(); this.viewInputs.purge(); this.viewStates.purge();
   }
   private readonly valuePackages=new ValuePackages(async()=>{
     const generation=this.generation;

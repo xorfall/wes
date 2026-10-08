@@ -30,6 +30,14 @@
       "summary": "Choose a command family or provider. :list providers discovers the selected catalogue. :help arguments explains literals and nested references; :help errors explains diagnostic codes and typical fixes.",
       "children": [
         {
+          "name": "scan",
+          "summary": "Analyze captured finite records with declared pure transitions, coverage and cumulative limits."
+        },
+        {
+          "name": "dataset",
+          "summary": ""
+        },
+        {
           "name": "view",
           "summary": ""
         },
@@ -60,10 +68,6 @@
         {
           "name": "accumulate",
           "summary": "Accumulate each ordered event with a bounded, atomic checkpoint."
-        },
-        {
-          "name": "scan",
-          "summary": "Analyze captured finite records with declared pure transitions, coverage and cumulative limits."
         },
         {
           "name": "help",

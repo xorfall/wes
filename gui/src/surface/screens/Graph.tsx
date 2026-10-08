@@ -31,8 +31,14 @@ export interface GraphEdge {
    * `creation`: the edge ordered the consumer's one construction. Once it is `constructed`, refreshes
    * no longer travel along it; the edge stays drawn because ownership and deletion still follow it.
    */
-  readonly lifetime?: "creation";
+  readonly lifetime?: "creation" | "captured";
   readonly constructed?: boolean;
+  /**
+   * `captured`: the consumer took this input when its run was admitted. Producer updates no longer
+   * make it out of date (an explicit refresh of it captures them); the edge stays drawn and still
+   * counts for ownership, deletion and cycles.
+   */
+  readonly captured?: boolean;
 }
 
 /** Why the selected node is what it is, and what it would take with it. */

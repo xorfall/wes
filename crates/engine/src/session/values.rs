@@ -266,6 +266,19 @@ pub(super) struct SessionValues {
     policy: RetentionPolicy,
 }
 impl SessionValues {
+    pub(super) fn withdraw_nodes(&mut self, nodes: &[NodeId]) {
+        let mut changed = false;
+        for node in nodes {
+            changed |= self.outputs.swap_remove(node).is_some();
+            changed |= self.versions.swap_remove(node).is_some();
+        }
+        if changed {
+            let _ = self.updates.send(());
+        }
+    }
+    pub(super) fn worker(&self) -> StoreWorker {
+        self.storage.clone()
+    }
     pub fn prepare_pin(
         &mut self,
         node: NodeId,

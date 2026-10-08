@@ -1,0 +1,11 @@
+/* Management review: fixed rows, actions beneath the facts they act on. */
+.wes-terminal .delete-plan { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.wes-terminal .delete-plan-references { max-height:calc(8 * 1.5em); overflow:auto; overscroll-behavior:contain; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.wes-terminal .delete-plan-notice { white-space:pre-wrap; }
+.wes-terminal .delete-plan-choice { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin:0; padding:0; border:0; font:inherit; }
+.wes-terminal .delete-plan-choice legend { float:left; margin-right:12px; padding:0; }
+.wes-terminal .delete-plan-actions,
+.wes-terminal .management-actions { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-height:1.5em; }
+/* Run-zone command notes wrap within the cell instead of widening it at narrow sizes. */
+.wes-terminal .recording-controls > .value-line,
+.wes-terminal .reconciliation-controls > .value-line { flex:1 1 16ch; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }

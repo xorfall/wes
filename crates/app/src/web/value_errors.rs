@@ -50,6 +50,12 @@ impl Failure {
                 "This stored result is unavailable. It may have been released or evicted; no command was rerun.",
                 false,
             ),
+            Self::Storage(StoreError::DatasetWithdrawn) => (
+                StatusCode::FORBIDDEN,
+                "VALUE_ACCESS_WITHDRAWN",
+                "Result access was withdrawn; no command was rerun.",
+                false,
+            ),
             Self::Storage(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "VALUE_READ_FAILED",
@@ -117,6 +123,12 @@ mod tests {
         for (failure, status, code, retryable) in [
             (Failure::Busy, 503, "VALUE_READ_BUSY", true),
             (Failure::Missing, 404, "VALUE_UNAVAILABLE", false),
+            (
+                Failure::Storage(StoreError::DatasetWithdrawn),
+                403,
+                "VALUE_ACCESS_WITHDRAWN",
+                false,
+            ),
             (
                 Failure::Storage(StoreError::Closed),
                 500,

@@ -31,7 +31,7 @@ impl Capture {
                 .contracts
                 .resolve(&port.r#type)
                 .map_err(|_| Error::Interaction)?;
-            if !event.data.is_materialized() || !contract.issues(&event.data).is_empty() {
+            if !event.data.is_inline() || !contract.issues(&event.data).is_empty() {
                 return Err(Error::Interaction);
             }
             let value = Value::new(contract.shape(), event.data.clone(), Provenance::default())

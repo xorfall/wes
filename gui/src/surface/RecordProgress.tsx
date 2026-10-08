@@ -1,6 +1,6 @@
 import type { WorkspaceNode } from "../workspace";
 import { lineText, MonoLine } from "./MonoLine";
-import { PROGRESS_NOTE, progressRows } from "./record-progress";
+import { PROGRESS_NOTE, progressKind, progressRows, RECORDING_NOTE } from "./record-progress";
 import "./record-progress.css";
 
 /**
@@ -12,9 +12,11 @@ import "./record-progress.css";
 export function RecordProgress({ node, full = false }: { readonly node: WorkspaceNode | undefined; readonly full?: boolean }) {
   const rows = progressRows(node);
   if (!rows) return null;
+  const recording = progressKind(node) === "recording";
+  const note = recording ? RECORDING_NOTE : PROGRESS_NOTE;
   return (
-    <div className={`record-progress${full ? " record-progress-full" : ""}`} role="group" aria-label="analysis progress"
-      aria-description={full ? PROGRESS_NOTE : `${PROGRESS_NOTE} Whole rows and the analysis receipt are under details.`}>
+    <div className={`record-progress${full ? " record-progress-full" : ""}`} role="group" aria-label={recording ? "recording progress" : "analysis progress"}
+      aria-description={full ? note : `${note} Whole rows${recording ? "" : " and the analysis receipt"} are under details.`}>
       {rows.map((row, at) => <MonoLine key={at} segments={row} className="record-progress-row" description={full ? undefined : lineText(row)} />)}
     </div>
   );

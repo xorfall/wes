@@ -478,7 +478,7 @@ pub(super) fn build(
             out.runs.insert(node.id().clone(), run.clone());
             out.bytes += 64;
         }
-        out.push(format!("created:{id}"), json!({"event":"created", "node":id, "errorNames":observation.state.names.iter().filter(|(_,output)| output.node==*node.id() && output.port==OutputPort::Error).take(8).map(|(name,_)|name).collect::<Vec<_>>(), "dependencyLifetime":if execution.creation_inputs.contains_key(node.id()) {"creation"} else {"continuous"}, "dependsOn":node.dependencies().keys().map(|id| id.as_str()).collect::<Vec<_>>(), "name":name, "command":sources.get(id).copied().unwrap_or(""), "currentDefinition":node.payload().call().filter(|call|call.definition_changed()).map(|call|current_definition(call, observation.state.names.iter())), "run":execution.runs.get(node.id()).map(|run|run.as_str()), "interactive":interactive, "streamOutput":stream_outputs.contains(node.id()), "streamSource":node.payload().call().is_some_and(wes_engine::providers::BoundCall::streaming), "repeatable":node.payload().traits().repeatable, "traced":node.payload().call().is_some_and(|call|call.invocation().trace_profile.is_some()), "startedAt":started.get(id)}))?;
+        out.push(format!("created:{id}"), json!({"event":"created", "node":id, "errorNames":observation.state.names.iter().filter(|(_,output)| output.node==*node.id() && output.port==OutputPort::Error).take(8).map(|(name,_)|name).collect::<Vec<_>>(), "dependencyLifetime":if execution.creation_inputs.contains_key(node.id()) {"creation"} else if execution.captured_inputs.contains_key(node.id()) {"captured"} else {"continuous"}, "inputsCaptured":execution.captured_inputs.get(node.id()).copied().unwrap_or(false), "dependsOn":node.dependencies().keys().map(|id| id.as_str()).collect::<Vec<_>>(), "name":name, "command":sources.get(id).copied().unwrap_or(""), "currentDefinition":node.payload().call().filter(|call|call.definition_changed()).map(|call|current_definition(call, observation.state.names.iter())), "run":execution.runs.get(node.id()).map(|run|run.as_str()), "interactive":interactive, "streamOutput":stream_outputs.contains(node.id()), "streamSource":node.payload().call().is_some_and(wes_engine::providers::BoundCall::streaming), "recordingControl":execution.runs.get(node.id()).and_then(|run|node.payload().recording_control(run.as_str())), "reconciliationControl":execution.runs.get(node.id()).and_then(|_|node.payload().reconciliation_control(!execution.executing.contains(node.id()) && !matches!(node.state(), wes_engine::graph::NodeState::Running | wes_engine::graph::NodeState::Pending))), "lifetimeActive":node.payload().lifetime().then(|| execution.executing.contains(node.id())), "repeatable":node.payload().traits().repeatable, "traced":node.payload().call().is_some_and(|call|call.invocation().trace_profile.is_some()), "startedAt":started.get(id)}))?;
         if let Some(binding) = node.payload().environments().next() {
             out.push(format!("environment:{id}"), json!({"event":"node-environment","node":id,"environment":binding.environment().name(),"revision":binding.environment().revision().to_string(),"target":binding.import().target().name(),"endpoint":binding.import().endpoint(),"origin":binding.import().origin().environment}))?;
         }
@@ -500,6 +500,14 @@ pub(super) fn build(
         state["updatePending"] = json!(execution.input_updates.contains(node.id()));
         if let Some(reason) = execution.stale_reasons.get(node.id()) {
             state["staleReason"] = json!({"code":reason.code(),"message":reason.message()});
+            if reason.code() == "result_withdrawn" {
+                // Scoped to a node this reader already knows. No global dataset
+                // inventory or withdrawn descriptor is sent to the client.
+                out.push(
+                    format!("access:{id}"),
+                    json!({"event":"result-access", "node":id, "readable":false}),
+                )?;
+            }
         }
         if let Some(waits) = execution.waiting_inputs.get(node.id()) {
             state["waiting"] =

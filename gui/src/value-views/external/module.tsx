@@ -16,6 +16,8 @@ import {MessageRate} from "./message-rate";
 import fonts from "../../surface/fonts.css?inline";
 import authoring from "@wes/view-sdk/authoring.json";
 import type {PresentationNode} from "../../presentation/types";
+import {DatasetBridge,ViewDatasetContext,type DatasetRoute} from "../view-datasets";
+import {DatasetHostContext} from "../../surface/render/dataset-source";
 interface Model {input:unknown;identity?:string;inputRevision?:string;path:string;slots:Readonly<Record<string,readonly PresentationNode[]>>;mode:Mode;coordinated:boolean}
 interface InspectionSession { controller:InteractionController<unknown,unknown>; apply:(message:Record<string,unknown>)=>boolean }
 interface InspectionOutlet { selected?:string; target:HTMLElement|null; select:(key:string|undefined)=>void }
@@ -73,6 +75,15 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   useEffect(()=>()=>{if(!mirror && outletRef.current?.selected===inspectionKey)outletRef.current.select(undefined);},[inspectionKey,mirror]);
   const box=useRef<HTMLDivElement>(null),frame=useRef<HTMLIFrameElement>(null);
   const host=useContext(InstanceInteractionHost),hostRef=useRef(host);hostRef.current=host;
+  // Dataset reads go only through the source this drawing already has: the drawn frame member, or
+  // the stored result an ordinary value renderer is drawn from. Never through anything the View names.
+  const bindings=useContext(ViewDatasetContext),stored=useContext(DatasetHostContext);
+  const binding=model.identity!==undefined ? bindings?.(model.path) : undefined;
+  const route:DatasetRoute=binding ? {kind:"frame",binding} : model.identity===undefined && stored?.source ? {kind:"stored",source:stored.source,path:model.path} : {kind:"none"};
+  const routeKey=route.kind==="frame" ? stringifyExactJson(["frame",route.binding.generation,route.binding.root,route.binding.rootInstance,route.binding.member,route.binding.revision,route.binding.inputRevision])
+    : route.kind==="stored" ? stringifyExactJson(["stored",route.source.generation,route.source.handle,route.path]) : "none";
+  const routeRef=useRef(route);routeRef.current=route;
+  const bridge=useRef<DatasetBridge>(),drawn=useRef<{input:unknown;route:string}>();
   const rebindShared=useRef<()=>void>();
   useLayoutEffect(()=>rebindShared.current?.(),[host]);
   // Delivery receipts cover only the primary canvas of a live frame entry; inspection mirrors and
@@ -91,8 +102,15 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const slots=Object.entries(model.slots).flatMap(([name,nodes])=>nodes.map((node,index)=>({key:`${name}/${index}`,node})));
   const heights=useRef<Record<string,number>>({}),children=new Map(slots.map(slot=>[slot.key,slot.node]));
   const active=useRef(false);
-  const update=()=>delivery.current?.update(()=>({input:modelRef.current.input,context:{mode:modelRef.current.mode,instance:modelRef.current.identity??null,coordinated:modelRef.current.coordinated,inspectionOnly:!!mirror,inspectionActive:outletRef.current?.selected===inspectionKey,inspectionOutlet:!!outletRef.current && modelRef.current.coordinated && !mirror,active:active.current},slots:Object.fromEntries(Object.entries(modelRef.current.slots).map(([name,nodes])=>[name,nodes.map((_node,index)=>({key:`${name}/${index}`,height:heights.current[`${name}/${index}`]??120}))]))}));
-  useLayoutEffect(update,[model,inspectionOutlet,inspectionActive]);
+  const update=()=>{
+    // A new input or binding ends every Dataset read in flight for the old one.
+    const now={input:modelRef.current.input,route:routeKey};
+    if(drawn.current && (drawn.current.input!==now.input||drawn.current.route!==now.route))bridge.current?.reset();
+    drawn.current=now;
+    delivery.current?.update(()=>({input:modelRef.current.input,context:{mode:modelRef.current.mode,instance:modelRef.current.identity??null,coordinated:modelRef.current.coordinated,inspectionOnly:!!mirror,inspectionActive:outletRef.current?.selected===inspectionKey,inspectionOutlet:!!outletRef.current && modelRef.current.coordinated && !mirror,active:active.current,
+      datasets:routeRef.current.kind!=="none" && !mirror,datasetEpoch:bridge.current?.current()??0},slots:Object.fromEntries(Object.entries(modelRef.current.slots).map(([name,nodes])=>[name,nodes.map((_node,index)=>({key:`${name}/${index}`,height:heights.current[`${name}/${index}`]??120}))]))}));
+  };
+  useLayoutEffect(update,[model,inspectionOutlet,inspectionActive,routeKey]);
   /** Whether the reader's focus is inside this presentation (its frame or a host slot) while the
    *  application has focus. Every View hears the same signal, so none infers focus from its own clicks;
    *  it never says where focus went. It is for appearance only: delivery is asynchronous and may skip
@@ -125,7 +143,8 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     const attachShared=()=>{detachShared();if(!closed&&!failed&&controller&&remote)closeShared=hostRef.current?.(modelRef.current.path,remote,controller);};
     rebindShared.current=attachShared;
     observed.restart();
-    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
+    const datasets=new DatasetBridge(text=>{if(!closed&&!failed)channel.port1.postMessage(text);},limits.inputBytes);bridge.current=datasets;drawn.current=undefined;
+    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);datasets.close();setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
     const send=(value:unknown)=>{if(closed||failed)return;const text=stringifyExactJson(value);if(text.length>limits.messageCharacters)throw new Error("Message budget");channel.port1.postMessage(text);};
     const sync=()=>{if(controller)send({kind:"state",state:controller.committed(),revision:controller.committedRevision()});};
     const applyEvent=(message:Record<string,unknown>)=>{
@@ -192,6 +211,10 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
         }else if(message.kind==="shortcut"){
           if(!["Tab","Enter","r","R","m","M"].includes(String(message.key))||!(message.ctrl||message.meta))throw new Error();
           iframe.dispatchEvent(new KeyboardEvent("keydown",{key:String(message.key),ctrlKey:!!message.ctrl,metaKey:!!message.meta,shiftKey:!!message.shift,bubbles:true,cancelable:true}));
+        }else if(message.kind==="dataset-read"){
+          // A page read for this drawing's own input only; the inspection mirror reads nothing.
+          if(mirror)throw new Error("Dataset reads are not available in inspection");
+          datasets.handle(message,asset.definition,modelRef.current.input,routeRef.current);
         }else if(message.kind==="error")fail("View renderer failed. Close and reopen to retry.","renderer_failed");else throw new Error("Unknown message");
       }catch{fail("View communication rejected: invalid data or message rate exceeded. Close and reopen to retry.","communication_rejected");}
     };
@@ -201,7 +224,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     connect.current=loaded;
     channel.port1.start();
     didLoad.current=false;iframe.srcdoc=document;
-    return ()=>{closed=true;abort.abort();d.close();channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
+    return ()=>{closed=true;abort.abort();d.close();datasets.close();if(bridge.current===datasets)bridge.current=undefined;channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
   },[document,asset,module,mirror,observed]);
   return <><div ref={box} style={{position:"relative",maxWidth:"100%",minWidth:0,overflow:"hidden"}}>
     {problem&&<p className="mono-warn" role="status">{problem}</p>}

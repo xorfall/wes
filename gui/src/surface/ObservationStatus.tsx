@@ -13,6 +13,6 @@ export function ObservationStatus({ observation, onRetry, inline = false }: { ob
   return <span className={`result-observation-status${inline ? " result-observation-status-inline" : ""}`} role="status" aria-description={observation?.problem ?? observation?.staleReason}
     aria-hidden={!pending} data-state={pending ? observation.problem ? "problem" : observation.state : "current"}>
     <span className="result-observation-label">{pending ? observation.problem ? `Previous result · ${observation.problem}` : label : ""}</span>
-    {pending && observation.problem && onRetry && <button type="button" className="cell-action" onClick={onRetry}>retry reading result</button>}
+    {pending && observation.problem && !observation.withdrawn && onRetry && <button type="button" className="cell-action" onClick={onRetry}>retry reading result</button>}
   </span>;
 }

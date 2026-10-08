@@ -35,7 +35,7 @@ mod replay;
 pub use actions::{ControlApplied, OperationReceipt, PreparedControl};
 pub use draft::{BatchApplied, DeclarationDraft, PreparedBatch};
 pub use replay::ReplayWorkspace;
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum Installation {
     Live,
     Held,
@@ -166,6 +166,7 @@ enum Change {
     Node {
         node: NodeId,
         task: BoundTask,
+        admission: Installation,
         activation: Option<OutputRef>,
         stream_origin: Option<NodeId>,
         pipeline: crate::runtime::PipelineStep,
@@ -328,6 +329,8 @@ pub struct Applied {
 mod observation;
 
 pub struct Workspace {
+    pub(crate) recordings: crate::eventlog::owner::Owner,
+    pub(crate) dataset_access: crate::storage::datasets::DatasetAccess,
     pub(crate) views: crate::views::Store,
     pub(crate) sandbox_store: Option<Arc<dyn crate::session::sandbox::DefinitionStore>>,
     pub(crate) sandbox_runtime: bool,
@@ -528,6 +531,8 @@ impl Workspace {
     }
     pub fn new() -> Self {
         Self {
+            recordings: Default::default(),
+            dataset_access: Default::default(),
             views: Default::default(),
             sandbox_store: None,
             sandbox_runtime: false,
@@ -647,6 +652,11 @@ impl Workspace {
         run: &Run,
         progress: crate::driver::progress::ExecutionProgress,
     ) -> bool {
+        let progress = if progress.blocked_by(&self.dataset_access) {
+            progress.restricted(&wes_core::flow::FlowPolicy::default().private())
+        } else {
+            progress
+        };
         self.runtime.update_progress(run, progress)
     }
     pub fn catalogue(&self) -> &Catalogue {
@@ -912,6 +922,7 @@ impl Workspace {
             Change::Node {
                 node,
                 task,
+                admission,
                 activation,
                 stream_origin,
                 pipeline,
@@ -921,12 +932,12 @@ impl Workspace {
                 let dependencies = task.dependencies().collect::<Vec<_>>();
                 let traits = task.traits();
                 let dependency_lifetime = task.dependency_lifetime();
-                match installation {
-                    Installation::Live => {
+                match (installation, admission) {
+                    (Installation::Live, Installation::Live) => {
                         self.runtime
                             .add_at(node.clone(), task, dependencies, traits)?
                     }
-                    Installation::Held => self.runtime.restore(
+                    _ => self.runtime.restore(
                         node.clone(),
                         task,
                         dependencies,
@@ -1025,12 +1036,15 @@ impl Workspace {
             .is_some_and(crate::providers::BoundCall::streaming)
         {
             self.runtime.enter_stream(&ticket.run)
+        } else if ticket.payload.lifetime() {
+            self.runtime.enter_lifetime(&ticket.run)
         } else {
             self.runtime.enter(&ticket.run)
         };
         if !entered {
             return Ok(None);
         }
+        self.recordings.retire_obsolete(&self.runtime);
         self.check_task_bindings(&ticket.payload).map_err(|error| {
             wes_core::ErrorValue::new(
                 wes_core::ErrorId::new(uuid::Uuid::new_v4().to_string()).expect("error identity"),
@@ -1041,7 +1055,18 @@ impl Workspace {
             )
             .expect("binding refusal")
         })?;
-        if let BoundTask::Call(call) = &mut ticket.payload {
+        if let BoundTask::SourceLaunch(launch) = &mut ticket.payload {
+            launch.capture(self);
+        }
+        let call = match &mut ticket.payload {
+            BoundTask::Call(call) => Some(call),
+            BoundTask::SourceLaunch(launch) => Some(&mut launch.source),
+            _ => None,
+        };
+        if let Some(call) = call {
+            if let Some(node) = self.runtime.graph().node(ticket.run.node()) {
+                call.set_source_definition(node.definition());
+            }
             call.set_traces(self.traces.clone());
             call.set_stream_budget(self.runtime.stream_delivery_budget(ticket.run.node()));
         }
@@ -1050,6 +1075,21 @@ impl Workspace {
         }
         if let BoundTask::Query(query) = &mut ticket.payload {
             query.capture(self);
+        }
+        if let BoundTask::Recording(recording) = &mut ticket.payload {
+            recording.capture(self);
+        }
+        if let BoundTask::Dataset(read) = &mut ticket.payload {
+            read.capture(self);
+        }
+        if let BoundTask::Reconcile(reconcile) = &mut ticket.payload {
+            reconcile.capture(self);
+        }
+        if let BoundTask::ScanExcerpt(excerpt) = &mut ticket.payload {
+            excerpt.capture(self);
+        }
+        if let BoundTask::ScanResume(resume) = &mut ticket.payload {
+            resume.capture(self);
         }
         if let BoundTask::Stream(op) = &mut ticket.payload {
             op.delivery = self
@@ -1061,6 +1101,17 @@ impl Workspace {
             accumulation.capture(&self.runtime, &ticket.run);
         }
         Ok(Some(ticket))
+    }
+    pub(crate) fn lifetime_value(
+        &mut self,
+        run: &Run,
+        value: wes_core::Value,
+        now: Duration,
+    ) -> Option<Vec<Effect<BoundTask>>> {
+        if self.dataset_access.blocks(&value) {
+            return None;
+        }
+        self.runtime.lifetime_value(run, value, now)
     }
     pub(crate) fn stream_update(
         &mut self,
@@ -1075,6 +1126,17 @@ impl Workspace {
         outcome: Outcome,
         now: Duration,
     ) -> Vec<Effect<BoundTask>> {
+        let outcome = match outcome {
+            Outcome::Produced(value) | Outcome::Incomplete { value, .. }
+                if self.dataset_access.blocks(&value) =>
+            {
+                Outcome::Failed(crate::runtime::RuntimeCode::InputFailed.error(
+                    "Result access was withdrawn before publication; no source was replayed.",
+                    None,
+                ))
+            }
+            outcome => outcome,
+        };
         let effects = self.runtime.complete(run, outcome, now);
         if self.views.contains(run.node())
             && self.runtime.value_of(run.node()).is_none()
@@ -1091,6 +1153,35 @@ impl Workspace {
         }
         effects
     }
+    pub(crate) fn apply_dataset_access(
+        &mut self,
+        access: crate::storage::datasets::DatasetAccess,
+    ) -> (Vec<NodeId>, Vec<Effect<BoundTask>>) {
+        let blocked = self
+            .runtime
+            .graph()
+            .nodes()
+            .filter_map(|node| {
+                let value = self
+                    .runtime
+                    .value_of(node.id())
+                    .or_else(|| self.runtime.evidence_value(node.id()).map(|e| &e.value));
+                (value.is_some_and(|value| access.blocks(value))
+                    || self
+                        .runtime
+                        .execution_progress(node.id())
+                        .is_some_and(|progress| progress.blocked_by(&access)))
+                .then(|| node.id().clone())
+            })
+            .collect::<Vec<_>>();
+        self.dataset_access = access;
+        let mut effects = Vec::new();
+        for node in &blocked {
+            effects.extend(self.runtime.withdraw(node));
+        }
+        self.views.withdraw_dataset_inputs(&self.dataset_access);
+        (blocked, effects)
+    }
     pub(crate) fn complete_report(
         &mut self,
         run: &Run,
@@ -1101,7 +1192,7 @@ impl Workspace {
             self.runtime.set_stream_start(run, start);
         }
         if let Some(progress) = report.progress {
-            self.runtime.update_progress(run, progress);
+            self.update_execution_progress(run, progress);
         }
         self.complete(run, report.outcome, now)
     }

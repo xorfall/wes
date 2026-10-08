@@ -51,6 +51,11 @@ export class ViewFrameReader<T=ViewFrame> {
     return ()=>{selected.listeners.delete(listener);if(!selected.listeners.size){selected.controller?.abort();this.watches.delete(key);}if(!this.watches.size){clearTimeout(this.timer);this.timer=undefined;}};
   }
   invalidate(){for(const watch of this.watches.values())watch.dirty=true;this.schedule();}
+  /**
+   * Drops every held frame and its revision tag at once, so no withdrawn input stays drawn or can
+   * seed a delta; each open view reads its frame afresh as for any finite edit.
+   */
+  purge(){for(const watch of this.watches.values()){watch.controller?.abort();watch.etag=undefined;watch.poll=false;watch.failed=false;watch.retries=0;watch.dirty=true;watch.sample={};for(const listener of watch.listeners)listener(watch.sample);}this.schedule();}
   private schedule(){if(this.timer!==undefined || ![...this.watches.values()].some(w=>!w.failed&&(this.period||w.dirty||w.poll)&&!w.controller))return;
     this.timer=setTimeout(()=>{this.timer=undefined;for(const w of this.watches.values())if(!w.failed&&(this.period||w.poll))w.dirty=true;this.tick();},this.period??([...this.watches.values()].some(w=>w.poll)?250:100));}
   private tick(){

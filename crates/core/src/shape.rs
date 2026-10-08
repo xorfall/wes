@@ -71,6 +71,7 @@ impl Eq for RecordShape {}
 /// Nominal management types cannot be supplied where ordinary data is expected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetaType {
+    DatasetDeletePlan,
     WorkspaceDeletePlan,
     ImportPlan,
     ViewInstance,
@@ -78,6 +79,7 @@ pub enum MetaType {
 impl fmt::Display for MetaType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::DatasetDeletePlan => "DatasetDeletePlan",
             Self::WorkspaceDeletePlan => "WorkspaceDeletePlan",
             Self::ImportPlan => "ImportPlan",
             Self::ViewInstance => "ViewInstance",
@@ -90,12 +92,34 @@ pub enum Shape {
     List(Box<Shape>),
     Option(Box<Shape>),
     Iter(Box<Shape>),
+    Dataset(Box<Shape>),
     Record(RecordShape),
     Unknown,
     Meta(MetaType),
 }
 
 impl Shape {
+    pub fn is_inline(&self) -> bool {
+        self.snapshot_kind(false, 0, &mut 1_000_000)
+    }
+    pub fn is_storable_snapshot(&self) -> bool {
+        self.snapshot_kind(true, 0, &mut 1_000_000)
+    }
+    fn snapshot_kind(&self, datasets: bool, depth: usize, remaining: &mut usize) -> bool {
+        if depth > 128 || *remaining == 0 {
+            return false;
+        }
+        *remaining -= 1;
+        match self {
+            Self::Iter(_) | Self::Meta(_) => false,
+            Self::Dataset(s) => datasets && s.snapshot_kind(false, depth + 1, remaining),
+            Self::List(s) | Self::Option(s) => s.snapshot_kind(datasets, depth + 1, remaining),
+            Self::Record(r) => r
+                .fields()
+                .all(|(_, s)| s.snapshot_kind(datasets, depth + 1, remaining)),
+            Self::Primitive(_) | Self::Unknown => true,
+        }
+    }
     pub fn field(&self, name: &str) -> Option<&Shape> {
         match self {
             Self::Record(record) => record.field(name),
@@ -110,7 +134,7 @@ impl Shape {
     pub fn contains_meta(&self) -> bool {
         match self {
             Self::Meta(_) => true,
-            Self::List(s) | Self::Option(s) | Self::Iter(s) => s.contains_meta(),
+            Self::List(s) | Self::Option(s) | Self::Iter(s) | Self::Dataset(s) => s.contains_meta(),
             Self::Record(r) => r.fields().any(|(_, s)| s.contains_meta()),
             _ => false,
         }
@@ -121,9 +145,9 @@ impl Shape {
             (Self::Meta(a), Self::Meta(b)) => a == b,
             (_, Self::Unknown) => !self.contains_meta(),
             (Self::Primitive(a), Self::Primitive(b)) => a == b,
-            (Self::List(a), Self::List(b)) | (Self::Iter(a), Self::Iter(b)) => {
-                a.is_assignable_to(b)
-            }
+            (Self::List(a), Self::List(b))
+            | (Self::Iter(a), Self::Iter(b))
+            | (Self::Dataset(a), Self::Dataset(b)) => a.is_assignable_to(b),
             (Self::Option(a), Self::Option(b)) => a.is_assignable_to(b),
             (Self::Record(a), Self::Record(b)) => b.fields().all(|(key, shape)| {
                 a.field(key)
@@ -143,6 +167,7 @@ impl fmt::Display for Shape {
             Self::List(element) => write!(f, "List<{element}>"),
             Self::Option(element) => write!(f, "Option<{element}>"),
             Self::Iter(element) => write!(f, "Iter<{element}>"),
+            Self::Dataset(element) => write!(f, "Dataset<{element}>"),
             Self::Record(record) if !record.name.is_empty() => f.write_str(&record.name),
             Self::Record(record) => {
                 f.write_str("{ ")?;

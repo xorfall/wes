@@ -4,6 +4,8 @@ import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
 import { stoppedStream, updatePendingStatus, type Workspace, type WorkspaceNode } from "../workspace";
 import { RecordProgress } from "./RecordProgress";
+import { RecordingControls } from "./RecordingControls";
+import { LocalReconciliationControls } from "./LocalReconciliationControls";
 import { ScanReceiptDetails } from "./ScanReceiptDetails";
 import { evidenceLabel } from "./record-progress";
 import type { SessionCell } from "./session-model";
@@ -17,9 +19,13 @@ import { useScrollMemory } from "./scroll-memory";
 import { resultAccess } from "./result-access";
 import { openRoute } from "./open-route";
 import { creationInputOf } from "./graph-model";
+import { useWithdrawn, WITHDRAWN_TITLE } from "./render/dataset-source";
+import { ResultWithdrawnError } from "../result-reader";
 import "./inspector.css";
 
 const sentence=(text:string)=>`${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+/** What a captured-input analysis does with later input changes; nothing here is a construction. */
+export const CAPTURED_NOTE="Inputs were captured when this run started. Later changes to them neither restart nor change it; running it again captures the newer inputs.";
 
 export type InspectorTab="inspect"|"json"|"history";
 export interface InspectorSelection { cell:string; node?:string; tab:InspectorTab }
@@ -36,6 +42,7 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
   const node=workspace.nodes.find(it=>it.id===selection.node);
   const [read,setRead]=useState<{handle:string;value:StoredValue;generation:string;signature:string}>();
   const [problem,setProblem]=useState<string>();
+  const [problemWithdrawn,setProblemWithdrawn]=useState(false);
   const [retry,setRetry]=useState(0);
   const [historyVisited,setHistoryVisited]=useState(selection.tab==="history");
   useEffect(()=>{if(selection.tab==="history")setHistoryVisited(true);},[selection.tab]);
@@ -57,8 +64,8 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
   useEffect(()=>{if(active)heading.current?.focus({preventScroll:true});},[active]);
   useEffect(()=>{
     if(!active || !permitted || !node?.handle || !generation)return;
-    let current=true;const handle=node.handle;setProblem(undefined);
-    void engine.fetch(handle).then(value=>{if(current && latest.current?.handle===handle)setRead({handle,value,generation,signature});},error=>{if(current)setProblem(error instanceof Error ? error.message : String(error));});
+    let current=true;const handle=node.handle;setProblem(undefined);setProblemWithdrawn(false);
+    void engine.fetch(handle).then(value=>{if(current && latest.current?.handle===handle)setRead({handle,value,generation,signature});},error=>{if(current){setProblem(error instanceof Error ? error.message : String(error));setProblemWithdrawn(error instanceof ResultWithdrawnError);}});
     return()=>{current=false;};
   },[engine,node?.handle,node?.evidence?.kind,node?.evidence?.run,signature,generation,active,permitted,retry]);
   useEffect(()=>{
@@ -71,6 +78,9 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
   },[owner,node?.id,generation,signature,active,live,retry,selection.tab]);
   const currentValue=live ? (sample.signature===signature ? sample.value : undefined) : read && read.handle===node?.handle && read.generation===generation && read.signature===signature ? read.value : undefined;
   const value=permitted && !sample.withdrawn ? safeSnapshot?.value ?? currentValue : undefined;
+  // The stored result the shown value was read from; live samples and held snapshots have none.
+  const stored=read && value===read.value && generation ? {handle:read.handle,generation} : undefined;
+  const isWithdrawn=useWithdrawn();
   const stopped=Boolean(stoppedStream(node));
   const partial=resultAccess(node).partial;
   const newer=useMemo(()=>{
@@ -86,7 +96,7 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
   }}>
     <header className="inspector-header">
       {overlay && <button className="cell-action" onClick={onClose}>← session</button>}
-      <div className="inspector-title"><strong>{label}</strong><span>{value ? typeLine(presentationType(value)) : node?.state ?? "not run"}</span></div>
+      <div className="inspector-title"><strong>{label}</strong><span>{node?.accessWithdrawn || value && isWithdrawn(stored) ? WITHDRAWN_TITLE : value ? typeLine(presentationType(value)) : node?.state ?? "not run"}</span></div>
       <div className="inspector-live" role="status">
         {safeSnapshot ? <><span>{safeSnapshot.fromCell ? `snapshot from the cell’s hold at ${safeSnapshot.at}` : snapshotLabel(safeSnapshot,stopped,Boolean(newer))}{newer===undefined && " · last-value comparison exceeds the display budget"}</span><button className="cell-action" onClick={()=>setSnapshot(undefined)}>{stopped ? "show last value" : "follow live"}</button></>
           : live ? <><span>live · following</span><button className="cell-action" disabled={!currentValue} onClick={()=>currentValue && setSnapshot({value:currentValue,at:new Date().toLocaleTimeString(),revision:sample.revision,epoch:JSON.stringify(sample.metadata?.epochs),serverRevision:sample.metadata?.revision,signature})}>freeze</button></>
@@ -100,17 +110,20 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
       <div role="tabpanel" aria-label="inspect" hidden={tab!=="inspect"}>
         {node?.private && <p className="mono-warn">Private · memory only · readable in this workspace</p>}
         <RecordProgress node={node} />
+        <RecordingControls node={node} />
+        <LocalReconciliationControls node={node} />
         {partial && node?.failure && <p className="mono-bad">{node.failureRecord?.code ? `${node.failureRecord.code} · ` : ""}{node.failure}</p>}
-        {!permitted && node && <p className="mono-warn">{node.doubt ? "Outcome uncertain · result not read" : `${node.state} · no current value`}</p>}
-        {(problem || sample.problem) && <p className="mono-warn" role="alert">Read failed · {problem ?? sample.problem} <button className="cell-action" onClick={()=>setRetry(n=>n+1)}>retry reading</button></p>}
-        {value ? <ValueBlock engine={engine} value={value} cacheKey={`${generation}:${node?.id}:inspector:${safeSnapshot ? `snapshot:${safeSnapshot.revision}` : live ? `${JSON.stringify(sample.metadata?.epochs)}:${sample.metadata?.revision??sample.revision}` : node?.handle}`} bindingKey={`${generation}:${node?.id}:inspector`} mode="window" inCell={false} facts={{whole:true,stopped}}/>
+        {!permitted && node && <p className="mono-warn">{node.accessWithdrawn ? WITHDRAWN_TITLE : node.doubt ? "Outcome uncertain · result not read" : `${node.state} · no current value`}</p>}
+        {(problem || sample.problem) && <p className="mono-warn" role="alert">Read failed · {problem ?? sample.problem} {!(problem && problemWithdrawn) && <button className="cell-action" onClick={()=>setRetry(n=>n+1)}>retry reading</button>}</p>}
+        {value ? <ValueBlock engine={engine} value={value} {...(stored ? { stored } : {})} {...(node?.name ? { name: node.name } : {})} cacheKey={`${generation}:${node?.id}:inspector:${safeSnapshot ? `snapshot:${safeSnapshot.revision}` : live ? `${JSON.stringify(sample.metadata?.epochs)}:${sample.metadata?.revision??sample.revision}` : node?.handle}`} bindingKey={`${generation}:${node?.id}:inspector`} mode="window" inCell={false} facts={{whole:true,stopped}}/>
           : permitted && !problem && <p className="mono-dim">{node?.handle || live ? "Reading value…" : "no value · inspect run history for the recorded outcome"}</p>}
         {/* Beside the generic value view, not instead of it; only a typed ScanResult has one. */}
-        <ScanReceiptDetails value={value} />
+        <ScanReceiptDetails value={isWithdrawn(stored) ? undefined : value} {...(node ? { node } : {})} />
         {node?.dependencyLifetime==="creation" && <p className="mono-dim inspector-creation" role="note">{sentence(creationInputOf(workspace,node))}</p>}
+        {node?.dependencyLifetime==="captured" && <p className="mono-dim inspector-creation" role="note">{CAPTURED_NOTE}</p>}
         <details className="inspector-details"><summary>run details</summary><p>{node?.state ?? "not run"}</p><pre>{node?.command ?? cell.source}</pre>{node?.failure && <p className="mono-bad">{node.failure}</p>}<RecordProgress node={node} full /></details>
       </div>
-      <div role="tabpanel" aria-label="json" hidden={tab!=="json"}>{value ? <ReadableJson value={value} active={tab==="json"}/> : <p className="mono-dim">No stored value available.</p>}</div>
+      <div role="tabpanel" aria-label="json" hidden={tab!=="json"}>{value && isWithdrawn(stored) ? <p className="mono-warn" role="status">{WITHDRAWN_TITLE}</p> : value ? <ReadableJson value={value} active={tab==="json"}/> : <p className="mono-dim">No stored value available.</p>}</div>
       <div role="tabpanel" aria-label="history" hidden={tab!=="history"}>{generation && historyVisited && <RunHistory engine={engine} workspace={workspace} generation={generation} cell={cell.id} nodes={cell.nodes} initialNode={selection.node} onClose={onClose}/>}</div>
     </div>
   </aside>;

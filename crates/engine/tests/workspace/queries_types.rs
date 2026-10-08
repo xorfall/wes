@@ -56,14 +56,18 @@ async fn discovery_describes_resolved_constraints_optional_fields_and_finite_con
     let customers = commit(&mut workspace, ":inspect type:Customers > customers").unwrap();
     run_all(&mut workspace).await;
     let list = workspace.runtime().value_of(&listed).unwrap().data();
-    assert_eq!(rows(list).len(), count + 5);
+    assert_eq!(rows(list).len(), count + 6);
     assert_eq!(row(list, "Customer")["origin"], Data::Text("loaded".into()));
     assert_eq!(row(list, "Int")["origin"], Data::Text("builtin".into()));
     assert_eq!(
         row(list, "Map")["parameters"],
-        Data::List(vec![Data::Text("K".into()), Data::Text("V".into())])
+        Data::List(vec![Data::Text("Text".into()), Data::Text("T".into())])
     );
     assert_eq!(row(list, "Iter")["kind"], Data::Text("constructor".into()));
+    assert_eq!(
+        row(list, "Dataset")["parameters"],
+        Data::List(vec![Data::Text("T".into())])
+    );
     let description = fields(workspace.runtime().value_of(&customer).unwrap());
     let fs = &description["fields"];
     assert_eq!(row(fs, "note")["optional"], Data::Bool(true));

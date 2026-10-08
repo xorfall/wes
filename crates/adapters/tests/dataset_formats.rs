@@ -195,7 +195,7 @@ fn every_truncation_corruption_bad_version_and_foreign_identity_refuses() {
         );
     }
     let mut bad = bytes.clone();
-    bad[8] = 2;
+    bad[8] = 3;
     assert!(matches!(
         SegmentReader::open(&bad, STORE, DATASET, &schema, FormatLimits::default()),
         Err(FormatError::Version)
@@ -281,12 +281,20 @@ fn recomputing_checksums_cannot_bypass_schema_or_policy_validation() {
     let length = u32::from_le_bytes(bytes[frame + 24..start].try_into().unwrap()) as usize;
     let original: serde_json::Value =
         serde_json::from_slice(&bytes[start..start + length]).unwrap();
-    for violation in 0..2 {
+    for violation in 0..3 {
         let mut value = original.clone();
         if violation == 0 {
             value["data"]["value"] = serde_json::json!("11");
-        } else {
+        } else if violation == 1 {
             value["policy"]["unknown"] = serde_json::json!(true);
+        } else {
+            let annotated = record(1).value.with_metadata(Some(
+                wes_core::contracts::metadata::ValueMetadata::capture(schema.root()),
+            ));
+            let encoded =
+                wes_adapters::codec::encode_value(&annotated, Default::default()).unwrap();
+            let encoded: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+            value["meta"] = encoded["meta"].clone();
         }
         let payload = serde_json::to_vec(&value).unwrap();
         let mut forged = bytes[..frame].to_vec();
@@ -299,14 +307,18 @@ fn recomputing_checksums_cannot_bypass_schema_or_policy_validation() {
         forged.extend_from_slice(&payload);
         forged.extend_from_slice(&checksum.finalize());
         let total = forged.len() + 56;
-        forged.extend_from_slice(b"WESEND01");
+        forged.extend_from_slice(b"WESEND02");
         forged.extend_from_slice(&1u64.to_le_bytes());
         forged.extend_from_slice(&(total as u64).to_le_bytes());
         let checksum = Sha256::digest(&forged);
         forged.extend_from_slice(&checksum);
         let result = SegmentReader::open(&forged, STORE, DATASET, &schema, FormatLimits::default());
-        if violation == 0 {
-            assert!(matches!(result, Err(FormatError::Contract)));
+        if violation != 1 {
+            assert!(
+                matches!(&result, Err(FormatError::Contract)),
+                "{:?}",
+                result.err()
+            );
         } else {
             assert!(matches!(result, Err(FormatError::Restricted)));
         }

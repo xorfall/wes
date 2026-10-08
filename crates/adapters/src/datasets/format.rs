@@ -9,8 +9,8 @@ use wes_core::{
     contracts::{Contract, ContractKind, ResolvedContractBundle, metadata::ValueMetadata},
 };
 
-const MAGIC: &[u8; 8] = b"WESSEG01";
-const END: &[u8; 8] = b"WESEND01";
+const MAGIC: &[u8; 8] = b"WESSEG02";
+const END: &[u8; 8] = b"WESEND02";
 const FOOTER: usize = 8 + 8 + 8 + 32;
 const PREFIX: usize = 8 + 2 + 2 + 4;
 const FRAME_PREFIX: usize = 8 + 8 + 8 + 4;
@@ -102,7 +102,6 @@ pub fn encode_segment(
     let mut remaining = limits.validation_work;
     inline_contract(schema.root(), &mut remaining, 0)?;
     let expected_shape = schema.root().shape();
-    let metadata = ValueMetadata::capture(schema.root());
     let mut previous = header.source.start;
     for record in records {
         validate_range(
@@ -122,7 +121,7 @@ pub fn encode_segment(
     let header_bytes = bounded_json(header, limits.header_bytes)?;
     let mut bytes = Vec::new();
     append(&mut bytes, MAGIC, limits.segment_bytes)?;
-    append(&mut bytes, &1u16.to_le_bytes(), limits.segment_bytes)?;
+    append(&mut bytes, &2u16.to_le_bytes(), limits.segment_bytes)?;
     append(&mut bytes, &2u16.to_le_bytes(), limits.segment_bytes)?;
     append(
         &mut bytes,
@@ -135,7 +134,11 @@ pub fn encode_segment(
     let mut value_limits = limits.value;
     value_limits.bytes = value_limits.bytes.min(limits.record_bytes);
     for (index, record) in records.iter().enumerate() {
-        let value = record.value.clone().with_metadata(Some(metadata.clone()));
+        // Every row has this segment's pinned element declaration. Its full
+        // metadata belongs to that captured schema, rather than a redundant
+        // independently parsed copy in every row. Data and policy remain in
+        // the exact retained-value codec. Reader restores metadata natively.
+        let value = record.value.clone().with_metadata(None);
         let payload = codec::encode_value(&value, value_limits)?;
         let ordinal = header
             .first
@@ -189,6 +192,7 @@ pub struct SegmentReader<'a> {
     header: SegmentHeader,
     locations: Vec<Location>,
     limits: FormatLimits,
+    metadata: ValueMetadata,
 }
 impl<'a> SegmentReader<'a> {
     pub fn open(
@@ -207,7 +211,7 @@ impl<'a> SegmentReader<'a> {
         }
         let mut input = Input::new(bytes);
         input.take(8)?;
-        if input.u16()? != 1 || input.u16()? != 2 {
+        if input.u16()? != 2 || input.u16()? != 2 {
             return Err(FormatError::Version);
         }
         let header_len = input.u32()? as usize;
@@ -275,8 +279,9 @@ impl<'a> SegmentReader<'a> {
             }
             let value = codec::decode_value(&bytes[start..end], limits.value)?.value;
             validate_value(&value, schema.root(), &expected_shape, &mut remaining)?;
-            // A forged record cannot substitute registry metadata for the pinned schema.
-            if value.metadata() != Some(&metadata) {
+            // A row may not supply a competing declaration. The digest-bound
+            // schema is the only source of its captured metadata.
+            if value.metadata().is_some() {
                 return Err(FormatError::Contract);
             }
             locations.push(Location {
@@ -294,6 +299,7 @@ impl<'a> SegmentReader<'a> {
             header,
             locations,
             limits,
+            metadata,
         })
     }
     pub fn header(&self) -> &SegmentHeader {
@@ -311,7 +317,8 @@ impl<'a> SegmentReader<'a> {
         };
         let value =
             codec::decode_value(&self.bytes[location.start..location.end], self.limits.value)?
-                .value;
+                .value
+                .with_metadata(Some(self.metadata.clone()));
         // Bytes are immutable and were fully validated at open; no current registry lookup.
         Ok(Some(Record {
             value,
@@ -370,7 +377,7 @@ fn validate_range(
     }
     Ok(())
 }
-fn validate_value(
+pub(crate) fn validate_value(
     value: &Value,
     contract: &Contract,
     expected_shape: &Shape,
@@ -399,7 +406,7 @@ fn validate_value(
 fn inline_shape(shape: &Shape, remaining: &mut usize, depth: usize) -> Result<(), FormatError> {
     charge(remaining, depth)?;
     match shape {
-        Shape::Iter(_) | Shape::Meta(_) => Err(FormatError::NonInline),
+        Shape::Iter(_) | Shape::Dataset(_) | Shape::Meta(_) => Err(FormatError::NonInline),
         Shape::List(element) | Shape::Option(element) => {
             inline_shape(element, remaining, depth + 1)
         }
@@ -428,7 +435,7 @@ fn inline_contract(
 ) -> Result<(), FormatError> {
     charge(remaining, depth)?;
     match contract.kind() {
-        ContractKind::Iter(_) => Err(FormatError::NonInline),
+        ContractKind::Iter(_) | ContractKind::Dataset(_) => Err(FormatError::NonInline),
         ContractKind::Record(fields) => {
             for field in fields.values() {
                 inline_contract(&field.contract, remaining, depth + 1)?;
@@ -446,7 +453,7 @@ fn inline_contract(
 fn inline_value(data: &Data, remaining: &mut usize, depth: usize) -> Result<(), FormatError> {
     charge(remaining, depth)?;
     match data {
-        Data::Iter(_) => Err(FormatError::NonInline),
+        Data::Iter(_) | Data::Dataset(_) => Err(FormatError::NonInline),
         Data::List(items) => {
             for item in items {
                 inline_value(item, remaining, depth + 1)?;

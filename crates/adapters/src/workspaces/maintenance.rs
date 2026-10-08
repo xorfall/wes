@@ -18,6 +18,8 @@ impl FileWorkspaces {
     pub fn collect_unused(&mut self) -> Result<CollectionReport, WorkspaceFileError> {
         let mut referenced = BTreeSet::new();
         let mut candidates = vec![];
+        let mut retirements = BTreeSet::new();
+        let mut pending = Vec::new();
         for (index, entry) in self.directory.entries().map_err(storage)?.enumerate() {
             if index >= max_entries() {
                 return Err(WorkspaceFileError::Capacity);
@@ -30,17 +32,39 @@ impl FileWorkspaces {
                 referenced.insert(self.generation(&name)?.ok_or(WorkspaceFileError::Invalid)?);
             } else if let Some(id) = file.strip_prefix("generation-") {
                 if valid_id(id) {
-                    candidates.push((file.to_owned(), Some(id.to_owned())));
+                    candidates.push((file.to_owned(), id.to_owned(), false));
                 }
             } else if let Some(id) = file.strip_prefix(".wes-retired-")
                 && valid_id(id)
             {
-                candidates.push((file.to_owned(), None));
+                candidates.push((file.to_owned(), id.to_owned(), true));
+            } else if let Some(id) = file.strip_prefix(".wes-retirement-") {
+                if !valid_id(id) {
+                    return Err(WorkspaceFileError::Invalid);
+                }
+                self.read_retirement(id)?;
+                retirements.insert(id.to_owned());
+            } else if let Some(id) = file.strip_prefix(".wes-pending-")
+                && valid_id(id)
+                && self
+                    .directory
+                    .symlink_metadata(file)
+                    .map_err(storage)?
+                    .is_file()
+            {
+                pending.push(file.to_owned());
             }
         }
+        // Parent ownership excludes every pointer/plan publisher. These canonical
+        // temporary files cannot be current pointers; interrupted writes may be partial.
+        // Validate all named pointers first, and preserve unknown names, links and dirs.
+        for file in pending {
+            self.directory.remove_file(file).map_err(storage)?;
+        }
+        self.directory.sync().map_err(storage)?;
         let mut report = CollectionReport::default();
-        for (file, id) in candidates {
-            if id.as_ref().is_some_and(|id| referenced.contains(id)) {
+        for (file, id, retired) in candidates {
+            if referenced.contains(&id) {
                 continue;
             }
             if !self
@@ -79,6 +103,15 @@ impl FileWorkspaces {
                 report.preserved += 1;
                 continue;
             }
+            if retired
+                && retirements.contains(&id)
+                && directory.entries().map_err(storage)?.next().is_none()
+            {
+                directory.remove_open_dir().map_err(storage)?;
+                self.directory.sync().map_err(storage)?;
+                report.removed += 1;
+                continue;
+            }
             let directory = match OwnedDirectory::existing(
                 directory,
                 DirectoryKind::History,
@@ -101,20 +134,28 @@ impl FileWorkspaces {
                 }
                 Err(error) => return Err(storage(error)),
             };
-            // Unreferenced by every pointer, inside a store this call owns exclusively, and its
-            // writer lock taken: no session can be using this generation or come to use it.
-            let directory = match id {
-                Some(_) => match self.retire(&file, directory)? {
+            // Preserve generation identity until physical removal and root retirement agree.
+            // The writer lock and exclusive parent ownership still protect the payload.
+            self.write_retirement(&id)?;
+            retirements.insert(id.clone());
+            let directory = if !retired {
+                let retired = format!(".wes-retired-{id}");
+                match self.directory.symlink_metadata(&retired) {
+                    Ok(_) => return Err(WorkspaceFileError::Invalid),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(storage(error)),
+                }
+                match self.retire(&file, &retired, directory)? {
                     Retirement::Held(directory) => directory,
                     Retirement::Busy => {
                         report.active += 1;
                         continue;
                     }
-                },
-                // Already under a retired name: an earlier collection was interrupted here.
-                None => directory,
+                }
+            } else {
+                directory
             };
-            // The recorded work goes first, while the writer lock is still held.
+            // Remove recorded work while its writer lock is still held.
             for name in ["journal.jsonl", "recovery.jsonl"] {
                 match directory.remove_file(name) {
                     Ok(()) => (),
@@ -135,7 +176,94 @@ impl FileWorkspaces {
             self.directory.sync().map_err(storage)?;
             report.removed += 1;
         }
+        // A retirement marker is not permission to delete a directory. Only absent generations
+        // whose removal is parent-synchronized can release dataset roots.
+        for id in retirements {
+            if referenced.contains(&id) {
+                return Err(WorkspaceFileError::Invalid);
+            }
+            let mut present = false;
+            for path in [format!("generation-{id}"), format!(".wes-retired-{id}")] {
+                match self.directory.symlink_metadata(&path) {
+                    Ok(_) => present = true,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(storage(e)),
+                }
+            }
+            if present {
+                continue;
+            }
+            self.directory.sync().map_err(storage)?;
+            if let Some(publication) = &self.publication {
+                publication.retire(
+                    &Uuid::parse_str(&id)
+                        .map_err(|_| WorkspaceFileError::Invalid)?
+                        .to_string(),
+                )?;
+            } else {
+                // Absence of the port cannot acknowledge retirement of stored roots.
+                continue;
+            }
+            self.directory
+                .remove_file(format!(".wes-retirement-{id}"))
+                .map_err(storage)?;
+            self.directory.sync().map_err(storage)?;
+        }
         Ok(report)
+    }
+    fn read_retirement(&self, id: &str) -> Result<(), WorkspaceFileError> {
+        let mut options = private_options();
+        options.read(true);
+        let file = self
+            .directory
+            .open_with(format!(".wes-retirement-{id}"), &options)
+            .map_err(storage)?;
+        if !file.metadata().map_err(storage)?.is_file() {
+            return Err(WorkspaceFileError::Invalid);
+        }
+        let mut bytes = Vec::new();
+        file.take(128).read_to_end(&mut bytes).map_err(storage)?;
+        if bytes != format!("wes.workspace.retirement\n1\n{id}\n").as_bytes() {
+            return Err(WorkspaceFileError::Invalid);
+        }
+        Ok(())
+    }
+    fn write_retirement(&self, id: &str) -> Result<(), WorkspaceFileError> {
+        let path = format!(".wes-retirement-{id}");
+        match self.directory.symlink_metadata(&path) {
+            Ok(_) => {
+                self.read_retirement(id)?;
+                return self.directory.sync().map_err(storage);
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) => return Err(storage(e)),
+        }
+        for (index, entry) in self.directory.entries().map_err(storage)?.enumerate() {
+            entry.map_err(storage)?;
+            if index >= max_entries() - 1 {
+                return Err(WorkspaceFileError::Capacity);
+            }
+        }
+        let mut options = private_options();
+        options.write(true).create_new(true);
+        let pending = format!(".wes-pending-{}", Uuid::new_v4().simple());
+        let mut file = self
+            .directory
+            .open_with(&pending, &options)
+            .map_err(storage)?;
+        let written = file
+            .write_all(format!("wes.workspace.retirement\n1\n{id}\n").as_bytes())
+            .and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(error) = written {
+            let _ = self.directory.remove_file(&pending);
+            return Err(storage(error));
+        }
+        if let Err(error) = self.directory.rename(&pending, &self.directory, &path) {
+            let _ = self.directory.remove_file(&pending);
+            return Err(storage(error));
+        }
+        self.directory.sync().map_err(storage)
     }
 }
 /// What giving a generation a retired name came to.
@@ -152,8 +280,12 @@ impl FileWorkspaces {
     /// The caller establishes that the generation is unreferenced and that it owns the store;
     /// this operation cannot, and relies on it wherever the lock is not held.
     #[cfg(not(windows))]
-    fn retire(&self, name: &str, owned: OwnedDirectory) -> Result<Retirement, WorkspaceFileError> {
-        let retired = format!(".wes-retired-{}", Uuid::new_v4().simple());
+    fn retire(
+        &self,
+        name: &str,
+        retired: &str,
+        owned: OwnedDirectory,
+    ) -> Result<Retirement, WorkspaceFileError> {
         self.directory
             .rename(name, &self.directory, &retired)
             .map_err(storage)?;
@@ -166,11 +298,15 @@ impl FileWorkspaces {
     /// handle on the directory itself does not. A refused rename and a lock that cannot be
     /// retaken are both a generation still in use.
     #[cfg(windows)]
-    fn retire(&self, name: &str, owned: OwnedDirectory) -> Result<Retirement, WorkspaceFileError> {
+    fn retire(
+        &self,
+        name: &str,
+        retired: &str,
+        owned: OwnedDirectory,
+    ) -> Result<Retirement, WorkspaceFileError> {
         const ERROR_ACCESS_DENIED: i32 = 5;
         const ERROR_SHARING_VIOLATION: i32 = 32;
         drop(owned.into_retired());
-        let retired = format!(".wes-retired-{}", Uuid::new_v4().simple());
         match self.directory.rename(name, &self.directory, &retired) {
             Ok(()) => {}
             Err(error)
@@ -274,7 +410,7 @@ mod tests {
         let old = files.generation(&name).unwrap().unwrap();
         files.save(&name, &image()).unwrap();
         // An interrupted collection left the superseded generation under a retired name.
-        let retired = format!(".wes-retired-{}", Uuid::new_v4().simple());
+        let retired = format!(".wes-retired-{old}");
         std::fs::rename(
             root.path().join(format!("generation-{old}")),
             root.path().join(&retired),

@@ -1,5 +1,4 @@
-//! Closed finite-analysis admission vocabulary. Unimplemented store/live modes
-//! are not offered as choices by help, completion or agent discovery.
+//! Captured analysis admission vocabulary. Following reads committed EventLog extensions only.
 use wes_core::{Primitive, Shape, capability::Parameter, contracts::ContractRegistry};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
@@ -32,7 +31,7 @@ impl Profile {
 }
 pub fn parameters() -> Vec<Parameter> {
     let mut registry = ContractRegistry::new();
-    registry.load("types:\n  ScanProfile: {base: Text, enum: [LinesUtf8, LinesLossyUtf8, DelimitedUtf8, TypedRecords]}\n  ScanMode: {base: Text, enum: [complete]}\n  ScanSink: {base: Text, enum: [memory]}\n  ScanBudget: {base: Text, enum: [Investigation]}").expect("finite scan vocabulary");
+    registry.load("types:\n  ScanProfile: {base: Text, enum: [LinesUtf8, LinesLossyUtf8, DelimitedUtf8, TypedRecords]}\n  ScanMode: {base: Text, enum: [complete]}\n  ScanSink: {base: Text, enum: [memory, dataset]}\n  ScanBudget: {base: Text, enum: [Investigation, LiveAnalysis]}").expect("finite scan vocabulary");
     let text = Shape::Primitive(Primitive::Text);
     let choice = |name: &str, type_name: &str, required: bool| {
         Parameter::new(name, text.clone(), required).constrained_by(
@@ -51,6 +50,7 @@ pub fn parameters() -> Vec<Parameter> {
         Parameter::new("delimiter", text.clone(), false),
         choice("budget", "ScanBudget", false),
         choice("mode", "ScanMode", false),
+        Parameter::new("follow", Shape::Primitive(Primitive::Bool), false),
         choice("sink", "ScanSink", false),
     ]
 }

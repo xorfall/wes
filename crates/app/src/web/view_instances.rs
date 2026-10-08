@@ -2,6 +2,188 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+/// A renderer may page only a Dataset inside the exact input the host has shown it.
+/// View identity, membership and both revisions are checked before/after owned I/O.
+pub(super) async fn dataset(
+    Scoped(shared): Scoped,
+    Path((node, instance, member)): Path<(String, String, String)>,
+    request: Request,
+) -> Response {
+    use crate::dataset_reads::{self, Error};
+    let deny = |status, code, message| {
+        (
+            status,
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            serde_json::json!({"error":{"code":code,"message":message,"retryable":false}})
+                .to_string(),
+        )
+            .into_response()
+    };
+    let Ok(node) = NodeId::new(node) else {
+        return datasets::error_response(Error::Invalid);
+    };
+    let Ok(member) = NodeId::new(member) else {
+        return datasets::error_response(Error::Invalid);
+    };
+    let ordinals = {
+        let ordinal = |name: &str| {
+            request
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .filter(|v| v.len() <= 20)
+                .and_then(|v| v.parse::<u64>().ok().filter(|n| n.to_string() == v))
+        };
+        (
+            ordinal("X-Wes-View-Revision"),
+            ordinal("X-Wes-Input-Revision"),
+        )
+    };
+    let (Some(revision), Some(input_revision)) = ordinals else {
+        return datasets::error_response(Error::Invalid);
+    };
+    let input = match datasets::query(request.uri().query().unwrap_or("")) {
+        Ok(i) => i,
+        Err(e) => return datasets::error_response(e),
+    };
+    // A View's paging port is constrained to its actual frozen input frame.
+    // Host following is a distinct stored-result read capability.
+    if input.head || input.extent.is_some() {
+        return datasets::error_response(Error::Invalid);
+    }
+    let Ok(current) = shared.application.current() else {
+        return deny(
+            StatusCode::GONE,
+            "DATASET_SESSION_ENDED",
+            "Session has ended.",
+        );
+    };
+    if request
+        .headers()
+        .get("X-Wes-Session")
+        .and_then(|h| h.to_str().ok())
+        != Some(current.generation.as_str())
+    {
+        return deny(
+            StatusCode::CONFLICT,
+            "DATASET_SESSION_CHANGED",
+            "Read the current view frame.",
+        );
+    }
+    let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
+        return (StatusCode::SERVICE_UNAVAILABLE,[(header::CONTENT_TYPE,"application/json")],serde_json::json!({"error":{"code":"DATASET_READ_BUSY","message":"Dataset readers are busy; no command was rerun.","retryable":true}}).to_string()).into_response();
+    };
+    if current.session.check_retirement_access().await.is_err() {
+        return deny(
+            StatusCode::GONE,
+            "DATASET_WITHDRAWN",
+            "Result access has been withdrawn.",
+        );
+    }
+    let frame = match current.session.view_frame(node.clone()).await {
+        Ok(frame)
+            if frame
+                .instances
+                .first()
+                .is_some_and(|v| v.identity.as_ref() == instance) =>
+        {
+            frame
+        }
+        _ => {
+            return deny(
+                StatusCode::FORBIDDEN,
+                "DATASET_ACCESS_REFUSED",
+                "The view input is unavailable.",
+            );
+        }
+    };
+    let bindings = frame.binding_revisions();
+    let revisions = frame.revisions();
+    let Some(selected) = frame
+        .instances
+        .iter()
+        .find(|v| v.id == member && v.revision == revision && v.input_revision == input_revision)
+    else {
+        return deny(
+            StatusCode::CONFLICT,
+            "DATASET_SESSION_CHANGED",
+            "The shown view input changed.",
+        );
+    };
+    let Some(value) = selected.input.as_ref().and_then(|i| i.value()) else {
+        return deny(
+            StatusCode::GONE,
+            "DATASET_WITHDRAWN",
+            "The view input is unavailable.",
+        );
+    };
+    let reference = match dataset_reads::reference(value, &input.select) {
+        Ok(r) => r,
+        Err(e) => return datasets::error_response(e),
+    };
+    let response = match dataset_reads::read(&shared.values, value, input, 1024 * 1024).await {
+        Ok(r) => r,
+        Err(e) => return datasets::error_response(e),
+    };
+    let encoded = shared
+        .encoders
+        .spawn_blocking(move || {
+            let _permit = permit;
+            serde_json::to_vec(&response)
+        })
+        .await;
+    if !shared
+        .application
+        .current()
+        .is_ok_and(|now| now.generation == current.generation)
+        || current.session.check_retirement_access().await.is_err()
+    {
+        return deny(
+            StatusCode::CONFLICT,
+            "DATASET_SESSION_CHANGED",
+            "Read the current view frame.",
+        );
+    }
+    if let Err(error) = shared.values.dataset_inspect(reference).await {
+        return datasets::error_response(Error::Storage(error));
+    }
+    match current.session.view_frame(node).await {
+        Ok(frame) if frame.binding_revisions() == bindings && frame.revisions() == revisions => {}
+        _ => {
+            return deny(
+                StatusCode::GONE,
+                "DATASET_WITHDRAWN",
+                "The shown input is no longer readable.",
+            );
+        }
+    }
+    if !shared
+        .application
+        .current()
+        .is_ok_and(|now| now.generation == current.generation)
+    {
+        return deny(
+            StatusCode::CONFLICT,
+            "DATASET_SESSION_CHANGED",
+            "Read the current view frame.",
+        );
+    }
+    match encoded {
+        Ok(Ok(bytes)) => (
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        _ => datasets::error_response(Error::Encoding),
+    }
+}
+
 pub(super) async fn read(
     Scoped(shared): Scoped,
     Path((node, instance)): Path<(String, String)>,

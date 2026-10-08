@@ -1145,6 +1145,12 @@
   },
   "typeConstructors": [
     {
+      "name": "Dataset",
+      "parameters": [
+        "T"
+      ]
+    },
+    {
       "name": "Union",
       "parameters": [
         "A",

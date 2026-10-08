@@ -942,7 +942,7 @@ pub(super) fn observe(
             let value = value.ok_or_else(|| {
                 error("Sandbox member has no current value. Inspect it for its state.")
             })?;
-            if !value.data().is_materialized() {
+            if !value.data().is_inline() {
                 return Err(error(
                     "Sandbox member requires a bounded materialized observation.",
                 ));

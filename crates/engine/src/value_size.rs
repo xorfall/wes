@@ -38,6 +38,10 @@ fn charge_shell(value: &Value, budget: &mut Budget) -> Option<()> {
     for origin in value.provenance().policy().origins() {
         budget.text(origin)?;
     }
+    for origin in value.provenance().policy().dataset_reads() {
+        budget.text(origin.store())?;
+        budget.text(origin.dataset())?;
+    }
     if let Some(meta) = value.metadata() {
         budget.add(meta.charge())?;
     }
@@ -63,6 +67,18 @@ fn charge_data(root: &Data, budget: &mut Budget) -> Option<()> {
                 budget.add(decimal.compact_text_size_bound().saturating_mul(6))?
             }
             Data::Bytes(bytes) => budget.add((bytes.len() as u64).saturating_mul(2))?,
+            Data::Dataset(reference) => {
+                budget.add(128)?;
+                for text in [
+                    reference.store(),
+                    reference.dataset(),
+                    reference.manifest(),
+                    reference.manifest_digest(),
+                    reference.schema_digest(),
+                ] {
+                    budget.text(text)?;
+                }
+            }
             Data::Iter(iter) => {
                 budget.shape(iter.item_shape())?;
                 budget.shape(iter.source().shape())?;
@@ -136,9 +152,10 @@ impl Budget {
         while let Some((shape, depth)) = shapes.pop() {
             self.node(depth)?;
             match shape {
-                Shape::List(element) | Shape::Option(element) | Shape::Iter(element) => {
-                    shapes.push((element, depth + 1))
-                }
+                Shape::List(element)
+                | Shape::Option(element)
+                | Shape::Iter(element)
+                | Shape::Dataset(element) => shapes.push((element, depth + 1)),
                 Shape::Record(record) => {
                     self.text(record.name())?;
                     self.children(record.fields().len(), shapes.len())?;

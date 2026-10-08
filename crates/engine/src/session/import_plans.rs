@@ -178,7 +178,7 @@ impl Actor {
                 .map_or(0, |c| c.revisions.len() as u64 * 1024);
         for (key, value) in values {
             if !matches!(value.shape(), Shape::Primitive(_))
-                || !value.data().is_materialized()
+                || !value.data().is_inline()
                 || !value.provenance().policy().is_empty()
             {
                 return Err(

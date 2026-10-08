@@ -26,6 +26,8 @@ use wes_engine::{
 use wes_language::{Severity, SourceText};
 #[path = "source/documents.rs"]
 mod documents;
+#[path = "source/held.rs"]
+mod held;
 #[path = "source/imports.rs"]
 mod imports;
 #[path = "source/pipelines.rs"]

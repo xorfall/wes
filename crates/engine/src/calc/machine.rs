@@ -1066,7 +1066,7 @@ impl Machine {
                         let mut arguments = IndexMap::new();
                         for (key, value) in fields.iter() {
                             let data = value.data(&mut self.budget, span, 0)?;
-                            if !data.is_materialized() {
+                            if !data.is_inline() {
                                 return Err(Failure::new(
                                     "CAL004",
                                     span,

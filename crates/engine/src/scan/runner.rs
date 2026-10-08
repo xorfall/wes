@@ -23,7 +23,8 @@ use wes_language::Span;
 /// Immutable admission, captured before the attempt enters its source. All
 /// byte figures except original source positions are conservative logical
 /// charges, never wire-byte counts or a measured resident-memory promise.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settings {
     pub limits: Limits,
     pub startup_work: u64,
@@ -37,8 +38,41 @@ pub struct Settings {
     pub patterns: usize,
     pub block: usize,
     pub duration: Duration,
+    pub page_rows: usize,
+    pub page_bytes: usize,
+    pub page_segments: usize,
+    pub commit_records: usize,
+    pub commit_bytes: u64,
 }
 impl Settings {
+    fn within(&self, ceiling: Self) -> bool {
+        self.valid()
+            && self.limits.work <= ceiling.limits.work
+            && self.limits.input_bytes <= ceiling.limits.input_bytes
+            && self.limits.input_records <= ceiling.limits.input_records
+            && self.limits.memory_bytes <= ceiling.limits.memory_bytes
+            && self.limits.output_bytes <= ceiling.limits.output_bytes
+            && self.limits.output_records <= ceiling.limits.output_records
+            && self.startup_work <= ceiling.startup_work
+            && self.work_per_input_unit <= ceiling.work_per_input_unit
+            && self.source_charge <= ceiling.source_charge
+            && self.state_charge <= ceiling.state_charge
+            && self.context_charge <= ceiling.context_charge
+            && self.record_charge <= ceiling.record_charge
+            && self.scratch.work <= ceiling.scratch.work
+            && self.scratch.bytes <= ceiling.scratch.bytes
+            && self.scratch.frames <= ceiling.scratch.frames
+            && self.scratch.quantum <= ceiling.scratch.quantum
+            && self.outputs_per_record <= ceiling.outputs_per_record
+            && self.patterns <= ceiling.patterns
+            && self.block <= ceiling.block
+            && self.duration <= ceiling.duration
+            && self.page_rows <= ceiling.page_rows
+            && self.page_bytes <= ceiling.page_bytes
+            && self.page_segments <= ceiling.page_segments
+            && self.commit_records <= ceiling.commit_records
+            && self.commit_bytes <= ceiling.commit_bytes
+    }
     /// One immutable snapshot of the common application budget catalogue.
     pub fn capture() -> Self {
         let get = wes_budgets::get;
@@ -69,6 +103,11 @@ impl Settings {
             patterns: get("scan.patterns") as usize,
             block: get("scan.block.bytes") as usize,
             duration: Duration::from_millis(get("scan.duration.ms")),
+            page_rows: 32.min(get("dataset.page.rows") as usize),
+            page_bytes: (64 * 1024).min(get("dataset.page.bytes") as usize),
+            page_segments: 8.min(get("dataset.page.segments") as usize),
+            commit_records: get("scan.commit.records") as usize,
+            commit_bytes: get("scan.commit.bytes"),
         }
     }
     pub fn valid(&self) -> bool {
@@ -103,10 +142,16 @@ impl Settings {
             && (1..=65_536).contains(&self.block)
             && !self.duration.is_zero()
             && self.duration <= Duration::from_secs(86_400)
+            && (1..=32).contains(&self.page_rows)
+            && (1..=65536).contains(&self.page_bytes)
+            && (1..=8).contains(&self.page_segments)
+            && (1..=128).contains(&self.commit_records)
+            && (1..=1024 * 1024).contains(&self.commit_bytes)
     }
 }
 
 pub struct Input {
+    pub live: bool,
     pub source: Value,
     pub initial: Value,
     pub context: Value,
@@ -116,7 +161,8 @@ pub struct Input {
     pub identity: Identity,
     pub control: Option<Provenance>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceIdentity {
     pub node: String,
     pub run: String,
@@ -124,7 +170,8 @@ pub struct SourceIdentity {
     pub port: String,
     pub path: Vec<String>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Identity {
     pub analysis: String,
     pub source: Option<SourceIdentity>,
@@ -136,6 +183,7 @@ pub enum Phase {
     Reading,
     Processing,
     Finishing,
+    Committing,
     Complete,
     Stopped,
     Cancelled,
@@ -150,6 +198,7 @@ pub struct Progress {
     pub extent: u64,
     pub framed: bool,
     pub finish_applied: bool,
+    pub producer_complete: Option<bool>,
     pub work_allowance: u64,
     pub regex: wes_core::RegexCacheUsage,
 }
@@ -162,6 +211,12 @@ pub struct Stop {
 }
 pub enum Poll {
     Yield,
+    ReadPage,
+    ReadHead,
+    /// No more source or callback work may enter until the durable grant is acknowledged.
+    Grant,
+    /// A pure candidate is ready; its state/cursor remain at the prior acknowledgement.
+    Commit,
     Terminal,
 }
 /// The runtime integration must preserve failed/cancelled state when `stop` is
@@ -187,6 +242,21 @@ struct Invocation {
     range: Option<(u64, u64, u64)>,
     finishing: bool,
 }
+struct Candidate {
+    state: Value,
+    state_charge: u64,
+    outputs: Vec<Data>,
+    output_charge: u64,
+    held_after: u64,
+    provenance: Provenance,
+    range: Option<(u64, u64, u64)>,
+    finishing: bool,
+    terminal: bool,
+    usage: Usage,
+    inputs: usize,
+    output_ranges: Vec<(u64, u64)>,
+    flush: bool,
+}
 pub struct Runner {
     source: CapturedSource,
     state: Value,
@@ -198,6 +268,9 @@ pub struct Runner {
     ledger: Ledger,
     base_charge: u64,
     outputs: Vec<Data>,
+    dataset: Option<wes_core::DatasetRef>,
+    writer_lease: Option<crate::storage::datasets::DatasetWriteLease>,
+    candidate: Option<Candidate>,
     committed_position: u64,
     invocation: Option<Invocation>,
     cache: Option<IterRegexCache>,
@@ -205,16 +278,200 @@ pub struct Runner {
     provenance: Provenance,
     result_contract: Arc<Contract>,
     result_metadata: ValueMetadata,
+    output_metadata: ValueMetadata,
+    output_shell_charge: u64,
     services: Option<Arc<dyn LocalServices>>,
     token: CancellationToken,
     started: Instant,
+    elapsed_prior: Duration,
     span: Span,
     phase: Phase,
     finish_applied: bool,
     stop: Option<Stop>,
     identity: Identity,
+    live: bool,
+    durable: Option<durable::Durable>,
 }
+mod batch;
+mod durable;
+pub use durable::PreparedResume;
 impl Runner {
+    fn write_owner(&self) -> crate::storage::datasets::DatasetWriteOwner {
+        crate::storage::datasets::DatasetWriteOwner {
+            role: crate::storage::datasets::DatasetWriteRole::Analysis,
+            lineage: self.identity.analysis.clone(),
+            run: self.durable.as_ref().map_or_else(
+                || self.identity.analysis.clone(),
+                |d| d.checkpoint.run.clone(),
+            ),
+        }
+    }
+    pub(crate) fn retain_writer(&mut self, lease: crate::storage::datasets::DatasetWriteLease) {
+        self.writer_lease = Some(lease);
+    }
+    pub fn dataset_admission(&self) -> Result<crate::storage::datasets::DatasetCreate, Failure> {
+        use crate::storage::datasets::{DatasetCreate, DatasetKind};
+        if self.provenance.policy().is_private() || self.provenance.policy().is_unknown() {
+            return Err(Failure::new(
+                "CAL004",
+                self.span,
+                "durable scan refuses private or unknown-policy input; choose sink:memory",
+            ));
+        }
+        let schema = wes_core::contracts::ResolvedContractBundle::capture(
+            self.step.output_contract.clone(),
+            Default::default(),
+        )
+        .map_err(|_| {
+            Failure::new(
+                "CAL006",
+                self.span,
+                "scan output schema exceeds its capture budget",
+            )
+        })?;
+        Ok(DatasetCreate {
+            owner: Some(self.write_owner()),
+            checkpoint: None,
+            recording: None,
+            dataset: uuid::Uuid::new_v4().to_string(),
+            transaction: uuid::Uuid::new_v4().to_string(),
+            kind: DatasetKind::Analysis,
+            schema,
+            source: self.source_extent(),
+            policy: self.provenance.policy().clone(),
+        })
+    }
+    fn source_extent(&self) -> crate::storage::datasets::SourceExtent {
+        use crate::storage::datasets::{SourceExtent, SourceUnit};
+        SourceExtent {
+            identity: self.identity.analysis.clone(),
+            unit: if self.source.framed() {
+                SourceUnit::Bytes
+            } else {
+                SourceUnit::Records
+            },
+            start: 0,
+            end: self.source.total(),
+        }
+    }
+    /// Switch the sink only before source processing, after owned-store admission.
+    pub fn attach_dataset(&mut self, reference: wes_core::DatasetRef) -> Result<(), Failure> {
+        if self.dataset.is_some()
+            || self.invocation.is_some()
+            || self.candidate.is_some()
+            || self.ledger.usage().input_records != 0
+            || reference.records() != 0
+            || reference.schema_digest() != self.step.output_contract.digest()
+            || self.phase != Phase::Reading
+        {
+            return Err(Failure::new(
+                "CAL003",
+                self.span,
+                "dataset sink does not match the admitted scan",
+            ));
+        }
+        self.result_contract = result_contract_for_sink(&self.step, true, self.span)?;
+        self.result_metadata = ValueMetadata::capture(&self.result_contract);
+        self.dataset = Some(reference);
+        Ok(())
+    }
+    pub fn dataset_candidate(&self) -> Result<crate::storage::datasets::DatasetAppend, Failure> {
+        use crate::storage::datasets::{DatasetAppend, DatasetLifecycle, DatasetRow};
+        let candidate = self
+            .candidate
+            .as_ref()
+            .ok_or_else(|| Failure::new("CAL003", self.span, "scan has no pending candidate"))?;
+        let previous = self
+            .dataset
+            .clone()
+            .ok_or_else(|| Failure::new("CAL003", self.span, "scan has no dataset sink"))?;
+        let metadata = Some(self.output_metadata.clone());
+        let mut rows = Vec::with_capacity(candidate.outputs.len());
+        for (offset, data) in candidate.outputs.iter().enumerate() {
+            let value = Value::new(
+                self.step.output.clone(),
+                data.clone(),
+                candidate.provenance.clone(),
+            )
+            .map_err(|_| {
+                Failure::new(
+                    "CAL002",
+                    self.span,
+                    "validated scan output lost its captured shape",
+                )
+            })?
+            .with_metadata(metadata.clone());
+            rows.push(DatasetRow {
+                ordinal: previous
+                    .records()
+                    .checked_add(offset as u64)
+                    .ok_or_else(|| {
+                        Failure::new("CAL006", self.span, "scan output ordinal overflow")
+                    })?,
+                source_start: candidate.output_ranges[offset].0,
+                source_end: candidate.output_ranges[offset].1,
+                value,
+            });
+        }
+        Ok(DatasetAppend {
+            owner: Some(self.write_owner()),
+            checkpoint: self.candidate_checkpoint()?,
+            recording: None,
+            previous,
+            transaction: uuid::Uuid::new_v4().to_string(),
+            rows,
+            source: self.source_extent(),
+            lifecycle: if candidate.terminal {
+                DatasetLifecycle::Sealed
+            } else {
+                DatasetLifecycle::Open
+            },
+            policy: candidate.provenance.policy().clone(),
+        })
+    }
+    /// The outer executor joins the store operation before calling this acknowledgement.
+    pub fn acknowledge_dataset(&mut self, reference: wes_core::DatasetRef) -> Result<(), Failure> {
+        let prior = self
+            .dataset
+            .as_ref()
+            .ok_or_else(|| Failure::new("CAL003", self.span, "scan has no dataset sink"))?;
+        let candidate = self
+            .candidate
+            .as_ref()
+            .ok_or_else(|| Failure::new("CAL003", self.span, "scan has no pending candidate"))?;
+        if reference.store() != prior.store()
+            || reference.dataset() != prior.dataset()
+            || reference.schema_digest() != prior.schema_digest()
+            || reference.authorization_generation() != prior.authorization_generation()
+            || prior.generation().checked_add(1) != Some(reference.generation())
+            || prior.records().checked_add(candidate.outputs.len() as u64)
+                != Some(reference.records())
+        {
+            return Err(Failure::new(
+                "CAL002",
+                self.span,
+                "dataset acknowledgement does not match the pending scan candidate",
+            ));
+        }
+        let checkpoint = self.candidate_checkpoint()?;
+        let candidate = self.candidate.take().expect("validated candidate");
+        if let (Some(durable), Some(checkpoint)) = (&mut self.durable, checkpoint) {
+            durable.checkpoint = checkpoint;
+            durable.grant_start_work = self.ledger.usage().work;
+        }
+        self.dataset = Some(reference);
+        self.acknowledge_batch(candidate)
+            .map_err(|stop| stop.failure)
+    }
+    pub fn refuse_dataset(&mut self, message: String) {
+        if let Some(durable) = &mut self.durable {
+            durable.storage_failed = true;
+        }
+        self.fail(stop(Failure::new("CAL004", self.span, message)));
+    }
+    pub fn refuse_scan(&mut self, failure: Failure) {
+        self.fail(stop(failure));
+    }
     pub fn new(
         input: Input,
         settings: Settings,
@@ -235,13 +492,34 @@ impl Runner {
         Self::new_admitted(input, settings, ledger, services, token, span)
     }
     pub(super) fn new_admitted(
-        input: Input,
+        mut input: Input,
         settings: Settings,
         mut ledger: Ledger,
         services: Option<Arc<dyn LocalServices>>,
         token: CancellationToken,
         span: Span,
     ) -> Result<Self, Failure> {
+        if input.live
+            && (!matches!(input.source.data(), Data::Dataset(_)) || input.framing.is_some())
+        {
+            return Err(Failure::new(
+                "CAL004",
+                span,
+                "live scan requires TypedRecords from a committed EventLog Dataset",
+            ));
+        }
+        if let Data::Dataset(reference) = input.source.data() {
+            input.source = input.source.with_provenance(
+                input.source.provenance().clone().with_policy(
+                    &input
+                        .source
+                        .provenance()
+                        .policy()
+                        .clone()
+                        .read_from_dataset(reference),
+                ),
+            );
+        }
         let bounded =
             |s: &str| !s.is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control);
         if !bounded(&input.identity.analysis)
@@ -296,18 +574,70 @@ impl Runner {
         let cache_charge = (settings.patterns as u64)
             .checked_mul(IterRegexCache::COMPILED_CHARGE + 16_384 * 8)
             .ok_or_else(|| Failure::new("CAL006", span, "scan regex reservation overflow"))?;
+        // Metadata has its own globally bounded capture, but its retained charge
+        // varies with the declaration. Admit both supported sink projections
+        // before constructing cursor/VM owners instead of applying an unrelated
+        // fixed 128 KiB threshold to a valid captured output contract.
+        let output_metadata = ValueMetadata::capture(&input.step.output_contract);
+        let output_shell_charge =
+            crate::value_size::shape_charge(&input.step.output, settings.limits.memory_bytes)
+                .and_then(|n| n.checked_add(output_metadata.charge()))
+                .and_then(|n| n.checked_add(256))
+                .ok_or_else(|| {
+                    Failure::new(
+                        "CAL006",
+                        span,
+                        "scan output declaration exceeds its held budget",
+                    )
+                })?;
+        let result_contract = result_contract(&input.step, span)?;
+        let result_metadata = ValueMetadata::capture(&result_contract);
+        let dataset_contract = result_contract_for_sink(&input.step, true, span)?;
+        let dataset_metadata = ValueMetadata::capture(&dataset_contract);
+        let declaration_charge = [
+            (&result_contract, &result_metadata),
+            (&dataset_contract, &dataset_metadata),
+        ]
+        .into_iter()
+        .try_fold(0u64, |maximum, (contract, metadata)| {
+            let shape =
+                crate::value_size::shape_charge(&contract.shape(), settings.limits.memory_bytes)
+                    .ok_or_else(|| {
+                        Failure::new(
+                            "CAL006",
+                            span,
+                            "scan result declaration exceeds its held budget",
+                        )
+                    })?;
+            let charge = sum(&[metadata.charge(), shape], span)?
+                .checked_mul(2)
+                .ok_or_else(|| Failure::new("CAL006", span, "scan declaration charge overflow"))?;
+            Ok::<_, Failure>(maximum.max(charge))
+        })?;
         // Native schema wrappers/metadata and terminal receipt have a bounded
         // reservation of their own, including the copy at the final handoff.
         let identity_charge = identity_charge(&input.identity, span)?;
         let base_charge = sum(
             &[
                 source_charge,
+                if matches!(input.source.data(), Data::Dataset(_)) {
+                    source_charge
+                } else {
+                    0
+                },
+                if matches!(input.source.data(), Data::Dataset(_)) {
+                    settings.record_charge
+                } else {
+                    0
+                },
                 context_charge,
                 identity_charge,
                 input.step.code_charge,
                 input.finish.as_ref().map_or(0, |f| f.code_charge),
                 framing,
                 cache_charge,
+                declaration_charge,
+                output_shell_charge,
                 256 * 1024,
             ],
             span,
@@ -370,19 +700,15 @@ impl Runner {
         if let Some(finish) = &input.finish {
             finish.argument(
                 "end",
-                &source_end(source.total(), source.framed(), provenance.clone()),
+                &source_end(
+                    source.total(),
+                    source.framed(),
+                    provenance.clone(),
+                    input.live,
+                ),
                 &|| token.is_cancelled(),
                 span,
             )?;
-        }
-        let result_contract = result_contract(&input.step, span)?;
-        let result_metadata = ValueMetadata::capture(&result_contract);
-        if result_metadata.charge() > 128 * 1024 {
-            return Err(Failure::new(
-                "CAL006",
-                span,
-                "scan result declaration exceeds its metadata reservation",
-            ));
         }
         let cache = IterRegexCache::with_capacity(settings.patterns)
             .map_err(|error| Failure::iteration(error, span))?;
@@ -400,6 +726,9 @@ impl Runner {
             ledger,
             base_charge,
             outputs: vec![],
+            dataset: None,
+            writer_lease: None,
+            candidate: None,
             committed_position: 0,
             invocation: None,
             cache: Some(cache),
@@ -407,14 +736,19 @@ impl Runner {
             provenance,
             result_contract,
             result_metadata,
+            output_metadata,
+            output_shell_charge,
             services,
             token,
             started: Instant::now(),
+            elapsed_prior: Duration::ZERO,
             span,
             phase: Phase::Reading,
             finish_applied: false,
             stop: None,
             identity: input.identity,
+            live: input.live,
+            durable: None,
         })
     }
     pub fn progress(&self) -> Progress {
@@ -426,6 +760,7 @@ impl Runner {
             extent: self.source.total(),
             framed: self.source.framed(),
             finish_applied: self.finish_applied,
+            producer_complete: self.source.producer_status(),
             work_allowance: self.ledger.work_allowance(),
             regex: self
                 .invocation
@@ -442,6 +777,7 @@ impl Runner {
                 Phase::Reading => P::Reading,
                 Phase::Processing => P::Processing,
                 Phase::Finishing => P::Finishing,
+                Phase::Committing => P::Committing,
                 Phase::Complete => P::Complete,
                 Phase::Stopped => P::Stopped,
                 Phase::Cancelled => P::Cancelled,
@@ -484,12 +820,27 @@ impl Runner {
                 source_span: None,
             });
         }
-        if self.started.elapsed() >= self.settings.duration {
+        if self.live && self.source.followed_source().is_none() {
+            return self.fail(stop(Failure::new(
+                "CAL004",
+                self.span,
+                "live source has not been admitted by its owned store",
+            )));
+        }
+        if self.candidate_ready() {
+            self.phase = Phase::Committing;
+            return Poll::Commit;
+        }
+        if self.elapsed() >= self.settings.duration {
             return self.fail(Stop {
                 failure: Failure::new("CAL006", self.span, "scan duration limit reached"),
-                dimension: None,
+                dimension: Some(Dimension::Duration),
                 source_span: None,
             });
+        }
+        if self.needs_durable_grant() {
+            self.phase = Phase::Committing;
+            return Poll::Grant;
         }
         match self.poll_inner() {
             Ok(poll) => poll,
@@ -497,6 +848,14 @@ impl Runner {
         }
     }
     fn fail(&mut self, mut stop: Stop) -> Poll {
+        if stop.dimension == Some(Dimension::Work)
+            && self.ledger.work_allowance() < self.settings.limits.work
+        {
+            stop.dimension = Some(Dimension::WorkAllowance);
+        }
+        if let Some(candidate) = &self.candidate {
+            stop.failure.policy = stop.failure.policy.join(candidate.provenance.policy());
+        }
         stop.failure.policy = stop.failure.policy.join(self.provenance.policy());
         self.provenance = self.provenance.clone().with_policy(&stop.failure.policy);
         self.phase = if stop.failure.cancelled {
@@ -505,12 +864,13 @@ impl Runner {
             Phase::Stopped
         };
         self.invocation = None;
+        self.candidate = None;
         self.stop = Some(stop);
         // No finish after failure, no callback retry, no partial candidate commit.
         let held = self
             .base_charge
             .saturating_add(self.state_charge)
-            .saturating_add(self.ledger.usage().output_bytes);
+            .saturating_add(self.retained_output_charge());
         let _ = self.ledger.held(held);
         Poll::Terminal
     }
@@ -592,6 +952,10 @@ impl Runner {
                     } else {
                         Phase::Reading
                     };
+                    if self.candidate_ready() {
+                        self.phase = Phase::Committing;
+                        return Ok(Poll::Commit);
+                    }
                     return Ok(if active.finishing {
                         Poll::Terminal
                     } else {
@@ -606,8 +970,8 @@ impl Runner {
                 sum(
                     &[
                         self.base_charge,
-                        self.state_charge,
-                        self.ledger.usage().output_bytes,
+                        self.held_state_charge(),
+                        self.retained_output_charge(),
                         self.settings.record_charge,
                     ],
                     self.span,
@@ -627,6 +991,24 @@ impl Runner {
                 source_span: error.source_span,
             })? {
             SourcePoll::Pending => Ok(Poll::Yield),
+            SourcePoll::ReadPage => {
+                if let Some(candidate) = &mut self.candidate {
+                    candidate.flush = true;
+                    self.phase = Phase::Committing;
+                    Ok(Poll::Commit)
+                } else {
+                    Ok(Poll::ReadPage)
+                }
+            }
+            SourcePoll::ReadHead => {
+                if let Some(candidate) = &mut self.candidate {
+                    candidate.flush = true;
+                    self.phase = Phase::Committing;
+                    Ok(Poll::Commit)
+                } else {
+                    Ok(Poll::ReadHead)
+                }
+            }
             SourcePoll::Record {
                 value,
                 start,
@@ -634,28 +1016,60 @@ impl Runner {
                 input_charge,
             } => {
                 self.ledger
-                    .admit_input(input_charge)
+                    .admit_input_from(self.working_usage(), input_charge)
                     .map_err(|error| refusal(error, self.span))?;
                 self.begin(value, Some((start, end, input_charge)), false)?;
                 Ok(Poll::Yield)
+            }
+            SourcePoll::Incomplete => {
+                if let Some(candidate) = &mut self.candidate {
+                    candidate.flush = true;
+                    self.phase = Phase::Committing;
+                    return Ok(Poll::Commit);
+                }
+                Err(stop(Failure::new(
+                    "CAL004",
+                    self.span,
+                    "EventLog ended without confirmed natural EOF; committed partial results remain available and finish was not called",
+                )))
             }
             SourcePoll::End => {
                 if self.finish.is_some() {
                     let end = source_end(
                         self.source.position(),
                         self.source.framed(),
-                        self.provenance.clone(),
+                        self.working_provenance().clone(),
+                        self.source.producer_complete(),
                     );
                     self.begin(end, None, true)?;
                     Ok(Poll::Yield)
                 } else {
+                    if self.dataset.is_some() {
+                        self.stage_batch(Candidate {
+                            state: self.working_state().clone(),
+                            state_charge: self.working_state_charge(),
+                            outputs: vec![],
+                            output_charge: 0,
+                            held_after: self.base_charge.saturating_add(self.state_charge),
+                            provenance: self.working_provenance().clone(),
+                            range: None,
+                            finishing: false,
+                            terminal: true,
+                            usage: self.working_usage(),
+                            inputs: 0,
+                            output_ranges: vec![],
+                            flush: true,
+                        })?;
+                        self.phase = Phase::Committing;
+                        return Ok(Poll::Commit);
+                    }
                     self.phase = Phase::Complete;
                     self.ledger
                         .held(
                             sum(
                                 &[
                                     self.base_charge,
-                                    self.state_charge,
+                                    self.working_state_charge(),
                                     self.ledger.usage().output_bytes,
                                 ],
                                 self.span,
@@ -692,8 +1106,8 @@ impl Runner {
                 sum(
                     &[
                         self.base_charge,
-                        self.state_charge,
-                        self.ledger.usage().output_bytes,
+                        self.held_state_charge(),
+                        self.retained_output_charge(),
                         self.settings.record_charge,
                         self.settings.scratch.bytes * 3,
                     ],
@@ -707,7 +1121,7 @@ impl Runner {
         let inputs = IndexMap::from([
             // These immutable owners already passed the same captured contracts
             // at setup or the previous atomic candidate boundary.
-            ("state".into(), self.state.clone()),
+            ("state".into(), self.working_state().clone()),
             ("context".into(), self.context.clone()),
             (
                 name.into(),
@@ -738,6 +1152,109 @@ impl Runner {
             finishing,
         });
         Ok(())
+    }
+    pub fn source_page_request(
+        &self,
+    ) -> Result<(wes_core::DatasetRef, crate::storage::datasets::PageRequest), Failure> {
+        let reference =
+            self.source.dataset().cloned().ok_or_else(|| {
+                Failure::new("CAL004", self.span, "analysis has no dataset source")
+            })?;
+        Ok((
+            reference,
+            crate::storage::datasets::PageRequest {
+                from: self.source.ordinal(),
+                rows: self.settings.page_rows,
+                bytes: self.settings.page_bytes,
+                segments: self.settings.page_segments,
+                work: Some(crate::storage::datasets::ReadWork::new(
+                    self.ledger.work_counter(),
+                )),
+            },
+        ))
+    }
+    pub fn acknowledge_source_page(
+        &mut self,
+        page: crate::storage::datasets::DatasetPage,
+    ) -> Result<(), Failure> {
+        self.source.acknowledge_page(page, self.span)
+    }
+    pub(crate) fn follow_source(
+        &mut self,
+        info: crate::storage::datasets::DatasetInfo,
+    ) -> Result<(), Failure> {
+        let coverage = info.recording.ok_or_else(|| {
+            Failure::new(
+                "CAL004",
+                self.span,
+                "live scan requires a recorded EventLog, not an analysis Dataset",
+            )
+        })?;
+        if !self.live || info.schema.root().shape() != self.source.item_shape() {
+            return Err(Failure::new(
+                "CAL004",
+                self.span,
+                "live source schema does not match its captured input",
+            ));
+        }
+        self.provenance = self.provenance.clone().with_policy(
+            &self
+                .provenance
+                .policy()
+                .join(&info.policy)
+                .read_from_dataset(&info.reference),
+        );
+        self.source.follow(
+            crate::storage::datasets::FollowedSource {
+                prefix: info.reference,
+                run: coverage.run,
+                epoch: coverage.epoch,
+                first: coverage.first,
+            },
+            self.span,
+        )
+    }
+    pub(crate) fn followed_dataset(&self) -> Option<&str> {
+        self.source
+            .followed_source()
+            .map(|source| source.prefix.dataset())
+    }
+    pub(crate) fn source_head_request(
+        &mut self,
+    ) -> Result<(wes_core::DatasetRef, crate::storage::datasets::ReadWork), Failure> {
+        self.ledger
+            .work(512)
+            .map_err(|e| refusal(e, self.span).failure)?;
+        Ok((
+            self.source.dataset().cloned().ok_or_else(|| {
+                Failure::new("CAL004", self.span, "analysis has no recorded source")
+            })?,
+            crate::storage::datasets::ReadWork::new(self.ledger.work_counter()),
+        ))
+    }
+    pub(crate) fn acknowledge_source_head(
+        &mut self,
+        info: crate::storage::datasets::DatasetInfo,
+    ) -> Result<bool, Failure> {
+        self.provenance = self.provenance.clone().with_policy(
+            &self
+                .provenance
+                .policy()
+                .join(&info.policy)
+                .read_from_dataset(&info.reference),
+        );
+        self.source.acknowledge_head(info, self.span)
+    }
+    fn elapsed(&self) -> Duration {
+        self.elapsed_prior.saturating_add(self.started.elapsed())
+    }
+    fn elapsed_ms(&self) -> u64 {
+        self.elapsed()
+            .as_millis()
+            .min(self.settings.duration.as_millis()) as u64
+    }
+    pub(crate) fn remaining_duration(&self) -> Duration {
+        self.settings.duration.saturating_sub(self.elapsed())
     }
     fn accept(
         &mut self,
@@ -808,67 +1325,154 @@ impl Runner {
         if self.token.is_cancelled() {
             return Err(stop(Failure::cancelled(self.span)));
         }
-        if self.started.elapsed() >= self.settings.duration {
-            return Err(stop(Failure::new(
-                "CAL006",
-                self.span,
-                "scan duration limit reached before candidate commit",
-            )));
+        if self.elapsed() >= self.settings.duration {
+            return Err(Stop {
+                failure: Failure::new(
+                    "CAL006",
+                    self.span,
+                    "scan duration limit reached before candidate commit",
+                ),
+                dimension: Some(Dimension::Duration),
+                source_span: None,
+            });
         }
         let held_after = sum(
             &[
                 self.base_charge,
                 state_charge,
-                self.ledger.usage().output_bytes,
+                self.retained_output_charge(),
                 output_charge,
+                if self.dataset.is_some() {
+                    self.state_charge.saturating_add(
+                        self.output_shell_charge
+                            .saturating_mul(outputs.len() as u64),
+                    )
+                } else {
+                    0
+                },
             ],
             self.span,
         )
         .map_err(stop)?;
         // Reserve possible Vec geometric capacity before appending. Record Data
         // charge includes container overhead; no per-record graph/history nodes.
-        self.ledger
-            .commit(
+        let usage = self
+            .ledger
+            .candidate_usage_from(
+                self.working_usage(),
                 range.map(|(_, _, charge)| charge),
                 outputs.len() as u64,
                 output_charge,
                 held_after,
             )
             .map_err(|error| refusal(error, self.span))?;
-        self.state = state;
-        self.state_charge = state_charge;
-        self.outputs.extend(outputs);
-        self.provenance = provenance;
-        if let Some((_, end, charge)) = range {
+        let output_ranges = vec![
+            range.map_or(
+                (self.committed_position, self.committed_position),
+                |(start, end, _)| (start, end)
+            );
+            outputs.len()
+        ];
+        let candidate = Candidate {
+            state,
+            state_charge,
+            outputs,
+            output_charge,
+            held_after,
+            provenance,
+            range,
+            finishing,
+            terminal: finishing,
+            usage,
+            inputs: usize::from(range.is_some()),
+            output_ranges,
+            flush: finishing,
+        };
+        if self.dataset.is_some() {
+            self.stage_batch(candidate)?;
+        } else {
+            self.advance(candidate)?;
+        }
+        Ok(())
+    }
+    fn retained_output_charge(&self) -> u64 {
+        if self.dataset.is_some() {
+            self.candidate.as_ref().map_or(0, |c| {
+                c.output_charge.saturating_add(
+                    self.output_shell_charge
+                        .saturating_mul(c.outputs.len() as u64),
+                )
+            })
+        } else {
+            self.ledger.usage().output_bytes
+        }
+    }
+    fn advance(&mut self, candidate: Candidate) -> Result<(), Stop> {
+        self.ledger
+            .commit(
+                candidate.range.map(|(_, _, charge)| charge),
+                candidate.outputs.len() as u64,
+                candidate.output_charge,
+                candidate.held_after,
+            )
+            .map_err(|error| refusal(error, self.span))?;
+        self.state = candidate.state;
+        self.state_charge = candidate.state_charge;
+        if self.dataset.is_none() {
+            self.outputs.extend(candidate.outputs);
+        }
+        self.provenance = candidate.provenance;
+        if let Some((_, end, charge)) = candidate.range {
             self.committed_position = end;
             self.ledger
                 .earn(charge.saturating_mul(self.settings.work_per_input_unit));
         }
-        self.finish_applied = finishing;
+        self.finish_applied = candidate.finishing;
+        self.phase = if candidate.terminal {
+            Phase::Complete
+        } else {
+            Phase::Reading
+        };
         Ok(())
     }
-    /// Consuming this owner also drops any speculative VM/candidate. The caller
-    /// keeps the aggregate lease until it hands the completion to the coordinator.
-    pub fn into_completion(self) -> Result<Completion, Failure> {
-        if !matches!(
-            self.phase,
-            Phase::Complete | Phase::Stopped | Phase::Cancelled
-        ) {
-            return Err(Failure::new(
-                "CAL003",
+    pub(crate) fn current_prefix(&self) -> Result<Value, Failure> {
+        let reference = self.dataset.clone().ok_or_else(|| {
+            Failure::new(
+                "CAL004",
                 self.span,
-                "scan attempt has not terminated",
-            ));
-        }
-        let progress = self.progress();
-        let mut receipt = receipt(&progress, self.stop.as_ref());
+                "live analysis has no acknowledged output prefix",
+            )
+        })?;
+        Value::new(
+            self.result_contract.shape(),
+            Data::Record(
+                [
+                    ("state".into(), self.state.data().clone()),
+                    ("outputs".into(), Data::Dataset(reference.into())),
+                    ("receipt".into(), self.result_receipt()),
+                ]
+                .into(),
+            ),
+            self.provenance.clone(),
+        )
+        .map_err(|_| {
+            Failure::new(
+                "CAL002",
+                self.span,
+                "analysis prefix violated its captured result shape",
+            )
+        })
+        .map(|value| value.with_metadata(Some(self.result_metadata.clone())))
+    }
+    fn result_receipt(&self) -> Data {
+        let mut receipt = receipt(&self.progress(), self.stop.as_ref());
         let Data::Record(fields) = &mut receipt else {
             unreachable!()
         };
         let optional = |value: Option<Data>| Data::Option(value.map(Box::new));
         fields.insert(
             "analysisId".into(),
-            Data::Text(self.identity.analysis.into()),
+            Data::Text(self.identity.analysis.as_str().into()),
         );
         fields.insert(
             "transitionRevision".into(),
@@ -882,10 +1486,13 @@ impl Runner {
                     .map(|f| Data::Text(f.revision().into())),
             ),
         );
-        fields.insert("profile".into(), Data::Text(self.identity.profile.into()));
+        fields.insert(
+            "profile".into(),
+            Data::Text(self.identity.profile.as_str().into()),
+        );
         fields.insert(
             "profileRevision".into(),
-            Data::Text(self.identity.profile_revision.into()),
+            Data::Text(self.identity.profile_revision.as_str().into()),
         );
         fields.insert(
             "sourceNode".into(),
@@ -925,11 +1532,48 @@ impl Runner {
         );
         fields.insert(
             "sourcePath".into(),
-            Data::List(self.identity.source.map_or_else(Vec::new, |s| {
-                s.path.into_iter().map(|p| Data::Text(p.into())).collect()
+            Data::List(self.identity.source.as_ref().map_or_else(Vec::new, |s| {
+                s.path
+                    .iter()
+                    .map(|p| Data::Text(p.as_str().into()))
+                    .collect()
             })),
         );
-        fields.insert("durableResume".into(), Data::Bool(false));
+        fields.insert("durableResume".into(), Data::Bool(self.resume_available()));
+        let durable = self.durable.as_ref();
+        let measured = durable.map_or(self.ledger.usage().work, |d| {
+            d.checkpoint
+                .work
+                .completed
+                .checked_add(self.ledger.usage().work.saturating_sub(d.grant_start_work))
+                .expect("measured work is bounded by the admitted cumulative ledger")
+        });
+        for (name, value) in [
+            (
+                "attempt",
+                optional(durable.map(|d| Data::Text(d.checkpoint.attempt.clone().into()))),
+            ),
+            (
+                "previousAttempt",
+                optional(
+                    durable
+                        .and_then(|d| d.checkpoint.previous_attempt.clone())
+                        .map(|s| Data::Text(s.into())),
+                ),
+            ),
+            ("measuredWork", Data::Int(measured as i64)),
+            (
+                "outstandingWork",
+                optional(durable.map(|d| Data::Int(d.checkpoint.work.outstanding as i64))),
+            ),
+            ("durationChargedMs", Data::Int(self.elapsed_ms() as i64)),
+            (
+                "durationOutstandingMs",
+                optional(durable.map(|d| Data::Int(d.checkpoint.duration.outstanding_ms as i64))),
+            ),
+        ] {
+            fields.insert(name.into(), value);
+        }
         let limits = self.settings.limits;
         fields.insert(
             "limits".into(),
@@ -971,12 +1615,54 @@ impl Runner {
                 .into(),
             ),
         );
+        receipt
+    }
+    /// Availability is execution-owner evidence, not a client guess from one remaining counter.
+    fn resume_available(&self) -> bool {
+        let usage = self.ledger.usage();
+        let limits = self.settings.limits;
+        self.durable.as_ref().is_some_and(|d| !d.storage_failed)
+            && matches!(self.phase, Phase::Stopped | Phase::Cancelled)
+            && !self.finish_applied
+            && self.elapsed() < self.settings.duration
+            && self.ledger.remaining_work() > 0
+            && usage.work < limits.work
+            && usage.input_bytes < limits.input_bytes
+            && usage.input_records < limits.input_records
+            && usage.output_bytes < limits.output_bytes
+            && usage.output_records < limits.output_records
+            && self
+                .stop
+                .as_ref()
+                .is_some_and(|stop| stop.failure.cancelled)
+    }
+    /// Consuming this owner also drops any speculative VM/candidate. The caller
+    /// keeps the aggregate lease until it hands the completion to the coordinator.
+    pub fn into_completion(self) -> Result<Completion, Failure> {
+        if !matches!(
+            self.phase,
+            Phase::Complete | Phase::Stopped | Phase::Cancelled
+        ) {
+            return Err(Failure::new(
+                "CAL003",
+                self.span,
+                "scan attempt has not terminated",
+            ));
+        }
+        let progress = self.progress();
+        let receipt = self.result_receipt();
         let value = Value::new(
             self.result_contract.shape(),
             Data::Record(
                 [
                     ("state".into(), self.state.into_data()),
-                    ("outputs".into(), Data::List(self.outputs)),
+                    (
+                        "outputs".into(),
+                        self.dataset.map_or_else(
+                            || Data::List(self.outputs),
+                            |reference| Data::Dataset(reference.into()),
+                        ),
+                    ),
                     ("receipt".into(), receipt),
                 ]
                 .into(),
@@ -1059,7 +1745,12 @@ fn refusal(error: Refusal, span: Span) -> Stop {
         source_span: None,
     }
 }
-fn source_end(position: u64, framed: bool, provenance: Provenance) -> Value {
+fn source_end(
+    position: u64,
+    framed: bool,
+    provenance: Provenance,
+    producer_complete: bool,
+) -> Value {
     let registry = ContractRegistry::new();
     let contract = native_record(
         &registry,
@@ -1077,13 +1768,26 @@ fn source_end(position: u64, framed: bool, provenance: Provenance) -> Value {
         contract.shape(),
         Data::Record(
             [
-                ("kind".into(), Data::Text("selected_range".into())),
+                (
+                    "kind".into(),
+                    Data::Text(
+                        if producer_complete {
+                            "natural_end"
+                        } else {
+                            "selected_range"
+                        }
+                        .into(),
+                    ),
+                ),
                 ("position".into(), Data::Int(position as i64)),
                 (
                     "unit".into(),
                     Data::Text(if framed { "bytes" } else { "records" }.into()),
                 ),
-                ("producerComplete".into(), Data::Option(None)),
+                (
+                    "producerComplete".into(),
+                    Data::Option(producer_complete.then(|| Box::new(Data::Bool(true)))),
+                ),
             ]
             .into(),
         ),
@@ -1119,6 +1823,13 @@ fn native_record(
         .map_err(|error| Failure::new("CAL002", span, error.to_string()))
 }
 pub(super) fn result_contract(step: &Transition, span: Span) -> Result<Arc<Contract>, Failure> {
+    result_contract_for_sink(step, false, span)
+}
+pub(super) fn result_contract_for_sink(
+    step: &Transition,
+    dataset: bool,
+    span: Span,
+) -> Result<Arc<Contract>, Failure> {
     let registry = ContractRegistry::new();
     let limits = native_record(
         &registry,
@@ -1174,6 +1885,12 @@ pub(super) fn result_contract(step: &Transition, span: Span) -> Result<Arc<Contr
             ("sourcePort", "Option<Text>"),
             ("sourcePath", "List<Text>"),
             ("durableResume", "Bool"),
+            ("attempt", "Option<Text>"),
+            ("previousAttempt", "Option<Text>"),
+            ("measuredWork", "Int"),
+            ("outstandingWork", "Option<Int>"),
+            ("durationChargedMs", "Int"),
+            ("durationOutstandingMs", "Option<Int>"),
         ],
         span,
     )?;
@@ -1193,8 +1910,12 @@ pub(super) fn result_contract(step: &Transition, span: Span) -> Result<Arc<Contr
             .map_err(|error| Failure::new("CAL002", span, error.to_string()))?,
     );
     let outputs = Arc::new(
-        Contract::list("ScanOutputs", step.output_contract.clone())
-            .map_err(|error| Failure::new("CAL002", span, error.to_string()))?,
+        (if dataset {
+            Contract::dataset("ScanOutputs", step.output_contract.clone())
+        } else {
+            Contract::list("ScanOutputs", step.output_contract.clone())
+        })
+        .map_err(|error| Failure::new("CAL002", span, error.to_string()))?,
     );
     Contract::record(
         "ScanResult",
@@ -1237,7 +1958,8 @@ fn receipt(progress: &Progress, stop: Option<&Stop>) -> Data {
                     match progress.phase {
                         Phase::Complete => "complete",
                         Phase::Cancelled => "cancelled",
-                        _ => "stopped",
+                        Phase::Stopped => "stopped",
+                        _ => "running",
                     }
                     .into(),
                 ),
@@ -1284,7 +2006,10 @@ fn receipt(progress: &Progress, stop: Option<&Stop>) -> Data {
                 Data::Int(usage.high_water_bytes as i64),
             ),
             ("finishApplied".into(), Data::Bool(progress.finish_applied)),
-            ("sourceComplete".into(), Data::Option(None)),
+            (
+                "sourceComplete".into(),
+                optional(progress.producer_complete.map(Data::Bool)),
+            ),
             (
                 "failureCode".into(),
                 optional(stop.map(|stop| Data::Text(stop.failure.code.into()))),

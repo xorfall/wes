@@ -25,7 +25,7 @@ fn read_value_node(
     // The envelope is a format header, not a domain node. Shape, data and provenance
     // are charged below, including those in an Iter's owned source value.
     let options = context.options;
-    let iterators = context.iterators;
+    let retained = context.retained;
     let object = context.object(root)?;
     if raw::string(raw::required(&object, "format")?)? != super::VALUE_FORMAT
         || raw::scalar::<u32>(raw::required(&object, "version")?)? != super::VALUE_VERSION
@@ -33,12 +33,15 @@ fn read_value_node(
         return Err(invalid("unsupported retained-value format or version"));
     }
     context.options = true;
-    context.iterators = true;
+    context.retained = true;
     let shape = read_shape(raw::required(&object, "type")?, context, depth)?;
     let data = read_tagged(raw::required(&object, "data")?, context, depth)?;
     let mut provenance = read_provenance(raw::required(&object, "provenance")?, context)?;
     let fields = context.object(raw::required(&object, "policy")?)?;
-    if fields.len() != 2 {
+    if fields
+        .keys()
+        .any(|key| !matches!(key.as_str(), "origins" | "unknown" | "dataset_reads"))
+    {
         return Err(invalid("invalid value policy"));
     }
     let origins = context.sequence(raw::required(&fields, "origins")?)?;
@@ -46,6 +49,22 @@ fn read_value_node(
         return Err(CodecError::Work);
     }
     let mut policy = wes_core::flow::FlowPolicy::default();
+    if let Some(reads) = fields.get("dataset_reads") {
+        let reads = context.sequence(reads)?;
+        if reads.len() > 128 {
+            return Err(CodecError::Work);
+        }
+        for read in reads {
+            let read = context.object(read)?;
+            if read.len() != 2 {
+                return Err(invalid("invalid dataset read origin"));
+            }
+            let wire = serde_json::json!({"store": raw::string(raw::required(&read,"store")?)?, "dataset": raw::string(raw::required(&read,"dataset")?)?});
+            let origin = serde_json::from_value::<wes_core::flow::DatasetReadOrigin>(wire)
+                .map_err(|_| invalid("invalid dataset read origin"))?;
+            policy = policy.with_dataset_read(origin);
+        }
+    }
     for origin in origins {
         policy = policy.from_origin(raw::string(origin)?);
     }
@@ -54,7 +73,7 @@ fn read_value_node(
     }
     provenance = provenance.with_policy(&policy);
     context.options = options;
-    context.iterators = iterators;
+    context.retained = retained;
     let wire = object
         .get("meta")
         .map(|raw| read_metadata(raw, context))
@@ -86,6 +105,7 @@ fn read_shape(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Sha
         match raw::string(raw::required(&object, "kind")?)?.as_str() {
             "meta" => match raw::string(raw::required(&object, "name")?)?.as_str() {
                 "ImportPlan" => Shape::Meta(wes_core::MetaType::ImportPlan),
+                "DatasetDeletePlan" => Shape::Meta(wes_core::MetaType::DatasetDeletePlan),
                 "WorkspaceDeletePlan" => Shape::Meta(wes_core::MetaType::WorkspaceDeletePlan),
                 "ViewInstance" => Shape::Meta(wes_core::MetaType::ViewInstance),
                 _ => return Err(invalid("unknown management type")),
@@ -104,7 +124,12 @@ fn read_shape(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Sha
                     _ => return Err(invalid("unknown primitive type")),
                 },
             ),
-            "iter" if context.iterators => Shape::Iter(Box::new(read_shape(
+            "iter" if context.retained => Shape::Iter(Box::new(read_shape(
+                raw::required(&object, "element")?,
+                context,
+                depth + 1,
+            )?)),
+            "dataset" if context.retained => Shape::Dataset(Box::new(read_shape(
                 raw::required(&object, "element")?,
                 context,
                 depth + 1,
@@ -155,7 +180,7 @@ fn read_tagged(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Da
     let payload = raw::required(&object, "value")?;
     Ok(
         match raw::string(raw::required(&object, "kind")?)?.as_str() {
-            "iter" if context.iterators => read_iter(payload, context, depth)?,
+            "iter" if context.retained => read_iter(payload, context, depth)?,
             "option" if context.options => Data::Option(if payload.get() == "null" {
                 None
             } else {
@@ -192,9 +217,27 @@ fn read_tagged(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Da
                     .map(|(key, raw)| Ok((key, read_tagged(raw, context, depth + 1)?)))
                     .collect::<Result<_, CodecError>>()?,
             ),
+            "dataset" if context.retained => read_dataset(payload, context, depth)?,
             _ => return Err(invalid("unknown data kind")),
         },
     )
+}
+fn read_dataset(
+    payload: &RawValue,
+    context: &mut Context,
+    depth: usize,
+) -> Result<Data, CodecError> {
+    let fields = context.object(payload)?;
+    if fields.len() != 2 || raw::string(raw::required(&fields, "kind")?)? != "dataset" {
+        return Err(invalid("invalid dataset envelope"));
+    }
+    let reference = context.object(raw::required(&fields, "reference")?)?;
+    for _ in &reference {
+        context.visit(depth + 1)?;
+    }
+    let reference = serde_json::from_str(raw::required(&fields, "reference")?.get())
+        .map_err(|_| invalid("invalid dataset reference"))?;
+    Ok(Data::Dataset(std::sync::Arc::new(reference)))
 }
 fn read_iter(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Data, CodecError> {
     use wes_core::{ContractCapture, IterMode, IterStage, IterValue};

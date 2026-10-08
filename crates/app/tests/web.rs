@@ -109,6 +109,44 @@ impl Fixture {
         install: Install,
         storage: impl FnOnce(TieredValues) -> (StoreWorker, StoreWorkerTask),
     ) -> Self {
+        Self::configured_owner(configure, install, move |_, values| storage(values)).await
+    }
+    async fn datasets() -> Self {
+        Self::configured_owner(
+            |_| wes::web::Services::default(),
+            Arc::new(|_| Ok(())),
+            |root, values| {
+                let datasets = wes_adapters::datasets::DatasetStore::open(
+                    &root.join("datasets"),
+                    Durability::File,
+                    wes_adapters::datasets::StoreLimits::default(),
+                )
+                .unwrap();
+                wes_engine::storage::spawn_storage(values, datasets, StoreWorkerLimits::default())
+                    .unwrap()
+            },
+        )
+        .await
+    }
+    async fn configured_owner(
+        configure: impl FnOnce(&std::path::Path) -> wes::web::Services,
+        install: Install,
+        storage: impl FnOnce(&std::path::Path, TieredValues) -> (StoreWorker, StoreWorkerTask),
+    ) -> Self {
+        Self::configured_owner_concurrency(
+            configure,
+            install,
+            storage,
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .await
+    }
+    async fn configured_owner_concurrency(
+        configure: impl FnOnce(&std::path::Path) -> wes::web::Services,
+        install: Install,
+        storage: impl FnOnce(&std::path::Path, TieredValues) -> (StoreWorker, StoreWorkerTask),
+        concurrency: NonZeroUsize,
+    ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let site = root.path().join("site");
         std::fs::create_dir(&site).unwrap();
@@ -121,7 +159,7 @@ impl Fixture {
             None,
         )
         .unwrap();
-        let (worker, writer) = storage(values);
+        let (worker, writer) = storage(root.path(), values);
         let calls = Arc::new(AtomicUsize::new(0));
         let invoked = calls.clone();
         let (app, task) = wes::open(wes::Config {
@@ -129,7 +167,7 @@ impl Fixture {
             initial: WorkspaceName::new("default".into()).unwrap(),
             durability: Durability::File,
             max_streams: wes_engine::driver::DEFAULT_MAX_STREAMS,
-            concurrency: NonZeroUsize::new(2).unwrap(),
+            concurrency,
             type_reader: Arc::new(NoFiles),
             storage: Some(SessionStorage {
                 worker: worker.clone(),

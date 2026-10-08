@@ -7,15 +7,18 @@ import type {ViewRenderer} from "./index";
 import {applyFrameTheme} from "./theme";
 import authoring from "./authoring.json";
 import {slotClip} from "./geometry";
+import {FrameDatasets} from "./datasets";
 type Renderer=ViewRenderer<unknown,unknown,unknown,unknown,Record<string,unknown>> & {definition:ViewDefinition};
 const MAX_INPUT=authoring.runtimeLimits.inputBytes, MAX_EVENT=authoring.runtimeLimits.messageCharacters;
 export function startFrame(view:Renderer) {
   let port:MessagePort|undefined,input:unknown,state:unknown=null,revision=0,sequence=0,acknowledged=0,ready=false,pending=false;
   let slots:Record<string,readonly {key:string;height:number}[]>={},root:ReturnType<typeof createRoot>;
-  let context:{mode:"preview"|"expanded"|"window";instance:string|null;coordinated?:boolean;inspectionOnly?:boolean;inspectionOutlet?:boolean;inspectionActive?:boolean;active?:boolean}={mode:"window",instance:null};
+  let context:{mode:"preview"|"expanded"|"window";instance:string|null;coordinated?:boolean;inspectionOnly?:boolean;inspectionOutlet?:boolean;inspectionActive?:boolean;active?:boolean;datasets?:boolean;datasetEpoch?:number}={mode:"window",instance:null};
   const queue:unknown[]=[];
   const send=(value:unknown,limit=MAX_EVENT)=>{const text=stringifyExactJson(value);if(text.length>limit)throw new Error("Frame message budget");port?.postMessage(text);};
-  const fail=()=>{queue.length=0;pending=true;try{send({kind:"error",message:"View renderer failed. Close and reopen to retry."});}catch{}};
+  const fail=()=>{queue.length=0;pending=true;datasets.cancelAll("failed");try{send({kind:"error",message:"View renderer failed. Close and reopen to retry."});}catch{}};
+  // Dataset pages are read only through the host; the frame never holds an address or token.
+  const datasets=new FrameDatasets(value=>send(value));
   function emit(event:unknown) {
     if(!view.definition.interaction||pending&&queue.length>=authoring.runtimeLimits.pendingEvents)return fail();
     try {if(stringifyExactJson(event).length>MAX_EVENT)throw new Error();queue.push(event);flush();}catch{fail();}
@@ -49,7 +52,8 @@ export function startFrame(view:Renderer) {
     const advance=measure?.measureText('0000000000').width?measure.measureText('0000000000').width/10:7.8;
     const width=document.documentElement.clientWidth,height=window.innerHeight,leading=parseFloat(style.lineHeight)||21;
     const allocation={width,height,columns:Math.max(1,Math.floor(width/advance)),rows:Math.max(1,Math.floor(height/leading))};
-    return <Component input={input} state={state} revision={revision} emit={emit} slots={nodes} context={{...context,allocation,inspect:context.inspectionOutlet && view.Inspection ? ()=>send({kind:"inspect"}) : undefined}}/>;
+    const {datasets:readable,datasetEpoch:_epoch,...shown}=context;
+    return <Component input={input} state={state} revision={revision} emit={emit} slots={nodes} context={{...shown,allocation,datasets:readable?datasets:undefined,inspect:context.inspectionOutlet && view.Inspection ? ()=>send({kind:"inspect"}) : undefined}}/>;
   }
   function paint(){try{root.render(<Frame/>);}catch{fail();}}
   const connect=(event:MessageEvent)=>{
@@ -63,7 +67,10 @@ export function startFrame(view:Renderer) {
         if(update.kind==="render"){
           input=update.input;sequence=update.sequence;slots=update.slots??{};
           if(update.context){if(!["preview","expanded","window"].includes(update.context.mode)||(update.context.instance!==null&&typeof update.context.instance!=="string")||(update.context.coordinated!==undefined&&typeof update.context.coordinated!=="boolean"))throw new Error("Invalid View context");
-            for(const key of ["inspectionOnly","inspectionOutlet","inspectionActive","active"] as const)if(update.context[key]!==undefined && typeof update.context[key]!=="boolean")throw new Error("Invalid inspection context");
+            for(const key of ["inspectionOnly","inspectionOutlet","inspectionActive","active","datasets"] as const)if(update.context[key]!==undefined && typeof update.context[key]!=="boolean")throw new Error("Invalid inspection context");
+            if(update.context.datasetEpoch!==undefined&&!Number.isSafeInteger(update.context.datasetEpoch))throw new Error("Invalid dataset context");
+            // A new input binding settles every read still in flight for the old one.
+            if(update.context.datasetEpoch!==context.datasetEpoch||!update.context.datasets)datasets.cancelAll("changed");
             context=update.context;document.getElementById("root")!.dataset.mode=context.mode;}
           if(!ready){state=view.initial?.(input)??null;ready=true;send({kind:"ready",state,outputs:view.outputs?.(state)??{},digest:view.definition.digest,inspectable:!!view.Inspection});}
           if(update.state!==undefined){state=update.state;revision=update.revision??revision;}
@@ -75,7 +82,8 @@ export function startFrame(view:Renderer) {
           state=update.state;revision=update.revision??revision;
           if(update.kind==="event-reply"){pending=false;if(!update.accepted)queue.length=0;}
           paint();flush();
-        }else if(update.kind==="scroll")window.scrollBy(0,Number((update as unknown as {delta:number}).delta));
+        }else if(update.kind==="dataset-reply")datasets.settle(update as never);
+        else if(update.kind==="scroll")window.scrollBy(0,Number((update as unknown as {delta:number}).delta));
         else throw new Error();
       }catch{fail();}
     };

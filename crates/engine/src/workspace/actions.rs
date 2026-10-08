@@ -343,15 +343,22 @@ impl Workspace {
                 effects
             }
             Control::Change { node, call, typing } => {
-                let traits = call.traits();
+                let replacement = self
+                    .runtime
+                    .graph()
+                    .node(&node)
+                    .expect("prepared target")
+                    .payload()
+                    .with_replaced_call(call);
+                let traits = replacement.traits();
                 let effects = match installation {
                     super::Installation::Live => {
                         self.runtime
-                            .replace_payload(&node, BoundTask::Call(call), traits, now)?
+                            .replace_payload(&node, replacement.clone(), traits, now)?
                     }
                     super::Installation::Held => {
                         self.runtime
-                            .replace_held_payload(&node, BoundTask::Call(call), traits)?;
+                            .replace_held_payload(&node, replacement, traits)?;
                         vec![]
                     }
                 };

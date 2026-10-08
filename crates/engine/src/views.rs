@@ -730,7 +730,7 @@ impl Store {
         if value.shape() == &wes_core::Shape::Unknown {
             return Err(Error::InputUnknown);
         }
-        if !value.data().is_materialized() || value.shape().contains_meta() {
+        if !value.data().is_storable_snapshot() || value.shape().contains_meta() {
             return Err(Error::Input);
         }
         package
@@ -884,6 +884,34 @@ impl Store {
             if removed > 0 || lost {
                 instance.snapshot.revision = instance.snapshot.revision.saturating_add(1);
                 self.edges -= removed;
+            }
+        }
+        self.expire_mounts();
+    }
+    pub(crate) fn withdraw_dataset_inputs(
+        &mut self,
+        access: &crate::storage::datasets::DatasetAccess,
+    ) {
+        for instance in self.instances.values_mut() {
+            if instance
+                .snapshot
+                .input
+                .as_ref()
+                .and_then(|i| i.value.as_ref())
+                .is_some_and(|v| access.blocks(v))
+            {
+                if let Some(input) = &mut instance.snapshot.input {
+                    input.value = None;
+                }
+                instance.snapshot.input_problem =
+                    Some("Input access was withdrawn; cached data was cleared".into());
+                instance.snapshot.observing = false;
+                instance.input_observation_requested = false;
+                instance.snapshot.input_revision =
+                    instance.snapshot.input_revision.saturating_add(1);
+                instance.snapshot.revision = instance.snapshot.revision.saturating_add(1);
+                self.charged -= instance.charge;
+                instance.charge = 0;
             }
         }
         self.expire_mounts();

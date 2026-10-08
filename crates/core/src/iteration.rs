@@ -291,7 +291,7 @@ impl IterValue {
                 regex = Some(Arc::downgrade(&cache.compile(s)?));
             }
         }
-        if !source.data().is_materialized() {
+        if !source.data().is_inline() {
             return Err(IterPlanError::Type(
                 "Iter source requires bounded materialized data".into(),
             ));
@@ -326,6 +326,7 @@ impl IterValue {
                     Data::Record(_) => "Record",
                     Data::Option(_) => "Option",
                     Data::Iter(_) => "Iter",
+                    Data::Dataset(_) => "Dataset; use an explicit bounded page",
                     Data::Instant(_) => "Instant",
                     Data::Duration(_) => "Duration",
                     Data::Interval(_) => "Interval",

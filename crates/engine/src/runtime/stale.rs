@@ -21,6 +21,7 @@ reasons! {
     InputBehind => ("input_behind", "The calculation completed an older input while newer input arrived; waiting to compute the latest committed input."),
     StreamUpdated => ("stream_updated", "An upstream stream changed its data or availability; this result is no longer current."),
     ResultEvicted => ("result_evicted", "The result was removed from live memory and is no longer available to this cell."),
+    ResultWithdrawn => ("result_withdrawn", "Access to the result was withdrawn. Cached data and value-derived metadata were cleared; no work was replayed."),
     RestoreNotRetained => ("restore_not_retained", "No retained result was available when the workspace reopened. The command was not rerun."),
     RestoreUnavailable => ("restore_unavailable", "The retained result could not be loaded when the workspace reopened. The command was not rerun."),
     RestoreUnfinished => ("restore_unfinished", "No completed result was recorded before the workspace reopened. Check run history before retrying; external effects may already have occurred."),

@@ -17,7 +17,25 @@ impl DeclarationDraft {
             self.access.clone(),
             self.pipeline_groups.clone(),
         );
-        let result = self.stage_pipeline_inner(stages, None, None, &[], &mut None);
+        let result = if stages.last().is_some_and(|stage| match &stage.expression {
+            wes_language::Expression::Call(call) if call.marker.is_some() => {
+                wes_language::vocabulary::commands::signature(
+                    &call
+                        .path
+                        .iter()
+                        .map(|name| name.text.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .is_some_and(|spec| {
+                    spec.command == wes_language::vocabulary::MetaCommand::DatasetRecord
+                })
+            }
+            _ => false,
+        }) {
+            self.stage_recording_launch(stages)
+        } else {
+            self.stage_pipeline_inner(stages, None, None, &[], &mut None)
+        };
         if result.is_err() {
             self.graph = saved.0;
             self.bindings = saved.1;
@@ -28,6 +46,146 @@ impl DeclarationDraft {
             self.pipeline_groups = saved.6;
         }
         result
+    }
+    fn stage_recording_launch(
+        &mut self,
+        stages: &[Statement],
+    ) -> Result<Vec<Diagnostic>, WorkspaceError> {
+        use wes_language::{Argument, Expression, Name, Value};
+        if stages.len() != 2 {
+            return Err(super::super::rejected(
+                "PIP005",
+                stages.last().unwrap().span,
+                "Recording launch is one new provider source followed by :dataset record; event transforms belong in separate analysis work",
+            ));
+        }
+        let source = &stages[0];
+        if source
+            .annotations
+            .iter()
+            .any(|annotation| annotation.name.text == "hold")
+        {
+            return Err(super::super::rejected(
+                "PIP005",
+                source.span,
+                "A launch pipeline admits its source explicitly; use @hold only for separate setup and refresh",
+            ));
+        }
+        let Preparation::Change(mut prepared) = self.prepare_with_pipe(source, None)? else {
+            return Err(super::super::rejected(
+                "PIP005",
+                source.span,
+                "Recording launch requires a new provider subscription",
+            ));
+        };
+        let Change::Node {
+            node,
+            task: BoundTask::Call(call),
+            admission,
+            ..
+        } = &mut prepared.operation
+        else {
+            return Err(super::super::rejected(
+                "PIP005",
+                source.span,
+                "Recording launch requires a new provider subscription",
+            ));
+        };
+        if !call.streaming() || call.interactive() || call.recording_schema().is_none() {
+            return Err(super::super::rejected(
+                "PIP005",
+                source.span,
+                "Recording launch requires a non-interactive source with a complete captured inline event contract",
+            ));
+        }
+        let source_node = node.clone();
+        let bound_source = call.clone();
+        *admission = super::super::Installation::Held;
+        let source_index = self.changes.len();
+        let mut diagnostics = prepared.diagnostics.clone();
+        self.stage(prepared)?;
+        let mut setup = stages[1].clone();
+        let Expression::Call(call) = &mut setup.expression else {
+            unreachable!("recording launch");
+        };
+        if !call.operands.is_empty()
+            || call
+                .arguments
+                .iter()
+                .any(|argument| matches!(argument.key.text.as_str(), "source" | "from"))
+            || !setup.annotations.is_empty()
+        {
+            return Err(super::super::rejected(
+                "PIP005",
+                setup.span,
+                "Launch recording supplies source and from:start; omit those fields and annotations. Other declared recording options use normal command validation",
+            ));
+        }
+        for (key, value) in [
+            (
+                "source",
+                Value::Reference(Name {
+                    text: source_node.as_str().into(),
+                    span: call.span,
+                }),
+            ),
+            (
+                "from",
+                Value::Word(Name {
+                    text: "start".into(),
+                    span: call.span,
+                }),
+            ),
+        ] {
+            call.arguments.push(Argument {
+                key: Name {
+                    text: key.into(),
+                    span: call.span,
+                },
+                value,
+                span: call.span,
+            });
+        }
+        let Preparation::Change(prepared) = self.prepare_with_pipe(&setup, None)? else {
+            unreachable!("recording task declaration");
+        };
+        let recording_node = prepared.node().expect("recording node").clone();
+        diagnostics.extend(prepared.diagnostics.clone());
+        self.stage(prepared)?;
+        let task = BoundTask::SourceLaunch(crate::tasks::recording::BoundSourceLaunch {
+            source: bound_source,
+            setup: OutputRef::data(recording_node),
+            setup_run: None,
+        });
+        // No event dependency points back from setup to source. Its whole-source
+        // selection is captured by the native owner after atomic installation.
+        let removed = self
+            .graph
+            .remove(&source_node)
+            .map_err(|error| WorkspaceError::Runtime(error.into()))?;
+        debug_assert_eq!(removed.len(), 1);
+        self.graph
+            .restore(source_node.clone(), task.clone(), task.dependencies())
+            .map_err(|error| WorkspaceError::Runtime(error.into()))?;
+        let super::BatchChange::Declaration(prepared) = &mut self.changes[source_index] else {
+            unreachable!("source declaration");
+        };
+        let Change::Node {
+            task: source_task,
+            admission,
+            activation,
+            ..
+        } = &mut prepared.operation
+        else {
+            unreachable!("source node");
+        };
+        *source_task = task;
+        *admission = super::super::Installation::Live;
+        *activation = match source_task {
+            BoundTask::SourceLaunch(launch) => Some(launch.setup.clone()),
+            _ => unreachable!(),
+        };
+        Ok(diagnostics)
     }
     fn stage_pipeline_inner(
         &mut self,

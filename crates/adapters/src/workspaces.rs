@@ -22,7 +22,7 @@ use wes_engine::{
 };
 
 fn max_entries() -> usize {
-    wes_budgets::get("workspace.catalogue") as usize
+    wes_budgets::get("workspace.catalogue") as usize + 1
 }
 const MANIFEST_HEADER: &str = "wes.workspace\n1\n";
 #[derive(Debug, Error)]
@@ -48,6 +48,7 @@ pub struct FileWorkspaces {
     directory: OwnedDirectory,
     limits: ReadLimits,
     durability: Durability,
+    publication: Option<std::sync::Arc<dyn wes_engine::history::RetainedDatasetPublication>>,
 }
 /// Derived from validated owned histories, never an independently maintained index.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -249,7 +250,14 @@ impl FileWorkspaces {
                 .map_err(storage)?,
             limits,
             durability,
+            publication: None,
         })
+    }
+    pub fn set_retained_dataset_publication(
+        &mut self,
+        publication: std::sync::Arc<dyn wes_engine::history::RetainedDatasetPublication>,
+    ) {
+        self.publication = Some(publication);
     }
     /// Copy both streams, then replace one pointer. Any failure before publication leaves the prior
     /// name intact. No prior generation is deleted: it may still belong to a running/paused session.
@@ -289,6 +297,7 @@ impl FileWorkspaces {
             OwnedDirectory::from_dir(directory, DirectoryKind::History, self.durability)
                 .map_err(storage)?;
         let mut history = FileHistory::from_directory(directory, self.limits, self.durability)?;
+        history.set_dataset_publication(&generation, self.publication.clone())?;
         history.seed(image)?;
         drop(history);
         // The generation entry must itself be durable before a durable pointer can refer to it.
@@ -338,6 +347,7 @@ impl FileWorkspaces {
             OwnedDirectory::from_dir(directory, DirectoryKind::History, self.durability)
                 .map_err(storage)?;
         let mut history = FileHistory::from_directory(directory, self.limits, self.durability)?;
+        history.set_dataset_publication(&generation, self.publication.clone())?;
         let image = history.capture(HistoryCaptureLimits::default())?;
         Ok((history, image))
     }
@@ -363,7 +373,7 @@ impl FileWorkspaces {
     fn check_capacity(&self, additional: usize) -> Result<(), WorkspaceFileError> {
         for (index, entry) in self.directory.entries().map_err(storage)?.enumerate() {
             entry.map_err(storage)?;
-            if index >= max_entries() - additional {
+            if index >= max_entries().saturating_sub(1).saturating_sub(additional) {
                 return Err(WorkspaceFileError::Capacity);
             }
         }

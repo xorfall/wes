@@ -501,7 +501,7 @@ fn validate_arguments(
             )
         })?;
         // Validate actual data deeply; a retained Unknown shape is not evidence of conformance.
-        if !value.data().is_materialized() || !fits(value.data(), &parameter.shape, token, 0) {
+        if !value.data().is_inline() || !fits(value.data(), &parameter.shape, token, 0) {
             return Err(Failure::new(
                 "CAL004",
                 span,

@@ -423,7 +423,8 @@ export class Registry {
       }
       return undefined;
     }
-    if (list || !isObject(data)) return undefined;
+    // A Dataset's data is its descriptor object, never a record a `*` entry could read by its keys.
+    if (list || type?.kind === "dataset" || !isObject(data)) return undefined;
     for (const source of [this.home, this.core]) {
       const entry = source.get("*");
       if (!entry || !entry.applies.includes("record")) continue;

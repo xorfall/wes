@@ -1421,5 +1421,6 @@ pub fn literal_shape(data: &Data) -> Shape {
         Data::Bytes(_) => Shape::Primitive(Primitive::Bytes),
         Data::Option(None) => Shape::Option(Box::new(Shape::Unknown)),
         Data::Option(Some(_)) | Data::List(_) | Data::Record(_) => Shape::Unknown,
+        Data::Dataset(_) => Shape::Dataset(Box::new(Shape::Unknown)),
     }
 }

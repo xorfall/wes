@@ -56,6 +56,7 @@ impl FieldDescriptor {
             ContractKind::Option(_) => "option".into(),
             ContractKind::Map(..) => "map".into(),
             ContractKind::Iter(_) => "iter".into(),
+            ContractKind::Dataset(_) => "dataset".into(),
             ContractKind::Union(..) => "union".into(),
             ContractKind::Unknown => "unknown".into(),
         };
@@ -297,6 +298,7 @@ impl ValueMetadata {
                         | "int"
                         | "decimal"
                         | "bool"
+                        | "dataset"
                         | "instant"
                         | "duration"
                         | "interval"
@@ -382,6 +384,7 @@ impl Contract {
             ContractKind::List(c) => serde_json::json!(["list", c.digest()]),
             ContractKind::Option(c) => serde_json::json!(["option", c.digest()]),
             ContractKind::Iter(c) => serde_json::json!(["iter", c.digest()]),
+            ContractKind::Dataset(c) => serde_json::json!(["dataset", c.digest()]),
             ContractKind::Map(a, b) => serde_json::json!(["map", a.digest(), b.digest()]),
             ContractKind::Union(a, b) => serde_json::json!(["union", a.digest(), b.digest()]),
             ContractKind::Unknown => serde_json::json!(["unknown"]),

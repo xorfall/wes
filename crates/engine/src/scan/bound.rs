@@ -34,6 +34,8 @@ pub struct BoundScan {
     span: Span,
     result_shape: Shape,
     pipe_input: Option<OutputRef>,
+    durable_sink: bool,
+    live: bool,
 }
 impl std::fmt::Debug for BoundScan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -45,6 +47,9 @@ impl std::fmt::Debug for BoundScan {
     }
 }
 impl BoundScan {
+    pub(crate) fn durable(&self) -> bool {
+        self.durable_sink
+    }
     /// Supply the captured declaration's shapes to the common argument planner.
     /// Written literals are parsed contextually there; referenced values retain
     /// their producing type and are checked unchanged at dispatch.
@@ -125,15 +130,41 @@ impl BoundScan {
                 "scan uses named arguments, without positional operands".into(),
             ));
         }
-        if literal("mode", Some("complete"))? != "complete"
-            || literal("sink", Some("memory"))? != "memory"
-            || literal("budget", Some("Investigation"))? != "Investigation"
+        let sink = literal("sink", Some("memory"))?;
+        let mode = literal("mode", Some("complete"))?;
+        let follow = match task.inputs.get("follow") {
+            None => false,
+            Some(Input::Literal(value)) => match value.data() {
+                Data::Bool(value) => *value,
+                _ => return Err(invalid("scan follow: must be a literal boolean".into())),
+            },
+            _ => return Err(invalid("scan follow: must be a literal boolean".into())),
+        };
+        let budget = literal(
+            "budget",
+            Some(if follow {
+                "LiveAnalysis"
+            } else {
+                "Investigation"
+            }),
+        )?;
+        if mode != "complete"
+            || !matches!(sink.as_str(), "memory" | "dataset")
+            || budget
+                != if follow {
+                    "LiveAnalysis"
+                } else {
+                    "Investigation"
+                }
         {
-            return Err(invalid("finite scan supports mode:complete, sink:memory and budget:Investigation; durable/live modes are unavailable".into()));
+            return Err(invalid("scan uses mode:complete and sink:memory|dataset; follow:true requires budget:LiveAnalysis, otherwise budget:Investigation".into()));
         }
         let profile_name = literal("profile", None)?;
         let profile = scan::Profile::lookup(&profile_name)
             .ok_or_else(|| invalid("unknown native scan profile".into()))?;
+        if follow && (sink != "dataset" || profile != scan::Profile::TypedRecords) {
+            return Err(invalid("follow:true requires sink:dataset and profile:TypedRecords; it reads recorded EventLog extensions only".into()));
+        }
         let delimiter = if profile == scan::Profile::DelimitedUtf8 {
             let delimiter = literal("delimiter", None)?;
             if delimiter.is_empty() || delimiter.len() > 4096 {
@@ -182,7 +213,7 @@ impl BoundScan {
         } else {
             None
         };
-        let result_shape = super::runner::result_contract(&step, span)
+        let result_shape = super::runner::result_contract_for_sink(&step, sink == "dataset", span)
             .map_err(|failure| Diagnostic::error(failure.code, span, failure.message))?
             .shape();
         let profile_revision = profile_digest(profile, framing.as_ref());
@@ -200,11 +231,16 @@ impl BoundScan {
             span,
             result_shape,
             pipe_input: None,
+            durable_sink: sink == "dataset",
+            live: follow,
         })
     }
     pub(crate) fn with_pipe_input(mut self, input: Option<&OutputRef>) -> Self {
         self.pipe_input = input.cloned();
         self
+    }
+    pub(crate) fn live(&self) -> bool {
+        self.live
     }
     pub(crate) fn dependencies(&self) -> impl Iterator<Item = OutputRef> + '_ {
         [&self.source, &self.initial, &self.context]
@@ -230,11 +266,23 @@ impl BoundScan {
         self,
         ticket: RunTicket<()>,
         pool: MemoryPool,
+        storage: Option<crate::storage::StoreWorker>,
         token: CancellationToken,
         progress: crate::driver::progress::Reporter,
+        values: crate::driver::lifetime::Reporter,
     ) -> ExecutionFuture {
         Box::pin(async move {
             let span = self.span;
+            let durable_sink = self.durable_sink;
+            let live = self.live;
+            if durable_sink && storage.is_none() {
+                return failed(Failure::new(
+                    "CAL004",
+                    span,
+                    "dataset scan requires an owned durable storage capability",
+                ))
+                .into();
+            }
             let cancel = token.clone();
             let initialized=tokio::task::spawn_blocking(move || {
                 if cancel.is_cancelled() {return Err(Failure::cancelled(span));}
@@ -258,7 +306,7 @@ impl BoundScan {
                 let identity=Identity {analysis:ticket.run.id().to_string(),source:source_identity,
                     profile:self.profile.name().into(),profile_revision:self.profile_revision};
                 let control=self.pipe_input.as_ref().and_then(|reference|ticket.inputs.get(&reference.node)).map(|v|v.provenance().clone());
-                Runner::new_admitted(ScanInput {source,initial,context,step:self.step,finish:self.finish,framing:self.framing,identity,control},
+                Runner::new_admitted(ScanInput {live,source,initial,context,step:self.step,finish:self.finish,framing:self.framing,identity,control},
                     self.settings,ledger,self.services,cancel,span)
             }).await;
             let mut runner = match initialized {
@@ -266,63 +314,291 @@ impl BoundScan {
                 Ok(Err(failure)) => return failed(failure).into(),
                 Err(_) => return panic_failure(span).into(),
             };
-            progress.report(runner.execution_progress());
-            let mut reported = std::time::Instant::now();
-            loop {
-                // The physical worker is always joined, including cancellation.
-                // Bound slices amortize handoff without retaining record VMs.
-                let polled = tokio::task::spawn_blocking(move || {
-                    let mut terminal = false;
-                    for _ in 0..32 {
-                        if matches!(runner.poll(), Poll::Terminal) {
-                            terminal = true;
-                            break;
-                        }
+            if live {
+                let admitted = async {
+                    let worker = storage.as_ref().expect("live sink requires owned storage");
+                    if worker.dataset_changes().is_none() {
+                        return Err(Failure::new(
+                            "CAL004",
+                            span,
+                            "owned store has no committed-change lifetime",
+                        ));
                     }
-                    (runner, terminal)
-                })
-                .await;
-                let terminal;
-                (runner, terminal) = match polled {
-                    Ok(pair) => pair,
-                    Err(_) => return panic_failure(span).into(),
-                };
-                if terminal || reported.elapsed() >= std::time::Duration::from_millis(200) {
-                    progress.report(runner.execution_progress());
-                    reported = std::time::Instant::now();
+                    let source = runner.source_page_request()?.0;
+                    let info = worker
+                        .dataset_inspect(source)
+                        .await
+                        .map_err(|e| Failure::new("CAL004", span, e.to_string()))?;
+                    runner.follow_source(info)
                 }
-                if terminal {
+                .await;
+                if let Err(failure) = admitted {
+                    return failed(failure).into();
+                }
+            }
+            if durable_sink {
+                let worker = storage.as_ref().expect("admitted dataset store");
+                let admission = async {
+                    if token.is_cancelled() {
+                        return Err(Failure::cancelled(span));
+                    }
+                    let source = worker
+                        .capture_scan_source(runner.captured_source())
+                        .await
+                        .map_err(|e| Failure::new("CAL004", span, e.to_string()))?;
+                    let checkpoint = runner.checkpoint_seed(source)?;
+                    let mut request = runner.dataset_admission()?;
+                    request.checkpoint = Some(checkpoint);
+                    let admission = worker
+                        .dataset_create(request)
+                        .await
+                        .map_err(|e| Failure::new("CAL004", span, e.to_string()))?;
+                    let reference = admission.reference;
+                    let checkpoint = worker
+                        .dataset_checkpoint(reference.clone())
+                        .await
+                        .map_err(|e| Failure::new("CAL004", span, e.to_string()))?
+                        .ok_or_else(|| {
+                            Failure::new(
+                                "CAL004",
+                                span,
+                                "dataset admission did not preserve its checkpoint",
+                            )
+                        })?;
+                    runner.retain_writer(admission.lease);
+                    runner.attach_durable(reference, checkpoint)
+                }
+                .await;
+                if let Err(failure) = admission {
+                    return failed(failure).into();
+                }
+            }
+            if live {
+                let initial = runner.current_prefix();
+                let admitted = match initial {
+                    Ok(value) => values.publish(value).await,
+                    Err(_) => false,
+                };
+                if !admitted {
+                    runner.refuse_scan(Failure::new("CAL004",span,"initial live analysis prefix was not acknowledged; analysis was not detached"));
+                }
+            }
+            run_admitted(runner, storage, token, progress, span).await
+        })
+    }
+}
+pub(crate) async fn run_admitted(
+    mut runner: Runner,
+    storage: Option<crate::storage::StoreWorker>,
+    token: CancellationToken,
+    progress: crate::driver::progress::Reporter,
+    span: Span,
+) -> crate::driver::ExecutionReport {
+    // Subscribe before inspecting a head. Catalog changes and writer exit cannot be lost
+    // between the metadata read and waiting; wakeups confer no read/producer authority.
+    let mut changes = storage.as_ref().and_then(|worker| worker.dataset_changes());
+    progress.report(runner.execution_progress());
+    let mut reported = std::time::Instant::now();
+    loop {
+        // The physical worker is always joined, including cancellation.
+        // Bound slices amortize handoff without retaining record VMs.
+        let polled = tokio::task::spawn_blocking(move || {
+            let mut result = Poll::Yield;
+            for _ in 0..32 {
+                result = runner.poll();
+                if !matches!(result, Poll::Yield) {
                     break;
                 }
-                tokio::task::yield_now().await;
             }
-            let final_progress = runner.execution_progress();
-            let completed = tokio::task::spawn_blocking(move || runner.into_completion()).await;
-            match completed {
-                Ok(Ok(completion)) => {
-                    // Runtime cancellation/revision withdrawal still rejects late
-                    // publication. This does not create a cancellation exception.
-                    if token.is_cancelled() {
-                        return failed(Failure::cancelled(span)).into();
-                    }
-                    let (value, _, stop, hold) = completion.into_parts();
-                    let outcome = match stop {
-                        None => Outcome::Produced(value),
-                        Some(stop) if stop.failure.cancelled => failed(stop.failure),
-                        Some(stop) => Outcome::Incomplete {
-                            value,
-                            error: error(stop.failure),
-                        },
-                    };
-                    let mut report: crate::driver::ExecutionReport = outcome.into();
-                    report.progress = Some(final_progress);
-                    report.holds.push(hold);
-                    report
-                }
-                Ok(Err(failure)) => failed(failure).into(),
-                Err(_) => panic_failure(span).into(),
-            }
+            (runner, result)
         })
+        .await;
+        let result;
+        (runner, result) = match polled {
+            Ok(pair) => pair,
+            Err(_) => return panic_failure(span).into(),
+        };
+        if matches!(result, Poll::ReadHead) {
+            let Some(worker) = &storage else {
+                runner.refuse_scan(Failure::new(
+                    "CAL004",
+                    span,
+                    "live source requires its owned store",
+                ));
+                continue;
+            };
+            let Some(changed) = &mut changes else {
+                runner.refuse_scan(Failure::new(
+                    "CAL004",
+                    span,
+                    "live source has no committed-change lifetime",
+                ));
+                continue;
+            };
+            let dataset = runner
+                .followed_dataset()
+                .expect("ReadHead has an admitted recorded source")
+                .to_owned();
+            let watched_revision = changed.borrow_and_update().revision(&dataset);
+            let head = match runner.source_head_request() {
+                Ok((reference, work)) => worker
+                    .eventlog_head(reference, Some(work))
+                    .await
+                    .map_err(|e| Failure::new("CAL004", span, e.to_string())),
+                Err(e) => Err(e),
+            };
+            let advance = match head {
+                Ok(info) => runner.acknowledge_source_head(info),
+                Err(e) => Err(e),
+            };
+            match advance {
+                Err(e) => runner.refuse_scan(e),
+                Ok(true) => {}
+                Ok(false) => {
+                    progress.report(runner.execution_progress());
+                    let deadline = tokio::time::sleep(runner.remaining_duration());
+                    tokio::pin!(deadline);
+                    loop {
+                        tokio::select! {
+                            _ = token.cancelled() => break,
+                            _ = &mut deadline => break,
+                            result = changed.changed() => {
+                                if result.is_err() {
+                                    runner.refuse_scan(Failure::new("CAL004",span,"recording store closed; source was not restarted"));
+                                    break;
+                                }
+                                if changed.borrow_and_update().revision(&dataset) != watched_revision { break; }
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if matches!(result, Poll::ReadPage) {
+            let Some(worker) = &storage else {
+                runner.refuse_scan(Failure::new(
+                    "CAL004",
+                    span,
+                    "dataset source requires its owned reader",
+                ));
+                continue;
+            };
+            let read = match runner.source_page_request() {
+                Ok((reference, request)) => worker
+                    .dataset_page(reference, request)
+                    .await
+                    .map_err(|e| Failure::new("CAL004", span, e.to_string())),
+                Err(e) => Err(e),
+            };
+            match read {
+                Ok(page) => {
+                    if let Err(e) = runner.acknowledge_source_page(page) {
+                        runner.refuse_scan(e);
+                    }
+                }
+                Err(e) => runner.refuse_scan(e),
+            }
+            continue;
+        }
+        if matches!(result, Poll::Grant | Poll::Commit) {
+            let worker = storage
+                .as_ref()
+                .expect("dataset processing has its admitted owner");
+            let grant = matches!(result, Poll::Grant);
+            let request = if grant {
+                runner.durable_grant()
+            } else {
+                runner.dataset_candidate()
+            };
+            let committed = match request {
+                Ok(request) => {
+                    let checkpoint = request.checkpoint.clone();
+                    match worker.enqueue_dataset_append(request).await {
+                        Ok(pending) => pending
+                            .wait()
+                            .await
+                            .map(|reference| (reference, checkpoint)),
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(failure) => {
+                    runner.refuse_scan(failure);
+                    continue;
+                }
+            };
+            match committed {
+                Ok((reference, checkpoint)) => {
+                    let accepted = if grant {
+                        runner.acknowledge_grant(reference, checkpoint.expect("durable grant"))
+                    } else {
+                        runner.acknowledge_dataset(reference)
+                    };
+                    if let Err(failure) = accepted {
+                        runner.refuse_dataset(failure.to_string());
+                    }
+                }
+                Err(error) => runner.refuse_dataset(error.to_string()),
+            }
+            progress.report(runner.execution_progress());
+            continue;
+        }
+        let terminal = matches!(result, Poll::Terminal);
+        if terminal || reported.elapsed() >= std::time::Duration::from_millis(200) {
+            progress.report(runner.execution_progress());
+            reported = std::time::Instant::now();
+        }
+        if terminal {
+            if let Some(worker) = &storage {
+                if let Ok(Some(request)) = runner.durable_terminal_update() {
+                    let checkpoint = request
+                        .checkpoint
+                        .clone()
+                        .expect("durable terminal checkpoint");
+                    let written = match worker.enqueue_dataset_append(request).await {
+                        Ok(pending) => pending.wait().await,
+                        Err(error) => Err(error),
+                    };
+                    match written {
+                        Ok(reference) => {
+                            if let Err(failure) = runner.acknowledge_terminal(reference, checkpoint)
+                            {
+                                runner.refuse_dataset(failure.to_string());
+                            }
+                        }
+                        Err(error) => runner.refuse_dataset(error.to_string()),
+                    }
+                }
+            }
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let final_progress = runner.execution_progress();
+    let completed = tokio::task::spawn_blocking(move || runner.into_completion()).await;
+    match completed {
+        Ok(Ok(completion)) => {
+            // Runtime cancellation/revision withdrawal still rejects late
+            // publication. This does not create a cancellation exception.
+            if token.is_cancelled() {
+                return failed(Failure::cancelled(span)).into();
+            }
+            let (value, _, stop, hold) = completion.into_parts();
+            let outcome = match stop {
+                None => Outcome::Produced(value),
+                Some(stop) if stop.failure.cancelled => failed(stop.failure),
+                Some(stop) => Outcome::Incomplete {
+                    value,
+                    error: error(stop.failure),
+                },
+            };
+            let mut report: crate::driver::ExecutionReport = outcome.into();
+            report.progress = Some(final_progress);
+            report.holds.push(hold);
+            report
+        }
+        Ok(Err(failure)) => failed(failure).into(),
+        Err(_) => panic_failure(span).into(),
     }
 }
 fn error(failure: Failure) -> ErrorValue {
@@ -336,7 +612,7 @@ fn error(failure: Failure) -> ErrorValue {
     .expect("calculation failure code and issues")
     .with_policy(&failure.policy)
 }
-fn failed(failure: Failure) -> Outcome {
+pub(crate) fn failed(failure: Failure) -> Outcome {
     if failure.cancelled {
         Outcome::Cancelled(error(failure))
     } else {

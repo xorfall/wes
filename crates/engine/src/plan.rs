@@ -184,7 +184,7 @@ fn composed(
     let value = Value::new(shape, data, provenance)
         .expect("constructor derives its shape from captured children");
     if value.shape().contains_meta()
-        || !value.data().is_materialized()
+        || !value.data().is_storable_snapshot()
         || crate::value_size::value_charge(&value, 128 * 1024).is_none()
     {
         return Err(InputResolutionError::constructor(&value));
@@ -232,7 +232,7 @@ fn compose_list(values: Vec<Value>, item_shape: &Shape) -> Result<Value, InputRe
 }
 
 fn charge_part(value: &Value, remaining: &mut u64) -> Result<(), InputResolutionError> {
-    if value.shape().contains_meta() || !value.data().is_materialized() {
+    if value.shape().contains_meta() || !value.data().is_storable_snapshot() {
         return Err(InputResolutionError::constructor(value));
     }
     let Some(charge) = crate::value_size::value_charge(value, *remaining) else {
@@ -462,7 +462,7 @@ pub fn plan_with_expectations(
                 .iter()
                 .map(|value| {
                     let input = input(value, &Shape::Unknown, names)?;
-                    if matches!(input, Input::FieldPath { .. }) {
+                    if matches!(input, Input::FieldPath { .. }) && !matches!(spec.command,wes_language::vocabulary::MetaCommand::DatasetPage|wes_language::vocabulary::MetaCommand::DatasetRetention|wes_language::vocabulary::MetaCommand::DatasetSnapshot|wes_language::vocabulary::MetaCommand::DatasetInspect|wes_language::vocabulary::MetaCommand::DatasetPlanDelete) {
                         return Err(PlanError::diagnostic(Diagnostic::error("PLN004", value.name().span,
                             "field paths are supported in named arguments; this operand requires a whole result")));
                     }
@@ -509,6 +509,21 @@ pub fn plan_with_expectations(
             } else if matches!(
                 spec.command,
                 wes_language::vocabulary::MetaCommand::Inspect
+                    | wes_language::vocabulary::MetaCommand::ScanResume
+                    | wes_language::vocabulary::MetaCommand::ScanExcerpt
+                    | wes_language::vocabulary::MetaCommand::ScanReconcile
+                    | wes_language::vocabulary::MetaCommand::DatasetReconcile
+                    | wes_language::vocabulary::MetaCommand::DatasetPage
+                    | wes_language::vocabulary::MetaCommand::DatasetRetention
+                    | wes_language::vocabulary::MetaCommand::DatasetSnapshot
+                    | wes_language::vocabulary::MetaCommand::DatasetInspect
+                    | wes_language::vocabulary::MetaCommand::DatasetPlanDelete
+                    | wes_language::vocabulary::MetaCommand::DatasetDelete
+                    | wes_language::vocabulary::MetaCommand::DatasetCollect
+                    | wes_language::vocabulary::MetaCommand::DatasetRecord
+                    | wes_language::vocabulary::MetaCommand::DatasetRecordingStatus
+                    | wes_language::vocabulary::MetaCommand::DatasetStopRecording
+                    | wes_language::vocabulary::MetaCommand::DatasetDiscardRecording
                     | wes_language::vocabulary::MetaCommand::Read
                     | wes_language::vocabulary::MetaCommand::ImportApply
                     | wes_language::vocabulary::MetaCommand::ViewCreate

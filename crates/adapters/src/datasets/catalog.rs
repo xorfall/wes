@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use uuid::Uuid;
+use wes_core::DatasetRef;
 
-const MAGIC: &[u8; 8] = b"WESCAT01";
-const END: &[u8; 8] = b"CATEND01";
+const MAGIC: &[u8; 8] = b"WESCAT04";
+const END: &[u8; 8] = b"CATEND04";
 const PREFIX: usize = 8 + 2 + 4;
 const TRAILER: usize = 32 + 8;
 pub const GENESIS: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -43,6 +44,41 @@ pub struct RootChange {
     pub generation: u64,
     pub manifest: ObjectRef,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootKind {
+    Value,
+    Workspace,
+    Keep,
+    Pin,
+    Checkpoint,
+    Recording,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootRetention {
+    Temporary,
+    Automatic,
+    Protected,
+    Unknown,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceRootChange {
+    pub root: String,
+    pub kind: RootKind,
+    pub expected_generation: u64,
+    pub generation: u64,
+    /// Empty means released; its revision still prevents stale root mutations.
+    pub prefixes: Vec<DatasetRef>,
+    /// Checkpoint output ownership is distinct from prefixes retained as inputs.
+    pub owner_dataset: Option<String>,
+    /// Immutable physical saved-generation ownership; only Workspace roots have it.
+    pub owner_workspace: Option<String>,
+    pub captures: Vec<wes_engine::storage::datasets::CapturedValue>,
+    pub retention: RootRetention,
+    pub transaction: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogCommit {
@@ -51,6 +87,91 @@ pub struct CatalogCommit {
     pub transaction: String,
     pub previous_digest: String,
     pub roots: Vec<RootChange>,
+    pub references: Vec<ReferenceRootChange>,
+    /// Opaque read withdrawal facts. No payload, schema, provenance or error text.
+    pub gates: Vec<ReadGate>,
+    pub writes: Vec<WriteWitness>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteState {
+    Requested,
+    Committed,
+    Absent,
+    Retired,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteOperation {
+    Create,
+    Append,
+    Resume,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WriteWitness {
+    pub dataset: String,
+    pub owner: wes_engine::storage::datasets::DatasetWriteOwner,
+    pub transaction: String,
+    pub operation: WriteOperation,
+    pub admission: String,
+    pub predecessor: Option<DatasetRef>,
+    pub committed: Option<DatasetRef>,
+    pub state: WriteState,
+}
+impl WriteWitness {
+    pub(super) fn validate(&self, store: &str) -> Result<(), FormatError> {
+        if !valid_uuid(&self.dataset)
+            || !valid_uuid(&self.owner.run)
+            || !valid_uuid(&self.owner.lineage)
+            || (self.owner.role == wes_engine::storage::datasets::DatasetWriteRole::Recording
+                && self.owner.run != self.owner.lineage)
+            || (self.operation == WriteOperation::Create) != self.predecessor.is_none()
+            || (self.operation == WriteOperation::Resume
+                && self.owner.role != wes_engine::storage::datasets::DatasetWriteRole::Analysis)
+            || !valid_uuid(&self.transaction)
+            || !valid_uuid(&self.admission)
+            || (self.state == WriteState::Committed) != self.committed.is_some()
+            || self
+                .predecessor
+                .iter()
+                .chain(self.committed.iter())
+                .any(|p| p.store() != store || p.dataset() != self.dataset)
+        {
+            return Err(FormatError::Corrupt);
+        }
+        if let Some(next) = &self.committed {
+            if next.generation()
+                != self
+                    .predecessor
+                    .as_ref()
+                    .map_or(Some(1), |p| p.generation().checked_add(1))
+                    .ok_or(FormatError::Corrupt)?
+                || self.predecessor.as_ref().is_some_and(|p| {
+                    p.schema_digest() != next.schema_digest()
+                        || p.authorization_generation() != next.authorization_generation()
+                        || p.records() > next.records()
+                })
+            {
+                return Err(FormatError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadGateStatus {
+    Restricted,
+    Deleted,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadGate {
+    pub dataset: String,
+    pub expected_generation: u64,
+    pub generation: u64,
+    pub status: ReadGateStatus,
 }
 #[derive(Clone, Debug)]
 pub struct RecoveredCommit {
@@ -78,7 +199,7 @@ pub fn encode_commit(
     let length = u32::try_from(payload.len()).map_err(|_| FormatError::Limit("catalog frame"))?;
     let mut bytes = Vec::with_capacity(PREFIX + payload.len() + TRAILER);
     bytes.extend_from_slice(MAGIC);
-    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&4u16.to_le_bytes());
     bytes.extend_from_slice(&length.to_le_bytes());
     bytes.extend_from_slice(&payload);
     let checksum = Sha256::digest(&bytes);
@@ -121,7 +242,7 @@ pub fn recover_catalog(
                 return Err(FormatError::Corrupt);
             }
             if remainder.len() >= 10
-                && u16::from_le_bytes(remainder[8..10].try_into().unwrap()) != 1
+                && u16::from_le_bytes(remainder[8..10].try_into().unwrap()) != 4
             {
                 return Err(FormatError::Version);
             }
@@ -133,7 +254,7 @@ pub fn recover_catalog(
         if input.take(8)? != MAGIC {
             return Err(FormatError::Corrupt);
         }
-        if input.u16()? != 1 {
+        if input.u16()? != 4 {
             return Err(FormatError::Version);
         }
         let length = input.u32()? as usize;
@@ -188,14 +309,39 @@ fn validate(commit: &CatalogCommit, limits: CatalogLimits) -> Result<(), FormatE
         || !valid_uuid(&commit.transaction)
         || !valid_digest(&commit.previous_digest)
         || commit.sequence == 0
-        || commit.roots.is_empty()
+        || (commit.roots.is_empty()
+            && commit.references.is_empty()
+            && commit.gates.is_empty()
+            && commit.writes.is_empty())
     {
         return Err(FormatError::Corrupt);
     }
-    if commit.roots.len() > limits.roots_per_frame {
+    if commit
+        .roots
+        .len()
+        .saturating_add(commit.references.len())
+        .saturating_add(commit.gates.len())
+        .saturating_add(commit.writes.len())
+        > limits.roots_per_frame
+    {
         return Err(FormatError::Limit("catalog roots"));
     }
+    let mut writes = BTreeSet::new();
+    for write in &commit.writes {
+        write.validate(&commit.store)?;
+        if !writes.insert(&write.dataset) {
+            return Err(FormatError::Corrupt);
+        }
+    }
     let mut ids = BTreeSet::new();
+    for gate in &commit.gates {
+        if !valid_uuid(&gate.dataset)
+            || !ids.insert(&gate.dataset)
+            || gate.expected_generation.checked_add(1) != Some(gate.generation)
+        {
+            return Err(FormatError::Corrupt);
+        }
+    }
     for root in &commit.roots {
         if !valid_uuid(&root.dataset)
             || !ids.insert(&root.dataset)
@@ -205,6 +351,65 @@ fn validate(commit: &CatalogCommit, limits: CatalogLimits) -> Result<(), FormatE
             || root.manifest.bytes == 0
         {
             return Err(FormatError::Corrupt);
+        }
+    }
+    let mut roots = BTreeSet::new();
+    let mut total = 0usize;
+    for root in &commit.references {
+        if !valid_uuid(&root.root)
+            || root.expected_generation.checked_add(1) != Some(root.generation)
+            || !roots.insert(&root.root)
+            || root.transaction != commit.transaction
+        {
+            return Err(FormatError::Corrupt);
+        }
+        if (root.kind == RootKind::Workspace) != root.owner_workspace.is_some()
+            || root
+                .owner_workspace
+                .as_ref()
+                .is_some_and(|id| !valid_uuid(id))
+            || (root.kind == RootKind::Workspace
+                && (!root.captures.is_empty()
+                    || (!root.prefixes.is_empty() && root.retention != RootRetention::Protected)))
+            || (root.kind == RootKind::Checkpoint) != root.owner_dataset.is_some()
+            || root.owner_dataset.as_ref().is_some_and(|owner| {
+                !valid_uuid(owner)
+                    || (!root.prefixes.is_empty()
+                        && root
+                            .prefixes
+                            .iter()
+                            .filter(|p| p.dataset() == owner)
+                            .count()
+                            != 1)
+            })
+        {
+            return Err(FormatError::Corrupt);
+        }
+        let mut prefixes = BTreeSet::new();
+        let mut captures = BTreeSet::new();
+        for capture in &root.captures {
+            total += 1;
+            if total > limits.roots_per_frame {
+                return Err(FormatError::Limit("captured references"));
+            }
+            if !valid_uuid(&capture.handle)
+                || !valid_digest(&capture.digest)
+                || capture.bytes == 0
+                || !captures.insert(&capture.handle)
+            {
+                return Err(FormatError::Corrupt);
+            }
+        }
+        for prefix in &root.prefixes {
+            total += 1;
+            if total > limits.roots_per_frame {
+                return Err(FormatError::Limit("referenced prefixes"));
+            }
+            if prefix.store() != commit.store
+                || !prefixes.insert((prefix.dataset(), prefix.generation(), prefix.manifest()))
+            {
+                return Err(FormatError::Corrupt);
+            }
         }
     }
     Ok(())
@@ -225,10 +430,13 @@ mod tests {
     use super::*;
     fn commit(sequence: u64, previous: &str) -> CatalogCommit {
         CatalogCommit {
+            writes: vec![],
             store: "bda44444-4444-4444-8444-444444444444".into(),
             sequence,
             transaction: Uuid::new_v4().to_string(),
             previous_digest: previous.into(),
+            references: vec![],
+            gates: vec![],
             roots: vec![RootChange {
                 dataset: "bda55555-5555-4555-8555-555555555555".into(),
                 expected_generation: sequence - 1,

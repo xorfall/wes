@@ -25,6 +25,7 @@ export function memberProblem(member:DashboardMember,generation:string|undefined
   if(member.generation!==generation)return 'This result belongs to a previous workspace session. Replace it with a current result in the editor.';
   if(!node)return 'This result no longer exists. Its source command was not rerun.';
   if(node.private)return 'This result is private. Inspect it in the workspace.';
+  if(node.accessWithdrawn)return 'Result · Access withdrawn. Its source command was not rerun.';
   if(node.doubt)return 'The outcome of this command is unconfirmed. Inspect it in the workspace.';
   if(node.evidence?.kind==='stopped_stream')return 'This source was stopped. Its command was not restarted.';
   if(node.evidence?.kind==='incomplete')return 'This analysis stopped before completing. Inspect its partial result in the workspace.';

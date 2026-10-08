@@ -142,7 +142,11 @@ export interface TableArrangement {
 
 export type PresentationNode =
   | (Base & { readonly kind: "line"; readonly runs: readonly Run[] })
-  | (Base & { readonly kind: "fields"; readonly rows: readonly FieldRow[]; readonly nameWidth: number; readonly tree?: {readonly type: import("../protocol").TypeShape; readonly data: unknown; readonly mode: Mode; readonly declared?: Declared} })
+  | (Base & { readonly kind: "fields"; readonly rows: readonly FieldRow[]; readonly nameWidth: number; readonly tree?: {readonly type: import("../protocol").TypeShape; readonly data: unknown; readonly mode: Mode; readonly declared?: Declared;
+        /** Where this tree sits in the whole value, so a Dataset inside it can be read by its pointer. */
+        readonly datasets?: { readonly root: import("../protocol").TypeShape; readonly at: string }};
+      /** Set when these fields are a Dataset's descriptor: what a reader may page beneath them. */
+      readonly dataset?: import("./dataset").DatasetAnchor })
   | (Base & {
       readonly kind: "table"; readonly columns: readonly Column[];
       /** One entry per row, one entry per shown column: the cell's runs, already cut to the column's width. */

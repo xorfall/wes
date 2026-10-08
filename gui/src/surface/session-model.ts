@@ -1,5 +1,5 @@
 import { locationLines } from "../failure-text";
-import { constructed, incompleteResult, observationStale, staleMessage, stoppedStream, updatePendingStatus } from "../workspace";
+import { constructed, inputsCaptured, incompleteResult, observationStale, staleMessage, stoppedStream, updatePendingStatus } from "../workspace";
 /**
  * The session, projected from what the engine said.
  *
@@ -23,6 +23,7 @@ import { formatExecutionDuration } from "../presentation/format";
 import type { Language } from "./language";
 import type { Segment } from "./MonoLine";
 import type { FormValue } from "./forms/form";
+import { lifetimeActive, openLifetimeWord } from "./record-progress";
 
 /** A node's state as the gutter says it: one glyph per node, the same vocabulary everywhere. */
 export type Glyph = "ready" | "failed" | "skipped" | "running" | "stopped" | "cancelled" | "stale" | "pending" | "recipe";
@@ -92,6 +93,8 @@ export interface SessionCell {
   readonly value?: FormValue;
   /** More than one stage, so cancelling stops the pipeline. */
   readonly pipeline: boolean;
+  /** Semantic run activity for cancel versus repeat/branch; see `runActiveOf`. */
+  readonly runActive: boolean;
   /** Why a repeat must be confirmed, when it must. */
   readonly guard?: RepeatGuard;
   /** The view control: preview, expanded or collapsed. */
@@ -224,7 +227,10 @@ function factsOf(nodes: readonly WorkspaceNode[], value: FormValue | undefined):
   if (nodes.length > 1) {
     const count = (states: readonly string[]) => nodes.filter((node) => states.includes(node.state)).length;
     const facts: [number, string, Segment["role"]][] = [
-      [count(["ready"]), "ok", "mono-ok"], [count(["running"]), "running", "mono-meta"],
+      [nodes.filter((node) => node.state === "ready" && !lifetimeActive(node)).length, "ok", "mono-ok"],
+      ...(["recording", "analyzing", "active"] as const).map((word): [number, string, Segment["role"]] =>
+        [nodes.filter((node) => node.state === "ready" && lifetimeActive(node) && openLifetimeWord(node) === word).length, word, "mono-meta"]),
+      [count(["running"]), "running", "mono-meta"],
       [count(["failed"]), "failed", "mono-bad"], [nodes.filter((node) => node.state === "cancelled" && stoppedStream(node)).length, "stopped", "mono-warn"],
       [nodes.filter((node) => node.state === "cancelled" && !stoppedStream(node)).length, "cancelled", "mono-warn"],
       [count(["skipped"]), "skipped", "mono-dim"], [count(["stale"]), "stale", "mono-warn"],
@@ -350,7 +356,9 @@ export function verdictOf(
     : lone?.state==="pending" ? {text:"waiting",role:"mono-dim"}
     : lone?.state==="skipped" ? {text:"skipped",role:"mono-faint"}
     : cell.submissionRefusal !== undefined && !nodes.length ? {text:"refused",role:"mono-bad-strong"}
-    : refusal && !nodes.length ? {text:"not run",role:"mono-warn"} : VERDICT_STATE[state];
+    : refusal && !nodes.length ? {text:"not run",role:"mono-warn"}
+    // A usable prefix of a run the engine still calls open has not finished: say what it is doing.
+    : lone?.state==="ready" && lifetimeActive(lone) && VERDICT_STATE[state].text==="ok" ? { text: openLifetimeWord(lone), role: "mono-meta" } : VERDICT_STATE[state];
   const fields: VerdictField[] = [{ segments: [semantic], keep: true, slot: "state" }];
   const shape = shapeOf(state, nodes, refusal);
   const dataHeader = nodes.length === 1 && !refusal && ["default", "focus", "pinned"].includes(state);
@@ -426,9 +434,10 @@ export function guardOf(
   context: SessionContext,
 ): RepeatGuard | undefined {
   const effectful = nodes.some((node) => node.repeatable !== true);
-  // A completed construction is not invalidated by a repeat; listing it would imply re-creation.
+  // A completed construction, or an analysis that captured its inputs, is not invalidated by a
+  // repeat; listing it would imply re-creation or recomputation.
   const dependents = workspace.nodes
-    .filter((node) => !constructed(node) && node.dependsOn.some((on) => cell.nodes.includes(on)))
+    .filter((node) => !constructed(node) && !inputsCaptured(node) && node.dependsOn.some((on) => cell.nodes.includes(on)))
     .map((node) => (node.name ? `$${node.name}` : node.id));
   if (!effectful && dependents.length === 0) return undefined;
   const environment = nodes.map((node) => node.environment).find((it) => it !== undefined);
@@ -606,10 +615,23 @@ export function readCell(input: SessionInput, cell: ClientCell, now: Date, durat
     marks: marksOf(cell, nodes, input.context),
     ...(value ? { value } : {}),
     pipeline: nodes.length > 1,
+    runActive: runActiveOf(cell, nodes),
     guard: guardOf(input.workspace, cell, nodes, input.context),
     view: cell.view,
     results: cell.results,
   };
+}
+
+/**
+ * Whether this cell's work is still active, from its actual current nodes: a submission not yet
+ * answered, a node running or waiting to run, or a run the engine still calls open (a recording or
+ * a followed scan whose ready value is an acknowledged prefix). Active work can be cancelled through
+ * the ordinary node cancellation and is not repeated or branched until it has finished. Display
+ * words, receipts and type names play no part.
+ */
+export function runActiveOf(cell: ClientCell, nodes: readonly WorkspaceNode[]): boolean {
+  return cell.state === "running"
+    || nodes.some(node => node.state === "running" || node.state === "pending" || lifetimeActive(node));
 }
 
 /** `wes / sales-api · connected` */

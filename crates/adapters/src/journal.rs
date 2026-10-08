@@ -222,6 +222,11 @@ pub struct FileHistory {
     limits: ReadLimits,
     durability: Durability,
     poisoned: bool,
+    protected_handles: std::collections::BTreeSet<wes_engine::storage::ValueHandle>,
+    dataset_publication: Option<(
+        String,
+        std::sync::Arc<dyn wes_engine::history::RetainedDatasetPublication>,
+    )>,
 }
 #[derive(Clone, Copy, Default)]
 struct Position {
@@ -229,6 +234,57 @@ struct Position {
     lines: u64,
 }
 impl FileHistory {
+    pub(crate) fn set_dataset_publication(
+        &mut self,
+        generation: &str,
+        publication: Option<std::sync::Arc<dyn wes_engine::history::RetainedDatasetPublication>>,
+    ) -> Result<(), RecordError> {
+        let identity = uuid::Uuid::parse_str(generation)
+            .map_err(|_| RecordError::Limit("workspace generation"))?;
+        self.dataset_publication = publication.map(|port| (identity.to_string(), port));
+        Ok(())
+    }
+    pub(crate) fn protect_image(&mut self, image: &HistoryImage) -> Result<(), RecordError> {
+        if self.dataset_publication.is_none() {
+            return Ok(());
+        }
+        let mut handles = std::collections::BTreeSet::new();
+        for entry in image.journal() {
+            handles.extend(
+                entry
+                    .retained_dataset_handles()
+                    .map_err(|_| RecordError::Limit("retained history references"))?,
+            );
+            if handles.len() > 100_000 {
+                return Err(RecordError::Limit("retained history references"));
+            }
+        }
+        self.protect_handles(handles.into_iter().collect())
+    }
+    fn protect_handles(
+        &mut self,
+        handles: Vec<wes_engine::storage::ValueHandle>,
+    ) -> Result<(), RecordError> {
+        let Some((generation, publication)) = &self.dataset_publication else {
+            return Ok(());
+        };
+        let new = handles
+            .into_iter()
+            .filter(|handle| !self.protected_handles.contains(handle))
+            .collect::<std::collections::BTreeSet<_>>();
+        if new.is_empty() {
+            return Ok(());
+        }
+        if self.protected_handles.len().saturating_add(new.len()) > 100_000 {
+            return Err(RecordError::Limit("retained history references"));
+        }
+        let receipt = publication.protect(generation, &new.iter().cloned().collect::<Vec<_>>())?;
+        if receipt.iter().any(|handle| !new.contains(handle)) {
+            return Err(RecordError::Limit("retained publication receipt"));
+        }
+        self.protected_handles.extend(receipt);
+        Ok(())
+    }
     /// Capture and sync both validated prefixes while exclusively owning this writer. This changes
     /// no journal contents and performs no repair/retry. Call on a joined blocking startup worker,
     /// or through Recorder.capture after moving this FileHistory into the recording worker.
@@ -330,6 +386,8 @@ impl FileHistory {
             limits,
             durability,
             poisoned: false,
+            dataset_publication: None,
+            protected_handles: Default::default(),
         };
         Ok(history)
     }
@@ -345,6 +403,7 @@ impl FileHistory {
         {
             return Err(RecordError::Limit("workspace image"));
         }
+        self.protect_image(image)?;
         self.poisoned = true;
         let journal = seed_stream(
             &self.directory,
@@ -482,29 +541,37 @@ impl FileHistory {
                 return Err(RecordError::RequestConflict);
             }
         }
-        let (encoded, file, position, name) = match record {
+        let (encoded, current, name) = match record {
             Record::Journal(entry) => (
                 encode_journal(entry, self.limits.record),
-                &mut self.journal,
-                &mut self.journal_position,
+                self.journal_position,
                 "journal.jsonl",
             ),
             Record::Recovery(entry) => (
                 encode_recovery(entry, self.limits.record),
-                &mut self.recovery,
-                &mut self.recovery_position,
+                self.recovery_position,
                 "recovery.jsonl",
             ),
         };
         let bytes =
             encoded.map_err(|e| RecordError::backend("encoding a history record", false, e))?;
-        let end = u128::from(position.offset) + bytes.len() as u128 + 1;
+        let end = u128::from(current.offset) + bytes.len() as u128 + 1;
         if end > u128::from(self.limits.bytes) {
             return Err(RecordError::Limit("total byte"));
         }
-        if position.lines >= self.limits.lines {
+        if current.lines >= self.limits.lines {
             return Err(RecordError::Limit("line count"));
         }
+        if let Record::Journal(entry) = record {
+            let handles = entry
+                .retained_dataset_handles()
+                .map_err(|_| RecordError::Limit("retained history references"))?;
+            self.protect_handles(handles)?;
+        }
+        let (file, position) = match record {
+            Record::Journal(_) => (&mut self.journal, &mut self.journal_position),
+            Record::Recovery(_) => (&mut self.recovery, &mut self.recovery_position),
+        };
         if file.is_none() {
             let mut options = private_options();
             options.read(true).append(true).create_new(true);

@@ -83,6 +83,84 @@ test("contract errors and imports outside the package are refused before activat
   await assert.rejects(build(source,output),error=>error.diagnostics?.[0]?.code==="VIEW_CONTRACT");
 });
 
+/*
+ * Independent synthetic Dataset input package: a static View whose input record holds a read-only
+ * Dataset<Int>. It reads pages only through context.datasets, by a pointer into its own input; it has
+ * no Dataset outputs, state or events, no URL and no network capability.
+ */
+const DATASET_VIEW=`import {useEffect,useState} from "react";
+import {defineView,numericText,ViewDatasetError,type DatasetPage,type NumericValue} from "@wes/view-sdk";
+import {definition} from "./contract";
+
+export default defineView(definition, {
+  Component: ({input, context}) => {
+    const reads = context.datasets;
+    const [page, setPage] = useState<DatasetPage<NumericValue>>();
+    const [problem, setProblem] = useState<string>();
+    useEffect(() => {
+      if (!reads) { setProblem("unavailable"); return; }
+      let live = true;
+      reads.page<NumericValue>("/samples", {from: "0"}, 20).then(
+        next => { if (live) setPage(next); },
+        (error: unknown) => { if (live) setProblem(error instanceof ViewDatasetError ? error.code : "failed"); });
+      return () => { live = false; };
+    }, [reads, input.samples.reference.generation]);
+    return <section className="sample-page">
+      <h3 className="screen-title">{input.title}</h3>
+      <p className="screen-label">{input.samples.reference.records} committed samples</p>
+      {problem ? <p className="screen-label">{problem}</p> : <ol>{page?.rows.map(row =>
+        <li key={row.ordinal}>{row.ordinal}: <span className="table-value">{numericText(row.value)}</span></li>)}</ol>}
+    </section>;
+  },
+});
+`;
+function datasetPackage(t) {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"wes-dataset-author-"));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const source=path.join(root,"source");fs.cpSync(fixture,source,{recursive:true});
+  const view=JSON.parse(fs.readFileSync(path.join(source,"view.json"),"utf8"));
+  fs.writeFileSync(path.join(source,"view.json"),JSON.stringify({...view,name:"SamplePage",id:"sample-page",summary:"Read committed samples one bounded page at a time.",
+    input:"SamplePage",outputs:{},interaction:undefined},null,2));
+  fs.writeFileSync(path.join(source,"types.yaml"),"types:\n  SamplePage:\n    base: Record\n    fields:\n      title: Text\n      samples: Dataset<Int>\n");
+  fs.writeFileSync(path.join(source,"View.tsx"),DATASET_VIEW);
+  fs.writeFileSync(path.join(source,"view.css"),".sample-page{min-width:0}\n");
+  return {source,output:path.join(root,"sample-page.wes-view.json")};
+}
+
+test("a read-only Dataset input package generates its descriptor type and builds natively",async t=>{
+  const {source,output}=datasetPackage(t);
+  const result=await build(source,output);
+  assert.equal(result.ok,true);
+  assert.equal(result.definition.name,"SamplePage");
+  const definition=result.definition;
+  const field=definition.contracts[definition.input].fields.samples;
+  assert.deepEqual({kind:definition.contracts[field.type].kind,element:definition.contracts[field.type].element},{kind:"dataset",element:"Int"});
+  assert.deepEqual(definition.outputs,{});
+  assert.equal(definition.interaction,null);
+  assert.ok(!Object.values(definition.contracts).some(schema=>schema.kind==="dataset"&&schema!==definition.contracts[field.type]));
+  const generated=fs.readFileSync(path.join(source,"contract.ts"),"utf8");
+  assert.match(generated,/import type \{ DatasetRef \} from "@wes\/view-sdk";/);
+  assert.match(generated,/= DatasetRef<T\d+>;/);
+  const artifact=JSON.parse(fs.readFileSync(output,"utf8"));
+  assert.equal(artifact.definition,result.definition.digest);
+  // Pages are requested through the frame's own port; the View holds no address of its own.
+  assert.match(artifact.javascript,/dataset-read/);
+  assert.doesNotMatch(artifact.javascript,/\/view-datasets\/|\/datasets\//);
+});
+
+test("a Dataset may not leave a View through interaction state, and the page API is typed",async t=>{
+  const {source,output}=datasetPackage(t);
+  const view=JSON.parse(fs.readFileSync(path.join(source,"view.json"),"utf8"));
+  // Interaction state that reuses the Dataset-bearing input contract is refused natively.
+  fs.writeFileSync(path.join(source,"view.json"),JSON.stringify({...view,interaction:{protocol:"SampleHold",state:"SamplePage",event:"Pick",sharedFields:[]}},null,2));
+  fs.appendFileSync(path.join(source,"types.yaml"),"  Pick:\n    base: Record\n    fields:\n      ordinal: Text\n");
+  await assert.rejects(build(source,output),error=>error.diagnostics?.some(d=>/read-only input port/.test(d.message)));
+  assert.equal(fs.existsSync(output),false);
+  const fresh=datasetPackage(t);
+  fs.writeFileSync(path.join(fresh.source,"View.tsx"),DATASET_VIEW.replace('reads.page<NumericValue>("/samples"','reads.page<NumericValue>(42'));
+  await assert.rejects(build(fresh.source,fresh.output),error=>error.diagnostics?.some(d=>d.file==="View.tsx"&&d.code.startsWith("TS")));
+});
+
 test("installed bin symlinks execute the same machine-readable CLI",t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),"wes-view-bin-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const bin=path.join(root,"wes-view-package");fs.symlinkSync(fileURLToPath(new URL("./index.mjs",import.meta.url)),bin);

@@ -501,7 +501,10 @@ impl Analysis<'_> {
                                 .preceded_by(&diagnostics)
                         })?;
                         (
-                            BoundTask::Call(call.with_pipe_input(self.pipe_input.cloned())),
+                            BoundTask::Call(
+                                call.with_recording_schema(self.contracts)
+                                    .with_pipe_input(self.pipe_input.cloned()),
+                            ),
                             typing,
                         )
                     }
@@ -671,6 +674,69 @@ impl Analysis<'_> {
                         .with_pipe_input(self.pipe_input);
                         let typing = Arc::new(scan.predicted_typing());
                         (BoundTask::Scan(scan), typing)
+                    }
+                    Task::Meta(task)
+                        if matches!(
+                            task.spec.command,
+                            MetaCommand::DatasetPage
+                                | MetaCommand::DatasetRetention
+                                | MetaCommand::DatasetSnapshot
+                                | MetaCommand::DatasetInspect
+                                | MetaCommand::DatasetPlanDelete
+                                | MetaCommand::DatasetDelete
+                                | MetaCommand::DatasetCollect
+                        ) =>
+                    {
+                        let read = crate::tasks::dataset::BoundDataset::bind(task, statement.span)?;
+                        let typing = read.predicted_typing();
+                        (BoundTask::Dataset(read), Arc::new(typing))
+                    }
+                    Task::Meta(task)
+                        if matches!(
+                            task.spec.command,
+                            MetaCommand::DatasetRecord
+                                | MetaCommand::DatasetRecordingStatus
+                                | MetaCommand::DatasetStopRecording
+                                | MetaCommand::DatasetDiscardRecording
+                        ) =>
+                    {
+                        let recording =
+                            crate::tasks::recording::BoundRecording::bind(task, statement.span)?;
+                        (
+                            BoundTask::Recording(recording),
+                            Arc::new(Typing::new(Shape::Unknown)),
+                        )
+                    }
+                    Task::Meta(task)
+                        if matches!(
+                            task.spec.command,
+                            MetaCommand::ScanReconcile | MetaCommand::DatasetReconcile
+                        ) =>
+                    {
+                        let reconcile =
+                            crate::tasks::reconcile::BoundReconcile::bind(task, statement.span)?;
+                        (
+                            BoundTask::Reconcile(reconcile),
+                            Arc::new(Typing::new(Shape::Unknown)),
+                        )
+                    }
+                    Task::Meta(task) if task.spec.command == MetaCommand::ScanExcerpt => {
+                        let excerpt = crate::scan::BoundExcerpt::bind(task, statement.span)?;
+                        (
+                            BoundTask::ScanExcerpt(excerpt),
+                            Arc::new(Typing::new(Shape::Unknown)),
+                        )
+                    }
+                    Task::Meta(task) if task.spec.command == MetaCommand::ScanResume => {
+                        let resume = crate::scan::BoundResume::bind(
+                            task,
+                            self.calc_services.clone(),
+                            statement.span,
+                        )?;
+                        (
+                            BoundTask::ScanResume(resume),
+                            Arc::new(Typing::new(Shape::Unknown)),
+                        )
                     }
                     Task::Meta(task) if task.spec.command == MetaCommand::Help => {
                         let help = BoundHelp::new(
@@ -902,6 +968,11 @@ impl Analysis<'_> {
             Change::Node {
                 node: id,
                 task,
+                admission: if statement.annotations.iter().any(|a| a.name.text == "hold") {
+                    super::Installation::Held
+                } else {
+                    super::Installation::Live
+                },
                 activation: self.pipe_input.cloned(),
                 stream_origin: None,
                 pipeline: Default::default(),

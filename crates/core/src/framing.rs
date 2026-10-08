@@ -1,18 +1,19 @@
 //! Bounded incremental byte framing. Read-block boundaries carry no record meaning.
 use crate::text::TextSpan;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Delimiter {
     /// LF and CRLF; a lone CR remains content.
     Lines,
     Literal(Vec<u8>),
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Decoding {
     StrictUtf8,
     LossyUtf8,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     pub delimiter: Delimiter,
     pub decoding: Decoding,
@@ -72,6 +73,9 @@ pub struct Framer {
     closed: bool,
 }
 impl Framer {
+    pub fn profile(&self) -> &Profile {
+        &self.profile
+    }
     pub fn new(profile: Profile) -> Result<Self, Error<()>> {
         if !profile.valid() {
             return Err(Error::InvalidProfile);
@@ -106,6 +110,14 @@ impl Framer {
     }
     pub fn position(&self) -> u64 {
         self.position
+    }
+    /// Restore an already validated committed record boundary; no pending bytes are replayed.
+    pub fn at_boundary(profile: Profile, position: u64, ordinal: u64) -> Result<Self, Error<()>> {
+        let mut framer = Self::new(profile)?;
+        framer.start = position;
+        framer.position = position;
+        framer.ordinal = ordinal;
+        Ok(framer)
     }
     pub fn buffered_bytes(&self) -> usize {
         self.pending.len()

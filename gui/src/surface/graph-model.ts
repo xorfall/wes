@@ -11,8 +11,9 @@ import { staleMessage } from "../workspace";
  * the part that can be wrong, and the drawing is not.
  */
 import { describeSize, describeType, type StoredValue } from "../protocol";
-import { cellOf, constructed, type Workspace, type WorkspaceNode } from "../workspace";
+import { cellOf, constructed, inputsCaptured, type Workspace, type WorkspaceNode } from "../workspace";
 import type { GraphEdge, GraphNode, GraphNodeState, Selected } from "./screens/Graph";
+import { lifetimeActive } from "./record-progress";
 
 export interface GraphOptions {
   /** The node whose panel is open, if one is. */
@@ -80,7 +81,8 @@ export function stateOf(node: WorkspaceNode, selected: string | undefined): Grap
     case "stale": return "stale";
     case "failed":
     case "cancelled": return "failed";
-    default: return "ok";
+    // A usable prefix of a run the engine still calls open (recording or followed scan) has not finished.
+    default: return lifetimeActive(node) ? "running" : "ok";
   }
 }
 
@@ -90,16 +92,24 @@ export function edgesOf(nodes: readonly WorkspaceNode[]): GraphEdge[] {
   return nodes.flatMap((node) =>
     node.dependsOn.filter((from) => present.has(from)).map((from) => node.dependencyLifetime === "creation"
       ? { from, to: node.id, lifetime: "creation" as const, constructed: constructed(node) }
-      : { from, to: node.id }),
+      : node.dependencyLifetime === "captured"
+        ? { from, to: node.id, lifetime: "captured" as const, captured: inputsCaptured(node) }
+        : { from, to: node.id }),
   );
 }
 
-/** Everything reachable from these, following the edges the given way round. */
+/** Whether a producer's update still makes this edge's consumer out of date, per the engine's lifetime. */
+const carriesCurrency = (edge: GraphEdge) => !edge.constructed && !edge.captured;
+
+/**
+ * Everything an update reaches from these, following the edges the given way round. The engine
+ * stops currency at a completed construction and at an analysis that has captured its inputs; the
+ * structure itself (cycles, ownership, deletion) is read from all edges elsewhere.
+ */
 function reachable(edges: readonly GraphEdge[], from: Iterable<string>, downstream: boolean): Set<string> {
   const next = new Map<string, string[]>();
   for (const edge of edges) {
-    // The engine stops refresh propagation at a consumer whose construction already succeeded.
-    if (edge.constructed) continue;
+    if (!carriesCurrency(edge)) continue;
     const [key, value] = downstream ? [edge.from, edge.to] : [edge.to, edge.from];
     next.set(key, [...(next.get(key) ?? []), value]);
   }
@@ -112,7 +122,11 @@ function reachable(edges: readonly GraphEdge[], from: Iterable<string>, downstre
   return found;
 }
 
-/** What would be invalidated by running this again: everything that depends on it, however far, short of completed constructions. */
+/**
+ * What would be invalidated by running this again: everything that depends on it, however far,
+ * short of completed constructions and analyses that already captured their inputs. Running such an
+ * analysis again does reach its own downstream.
+ */
 export function dependentsOf(edges: readonly GraphEdge[], id: string): Set<string> {
   return reachable(edges, [id], true);
 }

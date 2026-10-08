@@ -374,6 +374,20 @@ impl JournalEntry {
     }
     /// Work-owned content, including acknowledged Temporary ownership and uncertain
     /// publication handles. Cleanup intent alone is deliberately not a reference.
+    /// Only acknowledged retained ownership participates in saved dataset protection.
+    pub fn retained_dataset_handles(&self) -> Result<Vec<ValueHandle>, InvalidRecord> {
+        Ok(match self {
+            Self::Result(r) => vec![r.handle.clone()],
+            Self::Snapshot(s) => s.result.iter().map(|r| r.handle.clone()).collect(),
+            Self::ProtectedRun { handle, .. } => vec![handle.clone()],
+            Self::Views(views) => views
+                .retained_inputs()?
+                .into_iter()
+                .map(|(_, h)| h)
+                .collect(),
+            _ => vec![],
+        })
+    }
     pub fn payload_reference(&self) -> Option<&ValueHandle> {
         match self {
             Self::Payload { handle, .. } | Self::ProtectedRun { handle, .. } => Some(handle),
@@ -571,6 +585,17 @@ impl RecordError {
             source: Box::new(source),
         }
     }
+}
+
+/// Called only by joined blocking history jobs. Protection precedes history publication;
+/// retirement follows confirmed physical generation deletion. Never retains temporary values.
+pub trait RetainedDatasetPublication: Send + Sync {
+    fn protect(
+        &self,
+        generation: &str,
+        handles: &[ValueHandle],
+    ) -> Result<Vec<ValueHandle>, RecordError>;
+    fn retire(&self, generation: &str) -> Result<(), RecordError>;
 }
 
 /// A synchronous leaf port, called only by the recording worker. Successful durable receipts

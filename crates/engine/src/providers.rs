@@ -311,13 +311,42 @@ pub struct BoundCall {
 }
 #[derive(Clone, Default)]
 struct CallContext {
+    source_definition: Option<Arc<()>>,
     stream_budget: Option<crate::streams::delivery::Budget>,
+    recording_schema: Option<wes_core::contracts::ResolvedContractBundle>,
     authority: crate::environments::InvocationAuthority,
     pipe_input: Option<crate::graph::OutputRef>,
     admission: Option<AdmittedCommand>,
     traces: Option<crate::trace::Traces>,
 }
 impl BoundCall {
+    pub(crate) fn set_source_definition(&mut self, definition: Arc<()>) {
+        self.context.source_definition = Some(definition);
+    }
+    pub(crate) fn with_recording_schema(
+        mut self,
+        registry: &wes_core::contracts::ContractRegistry,
+    ) -> Self {
+        if self.streaming() {
+            let shape = &self.invocation.capability.result;
+            self.context.recording_schema = registry
+                .resolve(&shape.to_string())
+                .ok()
+                .filter(|contract| contract.shape() == *shape)
+                .and_then(|contract| {
+                    wes_core::contracts::ResolvedContractBundle::capture(
+                        contract,
+                        Default::default(),
+                    )
+                    .ok()
+                });
+        }
+        self
+    }
+    pub(crate) fn recording_schema(&self) -> Option<&wes_core::contracts::ResolvedContractBundle> {
+        self.context.recording_schema.as_ref()
+    }
+
     pub(crate) fn set_stream_budget(&mut self, budget: Option<crate::streams::delivery::Budget>) {
         self.context.stream_budget = budget;
     }
@@ -470,6 +499,13 @@ pub struct CallExecutor {
     journal: Option<CallJournal>,
 }
 impl CallExecutor {
+    pub(crate) fn prepare_stream(
+        &self,
+        ticket: RunTicket<BoundCall>,
+        cancellation: CancellationToken,
+    ) -> streaming::PreparationFuture {
+        streaming::prepare_source(self.journal.clone(), ticket, cancellation)
+    }
     pub fn ephemeral() -> Self {
         Self { journal: None }
     }
@@ -783,7 +819,7 @@ fn prepare(
                 None,
             )));
         }
-        if !value.data().is_materialized() {
+        if !value.data().is_inline() {
             return Err(InvocationError::Failed(RuntimeCode::ExecutionFailed.error(
                 "Provider arguments require materialized data; collect Iter explicitly.",
                 None,
