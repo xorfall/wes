@@ -38,7 +38,7 @@
     ]
   },
   {
-    "input": "version: 2\ntypes: {}",
+    "input": "version: 3\ntypes: {}",
     "code": "TYP002",
     "names": [
       "Text",

@@ -241,3 +241,36 @@ async fn union_inspection_retains_alternatives_and_their_constraints() {
         Data::Text("Int".into())
     );
 }
+
+#[tokio::test]
+async fn type_inspection_describes_display_separately_from_validation_constraints() {
+    let (mut workspace, calls) = workspace();
+    load(
+        &mut workspace,
+        "version: 2\ntypes: {Status: {base: Text, enum: [ready, failed], display: {enumTones: {ready: ok, failed: bad}}}} ",
+    );
+    let node = commit(&mut workspace, ":inspect type:Status > description").unwrap();
+    run_all(&mut workspace).await;
+    let description = fields(workspace.runtime().value_of(&node).unwrap());
+    assert_eq!(
+        record(&record(&description["display"])["enumTones"])["ready"],
+        Data::Text("ok".into())
+    );
+    assert!(
+        record(&description["constraints"])
+            .get("enumTones")
+            .is_none()
+    );
+    assert_eq!(
+        description["digest"],
+        Data::Text(
+            workspace
+                .contracts()
+                .resolve("Status")
+                .unwrap()
+                .digest()
+                .into()
+        )
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

@@ -382,6 +382,8 @@ export interface StoredValue {
   readonly type: TypeShape;
   readonly provenance: Record<string, string>;
   readonly data: unknown;
+  /** Contract metadata beside the value; absent means unknown. Decoded by `withValidMeta`. */
+  readonly meta?: import("./value-meta").ValueMeta;
 }
 export type Retention = "temporary" | "automatic" | "protected" | "unknown";
 export interface ReleasePreview {

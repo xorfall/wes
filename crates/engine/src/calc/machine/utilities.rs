@@ -100,7 +100,7 @@ impl Machine {
                             end,
                             output: vec![],
                             shape: match &args[0] {
-                                Item::Typed(_, shape) => Some(shape.as_ref().clone()),
+                                Item::Typed(_, shape, _) => Some(shape.as_ref().clone()),
                                 _ => None,
                             },
                             span,

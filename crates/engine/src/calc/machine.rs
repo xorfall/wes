@@ -213,7 +213,9 @@ impl Machine {
             budget.allocate(charge, span)?;
             captured.insert(
                 name.clone(),
-                Item::from_data(input.data(), &mut budget, span, 0)?.typed(input.shape().clone()),
+                Item::from_data(input.data(), &mut budget, span, 0)?
+                    .typed(input.shape().clone())
+                    .annotated(input.metadata().cloned()),
             );
         }
         let mut parameters = BTreeMap::new();
@@ -228,7 +230,8 @@ impl Machine {
                 *symbol,
                 Some(
                     Item::from_data(input.data(), &mut budget, span, 0)?
-                        .typed(input.shape().clone()),
+                        .typed(input.shape().clone())
+                        .annotated(input.metadata().cloned()),
                 ),
             );
         }
@@ -317,7 +320,10 @@ impl Machine {
                 }
                 let result = Item::from_data(value.data(), &mut self.budget, self.span, 0);
                 match result {
-                    Ok(item) => self.values.push(item.typed(value.shape().clone())),
+                    Ok(item) => self.values.push(
+                        item.typed(value.shape().clone())
+                            .annotated(value.metadata().cloned()),
+                    ),
                     Err(e) => {
                         self.halted = true;
                         return Err(e);
@@ -423,7 +429,8 @@ impl Machine {
                 let data = item.data(&mut self.budget, self.span, 0)?;
                 let shape = item.output_shape(&data);
                 let value = Value::new(shape, data, self.provenance.clone())
-                    .map_err(|_| Failure::new("CAL004", self.span, "invalid calculation result"))?;
+                    .map_err(|_| Failure::new("CAL004", self.span, "invalid calculation result"))?
+                    .with_metadata(item.metadata().cloned());
                 self.halted = true;
                 return Ok(Step::Complete(value));
             };
@@ -605,7 +612,7 @@ impl Machine {
                 } => {
                     if index == items.len() {
                         self.values.push(if operation == Operation::Reduce {
-                            accumulator
+                            accumulator.annotated(None)
                         } else {
                             Item::List(Arc::new(output))
                         });

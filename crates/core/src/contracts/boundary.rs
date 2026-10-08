@@ -96,3 +96,20 @@ pub fn require(
             .expect("deep contract validation guarantees selected shallow shape"))
     }
 }
+
+/// Validate a producer result and capture the immutable contract that accepted it.
+/// Argument checks deliberately use `require` instead.
+pub fn checked_result(
+    contract: &Arc<Contract>,
+    value: &Value,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Value, BoundaryError> {
+    let checked = require(
+        "return",
+        std::slice::from_ref(contract),
+        &Shape::Unknown,
+        value,
+        cancelled,
+    )?;
+    Ok(checked.with_metadata(Some(super::metadata::ValueMetadata::capture(contract))))
+}

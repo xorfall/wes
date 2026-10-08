@@ -309,3 +309,63 @@ async fn run_history_keeps_the_selected_failure_after_a_successful_revision() {
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
     f.close().await;
 }
+
+#[tokio::test]
+async fn captured_contract_metadata_reaches_browser_values_and_survives_saved_reopen() {
+    let fixture = Fixture::new().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "declared",
+                ":def rows() -> List<Int> as :calc pure { return [7]; }\nrows > declared"
+            )
+            .await,
+        202
+    );
+    let ready = events.until("ready").await;
+    let url = fixture.url(&format!("/values/{}", ready["handle"].as_str().unwrap()));
+    let bytes = fixture
+        .client
+        .get(&url)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["meta"]["contract"]["name"], "List<Int>");
+    assert_eq!(value["meta"]["fields"]["/e"]["kind"], "int");
+    assert!(value["meta"]["fields"]["/e"].get("members").is_none());
+    assert_eq!(
+        fixture
+            .source(&generation, "save-meta", ":workspace save \"meta-copy\"")
+            .await,
+        202
+    );
+    assert_eq!(
+        fixture
+            .source(&generation, "load-meta", ":workspace load \"meta-copy\"")
+            .await,
+        202
+    );
+    let next = events.generation().await;
+    assert_ne!(next, generation);
+    let restored = events.until("ready").await;
+    let restored_bytes = fixture
+        .client
+        .get(fixture.url(&format!("/values/{}", restored["handle"].as_str().unwrap())))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let restored: Value = serde_json::from_slice(&restored_bytes).unwrap();
+    assert_eq!(restored["meta"], value["meta"]);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}

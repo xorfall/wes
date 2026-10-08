@@ -19,6 +19,8 @@ export interface Prepared {
   readonly type: TypeShape;
   readonly data: unknown;
   readonly provenance: Readonly<Record<string, string>>;
+  /** Contract metadata captured with the value; absent means unknown. */
+  readonly meta?: import("../value-meta").ValueMeta;
   /** True while an asynchronous decoding has not landed; the tree says `decoding…` for it. */
   readonly pending: boolean;
 }
@@ -103,13 +105,13 @@ function walk(type: TypeShape, data: unknown, budget: { visits: number }, depth:
 }
 
 /** Everything that can be decoded without waiting. Asynchronous bodies are marked pending. */
-export function prepareSync(value: Pick<StoredValue, "type" | "data"> & { readonly provenance?: Record<string, string> }): Prepared {
+export function prepareSync(value: Pick<StoredValue, "type" | "data"> & { readonly provenance?: Record<string, string>; readonly meta?: StoredValue["meta"] }): Prepared {
   const type = presentationType(value);
   const viewModules = viewsOfValue(value);
   const module = valueViewModules.find(type, value.data, undefined, viewModules);
   let reading = { data: value.data, pending: false };
   try { reading = module?.prepare?.({ ...value, type }, value.data) ?? reading; } catch { /* generic fallback */ }
-  return { ...(viewModules ? {viewModules} : {}), type, data: walk(type, reading.data, { visits: max_visits() }, 0), provenance: value.provenance ?? {}, pending: reading.pending };
+  return { ...(viewModules ? {viewModules} : {}), type, data: walk(type, reading.data, { visits: max_visits() }, 0), provenance: value.provenance ?? {}, ...(value.meta ? { meta: value.meta } : {}), pending: reading.pending };
 }
 
 function fallback(value: Pick<StoredValue, "type" | "data">, prepared: Prepared): Prepared {

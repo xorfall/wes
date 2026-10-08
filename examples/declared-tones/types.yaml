@@ -1,0 +1,14 @@
+version: 2
+types:
+  ServiceStatus:
+    base: Text
+    enum: [ready, failed, unknown]
+    display:
+      enumTones: {ready: ok, failed: bad, unknown: dim}
+  ServiceRow:
+    base: Record
+    fields:
+      id: Text
+      status: ServiceStatus
+      title: Text
+      titleAmbiguous: Bool

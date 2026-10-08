@@ -407,11 +407,15 @@ impl Machine {
                 let at = usize::try_from(requested).map_err(|_| {
                     index_bounds("List", requested, items.len(), span)
                 })?;
-                items.get(at).cloned().ok_or_else(|| index_bounds("List", requested, items.len(), span))
+                items.get(at).cloned().map(|v| {
+                    let v = if let Item::Typed(_, shape, _) = &item && let wes_core::Shape::List(element) = shape.as_ref() { v.typed(element.as_ref().clone()) } else { v };
+                    item.project_annotation(v, "/e")
+                }).ok_or_else(|| index_bounds("List", requested, items.len(), span))
             }
             Item::Record(fields) => fields
                 .get(index.text(span)?)
                 .cloned()
+                .map(|v| item.project_field_shape(v, index.text(span).expect("checked text")))
                 .ok_or_else(|| Failure::new("CAL004", span,
                     "requested record field is absent; use has(record, key) to check presence or keys(record) to inspect field names")),
             Item::Scalar(data) => {
@@ -471,7 +475,18 @@ impl Machine {
             }
             Operation::UnwrapOr => {
                 if let Item::Option(v) = args[0].untyped() {
-                    v.as_deref().unwrap_or(&args[1]).clone()
+                    if let Some(v) = v {
+                        let v = if let Item::Typed(_, shape, _) = &args[0]
+                            && let wes_core::Shape::Option(inner) = shape.as_ref()
+                        {
+                            v.as_ref().clone().typed(inner.as_ref().clone())
+                        } else {
+                            v.as_ref().clone()
+                        };
+                        args[0].project_annotation(v, "/o")
+                    } else {
+                        args[1].clone()
+                    }
                 } else {
                     return Err(Failure::new(
                         "CAL004",

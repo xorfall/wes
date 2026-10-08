@@ -578,3 +578,54 @@ async fn nested_reference_replay_restores_declarations_without_hydrated_shape_or
     assert!(restored.runtime().is_idle());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn hydrated_metadata_keeps_yesterdays_digest_and_tones_without_replaying_a_producer() {
+    let (base, calls) = workspace();
+    let mut builder = ReplayWorkspace::new(base).unwrap();
+    let mut record = command(
+        ":package load path:types.yaml\n:def status() -> Status as :calc pure {return 'ready';}\nstatus > captured",
+        &["historic-status"],
+    );
+    record.calculation_package = Some(wes_language::calc::Package::standard().source().into());
+    record.type_sources.insert("types.yaml".into(),"version: 2\ntypes: {Status: {base: Text, enum: [ready, failed], display: {enumTones: {ready: warn, failed: bad}}}} ".into());
+    apply(&mut builder, &record).await;
+    let mut yesterday = wes_core::contracts::ContractRegistry::new();
+    yesterday.load("version: 2\ntypes: {Status: {base: Text, enum: [ready, failed], display: {enumTones: {ready: ok, failed: bad}}}} ").unwrap();
+    let raw = Value::new(
+        Shape::Unknown,
+        Data::Text("ready".into()),
+        Provenance::default(),
+    )
+    .unwrap();
+    let captured = wes_core::contracts::boundary::checked_result(
+        &yesterday.resolve("Status").unwrap(),
+        &raw,
+        &|| false,
+    )
+    .unwrap();
+    builder
+        .hydrate(
+            &record.nodes[0],
+            RestoredState::Ready(captured.clone()),
+            Some(RunId::new("yesterday").unwrap()),
+        )
+        .unwrap();
+    let mut restored = builder.finish();
+    assert!(restored.start(Duration::ZERO).is_empty());
+    let meta = serde_json::to_value(
+        restored
+            .runtime()
+            .value_of(&record.nodes[0])
+            .unwrap()
+            .metadata()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["fields"][""]["tones"]["ready"], "ok");
+    assert_ne!(
+        meta["contract"]["digest"],
+        restored.contracts().resolve("Status").unwrap().digest()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

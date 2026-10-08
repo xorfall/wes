@@ -1,4 +1,5 @@
 import type { TypeShape } from "../protocol";
+import { ELEMENT, OPTION, field as fieldSegment, fieldMeta, membersLabel, type ValueMeta } from "../value-meta";
 import { ellipsizeEnd, width } from "../presentation/columns";
 
 /** Keep outer containers visible; reduce record detail before reducing names. */
@@ -39,18 +40,26 @@ export function compactType(shape: TypeShape, columns = 40, omitFieldCount = fal
   return "type";
 }
 
-/** Color the bounded printer at its semantic source, never by guessing words in its output. */
-export function typeOutlineSegments(shape: TypeShape): import("./MonoLine").Segment[] {
+/** Color the bounded printer at its semantic source, never by guessing words in its output. A
+ *  field whose contract was captured with the value also names its alias and declared members. */
+export function typeOutlineSegments(shape: TypeShape, meta?: ValueMeta): import("./MonoLine").Segment[] {
   const result: import("./MonoLine").Segment[] = [];
   let visits = 2000;
   const add = (text: string, role: import("./MonoLine").MonoRole = "mono-dim") => { result.push({ text, role }); };
-  const walk = (type: TypeShape, depth: number) => {
+  const declared = (path: string) => {
+    const described = fieldMeta(meta, path);
+    if (!described) return;
+    add(" · ", "mono-faint"); add(described.contract.name, "mono-ref");
+    const members = membersLabel(described);
+    if (members) { add(" · ", "mono-faint"); add(members, "mono-dim"); }
+  };
+  const walk = (type: TypeShape, depth: number, path = "") => {
     if (--visits < 0 || depth > 64) { add("… [type display limit]"); return; }
     switch (type.kind) {
       case "list": case "option": case "iter":
         add(`${type.kind === "list" ? "List" : type.kind === "option" ? "Option" : "Iter"}<`);
         if (type.kind === "iter" && type.contract !== undefined) add(type.contract, "mono-ref");
-        else walk(type.element, depth);
+        else walk(type.element, depth, path + (type.kind === "option" ? OPTION : ELEMENT));
         add(">"); break;
       case "record":
         if (type.name) add(`${type.name} `, "mono-ref");
@@ -61,10 +70,10 @@ export function typeOutlineSegments(shape: TypeShape): import("./MonoLine").Segm
           add("  ".repeat(depth + 1));
           if (visits <= 0) { add("… [type display limit]"); break; }
           const field = type.fields[at]!;
-          add(field.name, "mono-param"); add(": "); walk(field.type, depth + 1);
+          add(field.name, "mono-param"); add(": "); walk(field.type, depth + 1, path + fieldSegment(field.name));
         }
         add(`\n${"  ".repeat(depth)}}`); break;
-      case "primitive": add(type.name.charAt(0) + type.name.slice(1).toLowerCase(), "mono-meta"); break;
+      case "primitive": add(type.name.charAt(0) + type.name.slice(1).toLowerCase(), "mono-meta"); declared(path); break;
       case "meta": add(type.name, "mono-ref"); break;
       default: add("Unknown");
     }
@@ -74,6 +83,6 @@ export function typeOutlineSegments(shape: TypeShape): import("./MonoLine").Segm
 }
 
 /** Bound hostile/deep type descriptions; any omitted structure is explicitly labelled. */
-export function typeOutline(shape: TypeShape): string {
-  return typeOutlineSegments(shape).map(segment => segment.text).join("");
+export function typeOutline(shape: TypeShape, meta?: ValueMeta): string {
+  return typeOutlineSegments(shape, meta).map(segment => segment.text).join("");
 }

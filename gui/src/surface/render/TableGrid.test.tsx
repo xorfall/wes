@@ -65,3 +65,28 @@ describe("a table wider than its block", () => {
     expect(beyond(0, 800, 0)).toBe("");
   });
 });
+
+describe("declared table decoration", () => {
+  it("wraps a declared badge around the cell's own text and tints only the declared row", () => {
+    const columns = [{ name: "id", width: 6, key: true, label: "id" }, { name: "status", width: 7, label: "status" }];
+    const rows = [[[{ text: "api" }], [{ text: "ready", role: "mono-ok" as const }]], [[{ text: "worker" }], [{ text: "failed", role: "mono-bad" as const }]]];
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(<TableGrid columns={columns} rows={rows} styles={[[undefined, "badge"], [undefined, "badge"]]} tints={[undefined, "bad"]} />); });
+    const badges = tree.root.findAll((node) => node.props.className === "value-badge");
+    expect(badges.map((badge) => badge.findAll((node) => node.type === "span" && node.props.className !== "value-badge").map((span) => `${span.props.className}:${span.children.join("")}`))).toEqual([["mono-ok:ready"], ["mono-bad:failed"]]);
+    const rowsDrawn = tree.root.findAll((node) => node.type === "tr" && String(node.props.className).startsWith("value-table-row"));
+    expect(rowsDrawn.map((row) => row.props.className)).toEqual(["value-table-row", "value-table-row table-row-tint table-row-tint-bad"]);
+    act(() => tree.unmount());
+  });
+
+  it("keeps every declared tone in the key column, and its own role otherwise", () => {
+    const columns = [{ name: "id", key: true }, { name: "status" }];
+    const rows = [[[{ text: "cron", role: "mono-meta" as const }], [{ text: "unknown" }]], [[{ text: "api", role: "mono-dim" as const }], [{ text: "ready" }]], [[{ text: "worker", role: "mono-literal" as const }], [{ text: "failed" }]]];
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(<TableGrid columns={columns} rows={rows} />); });
+    const keys = tree.root.findAll((node) => node.type === "td" && classes(node).includes("table-key"));
+    expect(keys.map((cell) => cell.findAll((node) => node.type === "span").map((span) => span.props.className))).toEqual([["mono-meta"], ["mono-dim"], []]);
+    expect(keys[2]!.children).toEqual(["worker"]);
+    act(() => tree.unmount());
+  });
+});

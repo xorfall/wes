@@ -445,7 +445,12 @@ impl Executor<BoundTask> for TaskExecutor {
                 Outcome::Produced(
                     value
                         .with_shape(shape)
-                        .expect("deep validation guarantees checked shape"),
+                        .expect("deep validation guarantees checked shape")
+                        .with_metadata(Some(
+                            wes_core::contracts::metadata::ValueMetadata::capture(
+                                &checked.contract,
+                            ),
+                        )),
                 )
             }),
             BoundTask::Accumulation(accumulation) => local_work(cancellation, move |token| {

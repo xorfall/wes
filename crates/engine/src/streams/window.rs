@@ -82,6 +82,11 @@ impl Window {
         })
     }
     pub fn push(&mut self, value: Value) -> Result<(), StreamError> {
+        // A rolling observation reconstructs a list from potentially different producer
+        // contracts. It has no proof for a shared element annotation. Drop unused item
+        // annotations before retaining/charging them; ordered event delivery owns its
+        // separate original value and retains that producer's metadata.
+        let value = value.with_metadata(None);
         let attribution = self
             .empty
             .provenance()
@@ -247,6 +252,45 @@ mod tests {
         assert!(value.provenance().cautions().contains("unchecked:call"));
         assert!(!value.provenance().cautions().contains("old-caution"));
     }
+    #[test]
+    fn reconstructed_windows_drop_item_annotations_before_retention_and_charge() {
+        let mut registry = wes_core::contracts::ContractRegistry::new();
+        registry
+            .load("types: {Status: {base: Text, enum: [ready, failed]}}")
+            .unwrap();
+        let raw = Value::new(
+            Shape::Unknown,
+            Data::Text("ready".into()),
+            Provenance::default(),
+        )
+        .unwrap();
+        let captured = wes_core::contracts::boundary::checked_result(
+            &registry.resolve("Status").unwrap(),
+            &raw,
+            &|| false,
+        )
+        .unwrap();
+        let plain = captured.with_metadata(None);
+        let shape = captured.shape();
+        let mut window = Window::new(shape, Provenance::default(), Limits::default()).unwrap();
+        let charge = value_charge(&plain, u64::MAX).unwrap();
+        window.limits.bytes = (window.charged + charge * 2).try_into().unwrap();
+        window.push(captured.clone()).unwrap();
+        window.push(captured.clone()).unwrap();
+        assert_eq!(window.omitted(), 0);
+        assert_eq!(window.charged, window.limits.bytes.get());
+        assert!(
+            window
+                .items
+                .iter()
+                .all(|(value, _)| value.metadata().is_none())
+        );
+        assert!(window.value().metadata().is_none());
+        assert!(captured.metadata().is_some());
+        window.push(captured).unwrap();
+        assert_eq!(window.omitted(), 1);
+    }
+
     #[test]
     fn metadata_depth_and_omission_overflow_fail_without_replacing_old_values() {
         let mut shape = Shape::Unknown;

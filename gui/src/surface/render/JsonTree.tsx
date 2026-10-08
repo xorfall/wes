@@ -5,6 +5,10 @@ import type { TypeShape } from "../../protocol";
 import { DecodedBytes } from "../../presentation/bytes";
 import { formatWire } from "../../presentation/format";
 import { useColumns } from "./measure";
+import { declarationPath, declaredTone, fieldMeta, type Tone } from "../../value-meta";
+
+/** Declared tones in the roles the rest of the client draws them with. */
+const TONE_ROLE: Record<Tone, string> = { ok: "mono-ok", warn: "mono-warn", bad: "mono-bad", dim: "mono-dim", meta: "mono-meta", ink: "mono-ink" };
 
 const structure = (value: unknown) => value !== null && typeof value === "object" && !isExactNumber(value) && !(value instanceof DecodedBytes);
 export const pointerPart = (key: string) => key.replace(/~/g,"~0").replace(/\//g,"~1");
@@ -49,7 +53,14 @@ const entries=(value:unknown,type:TypeShape|undefined,limit:number):[string,unkn
 
 
 /** Exact data in a bounded, path-addressable tree; narrow boxes use one level at a time. */
-export function JsonTree({ data, type, mode="window", collapsed=false }: {data:unknown;type?:TypeShape;mode?:string;collapsed?:boolean}) {
+export function JsonTree({ data, type, mode="window", collapsed=false, declared }: {data:unknown;type?:TypeShape;mode?:string;collapsed?:boolean;declared?:import("../../presentation/types").Declared}) {
+  /** A scalar's declared tone at its pointer, when the tree carries metadata for its declaration. */
+  const toned=(address:string,item:unknown)=>{
+    if(!declared||!type)return undefined;
+    const relative=declarationPath(type,address);
+    const tone=relative===undefined ? undefined : declaredTone(fieldMeta(declared.meta,declared.at+relative),item);
+    return tone ? TONE_ROLE[tone] : undefined;
+  };
   const clipboard=useClipboard();
   const root=useRef<HTMLDivElement>(null);
   const columns=useColumns(root);
@@ -87,7 +98,7 @@ export function JsonTree({ data, type, mode="window", collapsed=false }: {data:u
           <div className={`json-row${selected===address ? " json-selected" : ""}`} onClick={()=>setSelected(address)}>
             {children ? <button className="json-toggle" aria-label={`${opened.has(address)?"Close":"Open"} ${address}`} aria-expanded={opened.has(address)} onClick={()=>narrow ? setPath(was=>[...was,{key}]) : toggle(address)}>{opened.has(address)&&!narrow ? "▾" : "▸"}</button> : <span className="json-toggle"/>}
             <span className="json-pair"><span className="json-key">{key}</span>
-            <span className={`json-value ${structure(item) ? "json-shape" : item==null ? "mono-faint" : typeof item === "string" ? "mono-literal" : typeof item === "boolean" ? "mono-ref" : "mono-meta"}`}>{cut ? `${summary.slice(0,80)}…` : summary}{cut && <button className="cell-action json-chars" onClick={()=>setWhole(was=>new Set(was).add(address))}>+{summary.length-80} chars</button>}</span></span>
+            <span className={`json-value ${structure(item) ? "json-shape" : item==null ? "mono-faint" : toned(address, item) ?? (typeof item === "string" ? "mono-literal" : typeof item === "boolean" ? "mono-ref" : "mono-meta")}`}>{cut ? `${summary.slice(0,80)}…` : summary}{cut && <button className="cell-action json-chars" onClick={()=>setWhole(was=>new Set(was).add(address))}>+{summary.length-80} chars</button>}</span></span>
           </div>
           {!narrow && children && opened.has(address) && <div className="json-indent">{branch(item,itemType,address,depth+1)}</div>}
         </div>;
