@@ -311,8 +311,17 @@ export interface ParameterWire {
   readonly type: string;
   readonly required: boolean;
   readonly allowed: string[];
+  /** The contract's declared values, when the parameter has a finite domain. */
+  readonly choices?: ChoicesWire;
   /** What language the value is written in, or empty when it is only a value. */
   readonly content: string;
+}
+
+export interface ChoicesWire {
+  readonly kind: "text" | "int" | "decimal" | "bool";
+  readonly members: string[];
+  readonly total: number;
+  readonly complete: boolean;
 }
 
 /** What could go inside a value written in a language of its own. Asked for, not pushed. */
