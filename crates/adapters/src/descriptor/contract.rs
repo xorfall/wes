@@ -276,6 +276,7 @@ pub(super) fn read(
                 .resolve(&param.kind)
                 .map_err(|_| DescriptorError("unknown parameter contract"))?;
             cap.parameters.push(
+                // Retain the resolved full enum domain beside bounded constraint hints.
                 Parameter::new(&param.name, contract.shape(), param.required)
                     .constrained_by(&contract),
             );

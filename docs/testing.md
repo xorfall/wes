@@ -23,6 +23,26 @@ The first Rust build needs the platform prerequisites of the desktop crate.
 macOS is the verified workspace-test platform. A smaller CLI/engine development
 run can exclude the desktop crate with `--exclude wes-desktop`.
 
+For declared enum choices in parameter completion, run the backend suites offline
+(the application package is named `wes`). `CARGO_TARGET_DIR` may point at a shared
+cache for compatible worktree builds:
+
+```sh
+cargo fmt --all --check
+cargo test -p wes-core --offline -- --test-threads=4
+cargo test -p wes-adapters --offline -- --test-threads=4
+cargo test -p wes --offline -- --test-threads=4
+```
+
+Core capability tests cover scalar extraction, exact spelling, deduplication,
+64/65/200-member previews, encoded byte bounds and full-domain intersections
+with documented rules. Descriptor contract tests check imported metadata and
+invalid arguments rejected before credential lookup or any loopback request.
+Application projection tests check imported and `:def` choices, exact numeric
+wire strings, empty domains, truncation and unchanged selector/legacy `allowed`.
+These commands exclude desktop and GUI suites and use synthetic fixtures and
+isolated data homes.
+
 ## Build cache size
 
 Development and test builds use `line-tables-only` debug information: backtraces

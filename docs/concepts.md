@@ -11,6 +11,22 @@ call that service. Environments bind contracts to endpoints and execution target
 The chosen authentication method and credential availability are separate from the
 provider definition. Use the environment UI to configure access deliberately.
 
+Imported-operation parameters and typed `:def` parameters expose choices from
+their declared scalar enum contracts. Text members keep their exact text; int,
+decimal and bool members keep exact scalar spelling, including decimal scale.
+Every documented `OneOf` rule narrows the full contract domain by intersection;
+inferred rules do not narrow suggestions. Duplicates are removed in declaration
+order before counting. Discovery never calls a provider or changes validation.
+
+Vocabulary parameters include optional `choices` with `kind` (`text`, `int`,
+`decimal` or `bool`), string `members`, the full effective `total`, and `complete`.
+The preview contains at most 64 members and its encoded choices object is at most
+16 KiB. A truncated preview sets `complete: false`; validation still uses the
+full contract. An empty intersection publishes an empty, complete domain. When
+there is no declared finite scalar domain, `choices` is absent. Selector and
+legacy `allowed` suggestions remain unchanged, and `$` references remain valid
+arguments.
+
 Execution state describes whether a run completed, failed, stopped or remains live.
 An HTTP response is data, including its status, headers and body. Receiving a 4xx
 response is distinct from being unable to perform the transport operation. JSON

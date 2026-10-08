@@ -332,6 +332,87 @@ fn invalid_bindings_and_auth_collisions_fail_at_import() {
     d["operations"][0]["auth"] = json!([{"query":"limit","secret":"token"}]);
     assert!(reading(&d, Some("http://127.0.0.1:1"), Arc::default()).is_err());
 }
+fn enum_document() -> serde_json::Value {
+    let mut document = doc();
+    document["types"]["Status"] =
+        json!({"base":"Text","enum":["queued","done","queued","true","123"]});
+    document["types"]["Many"] = json!({"base":"Int","enum":(0..200).collect::<Vec<_>>()});
+    document["operations"][0]["parameters"].as_array_mut().unwrap().extend([
+        json!({"name":"status","wire":"status","location":"query","type":"Status","required":false,"encoding":"scalar"}),
+        json!({"name":"member","wire":"member","location":"query","type":"Many","required":false,"encoding":"scalar"}),
+    ]);
+    document
+}
+
+#[test]
+fn imported_enum_metadata_keeps_full_domain_without_credentials_or_network() {
+    let secrets = Arc::new(Secrets::default());
+    let r = reading(
+        &enum_document(),
+        Some("http://127.0.0.1:1"),
+        secrets.clone(),
+    )
+    .unwrap();
+    let capability = r.description.capability(&["fetch".into()]).unwrap();
+    let status = capability
+        .parameter("status")
+        .unwrap()
+        .enum_domain
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        status.choices("status", &[]).members,
+        ["queued", "done", "true", "123"]
+    );
+    let many = capability
+        .parameter("member")
+        .unwrap()
+        .enum_domain
+        .as_ref()
+        .unwrap();
+    assert_eq!(many.members.len(), 200);
+    assert_eq!(many.members[199], Data::Int(199));
+    assert_eq!(many.choices("member", &[]).members.len(), 64);
+    assert!(capability.parameter("limit").unwrap().enum_domain.is_none());
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn invalid_enum_arguments_fail_contract_validation_before_credentials() {
+    let secrets = Arc::new(Secrets::default());
+    let r = reading(
+        &enum_document(),
+        Some("http://127.0.0.1:1"),
+        secrets.clone(),
+    )
+    .unwrap();
+    for (key, data) in [
+        ("status", Data::Text("invalid".into())),
+        ("member", Data::Int(200)),
+    ] {
+        let arguments = IndexMap::from([
+            ("id".into(), value(Data::Text("ok".into()))),
+            (key.into(), value(data)),
+        ]);
+        let InvocationError::Failed(error) = r
+            .invoker
+            .invoke(call(&r, arguments), CancellationToken::new())
+            .await
+            .unwrap_err()
+        else {
+            panic!("contract failure")
+        };
+        assert_eq!(error.code(), "HTTP001");
+        assert!(
+            error
+                .issues()
+                .iter()
+                .any(|issue| issue.code == "TYP005" && issue.path == format!("/arguments/{key}"))
+        );
+    }
+    assert_eq!(secrets.0.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn invalid_contract_or_dot_argument_fails_before_network() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

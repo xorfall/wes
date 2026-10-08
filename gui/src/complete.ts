@@ -9,6 +9,7 @@ import {
   type Capability,
   type Catalogue,
   type MetaCommand,
+  type Choices,
   type Parameter,
 } from "./vocabulary";
 
@@ -201,6 +202,9 @@ function values(
       .filter(item => item.value.toLocaleLowerCase().startsWith(prefix) || item.label.toLocaleLowerCase().includes(prefix))
       .map(item => ({ text: `${key}:${literalValue(item.value)}`, label: item.label, kind: "resource", detail: `${item.value.slice(0,12)} · ${item.detail} · observed ${age}s before this menu · ${resources!.node}` })) };
   }
+  if (parameter?.choices) {
+    return declared(from, key, written, parameter.type, parameter.choices);
+  }
   if (parameter === undefined || parameter.allowed.length === 0) {
     return NOTHING;
   }
@@ -210,6 +214,32 @@ function values(
     detail: parameter.type,
   }));
   return { from, items: items.filter((_, index) => parameter.allowed[index]?.startsWith(written.replace(/^"/, ""))) };
+}
+
+/**
+ * The values a contract declares. Text is always written quoted, so a member spelled `true` or `123`
+ * stays Text instead of becoming a Bool or an Int; numbers and booleans are written bare, exactly as
+ * the engine spelled them. When the engine sent a preview, the hint says how much was left out even if
+ * nothing in the preview matches what has been typed.
+ */
+function declared(from: number, key: string, written: string, type: string, choices: Choices): Completion {
+  const prefix = written.replace(/^"/, "");
+  const items = choices.members
+    .filter((member) => member.startsWith(prefix))
+    .map((member) => ({
+      text: `${key}:${choices.kind === "text" ? quoted(member) : member}`,
+      kind: "value" as const,
+      detail: type,
+    }));
+  const hint = choices.total === 0
+    ? "No value satisfies every rule for this parameter."
+    : choices.complete ? undefined
+      : `Only ${choices.members.length} of ${choices.total} declared values are listed; write any other in full.`;
+  return hint === undefined ? { from, items } : { from, items, hint };
+}
+
+function quoted(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function literalValue(value: string): string {

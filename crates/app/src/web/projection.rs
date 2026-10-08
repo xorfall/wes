@@ -8,7 +8,7 @@ use std::{
 use wes_adapters::credentials::MemoryCredentials;
 use wes_core::{
     ErrorValue,
-    capability::{Parameter, Rule, Safety, Sort},
+    capability::{DeclaredRule, EnumChoices, EnumDomain, Parameter, Rule, Safety, Sort},
 };
 use wes_engine::{
     credentials::Credentials,
@@ -745,7 +745,7 @@ fn vocabulary(
             Sort::Selector(registry) if registry == "view" => o.views.keys().cloned().collect(),
             Sort::Selector(registry) if registry == "refresh-scope" => wes_language::vocabulary::RefreshScope::ALL.iter().map(|scope|scope.name().to_owned()).collect(),
             _ => vec![],
-        });
+        }, &[]);
         let variants: Vec<_> = takes.iter().filter_map(|word| {
             let mut selected = commands::signature(&[name.into(),word.clone()])?;
             if name == "import" {selected.parameters.extend(o.importer_parameters.get(word).into_iter().flatten().cloned());}
@@ -761,7 +761,7 @@ fn vocabulary(
             "open":spec.as_ref().is_some_and(|s|s.open_arguments),"variants":variants,
             "parameters":spec.as_ref().map(|s|s.parameters.iter().map(project).collect::<Vec<_>>()).unwrap_or_default()})
     }).collect();
-    let templates: Vec<_> = o.templates.snapshot().iter().map(|(name,d)|json!({"name":name,"body":if d.calculation.is_some() { ":calc".to_owned() } else { d.syntax.body.to_string() },"parameters":d.parameters.iter().map(|name|json!({"name":name,"type":d.contracts.get(name).map_or_else(||"Unknown".to_owned(),|c|c.name().to_owned()),"required":true,"allowed":[],"content":""})).collect::<Vec<_>>()})).collect();
+    let templates = template_vocabulary(&o.templates);
     let package = wes_language::calc::Package::standard();
     json!({"calculation":{"keywords":package.keywords().collect::<Vec<_>>(),"operations":package.operations().map(|(name,_)|name).collect::<Vec<_>>()},"event":"vocabulary","commands":commands,"annotations":ANNOTATIONS.iter().map(|(n,_)|n).collect::<Vec<_>>(),"providers":providers,"templates":templates,"types":o.types.clone()})
 }
@@ -787,7 +787,7 @@ fn provider_vocabulary(
                     Rule::OneOf {key, values} if key == &p.name => Some(values),
                     _ => None,
                 }).flatten().cloned().collect();
-                let mut projected = parameter(p, allowed);
+                let mut projected = parameter(p, allowed, &capability.rules);
                 if let Sort::Resource(registry) = &p.sort
                     && let Some(producer) = provider.capabilities().find(|c| c.resources.as_ref().is_some_and(|r| &r.registry == registry)) {
                         projected["resourceHint"] = json!(format!("Run {} {} to load suggestions; refresh its result to update them", provider.name(), producer.path.join(" ")));
@@ -803,12 +803,220 @@ fn provider_vocabulary(
     }).collect()
 }
 
-fn parameter(p: &Parameter, allowed: Vec<String>) -> Value {
-    json!({"name":p.name,"type":p.shape.to_string(),"required":p.required,"allowed":allowed,"content":p.content.as_deref().unwrap_or("")})
+fn parameter(p: &Parameter, allowed: Vec<String>, rules: &[DeclaredRule]) -> Value {
+    let mut projected = json!({"name":p.name,"type":p.shape.to_string(),"required":p.required,"allowed":allowed,"content":p.content.as_deref().unwrap_or("")});
+    if let Some(domain) = &p.enum_domain {
+        projected["choices"] = choices(domain.choices(&p.name, rules));
+    }
+    projected
+}
+
+fn template_parameter(name: &str, contract: Option<&wes_core::contracts::Contract>) -> Value {
+    let mut projected = json!({"name":name,"type":contract.map_or("Unknown", |c|c.name()),"required":true,"allowed":[],"content":""});
+    if let Some(domain) = contract.and_then(EnumDomain::from_contract) {
+        projected["choices"] = choices(domain.choices(name, &[]));
+    }
+    projected
+}
+
+fn template_vocabulary(templates: &wes_language::templates::Templates) -> Vec<Value> {
+    templates.snapshot().iter().map(|(name,d)|json!({"name":name,"body":if d.calculation.is_some() { ":calc".to_owned() } else { d.syntax.body.to_string() },"parameters":d.parameters.iter().map(|name|template_parameter(name, d.contracts.get(name).map(Arc::as_ref))).collect::<Vec<_>>()})).collect()
+}
+
+fn choices(choices: EnumChoices) -> Value {
+    json!({"kind":choices.kind.name(),"members":choices.members,"total":choices.total,"complete":choices.complete})
 }
 
 #[cfg(test)]
 mod tests {
+    fn choice_registry() -> wes_core::contracts::ContractRegistry {
+        let mut registry = wes_core::contracts::ContractRegistry::new();
+        registry.load("types:\n Status: {base: Text, enum: [queued, done, 'true', '123']}\n Run: {base: Int, enum: [9007199254740993, -9223372036854775808]}\n Amount: {base: Decimal, enum: [12.50, 0.123456789012345678901234567890]}\n Flag: {base: Bool, enum: [true, false]}\n").unwrap();
+        registry
+    }
+
+    #[test]
+    fn imported_parameter_choices_intersect_documented_rules_and_keep_allowed() {
+        use wes_core::{
+            Shape,
+            capability::{Capability, Catalogue, ProviderDescription, RuleBasis},
+        };
+        let registry = choice_registry();
+        let mut capability = Capability::new(["list"], Shape::Unknown, Safety::Safe);
+        for (name, kind) in [
+            ("status", "Status"),
+            ("run", "Run"),
+            ("amount", "Amount"),
+            ("flag", "Flag"),
+            ("plain", "Text"),
+        ] {
+            let contract = registry.resolve(kind).unwrap();
+            capability
+                .parameters
+                .push(Parameter::new(name, contract.shape(), true).constrained_by(&contract));
+        }
+        let rule = |values: &[&str], binding| DeclaredRule {
+            rule: Rule::OneOf {
+                key: "status".into(),
+                values: values.iter().map(|s| (*s).into()).collect(),
+            },
+            basis: if binding {
+                RuleBasis::Documented { note: None }
+            } else {
+                RuleBasis::Inferred {
+                    reason: "fixture".into(),
+                }
+            },
+        };
+        let mut catalogue = Catalogue::new();
+        let project = |capability: Capability, catalogue: &mut Catalogue| {
+            catalogue.register(ProviderDescription::new("fixture", [capability], vec![]).unwrap());
+            provider_vocabulary(catalogue, None, &[], None)[0]["capabilities"][0]["parameters"]
+                .clone()
+        };
+        let parameters = project(capability.clone(), &mut catalogue);
+        assert_eq!(
+            parameters[0],
+            json!({"name":"status","type":"Text","required":true,"allowed":[],"content":"","choices":{"kind":"text","members":["queued","done","true","123"],"total":4,"complete":true}})
+        );
+        assert_eq!(
+            parameters[1]["choices"],
+            json!({"kind":"int","members":["9007199254740993","-9223372036854775808"],"total":2,"complete":true})
+        );
+        assert_eq!(
+            parameters[2]["choices"],
+            json!({"kind":"decimal","members":["12.50","0.123456789012345678901234567890"],"total":2,"complete":true})
+        );
+        assert_eq!(
+            parameters[3]["choices"],
+            json!({"kind":"bool","members":["true","false"],"total":2,"complete":true})
+        );
+        assert!(parameters[4].get("choices").is_none());
+        capability.rules = vec![
+            rule(&["queued", "done", "outside"], true),
+            rule(&["done", "123"], true),
+            rule(&["queued"], false),
+        ];
+        let parameters = project(capability.clone(), &mut catalogue);
+        assert_eq!(
+            parameters[0]["choices"],
+            json!({"kind":"text","members":["done"],"total":1,"complete":true})
+        );
+        assert_eq!(
+            parameters[0]["allowed"],
+            json!(["done", "outside", "queued", "123", "done"])
+        );
+        capability.rules.push(rule(&["queued"], true));
+        let parameters = project(capability, &mut catalogue);
+        assert_eq!(
+            parameters[0]["choices"],
+            json!({"kind":"text","members":[],"total":0,"complete":true})
+        );
+    }
+
+    #[test]
+    fn def_vocabulary_uses_captured_parameter_contracts_and_exact_numeric_text() {
+        let registry = choice_registry();
+        let mut templates = wes_language::templates::Templates::new();
+        let parsed = wes_language::parse(&wes_language::SourceText::new(
+            "fixture",
+            ":def inspect(run: Run, status: Status, amount: Amount, flag: Flag) as fixture list run:?run status:?status amount:?amount flag:?flag plain:?plain",
+        ));
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let wes_language::Expression::Definition(syntax) = parsed
+            .script
+            .statements
+            .into_iter()
+            .next()
+            .unwrap()
+            .expression
+        else {
+            panic!("definition")
+        };
+        templates.define(syntax, &registry).unwrap();
+        let projected = template_vocabulary(&templates);
+        let parameters = projected[0]["parameters"].as_array().unwrap();
+        let parameter = |name: &str| parameters.iter().find(|p| p["name"] == name).unwrap();
+        assert_eq!(
+            parameter("run"),
+            &json!({"name":"run","type":"Run","required":true,"allowed":[],"content":"","choices":{"kind":"int","members":["9007199254740993","-9223372036854775808"],"total":2,"complete":true}})
+        );
+        assert_eq!(
+            parameter("status")["choices"]["members"],
+            json!(["queued", "done", "true", "123"])
+        );
+        assert_eq!(
+            parameter("amount")["choices"]["members"],
+            json!(["12.50", "0.123456789012345678901234567890"])
+        );
+        assert_eq!(parameter("flag")["choices"]["kind"], "bool");
+        assert!(parameter("plain").get("choices").is_none());
+    }
+
+    #[test]
+    fn projected_large_enum_is_bounded_but_member_199_can_be_suggested() {
+        use wes_core::{
+            Shape,
+            capability::{Capability, Catalogue, ProviderDescription, RuleBasis},
+        };
+        let mut registry = wes_core::contracts::ContractRegistry::new();
+        let members = (0..200)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        registry
+            .load(&format!(
+                "types: {{Many: {{base: Int, enum: [{members}]}}}}"
+            ))
+            .unwrap();
+        let contract = registry.resolve("Many").unwrap();
+        let parameter = Parameter::new("item", contract.shape(), true).constrained_by(&contract);
+        let mut capability = Capability::new(["select"], Shape::Unknown, Safety::Safe);
+        capability.parameters.push(parameter);
+        let mut catalogue = Catalogue::new();
+        catalogue
+            .register(ProviderDescription::new("fixture", [capability.clone()], vec![]).unwrap());
+        let provider = provider_vocabulary(&catalogue, None, &[], None);
+        let preview = &provider[0]["capabilities"][0]["parameters"][0]["choices"];
+        assert_eq!(
+            preview["members"],
+            json!((0..64).map(|i| i.to_string()).collect::<Vec<_>>())
+        );
+        assert_eq!(preview["total"], 200);
+        assert_eq!(preview["complete"], false);
+        assert_eq!(
+            template_parameter("item", Some(&contract))["choices"],
+            *preview
+        );
+        capability.rules.push(DeclaredRule {
+            rule: Rule::OneOf {
+                key: "item".into(),
+                values: ["199".into()].into(),
+            },
+            basis: RuleBasis::Documented { note: None },
+        });
+        catalogue.register(ProviderDescription::new("fixture", [capability], vec![]).unwrap());
+        let provider = provider_vocabulary(&catalogue, None, &[], None);
+        assert_eq!(
+            provider[0]["capabilities"][0]["parameters"][0]["choices"],
+            json!({"kind":"int","members":["199"],"total":1,"complete":true})
+        );
+    }
+
+    #[test]
+    fn selector_and_legacy_parameters_keep_allowed_without_choices() {
+        let selector = Parameter::new("type", wes_core::Shape::Unknown, true).selecting("type");
+        assert_eq!(
+            parameter(&selector, vec!["Text".into(), "Int".into()], &[]),
+            json!({"name":"type","type":"Unknown","required":true,"allowed":["Text","Int"],"content":""})
+        );
+        let legacy = Parameter::new("status", wes_core::Shape::Unknown, false);
+        assert_eq!(
+            parameter(&legacy, vec!["queued".into()], &[]),
+            json!({"name":"status","type":"Unknown","required":false,"allowed":["queued"],"content":""})
+        );
+    }
+
     #[test]
     fn structured_source_preview_preserves_references_and_redacts_private_literal_leaves() {
         use wes_engine::{graph::OutputRef, plan::Input};

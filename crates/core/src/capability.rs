@@ -1,6 +1,6 @@
 //! Immutable provider metadata. Execution handles belong to the engine, not this catalogue.
 mod evidence;
-use crate::{Provenance, Shape};
+use crate::{Data, Primitive, Provenance, Shape};
 use indexmap::IndexMap;
 use std::{collections::BTreeSet, sync::Arc};
 use thiserror::Error;
@@ -24,6 +24,8 @@ pub struct Parameter {
     pub sort: Sort,
     /// Inert bounded hints projected by the producer from its resolved contract.
     pub constraints: Vec<String>,
+    /// Full declared scalar domain; previews never replace contract validation.
+    pub enum_domain: Option<EnumDomain>,
 }
 impl Parameter {
     pub fn new(name: impl Into<String>, shape: Shape, required: bool) -> Self {
@@ -34,10 +36,12 @@ impl Parameter {
             content: None,
             sort: Sort::Plain,
             constraints: vec![],
+            enum_domain: None,
         }
     }
     pub fn constrained_by(mut self, contract: &crate::contracts::Contract) -> Self {
         self.constraints = contract.constraint_hints();
+        self.enum_domain = EnumDomain::from_contract(contract);
         self
     }
     pub fn selecting(mut self, registry: impl Into<String>) -> Self {
@@ -56,6 +60,134 @@ impl Parameter {
         self.content = Some(language.into());
         self
     }
+}
+
+/// Immutable finite metadata captured from a resolved scalar contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnumDomain {
+    pub kind: EnumKind,
+    pub members: Arc<[Data]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnumKind {
+    Text,
+    Int,
+    Decimal,
+    Bool,
+}
+impl EnumKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Int => "int",
+            Self::Decimal => "decimal",
+            Self::Bool => "bool",
+        }
+    }
+}
+
+/// Exact scalar spelling, shared with the runtime semantics of documented OneOf rules.
+pub fn enum_spelling(data: &Data) -> Option<String> {
+    match data {
+        Data::Text(text) => Some(text.to_string()),
+        Data::Int(value) => Some(value.to_string()),
+        Data::Decimal(value) => Some(value.to_string()),
+        Data::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnumChoices {
+    pub kind: EnumKind,
+    pub members: Vec<String>,
+    pub total: usize,
+    pub complete: bool,
+}
+
+impl EnumDomain {
+    pub const MAX_MEMBERS: usize = 64;
+    pub const MAX_ENCODED_BYTES: usize = 16 * 1024;
+
+    pub fn from_contract(contract: &crate::contracts::Contract) -> Option<Self> {
+        use crate::contracts::ContractKind;
+        let kind = match contract.kind() {
+            ContractKind::Scalar(Primitive::Text) => EnumKind::Text,
+            ContractKind::Scalar(Primitive::Int) => EnumKind::Int,
+            ContractKind::Scalar(Primitive::Decimal) => EnumKind::Decimal,
+            ContractKind::Scalar(Primitive::Bool) => EnumKind::Bool,
+            _ => return None,
+        };
+        let enumeration = &contract.constraints().enumeration;
+        if enumeration.is_empty() {
+            return None;
+        }
+        // Preserve declaration order, keeping the first occurrence of each exact spelling.
+        let mut seen = BTreeSet::new();
+        let members = enumeration
+            .iter()
+            .filter(|data| enum_spelling(data).is_some_and(|text| seen.insert(text)))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        Some(Self { kind, members })
+    }
+
+    /// Intersect the FULL domain before counting or cutting a bounded prefix.
+    /// Unrelated and inferred rules do not constrain declared suggestions.
+    pub fn choices(&self, key: &str, rules: &[DeclaredRule]) -> EnumChoices {
+        let sets: Vec<_> = rules
+            .iter()
+            .filter(|rule| rule.is_binding())
+            .filter_map(|rule| match &rule.rule {
+                Rule::OneOf { key: name, values } if name == key => Some(values),
+                _ => None,
+            })
+            .collect();
+        let effective = || {
+            self.members.iter().filter_map(|data| {
+                let text = enum_spelling(data)?;
+                sets.iter()
+                    .all(|values| values.contains(&text))
+                    .then_some(text)
+            })
+        };
+        let total = effective().count();
+        // Charge the entire compact JSON choices object, including escaped strings.
+        // `false` is one byte longer than `true`, so this also bounds complete previews.
+        let mut bytes = format!(
+            "{{\"kind\":\"{}\",\"members\":[],\"total\":{total},\"complete\":false}}",
+            self.kind.name()
+        )
+        .len();
+        let mut members = Vec::new();
+        for text in effective().take(Self::MAX_MEMBERS) {
+            let charge = json_string_bytes(&text) + usize::from(!members.is_empty());
+            if bytes + charge > Self::MAX_ENCODED_BYTES {
+                break;
+            }
+            bytes += charge;
+            members.push(text);
+        }
+        EnumChoices {
+            kind: self.kind,
+            complete: members.len() == total,
+            members,
+            total,
+        }
+    }
+}
+
+fn json_string_bytes(text: &str) -> usize {
+    2 + text
+        .chars()
+        .map(|c| match c {
+            '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
+            '\u{0}'..='\u{1f}' => 6,
+            _ => c.len_utf8(),
+        })
+        .sum::<usize>()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

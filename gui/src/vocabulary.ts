@@ -88,6 +88,8 @@ export interface Parameter {
   readonly required: boolean;
   /** The values a rule allows. Empty when nothing constrains it. */
   readonly allowed: readonly string[];
+  /** The values the parameter's contract declares. When present it is what completion offers. */
+  readonly choices?: Choices;
   /**
    * What language the value is written in, or empty when it is only a value.
    *
@@ -96,6 +98,21 @@ export interface Parameter {
    * engine runs on — so this is the flag that says to go and ask.
    */
   readonly content: string;
+}
+
+/**
+ * The finite domain a parameter's contract declares, as the engine counted it.
+ *
+ * <p>`members` is the whole domain when `complete` is true, otherwise a bounded preview of it; `total`
+ * is always the size of the whole domain after every documented rule narrowed it. Members are spelled
+ * exactly: text verbatim, numbers as exact decimal text, booleans as `true` or `false`. Suggestions
+ * only — the contract still decides what is accepted.
+ */
+export interface Choices {
+  readonly kind: "text" | "int" | "decimal" | "bool";
+  readonly members: readonly string[];
+  readonly total: number;
+  readonly complete: boolean;
 }
 
 export const emptyCatalogue: Catalogue = { commands: [], annotations: [], providers: [] };
