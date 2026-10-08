@@ -36,10 +36,12 @@ pub(crate) enum DirectoryKind {
     Values,
     History,
     Workspaces,
+    Datasets,
 }
 impl DirectoryKind {
     fn names(&self) -> (&'static str, &'static str, &'static [u8]) {
         match self {
+            Self::Datasets => (".wes-datasets", ".wes-datasets.lock", b"wes.datasets\n1\n"),
             Self::Values => (
                 ".wes-value-store",
                 ".wes-values.lock",

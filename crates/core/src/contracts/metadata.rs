@@ -368,43 +368,47 @@ impl ValueMetadata {
 }
 
 impl Contract {
+    /// Exact digest input, shared by resolved snapshots; no independent schema grammar.
+    pub(super) fn canonical(&self) -> serde_json::Value {
+        let kind = match self.kind() {
+            ContractKind::Scalar(p) => serde_json::json!(["scalar", p.to_string()]),
+            ContractKind::Record(fields) => serde_json::json!([
+                "record",
+                fields
+                    .iter()
+                    .map(|(k, f)| serde_json::json!([k, f.optional, f.contract.digest()]))
+                    .collect::<Vec<_>>()
+            ]),
+            ContractKind::List(c) => serde_json::json!(["list", c.digest()]),
+            ContractKind::Option(c) => serde_json::json!(["option", c.digest()]),
+            ContractKind::Iter(c) => serde_json::json!(["iter", c.digest()]),
+            ContractKind::Map(a, b) => serde_json::json!(["map", a.digest(), b.digest()]),
+            ContractKind::Union(a, b) => serde_json::json!(["union", a.digest(), b.digest()]),
+            ContractKind::Unknown => serde_json::json!(["unknown"]),
+        };
+        let l = self.constraints();
+        serde_json::json!([
+            "wes.contract",
+            1,
+            self.name(),
+            self.base_digest,
+            self.display(),
+            kind,
+            l.enumeration.iter().map(enum_spelling).collect::<Vec<_>>(),
+            l.min.as_ref().map(ToString::to_string),
+            l.max.as_ref().map(ToString::to_string),
+            l.min_length,
+            l.max_length,
+            l.min_items,
+            l.max_items,
+            l.patterns.iter().map(|p| p.as_str()).collect::<Vec<_>>()
+        ])
+    }
     /// Digest v1: canonical resolved content, never a registry lookup or source path.
     pub fn digest(&self) -> &str {
         self.digest.get_or_init(|| {
             use sha2::{Digest, Sha256};
-            let kind = match self.kind() {
-                ContractKind::Scalar(p) => serde_json::json!(["scalar", p.to_string()]),
-                ContractKind::Record(fields) => serde_json::json!([
-                    "record",
-                    fields
-                        .iter()
-                        .map(|(k, f)| serde_json::json!([k, f.optional, f.contract.digest()]))
-                        .collect::<Vec<_>>()
-                ]),
-                ContractKind::List(c) => serde_json::json!(["list", c.digest()]),
-                ContractKind::Option(c) => serde_json::json!(["option", c.digest()]),
-                ContractKind::Iter(c) => serde_json::json!(["iter", c.digest()]),
-                ContractKind::Map(a, b) => serde_json::json!(["map", a.digest(), b.digest()]),
-                ContractKind::Union(a, b) => serde_json::json!(["union", a.digest(), b.digest()]),
-                ContractKind::Unknown => serde_json::json!(["unknown"]),
-            };
-            let l = self.constraints();
-            let canonical = serde_json::json!([
-                "wes.contract",
-                1,
-                self.name(),
-                self.base_digest,
-                self.display(),
-                kind,
-                l.enumeration.iter().map(enum_spelling).collect::<Vec<_>>(),
-                l.min.as_ref().map(ToString::to_string),
-                l.max.as_ref().map(ToString::to_string),
-                l.min_length,
-                l.max_length,
-                l.min_items,
-                l.max_items,
-                l.patterns.iter().map(|p| p.as_str()).collect::<Vec<_>>()
-            ]);
+            let canonical = self.canonical();
             format!(
                 "sha256:{:x}",
                 Sha256::digest(serde_json::to_vec(&canonical).unwrap())

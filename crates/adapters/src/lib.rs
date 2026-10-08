@@ -3,6 +3,7 @@ pub mod api_library;
 pub mod codec;
 pub mod completion;
 pub mod credentials;
+pub mod datasets;
 pub mod descriptor;
 pub mod docker;
 pub mod environments;

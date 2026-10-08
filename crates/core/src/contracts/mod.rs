@@ -2,6 +2,8 @@
 
 pub mod boundary;
 mod display;
+mod snapshot;
+pub use snapshot::{ResolvedContractBundle, SnapshotError, SnapshotLimits};
 mod expression;
 pub use display::{ContractDisplay, EnumTone};
 pub mod metadata;
