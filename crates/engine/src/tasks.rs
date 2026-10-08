@@ -683,20 +683,12 @@ impl TaskExecutor {
             }
             _ => {}
         }
-        let private = policy.is_private()
-            || ticket
-                .inputs
-                .values()
-                .any(|v| v.provenance().policy().is_private())
-            || match &ticket.payload {
-                BoundTask::Call(call) => call.private_output(),
-                BoundTask::SourceLaunch(launch) => launch.source.private_output(),
-                BoundTask::Calculation(calc) => calc.private_output(),
-                _ => false,
-            };
-        if private {
-            policy = policy.private();
-        }
+        policy = policy.join(&match &ticket.payload {
+            BoundTask::Call(call) => call.output_policy(),
+            BoundTask::SourceLaunch(launch) => launch.source.output_policy(),
+            BoundTask::Calculation(calc) => calc.output_policy(),
+            _ => Default::default(),
+        });
         let result_flow = match &ticket.payload {
             BoundTask::Dataset(task) => task.result_flow(),
             _ => ResultFlow::Content,

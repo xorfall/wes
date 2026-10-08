@@ -53,10 +53,10 @@ pub(super) fn execute(
         }
         let carried = bound.output_provenance(&carried);
         // Conversation bytes precede value publication and cannot yet carry a policy label.
-        // Refuse this unsupported channel before invoking a private-output provider.
-        if carried.policy().is_private() {
+        // Refuse this unsupported channel before invoking a confidential-output provider.
+        if carried.policy().is_confidential() {
             return Err(finish(journal, calling, Outcome::Failed(RuntimeCode::ExecutionFailed.error(
-                "ENV021: private conversations are unsupported; use a finite call with memory-only output.", None)).into()).await);
+                "ENV021: confidential conversations are unsupported; use a finite call with an appropriate output policy.", None)).into()).await);
         }
         let spawned = conversations::spawn(
             Call {

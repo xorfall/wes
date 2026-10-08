@@ -840,7 +840,7 @@ fn describe(spec: &CommandSpec) -> Data {
             ),
             "env plan" => (
                 &[":env plan file:\"/path/environments.yaml\" > proposed"],
-                "Choose exactly one of file: and source:. base: resolves relative inputs. reconcile:file or reconcile:source explicitly replaces conflicting workspace edits with that input.",
+                "Choose exactly one of file: and source:. base: resolves relative inputs. reconcile:file or reconcile:source explicitly replaces conflicting workspace edits with that input. An import's bind.output classifies future output: public permits ordinary storage, private is memory-only, confidential-temporary permits encrypted temporary storage but refuses Keep, and confidential permits encrypted storage with explicit Keep only. Confidentiality propagates through derivation and the strictest residence wins. Disk policies require a home initialized with --storage-key-file FILE and the same external 32-byte key on every reopen; existing ordinary homes are not converted. Encryption and Keep do not grant terminal, MCP or file export. User-authored source remains outside result encryption.",
             ),
             "node timeout" => (
                 &[":node timeout $result after:PT5S"],

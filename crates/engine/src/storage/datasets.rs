@@ -669,6 +669,9 @@ impl AnalysisDuration {
 /// Actor and result-read authority is validated by the runtime before/after each
 /// request. This port additionally validates same-home committed identity and revocation.
 pub trait DatasetStorage: Send {
+    fn supports_confidential(&self) -> bool {
+        false
+    }
     fn read_access(&self) -> Result<std::collections::BTreeSet<String>, StoreError> {
         Ok(Default::default())
     }

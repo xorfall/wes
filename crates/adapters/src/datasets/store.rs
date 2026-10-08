@@ -67,7 +67,7 @@ impl Default for StoreLimits {
 #[derive(Debug, Error)]
 pub enum DatasetError {
     #[error(transparent)]
-    Objects(#[from] ObjectError),
+    Objects(ObjectError),
     #[error(transparent)]
     Format(#[from] FormatError),
     #[error("dataset catalog filesystem operation failed")]
@@ -105,6 +105,14 @@ pub enum DatasetError {
     Withdrawn,
     #[error("dataset ordinal is outside the selected committed extent")]
     Range,
+}
+impl From<ObjectError> for DatasetError {
+    fn from(error: ObjectError) -> Self {
+        match error {
+            ObjectError::Format(FormatError::Restricted) => Self::Restricted,
+            error => Self::Objects(error),
+        }
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct PageLimits {
@@ -207,6 +215,14 @@ impl DatasetStore {
         durability: Durability,
         limits: StoreLimits,
     ) -> Result<Self, DatasetError> {
+        Self::open_protected(path, durability, limits, None)
+    }
+    pub fn open_protected(
+        path: &Path,
+        durability: Durability,
+        limits: StoreLimits,
+        protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
+    ) -> Result<Self, DatasetError> {
         if limits.datasets == 0
             || limits.reference_roots == 0
             || limits.workspace_roots == 0
@@ -220,11 +236,12 @@ impl DatasetStore {
         {
             return Err(DatasetError::Limit("configuration"));
         }
-        let mut files = ObjectFiles::open(path, durability, limits.objects)?;
+        let mut files = ObjectFiles::open_protected(path, durability, limits.objects, protection)?;
         let catalog_dir = files.catalog_directory()?;
-        let existing = read_active(&catalog_dir, limits)?;
+        let existing =
+            read_active_protected(&catalog_dir, limits, files.protection(), files.store_id())?;
         let snapshot = if let Some(bytes) = &existing {
-            decode_snapshot(bytes, files.store_id(), limits)?.0
+            decode_snapshot(&bytes.bytes, files.store_id(), limits)?.0
         } else {
             if files.has_objects() || catalog_dir.entries()?.next().is_some() {
                 return Err(DatasetError::StorageCorrupt);
@@ -240,6 +257,12 @@ impl DatasetStore {
                 writes: BTreeMap::new(),
             };
             let bytes = encode_snapshot(&snapshot, limits)?;
+            let bytes = crate::protected_storage::encode_log_frame(
+                files.protection(),
+                &format!("dataset/{}/catalog", files.store_id()),
+                0,
+                &bytes,
+            )?;
             files.account_external(bytes.len() as u64, 1)?;
             let mut options = private_options();
             options.write(true).create_new(true);
@@ -534,7 +557,14 @@ impl DatasetStore {
                         limit: limits.bytes as u64,
                     });
                 }
-                let row = reader.row(page.next)?.ok_or(DatasetError::StorageCorrupt)?;
+                let mut row = reader.row(page.next)?.ok_or(DatasetError::StorageCorrupt)?;
+                let policy = manifest.policy();
+                if policy.join(row.value.provenance().policy()) != policy {
+                    return Err(DatasetError::Restricted);
+                }
+                row.value = row
+                    .value
+                    .with_provenance(row.value.provenance().clone().with_policy(&policy));
                 let row_charge = if let Some(budget) = limits.charge {
                     use wes_engine::storage::datasets::PageChargeRefusal;
                     match budget.admit(&row.value, retained_charge) {
@@ -697,9 +727,7 @@ impl DatasetStore {
         policy: &FlowPolicy,
         sync: impl FnOnce(&cap_std::fs::File) -> io::Result<()>,
     ) -> Result<CommitReceipt, DatasetError> {
-        if policy.is_private() || policy.is_unknown() {
-            return Err(DatasetError::Restricted);
-        }
+        self.files.check_policy(policy)?;
         self.ready()?;
         if self.gates.contains_key(&candidate.dataset) {
             return Err(DatasetError::Withdrawn);
@@ -708,7 +736,8 @@ impl DatasetStore {
             .checked_add(1)
             .ok_or(DatasetError::Limit("catalog sequence"))?;
         self.check_policy_reads(policy.dataset_reads())?;
-        if candidate.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
+        if candidate.protection != policy.is_confidential().then_some(policy.residence())
+            || candidate.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
             || candidate.dataset_reads != policy.dataset_reads().iter().cloned().collect::<Vec<_>>()
         {
             return Err(DatasetError::Restricted);
@@ -896,6 +925,7 @@ impl DatasetStore {
                 )?
                 || candidate.previous.as_ref() != Some(reference)
                 || previous.generation.checked_add(1) != Some(candidate.generation)
+                || candidate.policy().join(&previous.policy()) != candidate.policy()
                 || candidate.kind != previous.kind
                 || candidate.schema != previous.schema
                 || candidate.schema_digest != previous.schema_digest
@@ -1117,9 +1147,10 @@ impl DatasetStore {
                 .map(|prior| self.files.read_manifest(prior, None))
                 .transpose()?
                 .is_some_and(|prior| prior.checkpoint.as_ref() == Some(reference));
-            if (!unchanged
-                && (checkpoint.transaction != manifest.transaction
-                    || checkpoint.lifecycle != manifest.lifecycle))
+            if manifest.policy().join(&checkpoint.policy()) != manifest.policy()
+                || (!unchanged
+                    && (checkpoint.transaction != manifest.transaction
+                        || checkpoint.lifecycle != manifest.lifecycle))
                 || checkpoint.output_end != manifest.summary.end
                 || checkpoint.coverage.as_ref() != manifest.coverage.as_ref().map(|c| &c.progress)
                 || checkpoint
@@ -1229,6 +1260,11 @@ impl DatasetStore {
                             for ordinal in entry.summary.first..entry.summary.end {
                                 let row =
                                     reader.row(ordinal)?.ok_or(DatasetError::StorageCorrupt)?;
+                                if manifest.policy().join(row.value.provenance().policy())
+                                    != manifest.policy()
+                                {
+                                    return Err(DatasetError::Restricted);
+                                }
                                 if row
                                     .value
                                     .provenance()
@@ -1270,9 +1306,15 @@ impl DatasetStore {
         Ok(())
     }
     fn reload(&mut self) -> Result<(), DatasetError> {
-        let bytes =
-            read_active(&self.catalog_dir, self.limits)?.ok_or(DatasetError::StorageCorrupt)?;
-        let (snapshot, prefix) = decode_snapshot(&bytes, self.store_id(), self.limits)?;
+        let physical = read_active_protected(
+            &self.catalog_dir,
+            self.limits,
+            self.files.protection(),
+            self.store_id(),
+        )?
+        .ok_or(DatasetError::StorageCorrupt)?;
+        let bytes = &physical.bytes;
+        let (snapshot, prefix) = decode_snapshot(bytes, self.store_id(), self.limits)?;
         // Restore/reconcile establishes trust from disk, never from a former verification cache.
         self.verified_nodes.clear();
         self.verified_segments.clear();
@@ -1435,13 +1477,18 @@ impl DatasetStore {
         self.next_sequence = next_sequence;
         self.previous_digest = previous_digest;
         self.frames = recovery.commits.len();
-        self.physical_bytes = bytes.len();
-        self.valid_bytes = valid_bytes;
-        self.torn_tail = recovery.torn_tail.is_some();
+        self.physical_bytes = physical.physical;
+        self.valid_bytes = physical.boundary(valid_bytes)?;
+        self.torn_tail = recovery.torn_tail.is_some() || physical.torn;
         Ok(())
     }
     fn valid_snapshot_bytes(&self) -> Result<usize, DatasetError> {
-        Ok(encode_snapshot(&self.snapshot, self.limits)?.len())
+        Ok(encode_snapshot(&self.snapshot, self.limits)?.len()
+            + if self.files.protected() {
+                crate::protected_storage::OVERHEAD + 4
+            } else {
+                0
+            })
     }
     fn reserve_catalog(&mut self, extra: u64, entries: usize) -> Result<(), DatasetError> {
         let (used, count) = catalog_inventory(&self.catalog_dir, self.limits)?;
@@ -1467,6 +1514,12 @@ impl DatasetStore {
             writes: self.writes.clone(),
         };
         let bytes = encode_snapshot(&snapshot, self.limits)?;
+        let bytes = crate::protected_storage::encode_log_frame(
+            self.files.protection(),
+            &format!("dataset/{}/catalog", self.store_id()),
+            0,
+            &bytes,
+        )?;
         let (used, entries) = catalog_inventory(&self.catalog_dir, self.limits)?;
         self.files.account_external(
             used.checked_add(bytes.len() as u64)
@@ -1621,6 +1674,9 @@ fn descriptor(reference: &ObjectRef, manifest: &Manifest) -> Result<DatasetRef, 
 }
 
 impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
+    fn supports_confidential(&self) -> bool {
+        self.files.protected()
+    }
     fn read_access(&self) -> Result<BTreeSet<String>, wes_engine::storage::StoreError> {
         self.ready().map_err(storage_error)?;
         Ok(self.gates.keys().cloned().collect())
@@ -2082,7 +2138,16 @@ fn decode_snapshot(
     }
     Ok((snapshot, end))
 }
+#[cfg(test)]
 fn read_active(dir: &Dir, limits: StoreLimits) -> Result<Option<Vec<u8>>, DatasetError> {
+    Ok(read_active_protected(dir, limits, None, "")?.map(|log| log.bytes))
+}
+fn read_active_protected(
+    dir: &Dir,
+    limits: StoreLimits,
+    protection: Option<&crate::protected_storage::ObjectProtection>,
+    store: &str,
+) -> Result<Option<crate::protected_storage::DecodedLog>, DatasetError> {
     let mut options = private_options();
     options.read(true);
     let file = match dir.open_with(ACTIVE, &options) {
@@ -2090,9 +2155,21 @@ fn read_active(dir: &Dir, limits: StoreLimits) -> Result<Option<Vec<u8>>, Datase
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    let maximum = limits
+    let logical = limits
         .snapshot_bytes
         .checked_add(limits.catalog.recovery_bytes)
+        .ok_or(DatasetError::Limit("catalog recovery"))?;
+    let maximum = logical
+        .checked_add(if protection.is_some() {
+            limits
+                .catalog
+                .frames
+                .checked_add(1)
+                .and_then(|n| n.checked_mul(crate::protected_storage::OVERHEAD + 4))
+                .ok_or(DatasetError::Limit("catalog frames"))?
+        } else {
+            0
+        })
         .ok_or(DatasetError::Limit("catalog recovery"))?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > maximum as u64 {
         return Err(DatasetError::StorageCorrupt);
@@ -2102,7 +2179,14 @@ fn read_active(dir: &Dir, limits: StoreLimits) -> Result<Option<Vec<u8>>, Datase
     if bytes.len() > maximum {
         return Err(DatasetError::Limit("catalog recovery"));
     }
-    Ok(Some(bytes))
+    Ok(Some(crate::protected_storage::decode_log(
+        protection,
+        &format!("dataset/{store}/catalog"),
+        bytes,
+        logical,
+        limits.catalog.frames + 1,
+        limits.snapshot_bytes.max(limits.catalog.frame_bytes),
+    )?))
 }
 fn catalog_inventory(dir: &Dir, limits: StoreLimits) -> Result<(u64, usize), DatasetError> {
     let mut bytes = 0u64;
@@ -2169,17 +2253,7 @@ impl DatasetStore {
             Lifecycle::Restricted => L::Restricted,
             Lifecycle::Deleted => L::Deleted,
         };
-        let policy = manifest
-            .origins
-            .iter()
-            .fold(FlowPolicy::default(), |policy, origin| {
-                policy.from_origin(origin)
-            });
-        let policy = manifest
-            .dataset_reads
-            .iter()
-            .cloned()
-            .fold(policy, |p, o| p.with_dataset_read(o));
+        let policy = manifest.policy();
         let persistence = match manifest.established {
             Persistence::FileSynced => P::FileSynced,
             Persistence::FileAndDirectorySynced => P::FileAndDirectorySynced,

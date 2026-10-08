@@ -438,9 +438,10 @@ impl BoundCall {
             _ => None,
         }
     }
-    pub(crate) fn private_output(&self) -> bool {
-        self.environment()
-            .is_some_and(|b| b.import().declaration().output_policy.is_sensitive())
+    pub(crate) fn output_policy(&self) -> wes_core::flow::FlowPolicy {
+        self.environment().map_or_else(Default::default, |b| {
+            b.import().declaration().output_policy.policy()
+        })
     }
     pub(crate) fn with_inputs(mut self, inputs: IndexMap<String, Input>) -> Self {
         self.definition_changed = true;
@@ -838,7 +839,7 @@ fn prepare(
             cancellation.is_cancelled()
         })
         .map_err(|error| {
-            if value.provenance().policy().is_private() {
+            if value.provenance().policy().is_confidential() {
                 InvocationError::Failed(RuntimeCode::ExecutionFailed.error(
                     "Private argument failed validation; details withheld.",
                     None,

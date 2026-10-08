@@ -443,7 +443,7 @@ pub(crate) fn spawn_with_archives(
                         } else { match result {
                             Ok(Ok(())) if state.opened => Phase::Ended,
                             Ok(Err(InvocationError::Cancelled)) => Phase::Cancelled,
-                            Ok(Err(InvocationError::Failed(_))) if state.window.value().provenance().policy().is_private() => Phase::Failed(RuntimeCode::ExecutionFailed.error("Private stream failed; details withheld.", None)),
+                            Ok(Err(InvocationError::Failed(_))) if state.window.value().provenance().policy().is_confidential() => Phase::Failed(RuntimeCode::ExecutionFailed.error("Private stream failed; details withheld.", None)),
                             Ok(Err(InvocationError::Failed(error))) => Phase::Failed(error),
                             Ok(Ok(())) => Phase::Failed(RuntimeCode::ExecutionFailed.error("The stream ended without acknowledging its opening.", None)),
                             Err(_) => Phase::Failed(RuntimeCode::ExecutionFailed.error("The stream provider terminated unexpectedly.", None)),

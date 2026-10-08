@@ -87,7 +87,7 @@ impl InputResolutionError {
         self
     }
     pub fn message(&self) -> String {
-        if self.policy.is_private() || self.policy.is_unknown() {
+        if self.policy.is_confidential() || self.policy.is_unknown() {
             return "The input is unavailable under its private data policy.".into();
         }
         if self.fields.is_empty() {
@@ -106,7 +106,7 @@ impl InputResolutionError {
         )
     }
     pub fn issue(&self, argument: &str) -> Option<ValidationIssue> {
-        if self.policy.is_private() || self.policy.is_unknown() {
+        if self.policy.is_confidential() || self.policy.is_unknown() {
             return None;
         }
         let escape = |s: &str| s.replace('~', "~0").replace('/', "~1");

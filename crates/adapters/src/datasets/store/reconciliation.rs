@@ -541,13 +541,7 @@ impl DatasetStore {
         }
         if let Some(prefix) = witness.committed.as_ref().or(witness.predecessor.as_ref()) {
             let manifest = self.read_exact(prefix)?;
-            let mut policy = FlowPolicy::default().read_from_dataset(prefix);
-            for origin in manifest.origins {
-                policy = policy.from_origin(origin);
-            }
-            for origin in manifest.dataset_reads {
-                policy = policy.with_dataset_read(origin);
-            }
+            let policy = manifest.policy().read_from_dataset(prefix);
             if policy.is_private() || policy.is_unknown() {
                 return Err(DatasetError::Restricted);
             }

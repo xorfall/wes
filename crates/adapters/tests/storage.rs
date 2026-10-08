@@ -690,3 +690,143 @@ fn a_value_store_opens_only_with_a_durability_this_host_establishes() {
     let store = open(&path, None);
     assert!(store.read(&handle).unwrap().is_some());
 }
+
+#[tokio::test]
+async fn confidential_retention_reopens_without_plaintext_or_automatic_keep() {
+    use wes_adapters::protected_storage::ObjectProtection;
+    use wes_core::flow::{FlowPolicy, Residence};
+    use wes_engine::storage::{AutoKeep, PublicationPolicy, StoreWorkerLimits, spawn_store};
+    let root = private_temp();
+    let home = uuid::Uuid::new_v4().to_string();
+    let key = ObjectProtection::new(&home, [9; 32]).unwrap();
+    let live = root.path().join("live");
+    let archive = root.path().join("archive");
+    let open = |key| {
+        TieredValues::open_protected(
+            &live,
+            &archive,
+            Limits::default(),
+            Durability::File,
+            None,
+            key,
+        )
+    };
+    let (worker, task) = spawn_store(
+        open(Some(key.clone())).unwrap(),
+        StoreWorkerLimits::default(),
+    )
+    .unwrap();
+    let confidential = |residence| {
+        Value::new(
+            Shape::Primitive(Primitive::Text),
+            Data::Text("encrypted-evidence-sentinel".into()),
+            Provenance::default().with_policy(&FlowPolicy::default().confidential(residence)),
+        )
+        .unwrap()
+    };
+    let output = worker
+        .publish(
+            confidential(Residence::Retainable),
+            AutoKeep::default().into(),
+        )
+        .await
+        .unwrap();
+    assert!(!output.kept);
+    assert!(worker.retain(output.handle.clone()).await.unwrap().kept);
+    let temporary = worker
+        .publish(
+            confidential(Residence::Temporary),
+            AutoKeep::default().into(),
+        )
+        .await
+        .unwrap();
+    assert!(!temporary.kept);
+    assert!(worker.retain(temporary.handle).await.is_err());
+    let private = confidential(Residence::Memory);
+    assert!(
+        worker
+            .publish(private.clone(), PublicationPolicy::Protected)
+            .await
+            .is_err()
+    );
+    let memory = worker
+        .publish(private, PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(!live.join(format!("{}.json", memory.handle)).exists());
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+    for directory in [&live, &archive] {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                assert!(
+                    !fs::read(path)
+                        .unwrap()
+                        .windows(27)
+                        .any(|w| w == b"encrypted-evidence-sentinel")
+                );
+            }
+        }
+    }
+    assert!(open(None).is_err());
+    assert!(open(Some(ObjectProtection::new(&home, [8; 32]).unwrap())).is_err());
+    assert!(
+        open(Some(
+            ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [9; 32]).unwrap()
+        ))
+        .is_err()
+    );
+    let store = open(Some(key)).unwrap();
+    let restored = store.read(&output.handle).unwrap().unwrap();
+    assert_eq!(
+        restored.value.provenance().policy().residence(),
+        Residence::Retainable
+    );
+    assert!(restored.value.provenance().policy().is_confidential());
+    assert!(store.is_kept(&output.handle).unwrap());
+    assert!(store.read(&memory.handle).unwrap().is_none());
+}
+
+#[test]
+fn confidential_values_refuse_plaintext_and_authenticated_payload_replacement() {
+    use wes_adapters::protected_storage::ObjectProtection;
+    use wes_core::flow::{FlowPolicy, Residence};
+    let root = private_temp();
+    let secret = value(12).with_provenance(
+        Provenance::default()
+            .with_policy(&FlowPolicy::default().confidential(Residence::Retainable)),
+    );
+    let mut ordinary = open(&root.path().join("ordinary"), None);
+    assert!(ordinary.store(&secret).is_err());
+    assert!(encode_value(&secret, Limits::default()).is_err());
+    let dir = root.path().join("protected");
+    let mut protected = FileValues::open_protected(
+        &dir,
+        Limits::default(),
+        Durability::File,
+        None,
+        Some(ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [3; 32]).unwrap()),
+    )
+    .unwrap();
+    let first = protected.store(&secret).unwrap();
+    let second = protected.store(&secret).unwrap();
+    // Valid ciphertext for another object is still an invalid replacement.
+    let files: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    let path = |h: &ValueHandle| {
+        files
+            .iter()
+            .find(|p| p.file_stem().is_some_and(|s| s == h.as_str()))
+            .unwrap()
+            .clone()
+    };
+    fs::copy(path(&first), path(&second)).unwrap();
+    assert!(protected.read(&second).is_err());
+    let mut bytes = fs::read(path(&first)).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    fs::write(path(&first), bytes).unwrap();
+    assert!(protected.read(&first).is_err());
+}

@@ -92,9 +92,7 @@ impl DatasetStore {
         {
             return Err(DatasetError::Conflict);
         }
-        if policy.is_private() || policy.is_unknown() {
-            return Err(DatasetError::Restricted);
-        }
+        self.files.check_policy(policy)?;
         self.ready()?;
         if content && changes.iter().any(|r| !r.prefixes.is_empty()) {
             self.check_policy_reads(policy.dataset_reads())?;
@@ -131,6 +129,13 @@ impl DatasetStore {
                     return Err(DatasetError::Withdrawn);
                 }
                 let manifest = self.resolve_committed(prefix, &self.roots, content)?;
+                if content
+                    && (policy.join(&manifest.policy()) != *policy
+                        || (change.retention != RootRetention::Temporary
+                            && !manifest.policy().allows_retention()))
+                {
+                    return Err(DatasetError::Restricted);
+                }
                 if content
                     && (manifest
                         .origins

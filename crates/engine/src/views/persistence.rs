@@ -11,7 +11,7 @@ use wes_core::{Provenance, Shape};
 // It is not an authority proof; retained-result history and definition identity remain required.
 pub(crate) fn input_digest(value: &Value) -> String {
     use sha2::{Digest, Sha256};
-    if value.provenance().policy().is_private()
+    if value.provenance().policy().is_confidential()
         || crate::value_size::value_charge(value, 8 * 1024 * 1024).is_none()
     {
         return "0".repeat(64);

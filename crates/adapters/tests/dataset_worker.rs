@@ -418,6 +418,7 @@ fn recorded(store: &mut DatasetStore) -> wes_core::DatasetRef {
         requested: DatasetPersistence::FileAndDirectorySynced,
         established: DatasetPersistence::FileAndDirectorySynced,
         authorization_generation: 1,
+        protection: None,
         origins: vec![],
         dataset_reads: vec![],
     };

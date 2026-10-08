@@ -7,7 +7,15 @@ impl DatasetStore {
         self.next_sequence
             .checked_add(1)
             .ok_or(DatasetError::Limit("catalog sequence"))?;
-        self.reserve_catalog(self.limits.catalog.frame_bytes as u64, 1)?;
+        self.reserve_catalog(
+            self.limits.catalog.frame_bytes as u64
+                + if self.files.protected() {
+                    (crate::protected_storage::OVERHEAD + 4) as u64
+                } else {
+                    0
+                },
+            1,
+        )?;
         if self.frames + 1 >= self.limits.catalog.frames
             || self
                 .physical_bytes
@@ -16,7 +24,15 @@ impl DatasetStore {
                 > self.limits.catalog.recovery_bytes
         {
             self.rotate()?;
-            self.reserve_catalog(self.limits.catalog.frame_bytes as u64, 1)?;
+            self.reserve_catalog(
+                self.limits.catalog.frame_bytes as u64
+                    + if self.files.protected() {
+                        (crate::protected_storage::OVERHEAD + 4) as u64
+                    } else {
+                        0
+                    },
+                1,
+            )?;
         }
         Ok(())
     }
@@ -60,6 +76,12 @@ impl DatasetStore {
         }
         self.validate_write_map(&snapshot.writes, &snapshot.roots, &snapshot.gates)?;
         encode_snapshot(&snapshot, self.limits)?;
+        let bytes = crate::protected_storage::encode_log_frame(
+            self.files.protection(),
+            &format!("dataset/{}/catalog", self.store_id()),
+            self.physical_bytes,
+            &bytes,
+        )?;
         let mut options = private_options();
         options.append(true);
         let mut file = self.catalog_dir.open_with(ACTIVE, &options)?;

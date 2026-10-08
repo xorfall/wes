@@ -29,7 +29,7 @@ pub fn encode_selection(
 ) -> Result<Vec<u8>, CodecError> {
     let policy = value.provenance().policy();
     // Check before even resolving a path: a path error or length is also an export.
-    if policy.is_private() || policy.is_unknown() {
+    if policy.is_confidential() || policy.is_unknown() {
         return Err(CodecError::Export(
             "This value cannot be exported to terminal processes.".into(),
         ));

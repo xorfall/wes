@@ -66,6 +66,8 @@ pub struct Manifest {
     pub established: Persistence,
     /// Revocation is checked against the current root even when reading an older generation.
     pub authorization_generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<wes_core::flow::Residence>,
     pub origins: Vec<String>,
     pub dataset_reads: Vec<wes_core::flow::DatasetReadOrigin>,
 }
@@ -86,6 +88,22 @@ pub(super) struct ManifestStream<'a> {
     pub summary: &'a IndexSummary,
 }
 impl Manifest {
+    pub(crate) fn policy(&self) -> wes_core::flow::FlowPolicy {
+        let mut p = self
+            .origins
+            .iter()
+            .fold(wes_core::flow::FlowPolicy::default(), |p, o| {
+                p.from_origin(o)
+            });
+        if let Some(residence) = self.protection {
+            p = p.confidential(residence);
+        }
+        self.dataset_reads
+            .iter()
+            .cloned()
+            .fold(p, |p, o| p.with_dataset_read(o))
+    }
+
     /// Every physical-tree consumer enumerates roots here; there is no independent side dataset.
     pub(super) fn streams(&self) -> impl Iterator<Item = ManifestStream<'_>> {
         std::iter::once(ManifestStream {
@@ -215,7 +233,8 @@ impl Manifest {
         if self.established != self.requested {
             return Err(FormatError::Corrupt);
         }
-        if self.dataset_reads.len() > 128
+        if self.protection == Some(wes_core::flow::Residence::Memory)
+            || self.dataset_reads.len() > 128
             || self.dataset_reads.windows(2).any(|s| s[0] >= s[1])
             || self.origins.len() > 128
             || self

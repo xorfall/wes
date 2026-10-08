@@ -136,15 +136,15 @@ impl Observation {
         call: Call,
         token: CancellationToken,
     ) -> Result<Value, InvocationError> {
-        // Private data must not be copied into daemon metadata, image references or argv.
+        // Confidential data must not be copied into daemon metadata, image references or argv.
         if call
             .arguments
             .values()
-            .any(|v| v.provenance().policy().is_private())
+            .any(|v| v.provenance().policy().is_confidential())
         {
             return Err(failure(
                 "ENV030",
-                "Docker lifecycle does not support private arguments",
+                "Docker lifecycle does not support confidential arguments",
             ));
         }
         self.permitted()?;

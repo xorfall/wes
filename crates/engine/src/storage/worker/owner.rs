@@ -89,6 +89,9 @@ impl<V: ValueStore> Owner<V> {
             if entry.element != &info.schema.root().shape() {
                 return Err(StoreError::Conflict);
             }
+            if value.provenance().policy().join(&info.policy) != *value.provenance().policy() {
+                return Err(StoreError::Restricted);
+            }
             if info
                 .policy
                 .origins()
@@ -128,6 +131,9 @@ impl<V: ValueStore> Owner<V> {
     }
 }
 impl<V: ValueStore> ValueStore for Owner<V> {
+    fn supports_confidential(&self) -> bool {
+        self.values.supports_confidential()
+    }
     fn retained_persistence(&self) -> crate::history::Persistence {
         self.values.retained_persistence()
     }
@@ -178,13 +184,17 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         Ok(Some(size))
     }
     fn automatic_retention_allowed(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if !self.values.automatic_retention_allowed(handle)? {
+            return Ok(false);
+        }
         for prefix in self
             .value_root(handle)?
             .into_iter()
             .flat_map(|root| root.prefixes)
         {
-            if self.datasets()?.inspect(&prefix)?.lifecycle
-                != crate::storage::datasets::DatasetLifecycle::Sealed
+            if self.datasets()?.inspect(&prefix)?.policy.is_confidential()
+                || self.datasets()?.inspect(&prefix)?.lifecycle
+                    != crate::storage::datasets::DatasetLifecycle::Sealed
             {
                 return Ok(false);
             }
@@ -248,6 +258,9 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         let Some(loaded) = self.values.read(handle)? else {
             return Ok(false);
         };
+        if !loaded.value.provenance().policy().allows_retention() {
+            return Err(StoreError::Restricted);
+        }
         self.root_value(handle, &loaded.value, reason)?;
         self.values.keep_with_reason(handle, reason)
     }
