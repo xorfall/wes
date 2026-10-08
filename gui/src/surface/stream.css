@@ -2,7 +2,7 @@
 @container (max-width:480px) { .wes-terminal .stream-phase{ font-size:12px; } .wes-terminal .stream-controls{ gap:4px; } .wes-terminal .log-tools input{ width:10ch; } } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view){ overflow:hidden; } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .view-host-content, .wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .live-view{ height:100%; display:flex; flex-direction:column; min-height:0; } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view) .log-view{ display:flex; flex-direction:column; flex:1; min-height:0; } .wes-terminal .view-host-stream.view-host-builtin .log-view .log-scroll{ flex:1; min-height:0; overflow:auto; } .wes-terminal .view-host-stream.view-host-builtin:has(.log-view,.value-table-block){ height:14lh; }
 .wes-terminal .live-view { position:relative; }
 .wes-terminal .stream-notice { position:absolute; z-index:2; bottom:24px; left:4px; right:4px; background:var(--sheet); border:1px solid var(--line); border-radius:3px; padding:4px 6px; max-height:3lh; overflow:auto; }
-.wes-terminal .log-sequence { min-width:3ch; text-align:right; font-size:12px; user-select:none; }
+.wes-terminal .log-sequence { flex:none; min-width:3ch; text-align:right; font-size:12px; user-select:none; }
 .wes-terminal .view-host-stream.view-host-builtin:has(.value-table-block) { overflow:hidden; }
 .wes-terminal .view-host-stream.view-host-builtin:has(.value-table-block) .view-host-content,.wes-terminal .view-host-stream.view-host-builtin:has(.value-table-block) .live-view { height:100%; min-height:0; }
 .wes-terminal .view-host-stream.view-host-builtin .value-table-scroll { max-height:calc(var(--stream-rows,14)*1lh - 3lh)!important; overflow-y:auto; }
@@ -50,3 +50,6 @@
 .wes-terminal .stream-fill .stream-value:has(>.log-view) { display:flex; flex-direction:column; min-height:auto; overflow:visible; }
 .wes-terminal .stream-fill .log-view { flex:1 1 0px; display:flex; flex-direction:column; }
 .wes-terminal .stream-fill .log-view .log-scroll { flex:1 1 0px; height:auto; min-height:3lh; max-height:none; }
+.wes-terminal .log-scope{ font-size:12px; padding:4px 0 1px; margin-top:2px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+
+.wes-terminal .log-fold{ flex:none; width:2ch; padding:0!important; font-size:11px; line-height:1; } .wes-terminal .log-folded{ font-size:12px; }

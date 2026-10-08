@@ -4,8 +4,8 @@ import type { Mode } from "../presentation/types";
 import type { Engine } from "../engine";
 import type { WorkspaceNode } from "../workspace";
 import { liveReader, sourceScope, SOURCE_SCOPE_HELP, type DisplaySource, type HeldDisplay, type LiveSample } from "../live-view-reader";
-import { ValueBlock } from "./render/ValueBlock";
-import { isLogValue } from "./render/LogView";
+import { ValueBlock, useRegistry } from "./render/ValueBlock";
+import { logShape } from "./render/log-identity";
 import { useVisibility } from "./useVisibility";
 import { resultAccess } from "./result-access";
 import "./stream.css";
@@ -89,11 +89,16 @@ function SourceCounts({sources,label}:{sources:readonly DisplaySource[];label:(n
 function StreamBody({mode,collapsed,sourceLabel=node=>node}:{mode:Mode;collapsed:boolean;sourceLabel?:(node:string)=>string}) {
   const display=useContext(Context)!;
   const {shown,latest,held,node,generation,engine,hold,clear}=display;
-  const keys=useMemo(()=>shown.value ? streamItemKeys(shown.value) : undefined,[shown.value]);
+  const registry=useRegistry();
+  // The same validated mapping ValueBlock draws with: a log view owns follow and anchoring itself.
+  const log=useMemo(()=>shown.value ? logShape(shown.value,registry) : undefined,[shown.value,registry]);
+  const keys=useMemo(()=>shown.value ? streamItemKeys(shown.value,log?.mapping) : undefined,[shown.value,log]);
   // Accepted deltas are meaningful only for one source; several sources never get an invented total.
   const counts=shown.metadata?.sources.length===1 ? shown.metadata.sources[0]?.counts : undefined;
   const incoming=held && counts && latest.metadata?.sources.length===1 && latest.metadata.sources[0]?.counts ? BigInt(latest.metadata.sources[0].counts.accepted)-BigInt(counts.accepted) : 0n;
   const value=shown.value;
+  /** A list drawn without a log view and without declared item keys can only hold its display while read. */
+  const keyless=Boolean(value && Array.isArray(value.data) && !log && !keys);
   const terminal=latest.metadata?.sources.some(source=>source.phase==="stopped" || source.phase==="failed");
   const revisions=held && latest.metadata && held.sample.metadata ? BigInt(latest.metadata.revision)-BigInt(held.sample.metadata.revision) : 0n;
   const body=useRef<HTMLDivElement>(null);
@@ -104,7 +109,7 @@ function StreamBody({mode,collapsed,sourceLabel=node=>node}:{mode:Mode;collapsed
   });
   return <div className={`live-view${latest.problem && !held?" live-view-read-failed":terminal?" live-view-terminal":""}`} ref={body} onScrollCapture={event=>{
     const target=event.target as HTMLElement;
-    if(value && Array.isArray(value.data) && !isLogValue(value) && !keys && target.scrollTop+target.clientHeight<target.scrollHeight-2)hold("reading");
+    if(keyless && target.scrollTop+target.clientHeight<target.scrollHeight-2)hold("reading");
   }}>
     {latest.problem && <div className="stream-notice mono-warn" role="alert" title={latest.problem}>{latest.problem}{!latest.withdrawn && <button className="cell-action" onClick={display.retry}>read again</button>}</div>}
     <div className="stream-value"><StreamItemsContext.Provider value={keys}>{value ? <ValueBlock engine={engine} value={value} cacheKey={`${generation}:${node.id}:display:${shown.metadata?.revision??shown.revision}:${epoch(shown)}`} bindingKey={`${generation}:${node.id}:${epoch(shown)}`} mode={mode} collapsed={collapsed} facts={{whole:true}}/>
@@ -112,7 +117,7 @@ function StreamBody({mode,collapsed,sourceLabel=node=>node}:{mode:Mode;collapsed
     {!collapsed && <div className="stream-footer"><div className="stream-status-line">
       {held && <span className="stream-snapshot mono-dim" title={[...display.reasons].join(", ")}>snapshot · {held.at}{revisions>0n && ` · ${revisions} newer value revisions`}</span>}
       {incoming>0n && <button className="cell-action stream-new" onClick={display.resume} title="Events this source accepted since the hold. Resume to show its latest window.">↓ {incoming.toString()} source events</button>}
-    {value && Array.isArray(value.data) && !keys && !collapsed && <div className="stream-counts mono-faint" title="no item identity · reading holds the display">no item identity · reading holds the display</div>}
+    {keyless && !collapsed && <div className="stream-counts mono-faint" title="no item identity · reading holds the display">no item identity · reading holds the display</div>}
     {terminal && !collapsed && <div className="stream-counts mono-warn" title="last displayed window · not a current input">last displayed window · not a current input</div>}
     </div>{!collapsed && <SourceCounts sources={shown.metadata?.sources ?? []} label={sourceLabel}/>}</div>}
   </div>;

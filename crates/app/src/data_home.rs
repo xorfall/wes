@@ -178,6 +178,7 @@ impl DataHome {
                     | "diagnostics"
                     | "terminal-history"
                     | "edit"
+                    | "presentations"
                     | "api-library-settings.json"
                     | "describe-settings.json"
                     | ".api-library.lock"
@@ -188,7 +189,10 @@ impl DataHome {
             ) || name.starts_with(".api-write-")
                 || name.starts_with(crate::credential_vault::PENDING_PREFIX);
             let file_type = entry.file_type()?;
-            if !known || file_type.is_symlink() || (name == "edit" && !file_type.is_dir()) {
+            if !known
+                || file_type.is_symlink()
+                || (matches!(name, "edit" | "presentations") && !file_type.is_dir())
+            {
                 return Err(io::Error::other("Choose an empty folder or an existing wes data folder; unrelated files and links are not adopted.").into());
             }
             if previous.is_none()
@@ -201,6 +205,7 @@ impl DataHome {
                         | "diagnostics"
                         | "terminal-history"
                         | "edit"
+                        | "presentations"
                         | "api-library-settings.json"
                         | "describe-settings.json"
                         | "desktop-ui.json"
