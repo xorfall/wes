@@ -34,7 +34,17 @@
 .wes-terminal .dataset-cell { flex:none; overflow:hidden; text-overflow:ellipsis; }
 .wes-terminal .dataset-focused { border-bottom:1px solid var(--line); padding:4px 0; }
 .wes-terminal .dataset-focused-head { display:flex; align-items:center; gap:8px; min-height:var(--dataset-line); }
+.wes-terminal .dataset-focused-head > .value-line { flex:1 1 0; min-width:0; text-overflow:ellipsis; }
 .wes-terminal .dataset-focused-body { max-height:calc(16 * var(--dataset-line)); overflow:auto; overscroll-behavior:contain; }
 .wes-terminal .dataset-withdrawn { display:flex; align-items:flex-start; }
+/*
+ * Skipped records: one count line, then one action line choosing the rows. Both keep their height at
+ * every width and whichever stream is shown; the count leads so a narrow pane clips the note first.
+ */
+.wes-terminal .dataset-coverage { display:flex; flex-direction:column; min-width:0; margin-top:4px; }
+.wes-terminal .dataset-coverage > .value-line { height:var(--dataset-line); text-overflow:ellipsis; }
+.wes-terminal .dataset-streams { display:flex; align-items:center; gap:8px; height:var(--dataset-action); white-space:nowrap; min-width:0; }
+.wes-terminal .dataset-streams > .cell-action { flex:none; box-sizing:border-box; height:var(--dataset-action); line-height:var(--dataset-line); }
+.wes-terminal .dataset-streams > .value-line { flex:1 1 0; min-width:0; text-overflow:ellipsis; }
 .wes-terminal .dataset-recording { display:flex; flex-direction:column; min-width:0; margin-top:4px; }
 .wes-terminal .dataset-recording .value-line { height:var(--dataset-line); text-overflow:ellipsis; }

@@ -416,9 +416,21 @@ fn describe(spec: &CommandSpec) -> Data {
                 ),
             ),
             (
+                "source_pages",
+                text(
+                    "Dataset sources read bounded pages. Stored row payload bytes and the logical charge of retained values are separate limits. Page bytes exclude schema metadata, segment frames and reply envelopes; returned metadata remains charged logically and transport encoders enforce their own reply bounds. The stored payload page bound is captured from the reserved record buffer and the Dataset page operating ceiling; receipt limits.pageBytes reports it. A full retained window returns the valid prefix and continues at its exact next ordinal. If one row exceeds its logical record-charge or stored payload page-byte limit, earlier valid rows are processed first and analysis stops at that row with record_charge or source_page_bytes respectively; it is not skipped or treated as corruption. Resume preserves the captured read limits. Reading or renewing a page never advances input credit until records are accepted. A renewed read grant can exceed its measured minimum to reduce repeated disk work, under the same cumulative and earned ceilings. Unused acknowledged work is conservatively charged after interruption.",
+                ),
+            ),
+            (
                 "totals",
                 text(
                     "Optional literal positive integer totals work:, input:, records:, output:, outputs: and duration: request smaller limits under the active operating ceilings. duration is cumulative milliseconds; input and output are cumulative charge, records and outputs are cumulative counts. Omitted totals use the active ceiling. Held memory, per-record framing/scratch/output caps, earning rate and code stay independently captured. References and reactive changes cannot enlarge these limits. Initial startup credit is clipped once to the requested work total; ordinary Resume preserves that captured budget. Reducing an output total does not reduce the independent per-record cap.",
+                ),
+            ),
+            (
+                "malformed",
+                text(
+                    "malformed:strict is the default: a malformed frame fails the analysis. Explicit malformed:forensic requires a finite framed Text/Bytes source and sink:dataset; TypedRecords and follow:true refuse it. Raw/decoded/span limits and invalid UTF-8 can then produce bounded original-byte rejection evidence instead of invoking step. State stays unchanged for that input; its position, input charge and rejection are acknowledged together. excerpt: is a literal 1–4096-byte cap (default 256), valid only with forensic. This is independent of LinesLossyUtf8 decoding. Callback, type, work, ownership and storage failures remain fatal. A naturally completed extent can finish with skipped inputs; complete does not mean every input was interpreted. Receipt rejectedRecords and rejectedInputBytes count acknowledged skips. Inspect them with :dataset page $analysis.outputs stream:coverage; request original source bytes separately with :scan excerpt $analysis.",
                 ),
             ),
             (
@@ -430,7 +442,7 @@ fn describe(spec: &CommandSpec) -> Data {
             (
                 "result",
                 text(
-                    "ScanResult contains state, outputs and receipt. Only fully validated candidates advance state, accepted input position and outputs together. A dataset sink waits for the shared catalog acknowledgement and captures its source, pure program, schemas and cumulative budget. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. Opening a Dataset or restoring a workspace never restarts analysis or a producer. :scan resume $analysis creates an explicit continuation from its retained checkpoint; it never reruns the original source or adopts edited code. :scan resume $analysis follow:true explicitly requests continued waiting for a captured EventLog epoch; without follow it reads only the captured checkpoint extent and remains incomplete. Work and input-earned allowance remain cumulative; crashed outstanding work is charged in full. Resume retains the latest granted bounds. To request larger totals, first read :scan continuation, then explicitly submit :scan continue with its reviewed basis.",
+                    "ScanResult contains state, outputs and receipt. Only fully validated candidates advance state, accepted input position and outputs together. A dataset sink waits for the shared catalog acknowledgement and captures its source, pure program, schemas and cumulative budget. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. Opening a Dataset or restoring a workspace never restarts analysis or a producer. :scan resume $analysis creates an explicit continuation from its retained checkpoint; it never reruns the original source or adopts edited code. :scan resume $analysis follow:true explicitly requests continued waiting for a captured EventLog epoch; without follow it reads only the captured checkpoint extent and remains incomplete. Work and input-earned allowance remain cumulative; crashed outstanding work is charged in full. A prepaid work boundary may renew native framing or an owned Dataset source read. Re-reading immutable page prefixes charges their work again, advances no input and never restarts a provider. Real absolute/earned limits, corruption, withdrawal and unknown storage outcomes stop the attempt. Resume retains the latest granted bounds. To request larger totals, first read :scan continuation, then explicitly submit :scan continue with its reviewed basis.",
                 ),
             ),
             (
@@ -493,6 +505,12 @@ fn describe(spec: &CommandSpec) -> Data {
                 "selection",
                 text(
                     "Select an owned Dataset result, including a record field: :dataset page $analysis.outputs from:0 limit:100 > page. This explicit read can inspect incomplete evidence without treating the original failed run as success.",
+                ),
+            ),
+            (
+                "stream",
+                text(
+                    "stream:outputs is the default. A forensic analysis also exposes stream:coverage for acknowledged rejected frames, including bounded original-byte excerpts. Use :dataset page $analysis.outputs stream:coverage from:0 limit:10. Coverage page ordinals are dense skipped-row positions; recordOrdinal inside each ScanRejection is the original input ordinal. The parent Dataset reference still counts ordinary outputs. Selected page records and schemaDigest describe only the selected stream. Coverage is absent for ordinary Datasets, not an invented empty stream; selecting it refuses. Neither stream starts or resumes analysis, and complete-with-skips is not full interpretation.",
                 ),
             ),
             (

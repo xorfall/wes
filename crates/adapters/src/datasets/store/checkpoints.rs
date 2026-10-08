@@ -34,13 +34,16 @@ impl DatasetStore {
                 return Err(DatasetError::Conflict);
             }
         }
+        if state.coverage.as_ref() != manifest.coverage.as_ref().map(|c| &c.progress) {
+            return Err(DatasetError::Conflict);
+        }
         let prior = manifest
             .previous
             .as_ref()
-            .map(|r| self.files.read_manifest(r))
+            .map(|r| self.files.read_manifest(r, None))
             .transpose()?
             .and_then(|m| m.checkpoint)
-            .map(|r| self.files.read_checkpoint(&r, &manifest.dataset))
+            .map(|r| self.files.read_checkpoint(&r, &manifest.dataset, None))
             .transpose()?;
         let mut schema = |bundle: &ResolvedContractBundle,
                           previous: Option<(&ObjectRef, &str)>|
@@ -85,9 +88,10 @@ impl DatasetStore {
             limits,
         )?;
         let checkpoint = Checkpoint {
+            coverage: state.coverage.clone(),
             stop: state.stop,
             budget: state.budget.clone(),
-            version: 3,
+            version: 4,
             store: manifest.store.clone(),
             dataset: manifest.dataset.clone(),
             analysis: state.analysis.clone(),
@@ -150,10 +154,12 @@ impl DatasetStore {
         let Some(reference) = manifest.checkpoint else {
             return Ok(None);
         };
-        let saved = self.files.read_checkpoint(&reference, &manifest.dataset)?;
-        let state_schema = self.files.read_schema(&saved.state.schema)?;
-        let context_schema = self.files.read_schema(&saved.context.schema)?;
-        let item_schema = self.files.read_schema(&saved.bindings.item_schema)?;
+        let saved = self
+            .files
+            .read_checkpoint(&reference, &manifest.dataset, None)?;
+        let state_schema = self.files.read_schema(&saved.state.schema, None)?;
+        let context_schema = self.files.read_schema(&saved.context.schema, None)?;
+        let item_schema = self.files.read_schema(&saved.bindings.item_schema, None)?;
         let state = saved
             .state
             .value(&state_schema, self.limits.objects.checkpoint)?;
@@ -161,6 +167,7 @@ impl DatasetStore {
             .context
             .value(&context_schema, self.limits.objects.checkpoint)?;
         Ok(Some(AnalysisCheckpoint {
+            coverage: saved.coverage.clone(),
             stop: saved.stop,
             budget: saved.budget,
             analysis: saved.analysis,
@@ -235,7 +242,9 @@ impl DatasetStore {
         let Some(checkpoint) = &manifest.checkpoint else {
             return Ok(vec![]);
         };
-        let saved = self.files.read_checkpoint(checkpoint, &manifest.dataset)?;
+        let saved = self
+            .files
+            .read_checkpoint(checkpoint, &manifest.dataset, None)?;
         let mut identities = vec![saved.analysis.clone()];
         if saved.run != saved.analysis {
             identities.push(saved.run.clone());

@@ -29,7 +29,7 @@ const reference = (records: string, generation = "2"): DatasetReference => decod
 const coverage = (over: Record<string, unknown> = {}) => ({
   run: RUN, epoch: DATASET, first: "11", acceptedThrough: "40", committedThrough: "40", pending: "0", rejected: "0", termination: "natural", ...over,
 });
-const reply = (records: string, recording: unknown, lifecycle = "sealed") => ({ reference: { ...reference(records) }, lifecycle, protected: true, persistence: "Durable", segmentBytes: "4096", recording });
+const reply = (records: string, recording: unknown, lifecycle = "sealed") => ({ reference: { ...reference(records) }, stream: "outputs", lifecycle, protected: true, persistence: "Durable", segmentBytes: "4096", recording });
 
 describe("recording coverage decoding", () => {
   it.each([
@@ -45,7 +45,7 @@ describe("recording coverage decoding", () => {
   });
 
   it("keeps an ordinary analysis read without any recording", () => {
-    const plain = { reference: { ...reference("30") }, lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "64" };
+    const plain = { reference: { ...reference("30") }, stream: "outputs", lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "64" };
     expect(decodeDatasetRead(plain, reference("30"))).not.toHaveProperty("recording");
   });
 

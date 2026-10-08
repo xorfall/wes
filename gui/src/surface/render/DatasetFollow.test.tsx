@@ -35,14 +35,14 @@ const recording = (ref: DatasetReference, termination: DatasetRecording["termina
   committedThrough: ref.records, pending: "0", rejected: "0", termination,
 });
 function head(ref: DatasetReference, lifecycle: DatasetRead["lifecycle"] = "open", termination: DatasetRecording["termination"] = null): DatasetRead {
-  return { reference: ref, lifecycle, protected: true, persistence: "Durable", segmentBytes: "4096", recording: recording(ref, termination) };
+  return { reference: ref, stream: "outputs", lifecycle, protected: true, persistence: "Durable", segmentBytes: "4096", recording: recording(ref, termination) };
 }
 function page(ref: DatasetReference, first: string, limit: number, lifecycle: DatasetRead["lifecycle"] = "open"): DatasetRead {
   const start = BigInt(first), total = BigInt(ref.records), end = total < start + BigInt(limit) ? total : start + BigInt(limit);
   const rows = [];
   for (let n = start; n < end; n++) rows.push({ ordinal: n.toString(), sourceStart: n.toString(), sourceEnd: n.toString(), value: { type: ROW, provenance: {}, data: { label: `event ${n}` } } });
   const exhausted = end === total;
-  return { reference: ref, lifecycle, protected: true, persistence: "Durable", segmentBytes: "4096",
+  return { reference: ref, stream: "outputs", lifecycle, protected: true, persistence: "Durable", segmentBytes: "4096",
     page: { first, next: end.toString(), rows, extentExhausted: exhausted, limitedBy: null, cursor: exhausted ? null : `c${end}` } };
 }
 
@@ -367,7 +367,7 @@ describe("head and extent reads", () => {
   });
 
   it("accepts a head only as a committed extension of both the saved snapshot and the shown head", () => {
-    const raw = (ref: DatasetReference) => ({ reference: { ...ref }, lifecycle: "open", protected: true, persistence: "Durable", segmentBytes: "4096" });
+    const raw = (ref: DatasetReference) => ({ reference: { ...ref }, stream: "outputs", lifecycle: "open", protected: true, persistence: "Durable", segmentBytes: "4096" });
     const shown = at("4", "130");
     expect(decodeDatasetHead(raw(at("5", "140")), ORIGINAL, shown)?.reference).toEqual(at("5", "140"));
     expect(decodeDatasetHead(raw(shown), ORIGINAL, shown)).toBeDefined();

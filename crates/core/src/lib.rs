@@ -13,7 +13,7 @@ mod provenance;
 mod shape;
 mod temporal;
 mod value;
-pub use dataset::{DatasetRef, InvalidDataset};
+pub use dataset::{DatasetRef, DatasetStream, InvalidDataset};
 
 pub use failure::{ErrorId, ErrorValue, InvalidError, ValidationIssue};
 pub use provenance::Provenance;

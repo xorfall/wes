@@ -21,8 +21,8 @@ use wes_core::{
 use wes_language::Span;
 
 /// Immutable admission, captured before the attempt enters its source. All
-/// byte figures except original source positions are conservative logical
-/// charges, never wire-byte counts or a measured resident-memory promise.
+/// charge fields are conservative logical accounting, not resident memory.
+/// page_bytes independently bounds encoded rows; source positions retain their native unit.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
@@ -104,7 +104,7 @@ impl Settings {
             block: get("scan.block.bytes") as usize,
             duration: Duration::from_millis(get("scan.duration.ms")),
             page_rows: 32.min(get("dataset.page.rows") as usize),
-            page_bytes: (64 * 1024).min(get("dataset.page.bytes") as usize),
+            page_bytes: get("scan.record.bytes").min(get("dataset.page.bytes")) as usize,
             page_segments: 8.min(get("dataset.page.segments") as usize),
             commit_records: get("scan.commit.records") as usize,
             commit_bytes: get("scan.commit.bytes"),
@@ -142,7 +142,7 @@ impl Settings {
             && !self.duration.is_zero()
             && self.duration <= Duration::from_secs(86_400)
             && (1..=32).contains(&self.page_rows)
-            && (1..=65536).contains(&self.page_bytes)
+            && (1..=16 * 1024 * 1024).contains(&self.page_bytes)
             && (1..=8).contains(&self.page_segments)
             && (1..=128).contains(&self.commit_records)
             && (1..=1024 * 1024).contains(&self.commit_bytes)
@@ -192,6 +192,8 @@ pub struct Progress {
     pub phase: Phase,
     /// Counts include only accepted candidates, not the in-flight invocation.
     pub usage: Usage,
+    /// Only acknowledged rejected frames. This is not a row list or a decode-success claim.
+    pub coverage: Option<crate::storage::datasets::CoverageProgress>,
     pub committed_position: u64,
     pub read_position: u64,
     pub extent: u64,
@@ -214,6 +216,8 @@ pub enum Poll {
     ReadHead,
     /// No more source or callback work may enter until the durable grant is acknowledged.
     Grant,
+    /// Reconcile measured work at the unchanged committed boundary before a new lease.
+    Settle,
     /// A pure candidate is ready; its state/cursor remain at the prior acknowledgement.
     Commit,
     Terminal,
@@ -245,6 +249,7 @@ struct Candidate {
     state: Value,
     state_charge: u64,
     outputs: Vec<Data>,
+    coverage: Vec<wes_core::framing::Rejection>,
     output_charge: u64,
     held_after: u64,
     provenance: Provenance,
@@ -267,11 +272,15 @@ pub struct Runner {
     ledger: Ledger,
     base_charge: u64,
     outputs: Vec<Data>,
+    coverage: Option<crate::storage::datasets::CoverageProgress>,
     dataset: Option<wes_core::DatasetRef>,
     writer_lease: Option<crate::storage::datasets::DatasetWriteLease>,
     candidate: Option<Candidate>,
     committed_position: u64,
     invocation: Option<Invocation>,
+    pending_source: Option<SourcePoll>,
+    renewal: bool,
+    read_work_demand: u64,
     cache: Option<IterRegexCache>,
     regex: wes_core::RegexCacheUsage,
     provenance: Provenance,
@@ -295,7 +304,9 @@ mod batch;
 mod continuation;
 mod durable;
 pub use continuation::{ContinuationReason, ContinuationReview};
+mod forensic;
 mod frozen;
+mod scheduling;
 pub use durable::PreparedResume;
 use frozen::FrozenSettings;
 impl Runner {
@@ -333,6 +344,7 @@ impl Runner {
             )
         })?;
         Ok(DatasetCreate {
+            coverage: self.coverage.as_ref().map(|c| c.policy),
             owner: Some(self.write_owner()),
             checkpoint: None,
             recording: None,
@@ -417,6 +429,7 @@ impl Runner {
             });
         }
         Ok(DatasetAppend {
+            coverage: candidate.coverage.clone(),
             owner: Some(self.write_owner()),
             checkpoint: self.candidate_checkpoint()?,
             recording: None,
@@ -459,6 +472,7 @@ impl Runner {
         let checkpoint = self.candidate_checkpoint()?;
         let candidate = self.candidate.take().expect("validated candidate");
         if let (Some(durable), Some(checkpoint)) = (&mut self.durable, checkpoint) {
+            self.coverage = checkpoint.coverage.clone();
             durable.checkpoint = checkpoint;
             durable.grant_start_work = self.ledger.usage().work;
         }
@@ -686,6 +700,19 @@ impl Runner {
             input
                 .step
                 .argument("context", &input.context, &|| token.is_cancelled(), span)?;
+        let coverage = input
+            .framing
+            .as_ref()
+            .and_then(|profile| match profile.malformed {
+                wes_core::framing::Malformed::Strict {} => None,
+                wes_core::framing::Malformed::Forensic { excerpt_bytes } => {
+                    Some(crate::storage::datasets::CoverageProgress::empty(
+                        crate::storage::datasets::CoveragePolicy {
+                            excerpt_bytes: excerpt_bytes as u32,
+                        },
+                    ))
+                }
+            });
         let source = CapturedSource::new(
             input.source,
             input.framing,
@@ -732,11 +759,15 @@ impl Runner {
             ledger,
             base_charge,
             outputs: vec![],
+            coverage,
             dataset: None,
             writer_lease: None,
             candidate: None,
             committed_position: 0,
             invocation: None,
+            pending_source: None,
+            renewal: false,
+            read_work_demand: 0,
             cache: Some(cache),
             regex: Default::default(),
             provenance,
@@ -761,6 +792,7 @@ impl Runner {
         Progress {
             phase: self.phase,
             usage: self.ledger.usage(),
+            coverage: self.coverage.clone(),
             committed_position: self.committed_position,
             read_position: self.source.position(),
             extent: self.source.total(),
@@ -833,6 +865,13 @@ impl Runner {
                 "live source has not been admitted by its owned store",
             )));
         }
+        if self.coverage.is_some() && self.durable.is_none() {
+            return self.fail(stop(Failure::new(
+                "CAL004",
+                self.span,
+                "forensic framing requires an acknowledged durable Dataset sink",
+            )));
+        }
         if self.candidate_ready() {
             self.phase = Phase::Committing;
             return Poll::Commit;
@@ -848,17 +887,16 @@ impl Runner {
             self.phase = Phase::Committing;
             return Poll::Grant;
         }
+        if self.renewal {
+            self.phase = Phase::Committing;
+            return Poll::Settle;
+        }
         match self.poll_inner() {
             Ok(poll) => poll,
             Err(stop) => self.fail(stop),
         }
     }
     fn fail(&mut self, mut stop: Stop) -> Poll {
-        if stop.dimension == Some(Dimension::Work)
-            && self.ledger.work_allowance() < self.settings.limits.work
-        {
-            stop.dimension = Some(Dimension::WorkAllowance);
-        }
         if let Some(candidate) = &self.candidate {
             stop.failure.policy = stop.failure.policy.join(candidate.provenance.policy());
         }
@@ -870,6 +908,8 @@ impl Runner {
             Phase::Stopped
         };
         self.invocation = None;
+        self.pending_source = None;
+        self.renewal = false;
         self.candidate = None;
         self.stop = Some(stop);
         // No finish after failure, no callback retry, no partial candidate commit.
@@ -996,17 +1036,34 @@ impl Runner {
                 .map_err(stop)?,
             )
             .map_err(|error| refusal(error, self.span))?;
-        let ledger = &mut self.ledger;
-        match self
-            .source
-            .poll_admitted(self.settings.block, &self.token, self.span, |amount| {
-                ledger.work(amount)
-            })
-            .map_err(|error| Stop {
-                failure: error.failure,
-                dimension: error.dimension,
-                source_span: error.source_span,
-            })? {
+        let polled =
+            if let Some(pending) = self.pending_source.take() {
+                pending
+            } else {
+                let can_flush = self.candidate.is_some();
+                let ledger = &mut self.ledger;
+                self.source
+                    .poll_scheduled(self.settings.block, &self.token, self.span, |amount| {
+                        match ledger.scheduled_work(amount) {
+                            Err(Refusal {
+                                dimension: Dimension::WorkAllowance,
+                                ..
+                            }) if can_flush => Ok(false),
+                            result => result,
+                        }
+                    })
+                    .map_err(|error| Stop {
+                        failure: error.failure,
+                        dimension: error.dimension,
+                        source_span: error.source_span,
+                    })?
+            };
+        if self.needs_handoff_grant(&polled)? {
+            self.pending_source = Some(polled);
+            return self.request_renewal();
+        }
+        match polled {
+            SourcePoll::Renew => self.request_renewal(),
             SourcePoll::Pending => Ok(Poll::Yield),
             SourcePoll::ReadPage => {
                 if let Some(candidate) = &mut self.candidate {
@@ -1027,16 +1084,27 @@ impl Runner {
                 }
             }
             SourcePoll::Record {
+                ordinal,
                 value,
                 start,
                 end,
                 input_charge,
             } => {
+                self.validate_source_boundary(ordinal, start, end)?;
                 self.ledger
                     .admit_input_from(self.working_usage(), input_charge)
                     .map_err(|error| refusal(error, self.span))?;
                 self.begin(value, Some((start, end, input_charge)), false)?;
                 Ok(Poll::Yield)
+            }
+            SourcePoll::Rejected(row) => {
+                self.accept_rejection(row)?;
+                if self.candidate_ready() {
+                    self.phase = Phase::Committing;
+                    Ok(Poll::Commit)
+                } else {
+                    Ok(Poll::Yield)
+                }
             }
             SourcePoll::Incomplete => {
                 if let Some(candidate) = &mut self.candidate {
@@ -1066,6 +1134,7 @@ impl Runner {
                             state: self.working_state().clone(),
                             state_charge: self.working_state_charge(),
                             outputs: vec![],
+                            coverage: vec![],
                             output_charge: 0,
                             held_after: self.base_charge.saturating_add(self.state_charge),
                             provenance: self.working_provenance().clone(),
@@ -1114,7 +1183,7 @@ impl Runner {
         self.ledger
             .work(
                 amount
-                    .saturating_add(self.state_charge)
+                    .saturating_add(self.working_state_charge())
                     .saturating_add(1024),
             )
             .map_err(|error| refusal(error, self.span))?;
@@ -1180,6 +1249,7 @@ impl Runner {
         Ok((
             reference,
             crate::storage::datasets::PageRequest {
+                charge: Some(self.source.page_charge(self.span)?),
                 from: self.source.ordinal(),
                 rows: self.settings.page_rows,
                 bytes: self.settings.page_bytes,
@@ -1194,7 +1264,9 @@ impl Runner {
         &mut self,
         page: crate::storage::datasets::DatasetPage,
     ) -> Result<(), Failure> {
-        self.source.acknowledge_page(page, self.span)
+        self.source.acknowledge_page(page, self.span)?;
+        self.read_work_demand = 0;
+        Ok(())
     }
     pub(crate) fn follow_source(
         &mut self,
@@ -1239,9 +1311,6 @@ impl Runner {
     pub(crate) fn source_head_request(
         &mut self,
     ) -> Result<(wes_core::DatasetRef, crate::storage::datasets::ReadWork), Failure> {
-        self.ledger
-            .work(512)
-            .map_err(|e| refusal(e, self.span).failure)?;
         Ok((
             self.source.dataset().cloned().ok_or_else(|| {
                 Failure::new("CAL004", self.span, "analysis has no recorded source")
@@ -1260,7 +1329,9 @@ impl Runner {
                 .join(&info.policy)
                 .read_from_dataset(&info.reference),
         );
-        self.source.acknowledge_head(info, self.span)
+        let advanced = self.source.acknowledge_head(info, self.span)?;
+        self.read_work_demand = 0;
+        Ok(advanced)
     }
     fn elapsed(&self) -> Duration {
         self.elapsed_prior.saturating_add(self.started.elapsed())
@@ -1385,8 +1456,8 @@ impl Runner {
             .map_err(|error| refusal(error, self.span))?;
         let output_ranges = vec![
             range.map_or(
-                // Finish may share a batch with inputs not yet acknowledged by storage.
-                (self.working_position(), self.working_position()),
+                // Finish is admitted only at EOF; preceding inputs may still share this batch.
+                (self.source.position(), self.source.position()),
                 |(start, end, _)| (start, end)
             );
             outputs.len()
@@ -1395,6 +1466,7 @@ impl Runner {
             state,
             state_charge,
             outputs,
+            coverage: vec![],
             output_charge,
             held_after,
             provenance,
@@ -1653,6 +1725,10 @@ impl Runner {
                         Data::Int(self.settings.record_charge as i64),
                     ),
                     (
+                        "pageBytes".into(),
+                        Data::Int(self.settings.page_bytes as i64),
+                    ),
+                    (
                         "stateCharge".into(),
                         Data::Int(self.settings.state_charge as i64),
                     ),
@@ -1757,6 +1833,7 @@ pub(super) fn stop(failure: Failure) -> Stop {
     let dimension = failure.budget.map(|kind| match kind {
         calc::BudgetKind::Work => Dimension::RecordWork,
         calc::BudgetKind::CumulativeWork => Dimension::Work,
+        calc::BudgetKind::CumulativeAllowance => Dimension::WorkAllowance,
         calc::BudgetKind::Memory => Dimension::RecordMemory,
     });
     Stop {
@@ -1896,6 +1973,7 @@ pub(super) fn result_contract_for_sink(
             ("outputRecords", "Int"),
             ("recordWork", "Int"),
             ("recordCharge", "Int"),
+            ("pageBytes", "Int"),
             ("stateCharge", "Int"),
             ("contextCharge", "Int"),
             ("durationMs", "Int"),
@@ -1914,6 +1992,9 @@ pub(super) fn result_contract_for_sink(
             ("inputChargeUnit", "Text"),
             ("inputCharge", "Int"),
             ("inputRecords", "Int"),
+            ("malformed", "Text"),
+            ("rejectedRecords", "Int"),
+            ("rejectedInputBytes", "Int"),
             ("outputCharge", "Int"),
             ("outputRecords", "Int"),
             ("work", "Int"),
@@ -2049,6 +2130,25 @@ fn receipt(progress: &Progress, stop: Option<&Stop>) -> Data {
             ),
             ("inputCharge".into(), Data::Int(usage.input_bytes as i64)),
             ("inputRecords".into(), Data::Int(usage.input_records as i64)),
+            (
+                "malformed".into(),
+                Data::Text(
+                    if progress.coverage.is_some() {
+                        "forensic"
+                    } else {
+                        "strict"
+                    }
+                    .into(),
+                ),
+            ),
+            (
+                "rejectedRecords".into(),
+                Data::Int(progress.coverage.as_ref().map_or(0, |c| c.records) as i64),
+            ),
+            (
+                "rejectedInputBytes".into(),
+                Data::Int(progress.coverage.as_ref().map_or(0, |c| c.input_bytes) as i64),
+            ),
             ("outputCharge".into(), Data::Int(usage.output_bytes as i64)),
             (
                 "outputRecords".into(),

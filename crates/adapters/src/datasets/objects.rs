@@ -2,7 +2,9 @@
 use super::catalog::{ObjectRef, valid_digest, valid_uuid};
 use super::tree::{Branch, Entries};
 use super::{Checkpoint, CheckpointLimits};
-use super::{FormatError, FormatLimits, Record, SegmentHeader, SegmentReader, encode_segment};
+use super::{
+    FormatError, FormatLimits, Record, SegmentHeader, SegmentReader, Stream, encode_segment,
+};
 use super::{IndexEntry, IndexLimits, IndexNode, IndexSummary, Manifest, ManifestLimits};
 use crate::filesystem::{
     DirectoryError, DirectoryKind, Durability, OwnedDirectory, private_options, sync_directory,
@@ -21,6 +23,9 @@ use wes_core::{
     contracts::{ResolvedContractBundle, SnapshotLimits},
     flow::FlowPolicy,
 };
+
+mod range;
+pub use range::IndexRange;
 
 const MAGIC: &[u8; 8] = b"WESOBJ01";
 const HEADER: usize = 8 + 2 + 1 + 16 + 16 + 8;
@@ -58,12 +63,16 @@ pub struct ObjectLimits {
 }
 impl Default for ObjectLimits {
     fn default() -> Self {
+        let inventory_entries = wes_budgets::get("dataset.inventory.entries") as usize;
         Self {
             disk_bytes: wes_budgets::get("dataset.disk.bytes"),
-            inventory_entries: wes_budgets::get("dataset.inventory.entries") as usize,
+            inventory_entries,
             schema: SnapshotLimits::default(),
             segment: FormatLimits::default(),
-            index: IndexLimits::default(),
+            index: IndexLimits {
+                traversal_nodes: inventory_entries,
+                ..IndexLimits::default()
+            },
             manifest: ManifestLimits::default(),
             checkpoint: CheckpointLimits::default(),
         }
@@ -75,6 +84,8 @@ pub enum ObjectError {
     Locked,
     #[error("dataset directory has invalid ownership or permissions")]
     Ownership,
+    #[error(transparent)]
+    ReadWork(#[from] wes_engine::storage::datasets::ReadWorkRefusal),
     #[error("dataset operation exceeds its {0} limit")]
     Limit(&'static str),
     #[error("dataset physical outcome must be reconciled before more mutations")]
@@ -167,7 +178,7 @@ impl ObjectFiles {
                 };
                 if let Some(reference) = reachable.get(id) {
                     // Validate even live entries; a mismatched name/size never licenses cleanup.
-                    self.read(kind, reference, limit)?;
+                    self.read(kind, reference, limit, None)?;
                     shared = shared
                         .checked_add(metadata.len())
                         .ok_or(ObjectError::Limit("cleanup bytes"))?;
@@ -334,12 +345,16 @@ impl ObjectFiles {
         }
         self.publish(Kind::Manifest, &manifest.encode(self.limits.manifest)?)
     }
-    pub fn read_manifest(&self, reference: &ObjectRef) -> Result<Manifest, ObjectError> {
+    pub fn read_manifest(
+        &self,
+        reference: &ObjectRef,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
+    ) -> Result<Manifest, ObjectError> {
         #[cfg(test)]
         self.manifest_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let manifest = Manifest::decode(
-            &self.read(Kind::Manifest, reference, self.limits.manifest.bytes)?,
+            &self.read(Kind::Manifest, reference, self.limits.manifest.bytes, work)?,
             self.limits.manifest,
         )?;
         if manifest.store != self.store {
@@ -353,7 +368,7 @@ impl ObjectFiles {
         policy: &FlowPolicy,
     ) -> Result<ObjectRef, ObjectError> {
         check_policy(policy)?;
-        self.validate_checkpoint(checkpoint)?;
+        self.validate_checkpoint(checkpoint, None)?;
         if checkpoint.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
             || checkpoint.dataset_reads
                 != policy.dataset_reads().iter().cloned().collect::<Vec<_>>()
@@ -369,24 +384,34 @@ impl ObjectFiles {
         &self,
         reference: &ObjectRef,
         dataset: &str,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<Checkpoint, ObjectError> {
         let checkpoint = Checkpoint::decode(
-            &self.read(Kind::Checkpoint, reference, self.limits.checkpoint.bytes)?,
+            &self.read(
+                Kind::Checkpoint,
+                reference,
+                self.limits.checkpoint.bytes,
+                work,
+            )?,
             self.limits.checkpoint,
         )?;
         if checkpoint.dataset != dataset {
             return Err(ObjectError::Corrupt);
         }
-        self.validate_checkpoint(&checkpoint)?;
+        self.validate_checkpoint(&checkpoint, work)?;
         Ok(checkpoint)
     }
-    fn validate_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), ObjectError> {
+    fn validate_checkpoint(
+        &self,
+        checkpoint: &Checkpoint,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
+    ) -> Result<(), ObjectError> {
         checkpoint.encode(self.limits.checkpoint)?;
         if checkpoint.store != self.store {
             return Err(ObjectError::Corrupt);
         }
         for snapshot in [&checkpoint.state, &checkpoint.context] {
-            let schema = self.read_schema(&snapshot.schema)?;
+            let schema = self.read_schema(&snapshot.schema, work)?;
             let value = snapshot.value(&schema, self.limits.checkpoint)?;
             if value
                 .provenance()
@@ -414,7 +439,7 @@ impl ObjectFiles {
                 &checkpoint.bindings.output_schema_digest,
             ),
         ] {
-            if self.read_schema(reference)?.digest() != digest {
+            if self.read_schema(reference, work)?.digest() != digest {
                 return Err(ObjectError::Corrupt);
             }
         }
@@ -435,12 +460,14 @@ impl ObjectFiles {
         &self,
         reference: &ObjectRef,
         dataset: &str,
+        stream: Stream,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<IndexNode, ObjectError> {
         let node = IndexNode::decode(
-            &self.read(Kind::Index, reference, self.limits.index.bytes)?,
+            &self.read(Kind::Index, reference, self.limits.index.bytes, work)?,
             self.limits.index,
         )?;
-        if node.store != self.store || node.dataset != dataset {
+        if node.store != self.store || node.dataset != dataset || node.stream != stream {
             return Err(ObjectError::Corrupt);
         }
         Ok(node)
@@ -450,6 +477,7 @@ impl ObjectFiles {
         &mut self,
         root: Option<&ObjectRef>,
         dataset: &str,
+        stream: Stream,
         entry: IndexEntry,
         policy: &FlowPolicy,
     ) -> Result<(ObjectRef, IndexSummary), ObjectError> {
@@ -458,12 +486,13 @@ impl ObjectFiles {
             return Err(ObjectError::Corrupt);
         }
         let (left, right) = if let Some(root) = root {
-            self.append_path(root, dataset, entry, policy, 0)?
+            self.append_path(root, dataset, stream, entry, policy, 0)?
         } else {
             let node = IndexNode {
-                version: 1,
+                version: 3,
                 store: self.store.clone(),
                 dataset: dataset.into(),
+                stream,
                 height: 0,
                 summary: entry.summary.clone(),
                 entries: Entries::Leaf {
@@ -477,9 +506,10 @@ impl ObjectFiles {
             None => Ok((left.0, left.1.summary)),
             Some(right) => {
                 let mut parent = IndexNode {
-                    version: 1,
+                    version: 3,
                     store: self.store.clone(),
                     dataset: dataset.into(),
+                    stream,
                     height: left.1.height.checked_add(1).ok_or(ObjectError::Corrupt)?,
                     summary: left.1.summary.clone(),
                     entries: Entries::Branch {
@@ -506,6 +536,7 @@ impl ObjectFiles {
         &mut self,
         reference: &ObjectRef,
         dataset: &str,
+        stream: Stream,
         entry: IndexEntry,
         policy: &FlowPolicy,
         depth: u8,
@@ -513,7 +544,7 @@ impl ObjectFiles {
         if depth > self.limits.index.depth {
             return Err(ObjectError::Limit("index depth"));
         }
-        let mut node = self.read_index(reference, dataset)?;
+        let mut node = self.read_index(reference, dataset, stream, None)?;
         if entry.summary.first != node.summary.end {
             return Err(ObjectError::Corrupt);
         }
@@ -521,14 +552,14 @@ impl ObjectFiles {
             Entries::Leaf { entries } => entries.push(entry),
             Entries::Branch { children } => {
                 let last = children.last().ok_or(ObjectError::Corrupt)?.clone();
-                let actual = self.read_index(&last.node, dataset)?;
+                let actual = self.read_index(&last.node, dataset, stream, None)?;
                 if actual.height.checked_add(1) != Some(node.height)
                     || actual.summary != last.summary
                 {
                     return Err(ObjectError::Corrupt);
                 }
                 let (left, right) =
-                    self.append_path(&last.node, dataset, entry, policy, depth + 1)?;
+                    self.append_path(&last.node, dataset, stream, entry, policy, depth + 1)?;
                 *children.last_mut().unwrap() = Branch {
                     summary: left.1.summary,
                     node: left.0,
@@ -563,60 +594,6 @@ impl ObjectFiles {
         node.refresh_summary()?;
         Ok(((self.publish_index(&node, policy)?, node), right))
     }
-    pub fn locate(
-        &self,
-        root: &ObjectRef,
-        dataset: &str,
-        ordinal: u64,
-    ) -> Result<Option<IndexEntry>, ObjectError> {
-        self.locate_with_work(root, dataset, ordinal, None)
-    }
-    pub(crate) fn locate_with_work(
-        &self,
-        root: &ObjectRef,
-        dataset: &str,
-        ordinal: u64,
-        work: Option<&wes_engine::storage::datasets::ReadWork>,
-    ) -> Result<Option<IndexEntry>, ObjectError> {
-        let mut reference = root.clone();
-        let mut expected: Option<(u8, IndexSummary)> = None;
-        for _ in 0..=self.limits.index.depth {
-            if let Some(work) = work {
-                let cost = reference
-                    .bytes
-                    .checked_mul(64)
-                    .and_then(|n| n.checked_add(4096))
-                    .ok_or(ObjectError::Limit("analysis read work"))?;
-                work.charge(cost)
-                    .map_err(|_| ObjectError::Limit("analysis read work"))?;
-            }
-            let node = self.read_index(&reference, dataset)?;
-            if let Some((height, summary)) = expected.take() {
-                if node.height != height || node.summary != summary {
-                    return Err(ObjectError::Corrupt);
-                }
-            }
-            if ordinal < node.summary.first || ordinal >= node.summary.end {
-                return Ok(None);
-            }
-            match node.entries {
-                Entries::Leaf { entries } => {
-                    return Ok(entries
-                        .into_iter()
-                        .find(|e| e.summary.first <= ordinal && ordinal < e.summary.end));
-                }
-                Entries::Branch { children } => {
-                    let child = children
-                        .into_iter()
-                        .find(|e| e.summary.first <= ordinal && ordinal < e.summary.end)
-                        .ok_or(ObjectError::Corrupt)?;
-                    expected = Some((node.height - 1, child.summary));
-                    reference = child.node;
-                }
-            }
-        }
-        Err(ObjectError::Limit("index depth"))
-    }
     pub fn publish_schema(
         &mut self,
         schema: &ResolvedContractBundle,
@@ -645,18 +622,33 @@ impl ObjectFiles {
     pub fn read_schema(
         &self,
         reference: &ObjectRef,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<ResolvedContractBundle, ObjectError> {
-        let bytes = self.read(Kind::Schema, reference, self.limits.schema.bytes)?;
+        let bytes = self.read(Kind::Schema, reference, self.limits.schema.bytes, work)?;
         Ok(ResolvedContractBundle::decode(&bytes, self.limits.schema)?)
     }
     pub fn read_segment(
         &self,
         reference: &ObjectRef,
         dataset: &str,
+        stream: Stream,
         schema: &ResolvedContractBundle,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<Vec<u8>, ObjectError> {
-        let bytes = self.read(Kind::Segment, reference, self.limits.segment.segment_bytes)?;
-        SegmentReader::open(&bytes, &self.store, dataset, schema, self.limits.segment)?;
+        let bytes = self.read(
+            Kind::Segment,
+            reference,
+            self.limits.segment.segment_bytes,
+            work,
+        )?;
+        SegmentReader::open(
+            &bytes,
+            &self.store,
+            dataset,
+            stream,
+            schema,
+            self.limits.segment,
+        )?;
         Ok(bytes)
     }
     fn publish(&mut self, kind: Kind, payload: &[u8]) -> Result<ObjectRef, ObjectError> {
@@ -763,6 +755,7 @@ impl ObjectFiles {
         kind: Kind,
         reference: &ObjectRef,
         limit: usize,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<Vec<u8>, ObjectError> {
         if !valid_uuid(&reference.id) || !valid_digest(&reference.digest) {
             return Err(ObjectError::Corrupt);
@@ -770,8 +763,23 @@ impl ObjectFiles {
         let maximum = limit
             .checked_add(HEADER + CHECKSUM)
             .ok_or(ObjectError::Limit("object"))?;
-        if reference.bytes > maximum as u64 || reference.bytes < (HEADER + CHECKSUM) as u64 {
+        if reference.bytes < (HEADER + CHECKSUM) as u64 {
+            return Err(ObjectError::Corrupt);
+        }
+        if reference.bytes > maximum as u64 {
             return Err(ObjectError::Limit("object"));
+        }
+        if let Some(work) = work {
+            // Canonical identity and the kind's size bounds precede accounting.
+            // One charge covers the physical object and its bounded checksum,
+            // contract/codec validation and page encoding; nested physical reads
+            // enter this same admission port with the same owned counter.
+            let cost = reference
+                .bytes
+                .checked_mul(64)
+                .and_then(|n| n.checked_add(4096))
+                .ok_or(ObjectError::Limit("analysis read work"))?;
+            work.charge(cost)?;
         }
         let mut options = private_options();
         options.read(true);
@@ -956,7 +964,7 @@ mod tests {
             Err(ObjectError::Locked)
         ));
         assert_eq!(
-            files.read_schema(&reference).unwrap().digest(),
+            files.read_schema(&reference, None).unwrap().digest(),
             schema().digest()
         );
         let charge = files.charged_bytes();
@@ -970,7 +978,7 @@ mod tests {
         assert_eq!(reopened.store_id(), store);
         assert_eq!(reopened.charged_bytes(), charge);
         assert_eq!(
-            reopened.read_schema(&reference).unwrap().digest(),
+            reopened.read_schema(&reference, None).unwrap().digest(),
             schema().digest()
         );
     }
@@ -982,8 +990,10 @@ mod tests {
         let schema = schema();
         let dataset = Uuid::new_v4().to_string();
         let header = SegmentHeader {
+            coverage: None,
             store: files.store_id().into(),
             dataset: dataset.clone(),
+            stream: Stream::Outputs,
             schema: schema.digest().into(),
             first: 0,
             count: 1,
@@ -1002,11 +1012,14 @@ mod tests {
         let reference = files
             .publish_segment(&header, &[record], &schema, &FlowPolicy::default())
             .unwrap();
-        let bytes = files.read_segment(&reference, &dataset, &schema).unwrap();
+        let bytes = files
+            .read_segment(&reference, &dataset, Stream::Outputs, &schema, None)
+            .unwrap();
         let reader = SegmentReader::open(
             &bytes,
             files.store_id(),
             &dataset,
+            Stream::Outputs,
             &schema,
             FormatLimits::default(),
         )
@@ -1027,7 +1040,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            foreign.read_segment(&reference, &dataset, &schema),
+            foreign.read_segment(&reference, &dataset, Stream::Outputs, &schema, None),
             Err(ObjectError::Corrupt)
         ));
     }
@@ -1140,7 +1153,7 @@ mod tests {
             .unwrap();
         let mut forged = reference.clone();
         forged.id = "../outside".into();
-        assert!(files.read_schema(&forged).is_err());
+        assert!(files.read_schema(&forged, None).is_err());
         let path = tmp
             .path()
             .join("objects")
@@ -1150,7 +1163,7 @@ mod tests {
         bytes[end] ^= 1;
         std::fs::write(path, bytes).unwrap();
         assert!(matches!(
-            files.read_schema(&reference),
+            files.read_schema(&reference, None),
             Err(ObjectError::Corrupt)
         ));
     }

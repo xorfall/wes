@@ -1,6 +1,6 @@
 //! An immutable exact generation, never an unbounded list of segments.
 use super::{
-    FormatError, SourceRange,
+    FormatError, SourceRange, Stream,
     catalog::{ObjectRef, valid_digest, valid_uuid},
     format::bounded_json,
     tree::{IndexSummary, validate_reference, validate_source},
@@ -56,6 +56,7 @@ pub struct Manifest {
     pub schema_digest: String,
     pub index: Option<ObjectRef>,
     pub summary: IndexSummary,
+    pub coverage: Option<CoverageRoot>,
     pub source: SourceRange,
     pub lifecycle: Lifecycle,
     /// Complete captured runner state and bindings; committed atomically with the index.
@@ -68,7 +69,40 @@ pub struct Manifest {
     pub origins: Vec<String>,
     pub dataset_reads: Vec<wes_core::flow::DatasetReadOrigin>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoverageRoot {
+    pub schema: ObjectRef,
+    pub schema_digest: String,
+    pub index: Option<ObjectRef>,
+    pub summary: IndexSummary,
+    pub progress: wes_engine::storage::datasets::CoverageProgress,
+}
+pub(super) struct ManifestStream<'a> {
+    pub stream: Stream,
+    pub schema: &'a ObjectRef,
+    pub schema_digest: &'a str,
+    pub index: Option<&'a ObjectRef>,
+    pub summary: &'a IndexSummary,
+}
 impl Manifest {
+    /// Every physical-tree consumer enumerates roots here; there is no independent side dataset.
+    pub(super) fn streams(&self) -> impl Iterator<Item = ManifestStream<'_>> {
+        std::iter::once(ManifestStream {
+            stream: Stream::Outputs,
+            schema: &self.schema,
+            schema_digest: &self.schema_digest,
+            index: self.index.as_ref(),
+            summary: &self.summary,
+        })
+        .chain(self.coverage.iter().map(|root| ManifestStream {
+            stream: Stream::Coverage,
+            schema: &root.schema,
+            schema_digest: &root.schema_digest,
+            index: root.index.as_ref(),
+            summary: &root.summary,
+        }))
+    }
     pub fn encode(&self, limits: ManifestLimits) -> Result<Vec<u8>, FormatError> {
         self.validate()?;
         bounded_json(self, limits.bytes)
@@ -84,7 +118,7 @@ impl Manifest {
         Ok(manifest)
     }
     fn validate(&self) -> Result<(), FormatError> {
-        if self.version != 2 {
+        if self.version != 3 {
             return Err(FormatError::Version);
         }
         if !valid_uuid(&self.store)
@@ -93,6 +127,7 @@ impl Manifest {
             || !valid_digest(&self.schema_digest)
             || self.generation == 0
             || self.summary.first != 0
+            || self.summary.coverage.is_some()
             || self.authorization_generation == 0
         {
             return Err(FormatError::Corrupt);
@@ -125,6 +160,37 @@ impl Manifest {
         }
         if let Some(checkpoint) = &self.checkpoint {
             validate_reference(checkpoint)?;
+        }
+        if let Some(root) = &self.coverage {
+            if self.kind != DatasetKind::Analysis
+                || self.checkpoint.is_none()
+                || self.source.unit != super::PositionUnit::Bytes
+                || root.summary.first != 0
+                || root.summary.end != root.progress.records
+                || !root.progress.policy.valid()
+                || !valid_digest(&root.schema_digest)
+            {
+                return Err(FormatError::Corrupt);
+            }
+            match &root.summary.coverage {
+                Some(span)
+                    if span.valid(root.summary.end)
+                        && span.matches(&root.progress)
+                        && span.from >= self.source.start
+                        && span.through <= self.source.end => {}
+                None if root.summary.end == 0
+                    && root.progress.records == 0
+                    && root.progress.valid(0, 0, 0) => {}
+                _ => return Err(FormatError::Corrupt),
+            }
+            validate_reference(&root.schema)?;
+            match &root.index {
+                Some(index) if root.summary.end > 0 && root.summary.segment_bytes > 0 => {
+                    validate_reference(index)?
+                }
+                None if root.summary.end == 0 && root.summary.segment_bytes == 0 => {}
+                _ => return Err(FormatError::Corrupt),
+            }
         }
         match (&self.kind, &self.recording) {
             (DatasetKind::EventLog, Some(c)) => {

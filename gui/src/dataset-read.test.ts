@@ -22,7 +22,7 @@ const row = (ordinal: string, label = `row ${ordinal}`) => ({
 });
 /** `page: null` builds an inspection reply with no page at all; an object overrides page fields. */
 const reply = (over: Record<string, unknown> = {}, page: Record<string, unknown> | null = {}) => ({
-  reference: { ...reference() }, lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "18446744073709551615",
+  reference: { ...reference() }, stream: "outputs", lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "18446744073709551615",
   ...(page === null ? {} : { page: { first: "9007199254740990", next: "9007199254740992", rows: [row("9007199254740990"), row("9007199254740991")], extentExhausted: false, limitedBy: null, cursor: "c2Vjb25k", ...page } }),
   ...over,
 });

@@ -18,8 +18,10 @@ fn schema(name: &str) -> ResolvedContractBundle {
 }
 fn header(schema: &ResolvedContractBundle, count: u64) -> SegmentHeader {
     SegmentHeader {
+        coverage: None,
         store: STORE.into(),
         dataset: DATASET.into(),
+        stream: wes_adapters::datasets::Stream::Outputs,
         schema: schema.digest().into(),
         first: 7,
         count,
@@ -49,13 +51,24 @@ fn indexed_ordinals_raw_positions_and_captured_metadata_roundtrip() {
     let records = [record(1), record(2)];
     let h = header(&schema, 2);
     let bytes = encode_segment(&h, &records, &schema, FormatLimits::default()).unwrap();
-    let reader =
-        SegmentReader::open(&bytes, STORE, DATASET, &schema, FormatLimits::default()).unwrap();
+    let reader = SegmentReader::open(
+        &bytes,
+        STORE,
+        DATASET,
+        wes_adapters::datasets::Stream::Outputs,
+        &schema,
+        FormatLimits::default(),
+    )
+    .unwrap();
     assert_eq!(reader.header(), &h);
     assert!(reader.row(6).unwrap().is_none());
     assert!(reader.row(9).unwrap().is_none());
+    assert_eq!(reader.encoded_row_bytes(6), None);
+    assert_eq!(reader.encoded_row_bytes(9), None);
     for (i, n) in [1, 2].into_iter().enumerate() {
         let row = reader.row(7 + i as u64).unwrap().unwrap();
+        let stored = stored_payload(&records[i].value);
+        assert_eq!(reader.encoded_row_bytes(7 + i as u64), Some(stored.len()));
         assert_eq!(row.value.data(), &Data::Int(n));
         assert_eq!(
             (row.source_start, row.source_end),
@@ -67,6 +80,13 @@ fn indexed_ordinals_raw_positions_and_captured_metadata_roundtrip() {
         bytes,
         encode_segment(&h, &records, &schema, FormatLimits::default()).unwrap()
     );
+}
+fn stored_payload(value: &Value) -> Vec<u8> {
+    wes_adapters::codec::encode_value(
+        &value.clone().with_metadata(None),
+        wes_adapters::codec::Limits::default(),
+    )
+    .unwrap()
 }
 #[test]
 fn exact_native_scalars_and_optional_nested_values_use_retained_codec() {
@@ -94,8 +114,15 @@ fn exact_native_scalars_and_optional_nested_values_use_retained_codec() {
         };
         let bytes =
             encode_segment(&header(&schema, 1), &[r], &schema, FormatLimits::default()).unwrap();
-        let reader =
-            SegmentReader::open(&bytes, STORE, DATASET, &schema, FormatLimits::default()).unwrap();
+        let reader = SegmentReader::open(
+            &bytes,
+            STORE,
+            DATASET,
+            wes_adapters::datasets::Stream::Outputs,
+            &schema,
+            FormatLimits::default(),
+        )
+        .unwrap();
         assert_eq!(reader.row(7).unwrap().unwrap().value.data(), &data);
     }
 }
@@ -178,6 +205,7 @@ fn every_truncation_corruption_bad_version_and_foreign_identity_refuses() {
                 &bytes[..end],
                 STORE,
                 DATASET,
+                wes_adapters::datasets::Stream::Outputs,
                 &schema,
                 FormatLimits::default()
             )
@@ -189,23 +217,48 @@ fn every_truncation_corruption_bad_version_and_foreign_identity_refuses() {
         let mut changed = bytes.clone();
         changed[offset] ^= 1;
         assert!(
-            SegmentReader::open(&changed, STORE, DATASET, &schema, FormatLimits::default())
-                .is_err(),
+            SegmentReader::open(
+                &changed,
+                STORE,
+                DATASET,
+                wes_adapters::datasets::Stream::Outputs,
+                &schema,
+                FormatLimits::default()
+            )
+            .is_err(),
             "offset {offset}"
         );
     }
     let mut bad = bytes.clone();
-    bad[8] = 3;
+    bad[8] = 5;
     assert!(matches!(
-        SegmentReader::open(&bad, STORE, DATASET, &schema, FormatLimits::default()),
+        SegmentReader::open(
+            &bad,
+            STORE,
+            DATASET,
+            wes_adapters::datasets::Stream::Outputs,
+            &schema,
+            FormatLimits::default()
+        ),
         Err(FormatError::Version)
     ));
-    assert!(SegmentReader::open(&bytes, DATASET, STORE, &schema, FormatLimits::default()).is_err());
+    assert!(
+        SegmentReader::open(
+            &bytes,
+            DATASET,
+            STORE,
+            wes_adapters::datasets::Stream::Outputs,
+            &schema,
+            FormatLimits::default()
+        )
+        .is_err()
+    );
     assert!(
         SegmentReader::open(
             &bytes,
             STORE,
             DATASET,
+            wes_adapters::datasets::Stream::Outputs,
             &self::schema("Int"),
             FormatLimits::default()
         )
@@ -260,7 +313,14 @@ fn lengths_counts_spans_and_aggregate_validation_are_bounded() {
     let digest = Sha256::digest(&changed[..end]);
     changed[end..].copy_from_slice(&digest);
     assert!(matches!(
-        SegmentReader::open(&changed, STORE, DATASET, &schema, FormatLimits::default()),
+        SegmentReader::open(
+            &changed,
+            STORE,
+            DATASET,
+            wes_adapters::datasets::Stream::Outputs,
+            &schema,
+            FormatLimits::default()
+        ),
         Err(FormatError::Limit("row"))
     ));
 }
@@ -307,12 +367,19 @@ fn recomputing_checksums_cannot_bypass_schema_or_policy_validation() {
         forged.extend_from_slice(&payload);
         forged.extend_from_slice(&checksum.finalize());
         let total = forged.len() + 56;
-        forged.extend_from_slice(b"WESEND02");
+        forged.extend_from_slice(b"WESEND04");
         forged.extend_from_slice(&1u64.to_le_bytes());
         forged.extend_from_slice(&(total as u64).to_le_bytes());
         let checksum = Sha256::digest(&forged);
         forged.extend_from_slice(&checksum);
-        let result = SegmentReader::open(&forged, STORE, DATASET, &schema, FormatLimits::default());
+        let result = SegmentReader::open(
+            &forged,
+            STORE,
+            DATASET,
+            wes_adapters::datasets::Stream::Outputs,
+            &schema,
+            FormatLimits::default(),
+        );
         if violation != 1 {
             assert!(
                 matches!(&result, Err(FormatError::Contract)),
@@ -322,5 +389,87 @@ fn recomputing_checksums_cannot_bypass_schema_or_policy_validation() {
         } else {
             assert!(matches!(result, Err(FormatError::Restricted)));
         }
+    }
+}
+
+#[test]
+fn segment_stream_identity_is_required_and_checked_before_row_access() {
+    use wes_adapters::datasets::Stream;
+    for stream in [Stream::Outputs, Stream::Coverage] {
+        let (schema, rows) = if stream == Stream::Outputs {
+            (schema("Small"), vec![record(1)])
+        } else {
+            use wes_core::framing::{ByteSpan, Rejection, RejectionReason};
+            use wes_engine::storage::datasets::{rejection_schema, rejection_value};
+            let row = Rejection {
+                ordinal: 0,
+                source: ByteSpan { start: 0, end: 3 },
+                delimiter: ByteSpan { start: 3, end: 4 },
+                unterminated: false,
+                reason: RejectionReason::RawLimit,
+                reason_span: ByteSpan { start: 0, end: 3 },
+                excerpt: b"abc".to_vec(),
+                excerpt_truncated: false,
+            };
+            (
+                rejection_schema(),
+                vec![Record {
+                    source_start: 0,
+                    source_end: 4,
+                    value: rejection_value(&row, &Default::default()).unwrap(),
+                }],
+            )
+        };
+        let mut h = header(&schema, 1);
+        h.stream = stream;
+        if stream == Stream::Coverage {
+            use wes_engine::storage::datasets::{CoveragePolicy, CoverageSpan};
+            h.source.start = 0;
+            h.source.end = 4;
+            h.coverage = Some(wes_adapters::datasets::SegmentCoverage {
+                policy: CoveragePolicy { excerpt_bytes: 3 },
+                span: CoverageSpan {
+                    first_ordinal: 0,
+                    last_ordinal: 0,
+                    from: 0,
+                    through: 4,
+                    input_bytes: 4,
+                },
+            });
+        }
+        let bytes = encode_segment(&h, &rows, &schema, FormatLimits::default()).unwrap();
+        let reader = SegmentReader::open(
+            &bytes,
+            STORE,
+            DATASET,
+            stream,
+            &schema,
+            FormatLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(reader.header().stream, stream);
+        assert!(reader.row(h.first).unwrap().is_some());
+        let other = if stream == Stream::Outputs {
+            Stream::Coverage
+        } else {
+            Stream::Outputs
+        };
+        assert!(matches!(
+            SegmentReader::open(
+                &bytes,
+                STORE,
+                DATASET,
+                other,
+                &schema,
+                FormatLimits::default()
+            ),
+            Err(FormatError::Corrupt)
+        ));
+        let mut encoded = serde_json::to_value(&h).unwrap();
+        encoded.as_object_mut().unwrap().remove("stream");
+        assert!(serde_json::from_value::<SegmentHeader>(encoded).is_err());
+        let mut encoded = serde_json::to_value(&h).unwrap();
+        encoded["stream"] = serde_json::json!("unknown");
+        assert!(serde_json::from_value::<SegmentHeader>(encoded).is_err());
     }
 }

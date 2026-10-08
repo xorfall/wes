@@ -11,11 +11,16 @@ use wes_language::Span;
 pub enum SourcePoll {
     /// Original half-open position: bytes for framed sources, ordinals for records.
     Record {
+        ordinal: u64,
         value: Value,
         start: u64,
         end: u64,
         input_charge: u64,
     },
+    /// Explicit malformed-frame evidence; it is never a transition input.
+    Rejected(framing::Rejection),
+    /// No budget was replenished: the durable scheduler must settle and acknowledge a lease.
+    Renew,
     Pending,
     ReadPage,
     ReadHead,
@@ -76,6 +81,7 @@ pub fn framing_charge(profile: &Profile) -> Option<u64> {
         .checked_add((profile.decoded_bytes as u64).checked_mul(2)?)?
         .checked_add((profile.spans as u64).checked_mul(128)?)?
         .checked_add((delimiter as u64).checked_mul(32)?)?
+        .checked_add((profile.malformed.excerpt_bytes() as u64).checked_mul(4)?)?
         .checked_add(4096)
 }
 pub struct CapturedSource {
@@ -87,6 +93,7 @@ pub struct CapturedSource {
     position: usize,
     ordinal: usize,
     ended: bool,
+    pending_frame: Option<framing::Frame>,
     record_charge: u64,
     total: u64,
     page: std::collections::VecDeque<Value>,
@@ -179,6 +186,7 @@ impl CapturedSource {
             position: 0,
             ordinal: 0,
             ended: false,
+            pending_frame: None,
             record_charge,
             total,
             page: Default::default(),
@@ -315,6 +323,7 @@ impl CapturedSource {
                     .map_err(|_| invalid())?,
             );
             self.position = usize::try_from(position).map_err(|_| invalid())?;
+            self.ordinal = usize::try_from(ordinal).map_err(|_| invalid())?;
         } else {
             if position != ordinal {
                 return Err(invalid());
@@ -322,6 +331,7 @@ impl CapturedSource {
             self.ordinal = usize::try_from(ordinal).map_err(|_| invalid())?;
         }
         self.ended = false;
+        self.pending_frame = None;
         Ok(())
     }
     pub fn position(&self) -> u64 {
@@ -354,6 +364,13 @@ impl CapturedSource {
     pub(super) fn ordinal(&self) -> u64 {
         self.ordinal as u64
     }
+    pub(super) fn page_charge(
+        &self,
+        span: Span,
+    ) -> Result<crate::storage::datasets::PageCharge, Failure> {
+        crate::storage::datasets::PageCharge::new(self.record_charge, self.record_charge)
+            .ok_or_else(|| Failure::new("CAL006", span, "invalid captured source page charge"))
+    }
     pub(super) fn acknowledge_page(
         &mut self,
         page: crate::storage::datasets::DatasetPage,
@@ -382,6 +399,7 @@ impl CapturedSource {
             return Err(invalid());
         }
         let mut charge = 0u64;
+        let budget = self.page_charge(span)?;
         for (i, row) in page.rows.iter().enumerate() {
             if row.ordinal != page.first + i as u64
                 || row.value.shape() != &self.item_shape()
@@ -389,12 +407,21 @@ impl CapturedSource {
             {
                 return Err(invalid());
             }
-            let part = crate::value_size::value_charge(&row.value, self.record_charge)
-                .ok_or_else(invalid)?;
-            charge = charge
-                .checked_add(part)
-                .filter(|n| *n <= self.record_charge)
-                .ok_or_else(invalid)?;
+            let part = budget
+                .admit(&row.value, charge)
+                .map_err(|refused| match refused {
+                    crate::storage::datasets::PageChargeRefusal::Row { limit } => Failure::budget(
+                        crate::calc::BudgetKind::Memory,
+                        span,
+                        format!("dataset source row exceeds its logical charge limit ({limit})"),
+                    ),
+                    crate::storage::datasets::PageChargeRefusal::Retained => Failure::new(
+                        "CAL004",
+                        span,
+                        "dataset source page exceeds its declared retained charge",
+                    ),
+                })?;
+            charge += part;
         }
         self.page = page.rows.into_iter().map(|row| row.value).collect();
         self.lease = page.lease;
@@ -423,10 +450,19 @@ impl CapturedSource {
         span: Span,
         mut admit: impl FnMut(u64) -> Result<(), Refusal>,
     ) -> Result<SourcePoll, SourceFailure> {
+        self.poll_scheduled(block, token, span, |n| admit(n).map(|_| true))
+    }
+    pub(super) fn poll_scheduled(
+        &mut self,
+        block: usize,
+        token: &CancellationToken,
+        span: Span,
+        mut admit: impl FnMut(u64) -> Result<bool, Refusal>,
+    ) -> Result<SourcePoll, SourceFailure> {
         if token.is_cancelled() {
             return Err(Failure::cancelled(span).into());
         }
-        if self.ended {
+        if self.ended && self.pending_frame.is_none() {
             return Ok(SourcePoll::End);
         }
         if block == 0 || block > 65_536 {
@@ -461,12 +497,15 @@ impl CapturedSource {
                         None,
                     )
                 })?;
-            admit(input_charge).map_err(|e| budget_failure(e, span))?;
+            if !admit(input_charge).map_err(|e| budget_failure(e, span))? {
+                return Ok(SourcePoll::Renew);
+            }
             let value = self.page.pop_front().expect("admitted source row");
             let value = value.with_provenance(self.value.provenance().merge(value.provenance()));
             let start = self.ordinal as u64;
             self.ordinal += 1;
             return Ok(SourcePoll::Record {
+                ordinal: start,
                 value,
                 start,
                 end: self.ordinal as u64,
@@ -509,7 +548,9 @@ impl CapturedSource {
                         None,
                     )
                 })?;
-            admit(conversion).map_err(|error| budget_failure(error, span))?;
+            if !admit(conversion).map_err(|error| budget_failure(error, span))? {
+                return Ok(SourcePoll::Renew);
+            }
             let shape = match self.value.shape() {
                 Shape::List(item) => item.as_ref().clone(),
                 _ => Shape::Unknown,
@@ -530,6 +571,7 @@ impl CapturedSource {
             let start = self.ordinal as u64;
             self.ordinal += 1;
             return Ok(SourcePoll::Record {
+                ordinal: start,
                 value,
                 start,
                 end: self.ordinal as u64,
@@ -541,10 +583,12 @@ impl CapturedSource {
             Data::Bytes(bytes) => bytes.as_ref(),
             _ => unreachable!("captured byte source"),
         };
-        let row = if self.position < bytes.len() {
+        let row = if let Some(row) = self.pending_frame.take() {
+            Some(row)
+        } else if self.position < bytes.len() {
             let end = self.position + block.min(bytes.len() - self.position);
-            let (consumed, row) = framer
-                .pull_admitted(&bytes[self.position..end], |amount| {
+            let pull = framer
+                .pull_frame_scheduled(&bytes[self.position..end], |amount| {
                     if token.is_cancelled() {
                         return Err(Admission::Cancelled);
                     }
@@ -559,13 +603,16 @@ impl CapturedSource {
                     }
                     error => framing_failure(without_admission(error), span),
                 })?;
-            self.position += consumed;
-            row
+            self.position += pull.consumed;
+            if pull.paused {
+                return Ok(SourcePoll::Renew);
+            }
+            pull.frame
         } else {
             self.ended = true;
             let mut row = None;
             framer
-                .finish(|record| {
+                .finish_frames(|record| {
                     row = Some(record);
                     Ok::<_, ()>(())
                 })
@@ -579,6 +626,24 @@ impl CapturedSource {
                 SourcePoll::Pending
             });
         };
+        let row = match row {
+            framing::Frame::Record(row) => row,
+            framing::Frame::Rejected(row) => {
+                self.ordinal =
+                    usize::try_from(row.ordinal.checked_add(1).ok_or_else(|| {
+                        Failure::new("CAL006", span, "scan source ordinal overflow")
+                    })?)
+                    .map_err(|_| Failure::new("CAL006", span, "scan source ordinal overflow"))?;
+                return Ok(SourcePoll::Rejected(row));
+            }
+        };
+        let ordinal = row.ordinal;
+        self.ordinal = usize::try_from(
+            ordinal
+                .checked_add(1)
+                .ok_or_else(|| Failure::new("CAL006", span, "scan source ordinal overflow"))?,
+        )
+        .map_err(|_| Failure::new("CAL006", span, "scan source ordinal overflow"))?;
         let start = row.source.start;
         let end = row.delimiter.end;
         let original = Some(framing::ByteSpan { start, end });
@@ -606,11 +671,14 @@ impl CapturedSource {
                 original,
             )
         })?;
-        admit(conversion).map_err(|error| {
+        if !admit(conversion).map_err(|error| {
             let mut failure = budget_failure(error, span);
             failure.source_span = original;
             failure
-        })?;
+        })? {
+            self.pending_frame = Some(framing::Frame::Record(row));
+            return Ok(SourcePoll::Renew);
+        }
         let value = frame_value(row, self.value.provenance().clone());
         if crate::value_size::value_charge(&value, self.record_charge).is_none() {
             return Err(SourceFailure::record_limit(
@@ -620,6 +688,7 @@ impl CapturedSource {
             ));
         }
         Ok(SourcePoll::Record {
+            ordinal,
             value,
             start,
             end,
@@ -736,5 +805,73 @@ fn framing_failure(error: framing::Error<()>, span: Span) -> SourceFailure {
         failure: Failure::new(code, span, message),
         source_span,
         dimension: None,
+    }
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::*;
+    #[test]
+    fn emitted_unterminated_frame_survives_a_conversion_yield_after_eof() {
+        let span = Span::at(0);
+        let value = Value::new(
+            Shape::Primitive(Primitive::Bytes),
+            Data::Bytes(b"zz".to_vec().into()),
+            Provenance::default(),
+        )
+        .unwrap();
+        let mut source = CapturedSource::new(
+            value,
+            Some(Profile {
+                delimiter: framing::Delimiter::Lines,
+                decoding: framing::Decoding::StrictUtf8,
+                malformed: framing::Malformed::Strict {},
+                raw_bytes: 16,
+                decoded_bytes: 64,
+                spans: 16,
+            }),
+            65536,
+            65536,
+            span,
+        )
+        .unwrap();
+        let token = CancellationToken::new();
+        assert!(matches!(
+            source
+                .poll_scheduled(2, &token, span, |_| Ok(true))
+                .unwrap(),
+            SourcePoll::Pending
+        ));
+        assert!(matches!(
+            source
+                .poll_scheduled(2, &token, span, |_| Ok(false))
+                .unwrap(),
+            SourcePoll::Renew
+        ));
+        assert_eq!(source.position(), 2);
+        let SourcePoll::Record {
+            ordinal,
+            value,
+            start,
+            end,
+            ..
+        } = source
+            .poll_scheduled(2, &token, span, |_| Ok(true))
+            .unwrap()
+        else {
+            panic!("pending EOF frame")
+        };
+        assert_eq!((ordinal, start, end), (0, 0, 2));
+        let Data::Record(row) = value.data() else {
+            panic!("framed record")
+        };
+        assert_eq!(row["text"], Data::Text("zz".into()));
+        assert_eq!(row["unterminated"], Data::Bool(true));
+        assert!(matches!(
+            source
+                .poll_scheduled(2, &token, span, |_| Ok(true))
+                .unwrap(),
+            SourcePoll::End
+        ));
     }
 }

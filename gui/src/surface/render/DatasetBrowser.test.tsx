@@ -31,7 +31,7 @@ function page(ref: DatasetReference, first: string, limit: number): DatasetRead 
   for (let at = start; at < end; at++) rows.push({ ordinal: at.toString(), sourceStart: (at * 10n).toString(), sourceEnd: (at * 10n + 9n).toString(),
     value: { type: ROW, provenance: {}, data: { label: `synthetic ${at}` } } });
   const exhausted = end === BigInt(ref.records);
-  return { reference: ref, lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "4096",
+  return { reference: ref, stream: "outputs", lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "4096",
     page: { first, next: end.toString(), rows, extentExhausted: exhausted, limitedBy: null, cursor: exhausted ? null : `next${end}` } };
 }
 

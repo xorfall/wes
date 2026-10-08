@@ -37,6 +37,14 @@ const CURSOR = /^[A-Za-z0-9_-]+$/;
 export const DATASET_LIFECYCLES = ["open", "prefix", "sealed", "incomplete", "interrupted", "cancelled", "restricted", "deleted"] as const;
 export type DatasetLifecycle = (typeof DATASET_LIFECYCLES)[number];
 
+/**
+ * Which typed stream of the selected manifest a read pages. `outputs` are the Dataset's own records,
+ * the ones its descriptor counts. `coverage` are the records native forensic framing skipped in an
+ * analysis tree: their own dense ordinals, counted by the read's coverage, never by the descriptor.
+ */
+export const DATASET_STREAMS = ["outputs", "coverage"] as const;
+export type DatasetStream = (typeof DATASET_STREAMS)[number];
+
 /** Where a page starts: a canonical ordinal, or the cursor the previous page returned. */
 export type DatasetPosition = { readonly from: string } | { readonly cursor: string };
 
@@ -52,6 +60,49 @@ export interface DatasetRow {
   readonly sourceStart: string;
   readonly sourceEnd: string;
   readonly value: StoredValue;
+  /** A coverage row's own record, read from `value`; present exactly on coverage pages. */
+  readonly rejection?: ScanRejection;
+}
+
+export const REJECTION_REASONS = ["raw_limit", "invalid_utf8", "decoded_limit", "span_limit"] as const;
+export type RejectionReason = (typeof REJECTION_REASONS)[number];
+
+/**
+ * One record native framing refused and skipped. Offsets are original source bytes: content
+ * `sourceStart–sourceEnd`, then its delimiter, empty when the record is unterminated. `reason` is
+ * the framing refusal, not a failed transition; nothing in the record was interpreted. `excerpt` is
+ * the stored base64 of at most the coverage's excerpt bound of original content bytes from its start,
+ * never a decoded message or the whole record.
+ */
+export interface ScanRejection {
+  readonly reason: RejectionReason;
+  /** The skipped record's ordinal among all source records, not its coverage ordinal. */
+  readonly recordOrdinal: string;
+  readonly sourceStart: string;
+  readonly sourceEnd: string;
+  readonly delimiterStart: string;
+  readonly delimiterEnd: string;
+  readonly unterminated: boolean;
+  readonly reasonStart: string;
+  readonly reasonEnd: string;
+  readonly excerpt: string;
+  /** Bytes the excerpt holds, exact. */
+  readonly excerptSize: string;
+  readonly excerptTruncated: boolean;
+}
+
+/**
+ * The skipped-record stream of an analysis tree, as its acknowledged manifest counts it: `records`
+ * skipped records holding `inputBytes` original bytes, the last of them source record `lastOrdinal`
+ * ending at byte `through`. It says nothing about producer completion or how much was interpreted.
+ */
+export interface DatasetCoverage {
+  readonly records: string;
+  readonly inputBytes: string;
+  readonly lastOrdinal: string | null;
+  readonly through: string | null;
+  readonly excerptBytes: string;
+  readonly segmentBytes: string;
 }
 
 export interface DatasetPage {
@@ -88,6 +139,8 @@ export interface DatasetRecording {
 
 export interface DatasetRead {
   readonly reference: DatasetReference;
+  /** The stream this read pages; a page's rows and bounds belong to it alone. */
+  readonly stream: DatasetStream;
   readonly lifecycle: DatasetLifecycle;
   readonly protected: boolean;
   readonly persistence: string;
@@ -95,6 +148,8 @@ export interface DatasetRead {
   readonly page?: DatasetPage;
   /** Present only when the selected manifest carries recording coverage. */
   readonly recording?: DatasetRecording;
+  /** Present only when the selected manifest is an analysis tree with forensic framing coverage. */
+  readonly coverage?: DatasetCoverage;
 }
 
 /** How a failed read should be shown and whether anything may be retried. */
@@ -143,12 +198,19 @@ const FROZEN: DatasetTarget = { kind: "frozen" };
 /** Longest extent descriptor the server accepts in the query. */
 const MAX_EXTENT_BYTES = 4096;
 
-/** The query string for one page or one inspection, refusing what the server would refuse. */
-export function datasetQuery(select: string, position?: DatasetPosition, limit?: number, target: DatasetTarget = FROZEN): string {
+/**
+ * The query string for one page or one inspection, refusing what the server would refuse. Outputs
+ * are the server's default stream and are not named. A head is only ever inspected on outputs:
+ * skipped records are read from a fixed snapshot and are never followed.
+ */
+export function datasetQuery(select: string, position?: DatasetPosition, limit?: number, target: DatasetTarget = FROZEN, stream: DatasetStream = "outputs"): string {
   if (select !== "" && !select.startsWith("/")) throw new RangeError("select must be a JSON Pointer");
   if (new TextEncoder().encode(select).length > MAX_SELECT_BYTES) throw new RangeError("select is too long");
+  if (!(DATASET_STREAMS as readonly string[]).includes(stream)) throw new RangeError("unknown stream");
+  if (stream !== "outputs" && target.kind === "head") throw new RangeError("a head is inspected on outputs only");
   const query = new URLSearchParams();
   if (select !== "") query.set("select", select);
+  if (stream !== "outputs") query.set("stream", stream);
   if (target.kind === "head") {
     // The head is only ever inspected; its records are then paged as a known extent.
     if (position) throw new RangeError("a head read is an inspection");
@@ -210,29 +272,138 @@ function decodeRow(raw: unknown): DatasetRow | undefined {
   return value && { ordinal, sourceStart, sourceEnd, value };
 }
 
+const REJECTION_FIELDS = ["kind", "reason", "recordOrdinal", "sourceStart", "sourceEnd", "delimiterStart", "delimiterEnd", "unterminated",
+  "reasonStart", "reasonEnd", "excerpt", "excerptStart", "excerptTruncated"];
+const REJECTION_OFFSETS = ["recordOrdinal", "sourceStart", "sourceEnd", "delimiterStart", "delimiterEnd", "reasonStart", "reasonEnd", "excerptStart"] as const;
+/** The primitive each native rejection field is declared as; its enums are Text, offsets decimal Text. */
+const REJECTION_FIELD_TYPES: ReadonlyMap<string, string> = new Map<string, string>([
+  ["kind", "TEXT"], ["reason", "TEXT"], ...REJECTION_OFFSETS.map(name => [name, "TEXT"] as const),
+  ["unterminated", "BOOL"], ["excerptTruncated", "BOOL"], ["excerpt", "BYTES"],
+]);
+/** Standard padded base64, as stored Bytes are written. */
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const EXCERPT_MAX = 4096n;
+/** Longest base64 text an excerpt of at most `EXCERPT_MAX` bytes encodes to. */
+const EXCERPT_BASE64_MAX = Number((EXCERPT_MAX + 2n) / 3n * 4n);
+
 /**
- * The page, when it is one coherent bounded run of the committed snapshot: rows numbered from
- * `first` without gaps, no more than asked for, ending at `next`, within the committed count, and
- * carrying a cursor exactly when the snapshot has more.
+ * Whether `text` is canonical standard base64 of a bounded excerpt: checked by length before any
+ * pattern, and with zero pad bits in the last sextet, so one byte string has exactly one encoding.
  */
-function decodePage(raw: unknown, reference: DatasetReference, limit: number): DatasetPage | undefined {
+function canonicalExcerpt(text: string): boolean {
+  if (text.length > EXCERPT_BASE64_MAX || !BASE64.test(text)) return false;
+  const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+  if (padding === 0) return true;
+  return BASE64_ALPHABET.indexOf(text.charAt(text.length - padding - 1)) % (padding === 2 ? 16 : 4) === 0;
+}
+
+/**
+ * A coverage row's record, when it is exactly one native framing rejection that agrees with its own
+ * row: non-empty content immediately followed by its delimiter (empty exactly when unterminated), a
+ * non-empty reason span inside the content, and an excerpt that starts the content and holds the
+ * excerpt bound or the whole content, whichever is smaller, truncated exactly when it is shorter. The
+ * row's source range is the content start through the delimiter end.
+ */
+function decodeRejection(row: DatasetRow, excerptBytes: string): ScanRejection | undefined {
+  const { type, data } = row.value;
+  if (type.kind !== "record" || type.name !== "ScanRejection" || type.fields.length !== REJECTION_FIELDS.length
+    || !REJECTION_FIELDS.every(name => type.fields.some(field => field.name === name))
+    || !type.fields.every(field => field.type.kind === "primitive" && field.type.name === REJECTION_FIELD_TYPES.get(field.name))) return undefined;
+  if (!plain(data) || !keysWithin(data, REJECTION_FIELDS)) return undefined;
+  if (data.kind !== "rejected" || !(REJECTION_REASONS as readonly unknown[]).includes(data.reason)) return undefined;
+  if (!REJECTION_OFFSETS.every(name => ordinalText(data[name]))) return undefined;
+  const { unterminated, excerptTruncated, excerpt } = data;
+  if (typeof unterminated !== "boolean" || typeof excerptTruncated !== "boolean") return undefined;
+  if (typeof excerpt !== "string" || !canonicalExcerpt(excerpt)) return undefined;
+  const at = (name: (typeof REJECTION_OFFSETS)[number]) => BigInt(data[name] as string);
+  const start = at("sourceStart"), end = at("sourceEnd"), delimiterStart = at("delimiterStart"), delimiterEnd = at("delimiterEnd");
+  if (start >= end || delimiterStart !== end || delimiterEnd < delimiterStart || unterminated !== (delimiterStart === delimiterEnd)) return undefined;
+  if (at("reasonStart") < start || at("reasonEnd") > end || at("reasonStart") >= at("reasonEnd") || at("excerptStart") !== start) return undefined;
+  const padding = excerpt.endsWith("==") ? 2 : excerpt.endsWith("=") ? 1 : 0;
+  const size = BigInt(excerpt.length / 4 * 3 - padding), content = end - start, bound = BigInt(excerptBytes);
+  if (size !== (bound < content ? bound : content) || excerptTruncated !== (size < content)) return undefined;
+  if (row.sourceStart !== data.sourceStart || row.sourceEnd !== data.delimiterEnd) return undefined;
+  return Object.freeze({
+    reason: data.reason as RejectionReason, recordOrdinal: data.recordOrdinal as string,
+    sourceStart: data.sourceStart as string, sourceEnd: data.sourceEnd as string, delimiterStart: data.delimiterStart as string, delimiterEnd: data.delimiterEnd as string,
+    unterminated, reasonStart: data.reasonStart as string, reasonEnd: data.reasonEnd as string, excerpt, excerptSize: size.toString(), excerptTruncated,
+  });
+}
+
+/**
+ * The coverage rows of a page, when they are one ordered run of skipped records the coverage counts:
+ * each a different source record no earlier than its coverage ordinal and leaving room for the
+ * skipped records after it, none overlapping the one before, all within the coverage's last record
+ * and byte, and the final skipped record exactly that last record and byte.
+ */
+function withRejections(rows: readonly DatasetRow[], coverage: DatasetCoverage): DatasetRow[] | undefined {
+  if (coverage.lastOrdinal === null || coverage.through === null) return rows.length === 0 ? [] : undefined;
+  const lastRecord = BigInt(coverage.lastOrdinal), through = BigInt(coverage.through), final = BigInt(coverage.records) - 1n;
+  const checked: DatasetRow[] = [];
+  let previous: ScanRejection | undefined;
+  for (const row of rows) {
+    const rejection = decodeRejection(row, coverage.excerptBytes);
+    if (!rejection) return undefined;
+    const ordinal = BigInt(row.ordinal), record = BigInt(rejection.recordOrdinal), delimiterEnd = BigInt(rejection.delimiterEnd);
+    if (record < ordinal || lastRecord - record < final - ordinal || delimiterEnd > through) return undefined;
+    if (previous && (record <= BigInt(previous.recordOrdinal) || BigInt(rejection.sourceStart) < BigInt(previous.delimiterEnd))) return undefined;
+    if (ordinal === final && (record !== lastRecord || delimiterEnd !== through)) return undefined;
+    checked.push(Object.freeze({ ...row, rejection }));
+    previous = rejection;
+  }
+  return checked;
+}
+
+/**
+ * The page, when it is one coherent bounded run of the selected stream: rows numbered from `first`
+ * without gaps, no more than asked for, ending at `next`, within `records` — the descriptor's count
+ * for outputs, the coverage's own count for skipped records — and carrying a cursor exactly when the
+ * stream has more. Coverage rows must each be one skipped record that coverage accounts for.
+ */
+function decodePage(raw: unknown, records: string, limit: number, coverage?: DatasetCoverage): DatasetPage | undefined {
   if (!plain(raw) || !keysWithin(raw, ["first", "next", "rows", "extentExhausted", "limitedBy", "cursor"])) return undefined;
   const { first, next, extentExhausted, limitedBy, cursor } = raw;
   if (!ordinalText(first) || !ordinalText(next) || typeof extentExhausted !== "boolean") return undefined;
   if (limitedBy !== null && typeof limitedBy !== "string") return undefined;
   if (cursor !== null && (typeof cursor !== "string" || cursor.length === 0 || cursor.length > MAX_CURSOR_BYTES || !CURSOR.test(cursor))) return undefined;
   if (!Array.isArray(raw.rows) || raw.rows.length > limit) return undefined;
-  const records = BigInt(reference.records);
+  const count = BigInt(records);
   const start = BigInt(first), end = BigInt(next);
-  if (end !== start + BigInt(raw.rows.length) || end > records) return undefined;
-  if ((cursor === null) !== extentExhausted || extentExhausted !== (end === records)) return undefined;
-  const rows: DatasetRow[] = [];
+  if (end !== start + BigInt(raw.rows.length) || end > count) return undefined;
+  if ((cursor === null) !== extentExhausted || extentExhausted !== (end === count)) return undefined;
+  const decoded: DatasetRow[] = [];
   for (const [at, item] of raw.rows.entries()) {
     const row = decodeRow(item);
     if (!row || BigInt(row.ordinal) !== start + BigInt(at)) return undefined;
-    rows.push(row);
+    decoded.push(row);
   }
-  return { first, next, rows, extentExhausted, limitedBy, cursor };
+  const rows = coverage ? withRejections(decoded, coverage) : decoded;
+  return rows && { first, next, rows, extentExhausted, limitedBy, cursor };
+}
+
+const COVERAGE_KEYS = ["records", "inputBytes", "lastOrdinal", "through", "excerptBytes", "segmentBytes"];
+
+/**
+ * The forensic coverage of the selected analysis tree, when it is one consistent count: no skipped
+ * records and nothing else, or skipped records of at least one original byte each, a last source
+ * record that leaves room for all of them, and a positive end byte no smaller than their bytes. The
+ * excerpt bound is the frozen 1–4096.
+ */
+function decodeCoverage(raw: unknown): DatasetCoverage | undefined {
+  if (!plain(raw) || !keysWithin(raw, COVERAGE_KEYS)) return undefined;
+  const { records, inputBytes, lastOrdinal, through, excerptBytes, segmentBytes } = raw;
+  if (!ordinalText(records) || !ordinalText(inputBytes) || !ordinalText(excerptBytes) || !ordinalText(segmentBytes)) return undefined;
+  if ((lastOrdinal !== null && !ordinalText(lastOrdinal)) || (through !== null && !ordinalText(through))) return undefined;
+  if (BigInt(excerptBytes) < 1n || BigInt(excerptBytes) > EXCERPT_MAX) return undefined;
+  if (records === "0") {
+    if (inputBytes !== "0" || lastOrdinal !== null || through !== null) return undefined;
+  } else {
+    const count = BigInt(records), bytes = BigInt(inputBytes);
+    if (lastOrdinal === null || through === null || through === "0") return undefined;
+    if (bytes < count || BigInt(lastOrdinal) < count - 1n || bytes > BigInt(through)) return undefined;
+  }
+  return Object.freeze({ records, inputBytes, lastOrdinal: lastOrdinal as string | null, through: through as string | null, excerptBytes, segmentBytes });
 }
 
 /**
@@ -265,8 +436,15 @@ function decodeRecording(raw: unknown, reference: DatasetReference, lifecycle: D
   return Object.freeze({ run, epoch, first, acceptedThrough, committedThrough, pending: pending as string | null, rejected, termination: termination as RecordingTermination | null });
 }
 
-export function decodeDatasetRead(raw: unknown, expected: DatasetReference, limit?: number): DatasetRead | undefined {
-  if (!plain(raw) || !keysWithin(raw, ["reference", "lifecycle", "protected", "persistence", "segmentBytes"], ["page", "recording"])) return undefined;
+/**
+ * A read of `stream`, when the reply is exactly one. The reply names its stream and must name the one
+ * asked for. A skipped-record read requires coverage and is bounded by its count; the descriptor's
+ * count stays the outputs' count whichever stream is read. Recording and forensic coverage never
+ * describe the same manifest.
+ */
+export function decodeDatasetRead(raw: unknown, expected: DatasetReference, limit?: number, stream: DatasetStream = "outputs"): DatasetRead | undefined {
+  if (!plain(raw) || !keysWithin(raw, ["reference", "stream", "lifecycle", "protected", "persistence", "segmentBytes"], ["page", "recording", "coverage"])) return undefined;
+  if (raw.stream !== stream) return undefined;
   const reference = decodeDatasetReference(raw.reference);
   if (!reference || !sameReference(reference, expected)) return undefined;
   const lifecycle = raw.lifecycle;
@@ -277,10 +455,17 @@ export function decodeDatasetRead(raw: unknown, expected: DatasetReference, limi
     recording = decodeRecording(raw.recording, reference, lifecycle as DatasetLifecycle);
     if (!recording) return undefined;
   }
-  const base = { reference, lifecycle: lifecycle as DatasetLifecycle, protected: raw.protected, persistence: raw.persistence, segmentBytes: raw.segmentBytes,
-    ...(recording ? { recording } : {}) };
+  let coverage: DatasetCoverage | undefined;
+  if (Object.hasOwn(raw, "coverage")) {
+    coverage = decodeCoverage(raw.coverage);
+    if (!coverage) return undefined;
+  }
+  if (recording && coverage) return undefined;
+  if (stream === "coverage" && !coverage) return undefined;
+  const base = { reference, stream, lifecycle: lifecycle as DatasetLifecycle, protected: raw.protected, persistence: raw.persistence, segmentBytes: raw.segmentBytes,
+    ...(recording ? { recording } : {}), ...(coverage ? { coverage } : {}) };
   if (limit === undefined) return Object.hasOwn(raw, "page") ? undefined : base;
-  const page = decodePage(raw.page, reference, limit);
+  const page = stream === "coverage" ? decodePage(raw.page, coverage!.records, limit, coverage) : decodePage(raw.page, reference.records, limit);
   return page && { ...base, page };
 }
 

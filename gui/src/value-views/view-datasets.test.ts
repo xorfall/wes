@@ -82,7 +82,7 @@ describe("request shape and target", () => {
 
 describe("Engine.readViewDataset", () => {
   it("binds the exact frame, member and revisions and reads only by relative pointer", async () => {
-    const reply: DatasetRead = { reference: reference("2"), lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "64",
+    const reply: DatasetRead = { reference: reference("2"), stream: "outputs", lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "64",
       page: { first: "0", next: "1", extentExhausted: false, limitedBy: null, cursor: "Y3Vyc29y",
         rows: [{ ordinal: "0", sourceStart: "0", sourceEnd: "9", value: { type: ROW, provenance: {}, data: { label: "first", count: 1 } } }] } };
     const fetch = vi.fn(async () => new Response(JSON.stringify(reply), { status: 200 }));
@@ -122,7 +122,7 @@ describe("DatasetBridge", () => {
     const ask = (request: number, extra: Record<string, unknown> = {}) => bridge.handle({ kind: "dataset-read", request, operation: "page", select: "/events", ...extra }, definition, input(), route);
     return { bridge, ask, pending, replies, readViewDataset, submit, binding };
   }
-  const page = (rows: unknown[]): DatasetRead => ({ reference: reference(), lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "64",
+  const page = (rows: unknown[]): DatasetRead => ({ reference: reference(), stream: "outputs", lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "64",
     page: { first: "0", next: String(rows.length), extentExhausted: false, limitedBy: null, cursor: "bmV4dA", rows: rows as never } });
   const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 

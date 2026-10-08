@@ -20,7 +20,8 @@ const BUDGET = `sha256:${"1".repeat(64)}`, PRIOR = `sha256:${"2".repeat(64)}`;
 const MEMORY = { attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none, budgetDigest: none, budgetIssuedAttempt: none };
 const receipt = (over: Record<string, unknown> = {}) => ({
   status: "stopped", position: 1, readPosition: 2, extent: 3, positionUnit: "records", inputChargeUnit: "logical_charge",
-  inputCharge: 128, inputRecords: 1, outputCharge: 128, outputRecords: 1, work: 17100, measuredWork: 16000, workAllowance: 16524288,
+  inputCharge: 128, inputRecords: 1, malformed: "strict", rejectedRecords: 0, rejectedInputBytes: 0,
+  outputCharge: 128, outputRecords: 1, work: 17100, measuredWork: 16000, workAllowance: 16524288,
   outstandingWork: some(1048576), durationChargedMs: 58912, durationOutstandingMs: some(1200),
   heldCharge: 2000, highWaterCharge: 5000, finishApplied: false, sourceComplete: none,
   failureCode: some("CAL005"), failureMessage: some("division by zero"), exhausted: none, rejectedStart: none, rejectedEnd: none,
@@ -31,9 +32,10 @@ const receipt = (over: Record<string, unknown> = {}) => ({
   sourceNode: some("node-synthetic"), sourceRun: some("run-synthetic"), sourceRevision: some(1), sourcePort: some("data"), sourcePath: [],
   durableResume: false,
   limits: { work: 64000000, inputCharge: 16777216, inputRecords: 250000, heldCharge: 134217728, outputCharge: 16777216,
-    outputRecords: 100000, recordWork: 1000000, recordCharge: 8388608, stateCharge: 1048576, contextCharge: 1048576, durationMs: 60000 },
+    outputRecords: 100000, recordWork: 1000000, recordCharge: 8388608, pageBytes: 65536, stateCharge: 1048576, contextCharge: 1048576, durationMs: 60000 },
   ...over,
 });
+const LIMITS = receipt().limits;
 const INT = { kind: "primitive", name: "INT" } as const;
 const scanResult = (data: unknown, name = "ScanResult", meta: StoredValue["meta"] = undefined): StoredValue => ({
   type: { kind: "record", name, fields: [{ name: "state", type: INT }, { name: "outputs", type: { kind: "list", element: INT } },
@@ -42,6 +44,9 @@ const scanResult = (data: unknown, name = "ScanResult", meta: StoredValue["meta"
 });
 const stopped = scanResult({ state: 1, outputs: [1], receipt: receipt() });
 const said = (value: StoredValue) => receiptRows(scanReceiptOf(value)!).map(lineText);
+/** The captured page cap counts stored row payloads only: schema metadata is charged logically instead. */
+const PAGE_CAP = (bytes: string) =>
+  `Dataset source page · stored row payload cap ${bytes} bytes per page read · excludes schema metadata · not a logical charge`;
 
 describe("the analysis receipt", () => {
   it("reads a stopped analysis's receipt with unknown producer completion and separate committed and read positions", () => {
@@ -65,20 +70,157 @@ describe("the analysis receipt", () => {
     expect(rows).toContain("failure CAL005 · division by zero");
     expect(rows).toContain("source node-synthetic data · run run-synthetic · revision 1");
     expect(rows).toContain("finish definition none");
+    expect(rows).toContain("malformed input strict · a malformed frame stops the analysis");
+    expect(rows.some(row => row.includes("skipped"))).toBe(false);
     // A deterministic stop keeps its durable attempt even though the engine does not offer resuming.
     expect(rows).toContain("durable checkpoint yes");
-    expect(rows.join("\n")).not.toMatch(/resume|dataset|RSS|KiB|MiB|%/i);
+    expect(rows).toContain(PAGE_CAP("65,536"));
+    // Only the captured Dataset page cap names a Dataset; nothing offers resuming or claims memory use.
+    expect(rows.filter(row => row !== PAGE_CAP("65,536")).join("\n")).not.toMatch(/resume|dataset|RSS|KiB|MiB|%/i);
     expect(lineText(receiptHeadline(scanReceiptOf(stopped)!))).toBe("analysis receipt · stopped · committed through 1 of 3 records");
   });
 
-  it("says the exhausted dimension and the original rejected byte range only when the engine supplied them", () => {
+  it("says the exhausted dimension and the original refused frame range only when the engine supplied them", () => {
     const value = scanResult({ state: 0, outputs: [], receipt: receipt({ positionUnit: "bytes", inputChargeUnit: "raw_bytes",
       exhausted: some("held_charge"), rejectedStart: some(10), rejectedEnd: some(20), failureCode: some("CAL006"), failureMessage: some("limit") }) });
     const rows = said(value);
     expect(rows).toContain("limit reached held charge");
-    expect(rows).toContain("rejected original bytes 10–20 (half-open)");
+    expect(rows).toContain("refused frame · original bytes 10–20 (half-open)");
     expect(rows).toContain("1 records in · input raw bytes 128 · 1 outputs · output logical charge 128");
-    expect(said(stopped).some(row => row.startsWith("limit reached") || row.startsWith("rejected"))).toBe(false);
+    expect(said(stopped).some(row => row.startsWith("limit reached") || row.startsWith("refused"))).toBe(false);
+  });
+
+  /** Two rows processed under a 10,000-byte stored row payload page cap, then a third row too large for it. */
+  const pageStop = (over: Record<string, unknown> = {}) => scanResult({ state: 2, outputs: [1, 2], receipt: receipt({
+    position: 2, readPosition: 2, extent: 3, inputRecords: 2, outputRecords: 2,
+    failureCode: some("CAL006"), failureMessage: some("scan SourcePageBytes limit reached (10000)"), exhausted: some("source_page_bytes"),
+    limits: { ...LIMITS, pageBytes: 10000 }, ...over }) });
+
+  it("says a stop at the Dataset source page cap after the rows before it, apart from the logical charges", () => {
+    const read = scanReceiptOf(pageStop())!;
+    expect(read).toMatchObject({ status: "stopped", position: "2", inputRecords: "2", outputRecords: "2", exhausted: "source_page_bytes",
+      sourceComplete: undefined, rejectedStart: undefined, limits: { pageBytes: "10000", recordCharge: "8388608", heldCharge: "134217728" } });
+    expect(lineText(receiptHeadline(read))).toBe("analysis receipt · stopped · committed through 2 of 3 records");
+    const rows = said(pageStop());
+    expect(rows).toContain("committed through 2 · read through 2 records");
+    expect(rows).toContain("2 records in · input logical charge 128 · 2 outputs · output logical charge 128");
+    expect(rows).toContain("limit reached Dataset source page stored row payload bytes");
+    expect(rows).toContain(PAGE_CAP("10,000"));
+    // The per-record and held caps stay their own logical rows.
+    expect(rows).toContain("per record · work 1,000,000 · charge 8,388,608 · state 1,048,576 · context 1,048,576");
+    expect(rows).toContain("logical held charge 2,000 · high-water 5,000 · cap 134,217,728 · not memory use or stored bytes");
+    expect(rows).toContain("selected extent 3 records · producer completion unknown");
+    expect(rows.some(row => row.startsWith("refused frame"))).toBe(false);
+    expect(rows.join("\n")).not.toMatch(/skipped|corrupt|renew|grant needed/i);
+  });
+
+  it.each([["1", 1, "1"], ["16 MiB", 16777216, "16,777,216"]])("reads the source page cap at its bound of %s", (_, pageBytes, words) => {
+    const value = pageStop({ limits: { ...LIMITS, pageBytes } });
+    expect(scanReceiptOf(value)?.limits.pageBytes).toBe(String(pageBytes));
+    expect(said(value)).toContain(PAGE_CAP(words));
+  });
+
+  it.each([
+    ["a missing source page cap", Object.fromEntries(Object.entries(LIMITS).filter(([key]) => key !== "pageBytes"))],
+    ["a zero source page cap", { ...LIMITS, pageBytes: 0 }],
+    ["a source page cap above 16 MiB", { ...LIMITS, pageBytes: 16777217 }],
+    ["a source page cap as decimal text", { ...LIMITS, pageBytes: "65536" }],
+    ["a source page cap as an Option", { ...LIMITS, pageBytes: some(65536) }],
+    ["a negative source page cap", { ...LIMITS, pageBytes: -1 }],
+    ["a fractional source page cap", { ...LIMITS, pageBytes: 65536.5 }],
+    ["a source page cap under another name", { ...Object.fromEntries(Object.entries(LIMITS).filter(([key]) => key !== "pageBytes")), sourcePageBytes: 65536 }],
+  ])("gives no summary for %s", (_, limits) => {
+    expect(scanReceiptOf(pageStop({ limits }))).toBeUndefined();
+  });
+
+  /** A forensic analysis over raw bytes that reached its selected end, skipping two malformed frames. */
+  const FORENSIC = { status: "complete", positionUnit: "bytes", inputChargeUnit: "raw_bytes", malformed: "forensic",
+    position: 4096, readPosition: 4096, extent: 4096, inputRecords: 5, inputCharge: 4096, rejectedRecords: 2, rejectedInputBytes: 900,
+    outputRecords: 3, finishApplied: true, failureCode: none, failureMessage: none };
+  const forensic = (over: Record<string, unknown> = {}) => scanResult({ state: 1, outputs: [1, 2, 3], receipt: receipt({ ...FORENSIC, ...over }) });
+
+  it("keeps a forensic analysis complete while saying its skipped records and their original raw bytes first", () => {
+    const read = scanReceiptOf(forensic())!;
+    expect(read).toMatchObject({ status: "complete", malformed: "forensic", rejectedRecords: "2", rejectedInputBytes: "900",
+      inputRecords: "5", inputCharge: "4096", outputRecords: "3", sourceComplete: undefined });
+    expect(lineText(receiptHeadline(read)))
+      .toBe("analysis receipt · complete · 2 records skipped, 900 original raw bytes · committed through 4,096 of 4,096 bytes");
+    const rows = said(forensic());
+    expect(rows).toContain("outcome complete · finish applied");
+    // Skipped counts are parts of the input counts, and their evidence is not an output.
+    expect(rows).toContain("5 records in · input raw bytes 4,096 · 3 outputs · output logical charge 128");
+    expect(rows).toContain("malformed input forensic · 2 of 5 input records skipped · 900 of 4,096 input raw bytes");
+    expect(rows).toContain("skipped records were not interpreted · their evidence counts in output charge, not in outputs");
+    // Producer completion stays the engine's separate none, not derived from a complete selected extent.
+    expect(rows).toContain("selected extent 4,096 bytes · producer completion unknown");
+    // The captured source page cap is a limit row, not a paging or inspection control.
+    const all = rows.filter(row => row !== PAGE_CAP("65,536")).join("\n");
+    expect(all).not.toMatch(/interpreted\s*[=:]?\s*\d|\d+ interpreted|failed|incomplete|all records|refused frame|page|inspect/i);
+  });
+
+  it("says one skipped record and one byte in the singular", () => {
+    expect(lineText(receiptHeadline(scanReceiptOf(forensic({ rejectedRecords: 1, rejectedInputBytes: 1 }))!)))
+      .toBe("analysis receipt · complete · 1 record skipped, 1 original raw byte · committed through 4,096 of 4,096 bytes");
+  });
+
+  it("says a forensic analysis that skipped nothing as none skipped, and keeps its headline plain", () => {
+    const clean = forensic({ rejectedRecords: 0, rejectedInputBytes: 0 });
+    expect(said(clean)).toContain("malformed input forensic · none skipped");
+    expect(lineText(receiptHeadline(scanReceiptOf(clean)!))).toBe("analysis receipt · complete · committed through 4,096 of 4,096 bytes");
+  });
+
+  it("keeps a fatal refused frame apart from the acknowledged skipped counts", () => {
+    const rows = said(forensic({ status: "stopped", rejectedStart: some(4096), rejectedEnd: some(4200),
+      failureCode: some("SYN002"), failureMessage: some("synthetic refusal") }));
+    expect(rows).toContain("refused frame · original bytes 4,096–4,200 (half-open)");
+    expect(rows).toContain("malformed input forensic · 2 of 5 input records skipped · 900 of 4,096 input raw bytes");
+  });
+
+  it("reads the skipped counts exactly up to the largest native Int, and refuses one past it", () => {
+    const max = "9223372036854775807", past = "9223372036854775808";
+    const wire = (digits: string) => JSON.stringify(receipt({ ...FORENSIC, inputRecords: 7, rejectedRecords: 7, inputCharge: 8, rejectedInputBytes: 8 }))
+      .replace('"inputRecords":7', `"inputRecords":${digits}`).replace('"rejectedRecords":7', `"rejectedRecords":${digits}`)
+      .replace('"inputCharge":8', `"inputCharge":${digits}`).replace('"rejectedInputBytes":8', `"rejectedInputBytes":${digits}`);
+    const value = scanResult({ state: 1, outputs: [], receipt: parseExactJson(wire(max)) });
+    expect(scanReceiptOf(value)).toMatchObject({ rejectedRecords: max, rejectedInputBytes: max, inputRecords: max, inputCharge: max });
+    expect(said(value)).toContain(`malformed input forensic · 9,223,372,036,854,775,807 of 9,223,372,036,854,775,807 input records skipped · 9,223,372,036,854,775,807 of 9,223,372,036,854,775,807 input raw bytes`);
+    expect(scanReceiptOf(scanResult({ state: 1, outputs: [], receipt: parseExactJson(wire(past)) }))).toBeUndefined();
+  });
+
+  it("puts the skipped count before the position in the clipping summary and carries the whole headline as its label", () => {
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<ScanReceiptDetails value={forensic()} />); });
+    const summary = tree.root.findByType("summary");
+    const whole = "analysis receipt · complete · 2 records skipped, 900 original raw bytes · committed through 4,096 of 4,096 bytes";
+    expect(summary.props["aria-label"]).toBe(whole);
+    const spans = summary.findAllByType("span").map(span => span.props.children.join(""));
+    expect(spans.indexOf("2 records skipped")).toBeGreaterThan(-1);
+    expect(spans.indexOf("2 records skipped")).toBeLessThan(spans.indexOf("committed through "));
+    // Rows wrap whole inside the disclosure rather than clipping the counts away.
+    expect(tree.root.findAll(node => node.type === "pre" && node.props.className === "mono-line scan-receipt-row").length).toBeGreaterThan(0);
+    act(() => tree.unmount());
+  });
+
+  it.each([
+    ["strict with skipped records", { malformed: "strict", rejectedRecords: 1, rejectedInputBytes: 1 }],
+    ["strict with skipped bytes only", { malformed: "strict", rejectedInputBytes: 1 }],
+    ["forensic over records", { ...FORENSIC, positionUnit: "records" }],
+    ["forensic with a logical input charge", { ...FORENSIC, inputChargeUnit: "logical_charge" }],
+    ["forensic without a durable attempt", { ...FORENSIC, ...MEMORY }],
+    ["more skipped records than records in", { ...FORENSIC, rejectedRecords: 6, rejectedInputBytes: 900 }],
+    ["more skipped bytes than input bytes", { ...FORENSIC, rejectedInputBytes: 4097 }],
+    ["skipped bytes without a skipped record", { ...FORENSIC, rejectedRecords: 0 }],
+    ["a skipped record without bytes", { ...FORENSIC, rejectedInputBytes: 0 }],
+    ["fewer skipped bytes than skipped records", { ...FORENSIC, rejectedRecords: 3, rejectedInputBytes: 2 }],
+    ["an unknown malformed spelling", { malformed: "lossy" }],
+    ["a capitalized malformed spelling", { ...FORENSIC, malformed: "Forensic" }],
+    ["the malformed policy as an Option", { malformed: some("strict") }],
+    ["a skipped count as decimal text", { rejectedRecords: "0" }],
+    ["skipped bytes as an Option", { rejectedInputBytes: some(0) }],
+    ["a negative skipped count", { ...FORENSIC, rejectedRecords: -1 }],
+    ["a fractional skipped byte count", { ...FORENSIC, rejectedInputBytes: 900.5 }],
+  ])("gives no summary for %s", (_, over) => {
+    expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: receipt(over) }))).toBeUndefined();
   });
 
   it.each([
@@ -185,7 +327,8 @@ describe("the analysis receipt", () => {
 
   const without = (field: string) => Object.fromEntries(Object.entries(receipt()).filter(([key]) => key !== field));
   it.each(["attempt", "previousAttempt", "measuredWork", "outstandingWork", "durationChargedMs", "durationOutstandingMs",
-    "budgetDigest", "budgetIssuedAttempt", "budgetPrevious", "authorizedWork", "workGrant", "durationOverrunMs"])(
+    "budgetDigest", "budgetIssuedAttempt", "budgetPrevious", "authorizedWork", "workGrant", "durationOverrunMs",
+    "malformed", "rejectedRecords", "rejectedInputBytes"])(
     "gives no summary when the mandatory %s is missing", (field) => {
       expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: without(field) }))).toBeUndefined();
     });

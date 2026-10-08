@@ -259,7 +259,8 @@ describe("analysis continuation", () => {
   const some = (value: unknown) => ({ kind: "some", value });
   const receipt = (over: Record<string, unknown> = {}) => ({
     status: "cancelled", position: 1, readPosition: 2, extent: 3, positionUnit: "records", inputChargeUnit: "logical_charge",
-    inputCharge: 128, inputRecords: 1, outputCharge: 128, outputRecords: 1, work: 17100, measuredWork: 16000, workAllowance: 16524288,
+    inputCharge: 128, inputRecords: 1, malformed: "strict", rejectedRecords: 0, rejectedInputBytes: 0,
+    outputCharge: 128, outputRecords: 1, work: 17100, measuredWork: 16000, workAllowance: 16524288,
     outstandingWork: some(1048576), durationChargedMs: 1200, durationOutstandingMs: some(500),
     heldCharge: 2000, highWaterCharge: 5000, finishApplied: false, sourceComplete: none,
     failureCode: none, failureMessage: none, exhausted: none, rejectedStart: none, rejectedEnd: none,
@@ -270,7 +271,7 @@ describe("analysis continuation", () => {
     sourceNode: some("node-synthetic"), sourceRun: some("run-synthetic"), sourceRevision: some(1), sourcePort: some("data"), sourcePath: [],
     durableResume: true,
     limits: { work: 64000000, inputCharge: 16777216, inputRecords: 250000, heldCharge: 134217728, outputCharge: 16777216,
-      outputRecords: 100000, recordWork: 1000000, recordCharge: 8388608, stateCharge: 1048576, contextCharge: 1048576, durationMs: 60000 },
+      outputRecords: 100000, recordWork: 1000000, recordCharge: 8388608, pageBytes: 65536, stateCharge: 1048576, contextCharge: 1048576, durationMs: 60000 },
     ...over,
   });
   const result = (over: Record<string, unknown> = {}): StoredValue => ({

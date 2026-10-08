@@ -39,14 +39,14 @@ const recording = (ref: DatasetReference, termination: DatasetRecording["termina
   committedThrough: ref.records, pending: "0", rejected: "0", termination,
 });
 function head(ref: DatasetReference, lifecycle: DatasetRead["lifecycle"] = "open", termination: DatasetRecording["termination"] = null): DatasetRead {
-  return { reference: ref, lifecycle, protected: false, persistence: "Durable", segmentBytes: "8192", recording: recording(ref, termination) };
+  return { reference: ref, stream: "outputs", lifecycle, protected: false, persistence: "Durable", segmentBytes: "8192", recording: recording(ref, termination) };
 }
 function page(ref: DatasetReference, first: string, limit: number, lifecycle: DatasetRead["lifecycle"] = "open"): DatasetRead {
   const start = BigInt(first), total = BigInt(ref.records), end = total < start + BigInt(limit) ? total : start + BigInt(limit);
   const rows = [];
   for (let n = start; n < end; n++) rows.push({ ordinal: n.toString(), sourceStart: n.toString(), sourceEnd: n.toString(), value: { type: ROW, provenance: {}, data: { label: `event ${n}` } } });
   const exhausted = end === total;
-  return { reference: ref, lifecycle, protected: false, persistence: "Durable", segmentBytes: "8192",
+  return { reference: ref, stream: "outputs", lifecycle, protected: false, persistence: "Durable", segmentBytes: "8192",
     page: { first, next: end.toString(), rows, extentExhausted: exhausted, limitedBy: null, cursor: exhausted ? null : `c${end}` } };
 }
 

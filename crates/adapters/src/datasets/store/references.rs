@@ -158,7 +158,7 @@ impl DatasetStore {
             .any(|r| r.transaction == transaction)
             || self.roots.values().any(|r| {
                 self.files
-                    .read_manifest(&r.manifest)
+                    .read_manifest(&r.manifest, None)
                     .is_ok_and(|m| m.transaction == transaction)
             })
         {

@@ -163,6 +163,7 @@ pub(super) fn error_response(error: Error) -> Response {
             (StatusCode::FORBIDDEN, "DATASET_ACCESS_REFUSED")
         }
         Error::Invalid => (StatusCode::BAD_REQUEST, "DATASET_INVALID"),
+        Error::MissingStream => (StatusCode::BAD_REQUEST, "DATASET_STREAM_MISSING"),
         Error::Storage(wes_engine::storage::StoreError::Conflict) => {
             return failure(
                 StatusCode::CONFLICT,
@@ -178,9 +179,11 @@ pub(super) fn error_response(error: Error) -> Response {
         Error::Storage(wes_engine::storage::StoreError::DatasetMissing) => {
             (StatusCode::NOT_FOUND, "DATASET_MISSING")
         }
-        Error::Storage(wes_engine::storage::StoreError::Limit(_)) => {
-            (StatusCode::PAYLOAD_TOO_LARGE, "DATASET_READ_LIMIT")
-        }
+        Error::Storage(
+            wes_engine::storage::StoreError::Limit(_)
+            | wes_engine::storage::StoreError::DatasetRowCharge { .. }
+            | wes_engine::storage::StoreError::DatasetRowBytes { .. },
+        ) => (StatusCode::PAYLOAD_TOO_LARGE, "DATASET_READ_LIMIT"),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DATASET_READ_FAILED"),
     };
     failure(status, code, &error.to_string(), false)
@@ -204,7 +207,9 @@ pub(super) fn query(query: &str) -> Result<dataset_reads::Request, Error> {
             return Err(Error::Invalid);
         }
         let value = match key.as_ref() {
-            "select" | "from" | "cursor" => serde_json::Value::String(value.into_owned()),
+            "select" | "from" | "cursor" | "stream" => {
+                serde_json::Value::String(value.into_owned())
+            }
             "limit" => serde_json::json!(value.parse::<usize>().map_err(|_| Error::Invalid)?),
             "inspect" | "head" => serde_json::json!(match value.as_ref() {
                 "true" => true,

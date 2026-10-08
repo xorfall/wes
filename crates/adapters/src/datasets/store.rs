@@ -35,9 +35,11 @@ mod reachability;
 mod reconciliation;
 mod references;
 mod transaction;
+mod traversal;
 mod workspaces;
 mod writer;
 use management::check_gate;
+use traversal::{IndexVisit, Visit, walk_index};
 
 #[derive(Clone, Copy, Debug)]
 pub struct StoreLimits {
@@ -89,6 +91,10 @@ pub enum DatasetError {
     NeedsReconciliation,
     #[error("dataset operation exceeds its {0} budget")]
     Limit(&'static str),
+    #[error("a dataset row exceeds its logical charge limit ({limit})")]
+    RowCharge { limit: u64 },
+    #[error("a dataset row exceeds its encoded page-byte limit ({limit})")]
+    RowBytes { limit: u64 },
     #[error("dataset input is private or has unknown policy")]
     Restricted,
     #[error(
@@ -103,8 +109,10 @@ pub enum DatasetError {
 #[derive(Clone, Copy, Debug)]
 pub struct PageLimits {
     pub rows: usize,
+    /// Sum of stored row payload bytes, excluding frames, schema and reply envelopes.
     pub bytes: usize,
     pub segments: usize,
+    pub charge: Option<wes_engine::storage::datasets::PageCharge>,
 }
 impl Default for PageLimits {
     fn default() -> Self {
@@ -112,6 +120,7 @@ impl Default for PageLimits {
             rows: wes_budgets::get("dataset.page.rows") as usize,
             bytes: wes_budgets::get("dataset.page.bytes") as usize,
             segments: wes_budgets::get("dataset.page.segments") as usize,
+            charge: None,
         }
     }
 }
@@ -181,10 +190,10 @@ pub struct DatasetStore {
     uncertain_references: BTreeSet<String>,
     pending_admission: Option<catalog::WriteWitness>,
     torn_tail: bool,
-    verified_nodes: BTreeSet<(String, String, String, String)>,
+    verified_nodes: BTreeSet<(super::Stream, String, String, String, String)>,
     /// Immutable proof reuse across copy-on-write leaf revisions. Exact entry,
     /// schema and policy bindings are hashed; no payload or read authority is cached.
-    verified_segments: BTreeSet<(String, String, String, String, String)>,
+    verified_segments: BTreeSet<(super::Stream, String, String, String, String, String)>,
     recovery_failed: bool,
     /// Process-owned writer admission; restoring a catalog never restores execution permission.
     active_writers: std::sync::Arc<std::sync::Mutex<BTreeMap<String, String>>>,
@@ -205,6 +214,9 @@ impl DatasetStore {
             || limits.snapshot_bytes < OVERHEAD
             || limits.catalog.frames < 2
             || limits.catalog.recovery_bytes < limits.catalog.frame_bytes
+            // Every reachable tree object is a physical inventory entry. Cached append proofs
+            // must never admit a home whose uncached recovery or cleanup cannot walk it.
+            || limits.objects.inventory_entries > limits.objects.index.traversal_nodes
         {
             return Err(DatasetError::Limit("configuration"));
         }
@@ -291,7 +303,7 @@ impl DatasetStore {
         };
         let manifest = self
             .files
-            .read_manifest(&root.manifest)
+            .read_manifest(&root.manifest, None)
             .map_err(|_| DatasetError::StorageCorrupt)?;
         if manifest.dataset != dataset || manifest.generation != root.generation {
             return Err(DatasetError::StorageCorrupt);
@@ -354,11 +366,11 @@ impl DatasetStore {
             .get(reference.dataset())
             .ok_or(DatasetError::Unavailable)?;
         let mut object = root.manifest.clone();
-        charge_read(work, object.bytes)?;
+
         let current = self
             .files
-            .read_manifest(&object)
-            .map_err(|_| DatasetError::StorageCorrupt)?;
+            .read_manifest(&object, work)
+            .map_err(DatasetError::from)?;
         if current.dataset != reference.dataset() || current.generation != root.generation {
             return Err(DatasetError::StorageCorrupt);
         }
@@ -393,11 +405,11 @@ impl DatasetStore {
                 .get(jump)
                 .cloned()
                 .ok_or(DatasetError::StorageCorrupt)?;
-            charge_read(work, object.bytes)?;
+
             let previous = self
                 .files
-                .read_manifest(&object)
-                .map_err(|_| DatasetError::StorageCorrupt)?;
+                .read_manifest(&object, work)
+                .map_err(DatasetError::from)?;
             if previous.dataset != reference.dataset() || previous.generation != expected {
                 return Err(DatasetError::StorageCorrupt);
             }
@@ -412,11 +424,19 @@ impl DatasetStore {
         requested: usize,
         limits: PageLimits,
     ) -> Result<DatasetPage, DatasetError> {
-        self.page_with_work(reference, from, requested, limits, None)
+        self.page_with_work(
+            reference,
+            super::Stream::Outputs,
+            from,
+            requested,
+            limits,
+            None,
+        )
     }
     fn page_with_work(
         &self,
         reference: &DatasetRef,
+        stream: super::Stream,
         from: u64,
         requested: usize,
         limits: PageLimits,
@@ -426,47 +446,69 @@ impl DatasetStore {
             return Err(DatasetError::Limit("page configuration"));
         }
         let manifest = self.resolve_with_work(reference, &self.roots, true, work)?;
-        if from > reference.records() {
+        let selected = manifest
+            .streams()
+            .find(|root| root.stream == stream)
+            .ok_or(DatasetError::Unavailable)?;
+        if from > selected.summary.end {
             return Err(DatasetError::Range);
         }
-        charge_read(work, manifest.schema.bytes)?;
+
         let schema = self
             .files
-            .read_schema(&manifest.schema)
-            .map_err(|_| DatasetError::StorageCorrupt)?;
+            .read_schema(selected.schema, work)
+            .map_err(DatasetError::from)?;
         let mut page = DatasetPage {
             reference: reference.clone(),
             schema,
             first: from,
             next: from,
             rows: Vec::new(),
-            extent_exhausted: from == reference.records(),
+            extent_exhausted: from == selected.summary.end,
             limited_by: None,
             encoded_row_bytes: 0,
         };
+        let mut index = selected
+            .index
+            .map(|root| {
+                self.files.range(
+                    root,
+                    &manifest.dataset,
+                    stream,
+                    selected.summary,
+                    from,
+                    work,
+                )
+            })
+            .transpose()?;
         let mut segments = 0;
-        while page.next < reference.records() && page.rows.len() < requested {
+        let mut retained_charge = 0;
+        while page.next < selected.summary.end && page.rows.len() < requested {
             if segments == limits.segments {
                 page.limited_by = Some("segments");
                 break;
             }
-            let index = manifest
-                .index
-                .as_ref()
+            let entry = index
+                .as_mut()
+                .ok_or(DatasetError::StorageCorrupt)?
+                .next_entry()?
                 .ok_or(DatasetError::StorageCorrupt)?;
-            let entry = self
-                .files
-                .locate_with_work(index, &manifest.dataset, page.next, work)?
-                .ok_or(DatasetError::StorageCorrupt)?;
-            charge_read(work, entry.segment.bytes)?;
+
             let bytes = self
                 .files
-                .read_segment(&entry.segment, &manifest.dataset, &page.schema)
-                .map_err(|_| DatasetError::StorageCorrupt)?;
+                .read_segment(
+                    &entry.segment,
+                    &manifest.dataset,
+                    stream,
+                    &page.schema,
+                    work,
+                )
+                .map_err(DatasetError::from)?;
             let reader = super::SegmentReader::open(
                 &bytes,
                 self.store_id(),
                 &manifest.dataset,
+                stream,
                 &page.schema,
                 self.limits.objects.segment,
             )?;
@@ -474,36 +516,55 @@ impl DatasetStore {
                 || reader.header().first.checked_add(reader.header().count)
                     != Some(entry.summary.end)
                 || reader.header().source != entry.source
+                || !segment_coverage_matches(reader.header(), &entry, &manifest, stream)
             {
                 return Err(DatasetError::StorageCorrupt);
             }
             segments += 1;
             while page.next < entry.summary.end && page.rows.len() < requested {
-                let row = reader.row(page.next)?.ok_or(DatasetError::StorageCorrupt)?;
-                let remaining = limits.bytes - page.encoded_row_bytes;
-                let encoded = match crate::codec::encode_value(
-                    &row.value,
-                    crate::codec::Limits {
-                        bytes: remaining,
-                        nodes: self.limits.objects.segment.value.nodes,
-                    },
-                ) {
-                    Ok(encoded) => encoded,
-                    Err(crate::codec::CodecError::Bytes) if !page.rows.is_empty() => {
+                let encoded_bytes = reader
+                    .encoded_row_bytes(page.next)
+                    .ok_or(DatasetError::StorageCorrupt)?;
+                if encoded_bytes > limits.bytes - page.encoded_row_bytes {
+                    if !page.rows.is_empty() {
                         page.limited_by = Some("bytes");
                         return Ok(page);
                     }
-                    Err(crate::codec::CodecError::Bytes) => {
-                        return Err(DatasetError::Limit("single page row"));
+                    return Err(DatasetError::RowBytes {
+                        limit: limits.bytes as u64,
+                    });
+                }
+                let row = reader.row(page.next)?.ok_or(DatasetError::StorageCorrupt)?;
+                let row_charge = if let Some(budget) = limits.charge {
+                    use wes_engine::storage::datasets::PageChargeRefusal;
+                    match budget.admit(&row.value, retained_charge) {
+                        Ok(amount) => amount,
+                        Err(PageChargeRefusal::Retained) if !page.rows.is_empty() => {
+                            page.limited_by = Some("logical charge");
+                            return Ok(page);
+                        }
+                        Err(PageChargeRefusal::Row { limit }) => {
+                            if !page.rows.is_empty() {
+                                page.limited_by = Some("logical charge");
+                                return Ok(page);
+                            }
+                            return Err(DatasetError::RowCharge { limit });
+                        }
+                        // An admitted row fits an empty window by construction.
+                        Err(PageChargeRefusal::Retained) => {
+                            return Err(DatasetError::StorageCorrupt);
+                        }
                     }
-                    Err(error) => return Err(FormatError::Codec(error).into()),
+                } else {
+                    0
                 };
-                page.encoded_row_bytes += encoded.len();
+                page.encoded_row_bytes += encoded_bytes;
+                retained_charge += row_charge;
                 page.rows.push(row);
                 page.next += 1;
             }
         }
-        page.extent_exhausted = page.next == reference.records();
+        page.extent_exhausted = page.next == selected.summary.end;
         if !page.extent_exhausted && page.rows.len() == requested {
             page.limited_by = Some("rows");
         }
@@ -524,20 +585,15 @@ impl DatasetStore {
             .roots
             .get(reference.dataset())
             .ok_or(DatasetError::Unavailable)?;
-        charge_read(work, root.manifest.bytes)?;
+
         let latest = self
             .files
-            .read_manifest(&root.manifest)
-            .map_err(|_| DatasetError::StorageCorrupt)?;
+            .read_manifest(&root.manifest, work)
+            .map_err(DatasetError::from)?;
         self.check_same_attempt(&original, &latest, work)?;
         self.check_policy_reads(&latest.dataset_reads.iter().cloned().collect())?;
         let head = descriptor(&root.manifest, &latest)?;
         self.info_from_manifest(&head, latest, work)
-            .map_err(|error| match error {
-                wes_engine::storage::StoreError::DatasetWithdrawn => DatasetError::Withdrawn,
-                wes_engine::storage::StoreError::Limit(label) => DatasetError::Limit(label),
-                _ => DatasetError::StorageCorrupt,
-            })
     }
     fn check_same_attempt(
         &self,
@@ -561,10 +617,8 @@ impl DatasetStore {
         }
         match (&original.checkpoint, &target.checkpoint) {
             (Some(old), Some(new)) => {
-                charge_read(work, old.bytes)?;
-                charge_read(work, new.bytes)?;
-                let old = self.files.read_checkpoint(old, &original.dataset)?;
-                let new = self.files.read_checkpoint(new, &target.dataset)?;
+                let old = self.files.read_checkpoint(old, &original.dataset, work)?;
+                let new = self.files.read_checkpoint(new, &target.dataset, work)?;
                 if old.analysis != new.analysis || old.attempt != new.attempt || old.run != new.run
                 {
                     return Err(DatasetError::Conflict);
@@ -594,11 +648,6 @@ impl DatasetStore {
         self.check_same_attempt(&original, &target, None)?;
         let reference = descriptor(&object, &target)?;
         self.info_from_manifest(&reference, target, None)
-            .map_err(|error| match error {
-                wes_engine::storage::StoreError::DatasetWithdrawn => DatasetError::Withdrawn,
-                wes_engine::storage::StoreError::Limit(label) => DatasetError::Limit(label),
-                _ => DatasetError::StorageCorrupt,
-            })
     }
     fn ancestry_links(
         &self,
@@ -615,7 +664,7 @@ impl DatasetStore {
         let mut links = vec![previous.cloned().ok_or(DatasetError::Conflict)?];
         let count = (u64::BITS - (generation - 1).leading_zeros()) as usize;
         for index in 0..count {
-            let ancestor = self.files.read_manifest(&links[index])?;
+            let ancestor = self.files.read_manifest(&links[index], None)?;
             let expected = generation
                 .checked_sub(1u64 << index)
                 .ok_or(DatasetError::Conflict)?;
@@ -730,7 +779,7 @@ impl DatasetStore {
         for root in self.roots.values() {
             let manifest = self
                 .files
-                .read_manifest(&root.manifest)
+                .read_manifest(&root.manifest, None)
                 .map_err(|_| DatasetError::StorageCorrupt)?;
             if manifest.transaction == transaction {
                 return Ok(Reconciliation::Committed(
@@ -818,7 +867,9 @@ impl DatasetStore {
         candidate.encode(self.limits.objects.manifest)?;
         if prior.is_none_or(|(_, manifest)| manifest.checkpoint.is_none()) {
             if let Some(reference) = &candidate.checkpoint {
-                let first = self.files.read_checkpoint(reference, &candidate.dataset)?;
+                let first = self
+                    .files
+                    .read_checkpoint(reference, &candidate.dataset, None)?;
                 if first.previous_attempt.is_some()
                     || first.budget.previous.is_some()
                     || first.budget.issued_attempt != first.attempt
@@ -868,6 +919,16 @@ impl DatasetStore {
             {
                 return Err(DatasetError::Conflict);
             }
+            match (&previous.coverage, &candidate.coverage) {
+                (None, None) => {}
+                (Some(old), Some(new))
+                    if old.schema == new.schema
+                        && old.schema_digest == new.schema_digest
+                        && new.progress.extends(&old.progress)
+                        && new.summary.end >= old.summary.end
+                        && new.summary.segment_bytes >= old.summary.segment_bytes => {}
+                _ => return Err(DatasetError::Conflict),
+            }
             match (&previous.recording, &candidate.recording) {
                 (None, None) => {}
                 (Some(old), Some(new))
@@ -883,8 +944,8 @@ impl DatasetStore {
             let continuation = if let (Some(old), Some(new)) =
                 (&previous.checkpoint, &candidate.checkpoint)
             {
-                let old = self.files.read_checkpoint(old, &candidate.dataset)?;
-                let new = self.files.read_checkpoint(new, &candidate.dataset)?;
+                let old = self.files.read_checkpoint(old, &candidate.dataset, None)?;
+                let new = self.files.read_checkpoint(new, &candidate.dataset, None)?;
                 let resumed = new.attempt != old.attempt;
                 let kind = if witness.is_some_and(|w| {
                     w.transaction == candidate.transaction
@@ -907,6 +968,7 @@ impl DatasetStore {
                         || new.next_position != old.next_position
                         || new.next_ordinal != old.next_ordinal
                         || new.output_end != old.output_end
+                        || new.coverage != old.coverage
                         || new.state != old.state
                         || new.decoder_carry != old.decoder_carry
                         || new.followed_source != old.followed_source
@@ -935,6 +997,7 @@ impl DatasetStore {
                         || old.finish_applied
                         || candidate.summary != previous.summary
                         || candidate.index != previous.index
+                        || candidate.coverage != previous.coverage
                     {
                         return Err(DatasetError::Conflict);
                     }
@@ -948,6 +1011,7 @@ impl DatasetStore {
             if previous.lifecycle != Lifecycle::Open
                 && (candidate.summary != previous.summary
                     || candidate.index != previous.index
+                    || candidate.coverage != previous.coverage
                     || (!continuation && candidate.checkpoint != previous.checkpoint))
             {
                 return Err(DatasetError::Conflict);
@@ -961,8 +1025,8 @@ impl DatasetStore {
             }
             if let (Some(old), Some(new)) = (&previous.checkpoint, &candidate.checkpoint) {
                 if old != new {
-                    let old = self.files.read_checkpoint(old, &candidate.dataset)?;
-                    let new = self.files.read_checkpoint(new, &candidate.dataset)?;
+                    let old = self.files.read_checkpoint(old, &candidate.dataset, None)?;
+                    let new = self.files.read_checkpoint(new, &candidate.dataset, None)?;
                     if !new.bindings_extend(&old)
                         || new.analysis != old.analysis
                         || new.state.schema != old.state.schema
@@ -970,6 +1034,11 @@ impl DatasetStore {
                         || new.next_position < old.next_position
                         || new.next_ordinal < old.next_ordinal
                         || new.output_end < old.output_end
+                        || match (&old.coverage, &new.coverage) {
+                            (None, None) => false,
+                            (Some(old), Some(new)) => !new.extends(old),
+                            _ => true,
+                        }
                         || (!continuation && new.budget != old.budget)
                         || (!continuation && old.stop.is_some() && new.stop != old.stop)
                         || new.work.granted < old.work.granted
@@ -1001,6 +1070,7 @@ impl DatasetStore {
                             || new.next_position != old.next_position
                             || new.next_ordinal != old.next_ordinal
                             || new.output_end != old.output_end
+                            || new.coverage != old.coverage
                             || new.state != old.state
                             || new.decoder_carry != old.decoder_carry)
                     {
@@ -1036,28 +1106,22 @@ impl DatasetStore {
         Ok(())
     }
     fn verify_manifest(&mut self, manifest: &Manifest) -> Result<(), DatasetError> {
-        let schema = self
-            .files
-            .read_schema(&manifest.schema)
-            .map_err(|_| DatasetError::StorageCorrupt)?;
-        if schema.root().digest() != manifest.schema_digest {
-            return Err(DatasetError::StorageCorrupt);
-        }
         if let Some(reference) = &manifest.checkpoint {
             let checkpoint = self
                 .files
-                .read_checkpoint(reference, &manifest.dataset)
+                .read_checkpoint(reference, &manifest.dataset, None)
                 .map_err(|_| DatasetError::StorageCorrupt)?;
             let unchanged = manifest
                 .previous
                 .as_ref()
-                .map(|prior| self.files.read_manifest(prior))
+                .map(|prior| self.files.read_manifest(prior, None))
                 .transpose()?
                 .is_some_and(|prior| prior.checkpoint.as_ref() == Some(reference));
             if (!unchanged
                 && (checkpoint.transaction != manifest.transaction
                     || checkpoint.lifecycle != manifest.lifecycle))
                 || checkpoint.output_end != manifest.summary.end
+                || checkpoint.coverage.as_ref() != manifest.coverage.as_ref().map(|c| &c.progress)
                 || checkpoint
                     .origins
                     .iter()
@@ -1073,120 +1137,122 @@ impl DatasetStore {
                 return Err(DatasetError::StorageCorrupt);
             }
         }
-        let Some(root) = &manifest.index else {
-            return Ok(());
-        };
-        let node = self
-            .files
-            .read_index(root, &manifest.dataset)
-            .map_err(|_| DatasetError::StorageCorrupt)?;
-        if node.summary != manifest.summary {
-            return Err(DatasetError::StorageCorrupt);
-        }
-        let mut pending = vec![(root.clone(), node.height, node.summary)];
-        let mut seen = BTreeSet::new();
-        let mut segments = BTreeSet::new();
         let mut verified = Vec::new();
         let mut verified_segments = Vec::new();
-        while let Some((reference, height, summary)) = pending.pop() {
-            if seen.len() >= self.limits.objects.index.traversal_nodes {
-                return Err(DatasetError::Limit("index recovery traversal"));
-            }
-            if !seen.insert(reference.id.clone()) {
-                return Err(DatasetError::StorageCorrupt);
-            }
-            let node = self
+        let limit = self.limits.objects.index.traversal_nodes;
+        let mut work = limit;
+        for stream in manifest.streams() {
+            let schema = self
                 .files
-                .read_index(&reference, &manifest.dataset)
+                .read_schema(stream.schema, None)
                 .map_err(|_| DatasetError::StorageCorrupt)?;
-            if node.height != height || node.summary != summary {
+            if schema.digest() != stream.schema_digest
+                || (stream.stream == super::Stream::Coverage
+                    && schema.digest()
+                        != wes_engine::storage::datasets::rejection_schema().digest())
+            {
                 return Err(DatasetError::StorageCorrupt);
             }
-            let cache_key = (
-                reference.id.clone(),
-                reference.digest.clone(),
-                manifest.dataset.clone(),
-                manifest.schema_digest.clone(),
-            );
-            if self.verified_nodes.contains(&cache_key) {
-                continue;
-            }
-            match node.entries {
-                Entries::Branch { children } => {
-                    for child in children.into_iter().rev() {
-                        pending.push((child.node, height - 1, child.summary));
-                    }
-                }
-                Entries::Leaf { entries } => {
-                    for entry in entries {
-                        if !segments.insert(entry.segment.id.clone())
-                            || entry.source.identity != manifest.source.identity
-                            || entry.source.unit != manifest.source.unit
-                            || entry.source.start < manifest.source.start
-                            || entry.source.end > manifest.source.end
-                        {
-                            return Err(DatasetError::StorageCorrupt);
+            walk_index(
+                &self.files,
+                &manifest.dataset,
+                stream.stream,
+                stream.index,
+                stream.summary,
+                &manifest.source,
+                limit,
+                &mut work,
+                |event| {
+                    match event {
+                        IndexVisit::Node(reference) => {
+                            let cache_key = (
+                                stream.stream,
+                                reference.id.clone(),
+                                reference.digest.clone(),
+                                manifest.dataset.clone(),
+                                stream.schema_digest.to_owned(),
+                            );
+                            if self.verified_nodes.contains(&cache_key) {
+                                return Ok(Visit::Skip);
+                            }
+                            verified.push(cache_key);
                         }
-                        let binding = super::format::bounded_json(
-                            &(&entry, &manifest.origins, &manifest.dataset_reads),
-                            self.limits.objects.manifest.bytes,
-                        )?;
-                        let segment_key = (
-                            entry.segment.id.clone(),
-                            entry.segment.digest.clone(),
-                            manifest.dataset.clone(),
-                            manifest.schema_digest.clone(),
-                            format!("{:x}", sha2::Sha256::digest(&binding)),
-                        );
-                        // A new leaf repeats prior entries. Their same immutable
-                        // proofs need not re-decode every historical row. Page
-                        // reads still verify bytes and current authorization.
-                        if self.verified_segments.contains(&segment_key) {
-                            continue;
-                        }
-                        let bytes = self
-                            .files
-                            .read_segment(&entry.segment, &manifest.dataset, &schema)
-                            .map_err(|_| DatasetError::StorageCorrupt)?;
-                        let reader = super::SegmentReader::open(
-                            &bytes,
-                            self.store_id(),
-                            &manifest.dataset,
-                            &schema,
-                            self.limits.objects.segment,
-                        )?;
-                        if reader.header().first != entry.summary.first
-                            || reader.header().first.checked_add(reader.header().count)
-                                != Some(entry.summary.end)
-                            || reader.header().source != entry.source
-                        {
-                            return Err(DatasetError::StorageCorrupt);
-                        }
-                        for ordinal in entry.summary.first..entry.summary.end {
-                            let row = reader.row(ordinal)?.ok_or(DatasetError::StorageCorrupt)?;
-                            if row
-                                .value
-                                .provenance()
-                                .policy()
-                                .origins()
-                                .iter()
-                                .any(|origin| !manifest.origins.contains(origin))
-                                || row
+                        IndexVisit::Segment(entry) => {
+                            let binding = super::format::bounded_json(
+                                &(&entry, &manifest.origins, &manifest.dataset_reads),
+                                self.limits.objects.manifest.bytes,
+                            )?;
+                            let segment_key = (
+                                stream.stream,
+                                entry.segment.id.clone(),
+                                entry.segment.digest.clone(),
+                                manifest.dataset.clone(),
+                                stream.schema_digest.to_owned(),
+                                format!("{:x}", sha2::Sha256::digest(&binding)),
+                            );
+                            // Immutable proofs avoid decoding historical rows on each append.
+                            // Content reads still check bytes and the current authorization gate.
+                            if self.verified_segments.contains(&segment_key) {
+                                return Ok(Visit::Descend);
+                            }
+                            let bytes = self
+                                .files
+                                .read_segment(
+                                    &entry.segment,
+                                    &manifest.dataset,
+                                    stream.stream,
+                                    &schema,
+                                    None,
+                                )
+                                .map_err(|_| DatasetError::StorageCorrupt)?;
+                            let reader = super::SegmentReader::open(
+                                &bytes,
+                                self.store_id(),
+                                &manifest.dataset,
+                                stream.stream,
+                                &schema,
+                                self.limits.objects.segment,
+                            )?;
+                            if reader.header().first != entry.summary.first
+                                || reader.header().first.checked_add(reader.header().count)
+                                    != Some(entry.summary.end)
+                                || reader.header().source != entry.source
+                                || !segment_coverage_matches(
+                                    reader.header(),
+                                    entry,
+                                    manifest,
+                                    stream.stream,
+                                )
+                            {
+                                return Err(DatasetError::StorageCorrupt);
+                            }
+                            for ordinal in entry.summary.first..entry.summary.end {
+                                let row =
+                                    reader.row(ordinal)?.ok_or(DatasetError::StorageCorrupt)?;
+                                if row
                                     .value
                                     .provenance()
                                     .policy()
-                                    .dataset_reads()
+                                    .origins()
                                     .iter()
-                                    .any(|o| !manifest.dataset_reads.contains(o))
-                            {
-                                return Err(DatasetError::Restricted);
+                                    .any(|origin| !manifest.origins.contains(origin))
+                                    || row
+                                        .value
+                                        .provenance()
+                                        .policy()
+                                        .dataset_reads()
+                                        .iter()
+                                        .any(|origin| !manifest.dataset_reads.contains(origin))
+                                {
+                                    return Err(DatasetError::Restricted);
+                                }
                             }
+                            verified_segments.push(segment_key);
                         }
-                        verified_segments.push(segment_key);
                     }
-                }
-            }
-            verified.push(cache_key);
+                    Ok(Visit::Descend)
+                },
+            )?;
         }
         if self
             .verified_nodes
@@ -1225,7 +1291,7 @@ impl DatasetStore {
         for (dataset, root) in &roots {
             let manifest = self
                 .files
-                .read_manifest(&root.manifest)
+                .read_manifest(&root.manifest, None)
                 .map_err(|_| DatasetError::StorageCorrupt)?;
             if &manifest.dataset != dataset || manifest.generation != root.generation {
                 return Err(DatasetError::StorageCorrupt);
@@ -1252,7 +1318,7 @@ impl DatasetStore {
                 }
                 let manifest = self
                     .files
-                    .read_manifest(&change.manifest)
+                    .read_manifest(&change.manifest, None)
                     .map_err(|_| DatasetError::StorageCorrupt)?;
                 if manifest.transaction != entry.commit.transaction
                     || manifest.dataset != change.dataset
@@ -1264,7 +1330,7 @@ impl DatasetStore {
                 let prior_manifest = prior
                     .map(|p| {
                         self.files
-                            .read_manifest(&p.manifest)
+                            .read_manifest(&p.manifest, None)
                             .map(|m| (p.manifest.clone(), m))
                     })
                     .transpose()
@@ -1315,7 +1381,9 @@ impl DatasetStore {
                     return Err(DatasetError::StorageCorrupt);
                 }
                 if let Some(checkpoint) = manifest.checkpoint {
-                    let cp = self.files.read_checkpoint(&checkpoint, &manifest.dataset)?;
+                    let cp = self
+                        .files
+                        .read_checkpoint(&checkpoint, &manifest.dataset, None)?;
                     let same_attempt = write.state == catalog::WriteState::Committed
                         || write.operation == catalog::WriteOperation::Append;
                     if cp.analysis != write.owner.lineage
@@ -1343,7 +1411,7 @@ impl DatasetStore {
             self.verify_manifest(
                 &self
                     .files
-                    .read_manifest(&root.manifest)
+                    .read_manifest(&root.manifest, None)
                     .map_err(|_| DatasetError::StorageCorrupt)?,
             )?;
         }
@@ -1521,6 +1589,22 @@ fn encode_snapshot(snapshot: &Snapshot, limits: StoreLimits) -> Result<Vec<u8>, 
     bytes.extend_from_slice(END);
     Ok(bytes)
 }
+/// Recovery and paged reads require the same physical evidence for aggregate metadata.
+fn segment_coverage_matches(
+    header: &super::SegmentHeader,
+    entry: &super::IndexEntry,
+    manifest: &Manifest,
+    stream: super::Stream,
+) -> bool {
+    header.coverage.as_ref().map(|c| &c.span) == entry.summary.coverage.as_ref()
+        && header.coverage.as_ref().map(|c| c.policy)
+            == manifest
+                .coverage
+                .as_ref()
+                .filter(|_| stream == super::Stream::Coverage)
+                .map(|c| c.progress.policy)
+}
+
 fn descriptor(reference: &ObjectRef, manifest: &Manifest) -> Result<DatasetRef, DatasetError> {
     DatasetRef::new(
         manifest.store.clone(),
@@ -1835,6 +1919,9 @@ impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
         reference: &DatasetRef,
         work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<wes_engine::storage::datasets::DatasetInfo, wes_engine::storage::StoreError> {
+        if let Some(work) = work {
+            work.charge(512)?;
+        }
         self.committed_head(reference, true, work)
             .map_err(storage_error)
     }
@@ -1859,10 +1946,28 @@ impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
     ) -> Result<wes_engine::storage::datasets::DatasetInfo, wes_engine::storage::StoreError> {
         let manifest = self.read_exact(reference).map_err(storage_error)?;
         self.info_from_manifest(reference, manifest, None)
+            .map_err(storage_error)
     }
     fn page(
         &self,
         reference: &DatasetRef,
+        request: wes_engine::storage::datasets::PageRequest,
+    ) -> Result<wes_engine::storage::datasets::DatasetPage, wes_engine::storage::StoreError> {
+        self.leased_page(reference, super::Stream::Outputs, request)
+    }
+    fn coverage_page(
+        &self,
+        reference: &DatasetRef,
+        request: wes_engine::storage::datasets::PageRequest,
+    ) -> Result<wes_engine::storage::datasets::DatasetPage, wes_engine::storage::StoreError> {
+        self.leased_page(reference, super::Stream::Coverage, request)
+    }
+}
+impl DatasetStore {
+    fn leased_page(
+        &self,
+        reference: &DatasetRef,
+        stream: super::Stream,
         request: wes_engine::storage::datasets::PageRequest,
     ) -> Result<wes_engine::storage::datasets::DatasetPage, wes_engine::storage::StoreError> {
         use wes_engine::storage::{
@@ -1877,11 +1982,13 @@ impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
         let page = self
             .page_with_work(
                 reference,
+                stream,
                 request.from,
                 request.rows,
                 PageLimits {
                     bytes: request.bytes,
                     segments: request.segments,
+                    charge: request.charge,
                     ..cap
                 },
                 request.work.as_ref(),
@@ -1911,25 +2018,13 @@ impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
         })
     }
 }
-fn charge_read(
-    work: Option<&wes_engine::storage::datasets::ReadWork>,
-    bytes: u64,
-) -> Result<(), DatasetError> {
-    if let Some(work) = work {
-        // Includes checksums, bounded contract validation, codec traversals and
-        // page encoding. Admit before entering the immutable physical object.
-        let cost = bytes
-            .checked_mul(64)
-            .and_then(|n| n.checked_add(4096))
-            .ok_or(DatasetError::Limit("analysis read work"))?;
-        work.charge(cost)
-            .map_err(|_| DatasetError::Limit("analysis read work"))?;
-    }
-    Ok(())
-}
+
 fn storage_error(error: DatasetError) -> wes_engine::storage::StoreError {
     use wes_engine::storage::StoreError as S;
     match error {
+        DatasetError::RowCharge { limit } => S::DatasetRowCharge { limit },
+        DatasetError::RowBytes { limit } => S::DatasetRowBytes { limit },
+        DatasetError::Objects(ObjectError::ReadWork(refusal)) => S::ReadWork(refusal),
         DatasetError::Unavailable => S::DatasetMissing,
         DatasetError::Withdrawn => S::DatasetWithdrawn,
         DatasetError::Restricted => S::Restricted,
@@ -2038,16 +2133,16 @@ impl DatasetStore {
         reference: &DatasetRef,
         manifest: Manifest,
         work: Option<&wes_engine::storage::datasets::ReadWork>,
-    ) -> Result<wes_engine::storage::datasets::DatasetInfo, wes_engine::storage::StoreError> {
+    ) -> Result<wes_engine::storage::datasets::DatasetInfo, DatasetError> {
         use wes_engine::{
             history::Persistence as P,
             storage::datasets::{DatasetInfo, DatasetLifecycle as L},
         };
-        charge_read(work, manifest.schema.bytes).map_err(storage_error)?;
+
         let schema = self
             .files
-            .read_schema(&manifest.schema)
-            .map_err(|_| wes_engine::storage::StoreError::DatasetCorrupt)?;
+            .read_schema(&manifest.schema, work)
+            .map_err(DatasetError::from)?;
         let lifecycle = match manifest.lifecycle {
             Lifecycle::Open
                 if self
@@ -2061,7 +2156,7 @@ impl DatasetStore {
                 if !self
                     .active_writers
                     .lock()
-                    .map_err(|_| wes_engine::storage::StoreError::DatasetCorrupt)?
+                    .map_err(|_| DatasetError::StorageCorrupt)?
                     .contains_key(reference.dataset()) =>
             {
                 L::Interrupted
@@ -2090,11 +2185,31 @@ impl DatasetStore {
             Persistence::FileAndDirectorySynced => P::FileAndDirectorySynced,
         };
         Ok(DatasetInfo {
+            coverage: manifest
+                .coverage
+                .as_ref()
+                .map(|root| {
+                    Ok::<_, DatasetError>(wes_engine::storage::datasets::CoverageInfo {
+                        progress: root.progress.clone(),
+                        schema: self.files.read_schema(&root.schema, work)?,
+                        segment_bytes: root.summary.segment_bytes,
+                    })
+                })
+                .transpose()?,
             reference: reference.clone(),
             schema,
             lifecycle,
             policy,
-            segment_bytes: manifest.summary.segment_bytes,
+            segment_bytes: manifest
+                .summary
+                .segment_bytes
+                .checked_add(
+                    manifest
+                        .coverage
+                        .as_ref()
+                        .map_or(0, |c| c.summary.segment_bytes),
+                )
+                .ok_or(DatasetError::Limit("dataset segment bytes"))?,
             protected: self.is_protected(reference),
             persistence,
             recording: manifest.recording,

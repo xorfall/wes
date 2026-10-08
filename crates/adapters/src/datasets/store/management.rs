@@ -348,7 +348,7 @@ impl DatasetStore {
         for _ in 0..self.limits.reference_roots {
             let before = affected.len();
             for root in self.roots.values() {
-                let manifest = self.files.read_manifest(&root.manifest)?;
+                let manifest = self.files.read_manifest(&root.manifest, None)?;
                 if manifest
                     .dataset_reads
                     .iter()

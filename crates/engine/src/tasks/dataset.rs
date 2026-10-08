@@ -22,6 +22,7 @@ pub struct BoundDataset {
     command: MetaCommand,
     input: Option<Input>,
     from: u64,
+    stream: wes_core::DatasetStream,
     limit: usize,
     captured: Option<Result<Value, String>>,
     policy: FlowPolicy,
@@ -62,6 +63,15 @@ impl BoundDataset {
                 _ => return Err(invalid("from: must be a literal exact decimal ordinal")),
             },
             _ => return Err(invalid("from: must be a literal exact decimal ordinal")),
+        };
+        let stream = match task.inputs.get("stream") {
+            None => wes_core::DatasetStream::Outputs,
+            Some(Input::Literal(value)) => match value.data() {
+                Data::Text(name) => wes_core::DatasetStream::lookup(name)
+                    .ok_or_else(|| invalid("stream: must be outputs or coverage"))?,
+                _ => return Err(invalid("stream: must be literal outputs or coverage")),
+            },
+            _ => return Err(invalid("stream: must be literal outputs or coverage")),
         };
         let limit = match task.inputs.get("limit") {
             None => 50,
@@ -130,6 +140,7 @@ impl BoundDataset {
             command: task.spec.command,
             input,
             from,
+            stream,
             limit,
             captured: None,
             policy: Default::default(),
@@ -395,14 +406,27 @@ impl BoundDataset {
                 );
             };
             text("first", self.from.to_string());
-            text("records", reference.records().to_string());
+            let (records, schema_digest) = match self.stream {
+                wes_core::DatasetStream::Outputs => (reference.records(), info.schema.digest()),
+                wes_core::DatasetStream::Coverage => match &info.coverage {
+                    Some(coverage) => (coverage.progress.records, coverage.schema.digest()),
+                    None => {
+                        return failed("selected Dataset has no rejected-frame coverage".into())
+                            .into();
+                    }
+                },
+            };
+            text("records", records.to_string());
+            text("stream", self.stream.name().into());
             text("lifecycle", format!("{:?}", info.lifecycle).to_lowercase());
-            text("schemaDigest", info.schema.digest().into());
+            text("schemaDigest", schema_digest.into());
             if self.command == MetaCommand::DatasetPage {
                 let page = match worker
-                    .dataset_page(
+                    .dataset_stream_page(
                         reference.clone(),
+                        self.stream,
                         PageRequest {
+                            charge: None,
                             work: None,
                             from: self.from,
                             rows: self.limit,

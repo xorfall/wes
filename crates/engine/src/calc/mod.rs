@@ -39,6 +39,7 @@ impl Default for Limits {
 pub enum BudgetKind {
     Work,
     CumulativeWork,
+    CumulativeAllowance,
     Memory,
 }
 #[derive(Clone, Debug)]
@@ -137,7 +138,13 @@ impl Budget {
             .checked_sub(n)
             .ok_or_else(|| Failure::budget(BudgetKind::Work, span, format!("calculation work limit reached ({} work units). Reduce the input or split the calculation; work units count evaluated operations, not loop iterations.",self.work_limit)))?;
         if let Some(parent) = &self.parent_work {
-            parent.charge(n).map_err(|_|Failure::budget(BudgetKind::CumulativeWork,span,format!("cumulative work allowance reached ({} of {} work units); freeing scratch does not reset this attempt",parent.allowance(),parent.limit())))?;
+            parent.charge(n).map_err(|reason| {
+                let kind = match reason {
+                    crate::work_budget::WorkRefusal::Allowance => BudgetKind::CumulativeAllowance,
+                    _ => BudgetKind::CumulativeWork,
+                };
+                Failure::budget(kind,span,format!("cumulative work admission reached its {reason:?} bound ({} of {} work units); freeing scratch does not reset this attempt",parent.allowance(),parent.limit()))
+            })?;
         }
         self.left = left;
         Ok(())

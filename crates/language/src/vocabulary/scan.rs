@@ -31,7 +31,7 @@ impl Profile {
 }
 pub fn parameters() -> Vec<Parameter> {
     let mut registry = ContractRegistry::new();
-    registry.load("types:\n  ScanProfile: {base: Text, enum: [LinesUtf8, LinesLossyUtf8, DelimitedUtf8, TypedRecords]}\n  ScanMode: {base: Text, enum: [complete]}\n  ScanSink: {base: Text, enum: [memory, dataset]}\n  ScanBudget: {base: Text, enum: [Investigation, LiveAnalysis]}").expect("finite scan vocabulary");
+    registry.load("types:\n  ScanProfile: {base: Text, enum: [LinesUtf8, LinesLossyUtf8, DelimitedUtf8, TypedRecords]}\n  ScanMode: {base: Text, enum: [complete]}\n  ScanSink: {base: Text, enum: [memory, dataset]}\n  ScanMalformed: {base: Text, enum: [strict, forensic]}\n  ScanBudget: {base: Text, enum: [Investigation, LiveAnalysis]}").expect("finite scan vocabulary");
     let text = Shape::Primitive(Primitive::Text);
     let choice = |name: &str, type_name: &str, required: bool| {
         Parameter::new(name, text.clone(), required).constrained_by(
@@ -52,6 +52,8 @@ pub fn parameters() -> Vec<Parameter> {
         choice("mode", "ScanMode", false),
         Parameter::new("follow", Shape::Primitive(Primitive::Bool), false),
         choice("sink", "ScanSink", false),
+        choice("malformed", "ScanMalformed", false),
+        Parameter::new("excerpt", Shape::Primitive(Primitive::Int), false),
     ];
     parameters.extend(total_parameters());
     parameters
