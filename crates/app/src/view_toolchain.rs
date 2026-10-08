@@ -116,6 +116,16 @@ mod tests {
                 .unwrap();
         assert_eq!(lock["packages"]["compiler"]["version"], "1.0.0");
         assert!(target.join("sdk/index.ts").is_file());
+        let sdk: Value =
+            serde_json::from_slice(&std::fs::read(target.join("sdk/package.json")).unwrap())
+                .unwrap();
+        for file in sdk["files"].as_array().unwrap() {
+            let file = file.as_str().unwrap();
+            assert!(
+                target.join("sdk").join(file).is_file(),
+                "SDK export omits {file}"
+            );
+        }
         assert!(!target.join("node_modules").exists());
         assert_eq!(
             std::fs::read(target.join("bin").join(validator_name())).unwrap(),
