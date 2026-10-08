@@ -33,7 +33,7 @@ pub(super) fn cell(
         }
         if let Some(waits)=graph.waiting_inputs.get(id){node["waiting"]=crate::execution_status::waiting_inputs(waits, observation.state.names.iter());}
         let data = bridge::current_value(observation, id);
-        let exportable = data.is_some_and(|v| !v.provenance().policy().is_private() && !v.provenance().policy().is_unknown() && v.data().is_storable_snapshot());
+        let exportable = data.is_some_and(|v| !v.provenance().policy().is_confidential() && !v.provenance().policy().is_unknown() && v.data().is_storable_snapshot());
         public &= exportable;
         if exportable {
             node["names"] = json!(observation.state.names.iter().filter(|(_, output)| &output.node == id).map(|(name, _)| name).collect::<Vec<_>>());

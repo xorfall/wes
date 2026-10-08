@@ -137,6 +137,8 @@ fn privacy_precedes_path_errors_paging_and_metadata() {
     for policy in [
         wes_core::flow::FlowPolicy::default().private(),
         wes_core::flow::FlowPolicy::default().unknown(),
+        wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Temporary),
+        wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Retainable),
     ] {
         let value = fixture().with_provenance(Provenance::default().with_policy(&policy));
         for request in [
@@ -245,6 +247,8 @@ fn typed_reads_rebase_schema_paths_preserve_pages_and_shape_only_and_check_root_
     for policy in [
         wes_core::flow::FlowPolicy::default().private(),
         wes_core::flow::FlowPolicy::default().unknown(),
+        wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Temporary),
+        wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Retainable),
     ] {
         let hidden = v.with_provenance(Provenance::default().with_policy(&policy));
         let err = encode_selection(

@@ -521,7 +521,7 @@ fn request_report(
 fn public_outcome(value: &wes_core::Value) -> Option<Value> {
     use wes_core::{Data, Shape};
     let policy = value.provenance().policy();
-    if policy.is_private() || policy.is_unknown() {
+    if policy.is_confidential() || policy.is_unknown() {
         return None;
     }
     let (Shape::Record(shape), Data::Record(data)) = (value.shape(), value.data()) else {
@@ -1742,6 +1742,10 @@ mod tests {
             for policy in [
                 wes_core::flow::FlowPolicy::default().private(),
                 wes_core::flow::FlowPolicy::default().unknown(),
+                wes_core::flow::FlowPolicy::default()
+                    .confidential(wes_core::flow::Residence::Temporary),
+                wes_core::flow::FlowPolicy::default()
+                    .confidential(wes_core::flow::Residence::Retainable),
             ] {
                 assert_eq!(
                     public_outcome(

@@ -92,3 +92,67 @@ fn private_error_ports_keep_restrictions_and_remove_payload_from_diagnostics() {
             .contains("prod")
     );
 }
+
+#[test]
+fn confidentiality_and_residence_join_without_granting_retention() {
+    use wes_core::flow::Residence;
+    let retained = FlowPolicy::default()
+        .confidential(Residence::Retainable)
+        .from_origin("api");
+    let temporary = FlowPolicy::default()
+        .confidential(Residence::Temporary)
+        .from_origin("capture");
+    let memory = FlowPolicy::default().private();
+    assert!(retained.is_confidential());
+    assert!(!retained.is_private());
+    assert!(retained.allows_retention());
+    assert_eq!(retained.join(&temporary).residence(), Residence::Temporary);
+    assert!(!retained.join(&temporary).allows_retention());
+    assert!(temporary.join(&memory).is_private());
+    assert!(retained.join(&memory).is_private());
+    assert!(
+        memory
+            .clone()
+            .confidential(Residence::Retainable)
+            .is_private()
+    );
+    for a in [
+        &retained,
+        &temporary,
+        &memory,
+        &FlowPolicy::default().unknown(),
+    ] {
+        for b in [&retained, &temporary, &memory] {
+            assert_eq!(a.join(b), b.join(a));
+            assert_eq!(a.join(a), *a);
+        }
+    }
+}
+
+#[test]
+fn confidential_derivatives_and_error_details_do_not_lose_protection() {
+    use wes_core::flow::Residence;
+    let policy = FlowPolicy::default()
+        .confidential(Residence::Temporary)
+        .from_origin("fixture");
+    let value = Value::new(
+        Shape::Unknown,
+        Data::Text("confidential-sentinel".into()),
+        Provenance::default().with_policy(&policy),
+    )
+    .unwrap();
+    let derived = value.with_provenance(Provenance::default());
+    assert_eq!(derived.provenance().policy(), &policy);
+    assert!(!format!("{derived:?}").contains("confidential-sentinel"));
+    let error = wes_core::ErrorValue::new(
+        wes_core::ErrorId::new("confidential-error").unwrap(),
+        "ERR",
+        "confidential-sentinel",
+        vec![],
+        None,
+    )
+    .unwrap()
+    .with_policy(&policy);
+    assert!(!error.message().contains("confidential-sentinel"));
+    assert_eq!(error.to_value().provenance().policy(), &policy);
+}

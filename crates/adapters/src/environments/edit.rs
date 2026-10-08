@@ -238,7 +238,7 @@ fn imports(values: &std::collections::BTreeMap<String, ImportDefinition>) -> Jso
     Json::Object(values.iter().map(|(name, d)| {
         let key = d.source.source_field();
         let mut bind = json!({"target":d.target,"credentials":d.credentials.iter().map(|(k,v)|(k.clone(),json!({"secret":v}))).collect::<serde_json::Map<_,_>>()});
-        if d.private_output { bind["output"] = json!("private"); }
+        if d.output_policy != wes_core::flow::OutputPolicy::Public { bind["output"] = json!(d.output_policy.as_str()); }
         if let Some(v) = &d.transport { bind["transport"] = json!(v); }
         if let Some(v) = &d.endpoint { bind["endpoint"] = setting(v); }
         if let Some(v) = &d.timeout_ms { bind["timeout_ms"] = setting(v); }

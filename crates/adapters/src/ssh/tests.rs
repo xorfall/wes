@@ -265,22 +265,29 @@ async fn timeout_and_output_budget_join_client_and_report_uncertain_remote_effec
 }
 
 #[tokio::test]
-async fn private_args_disabled_authority_and_pre_cancel_refuse_without_launch() {
+async fn confidential_args_disabled_authority_and_pre_cancel_refuse_without_launch() {
     let f = Fixture::new("exit 0", 5000, "/bin/echo");
-    let value = Value::new(
-        Shape::Primitive(Primitive::Text),
-        Data::Text("PRIVATE_SENTINEL".into()),
-        Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
-    )
-    .unwrap();
-    let error = f
-        .product
-        .invoker()
-        .invoke(f.call(Some(value)), CancellationToken::new())
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("private arguments") && !error.contains("PRIVATE_SENTINEL"));
+    for policy in [
+        wes_core::flow::FlowPolicy::default().private(),
+        wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Temporary),
+        wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Retainable),
+        wes_core::flow::FlowPolicy::default().unknown(),
+    ] {
+        let value = Value::new(
+            Shape::Primitive(Primitive::Text),
+            Data::Text("PRIVATE_SENTINEL".into()),
+            Provenance::default().with_policy(&policy),
+        )
+        .unwrap();
+        let error = f
+            .product
+            .invoker()
+            .invoke(f.call(Some(value)), CancellationToken::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("confidential arguments") && !error.contains("PRIVATE_SENTINEL"));
+    }
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     assert!(matches!(

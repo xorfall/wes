@@ -225,7 +225,7 @@ impl ExecutionProgress {
     }
     pub fn restricted(mut self, policy: &wes_core::flow::FlowPolicy) -> Self {
         self.policy = self.policy.join(policy);
-        if policy.is_private() || policy.is_unknown() {
+        if policy.is_confidential() || policy.is_unknown() {
             self.counters = None;
             self.recording = None;
         }

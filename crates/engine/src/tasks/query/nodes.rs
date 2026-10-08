@@ -182,7 +182,7 @@ pub(super) fn capture_nodes(
                 .error_of(node.id())
                 .map(|error| {
                     charge.copy(
-                        if error.policy().is_private() || error.policy().is_unknown() {
+                        if error.policy().is_confidential() || error.policy().is_unknown() {
                             "Restricted failure; details are unavailable."
                         } else {
                             error.message()

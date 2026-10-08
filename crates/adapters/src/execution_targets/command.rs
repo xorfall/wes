@@ -1,5 +1,5 @@
 //! A finite POSIX command contract, independent of Docker/SSH wire encoding.
-//! Remote argv may be retained by a daemon/server; do not export private arguments.
+//! Remote argv may be retained by a daemon/server; do not export confidential arguments.
 use std::time::Duration;
 use wes_core::{
     Data, Primitive, Shape,
@@ -53,13 +53,11 @@ impl Program {
         binding: &Binding,
         call: &Call,
     ) -> Result<(Vec<String>, Duration), &'static str> {
-        if call
-            .arguments
-            .values()
-            .any(|v| v.provenance().policy().is_private() || v.provenance().policy().is_unknown())
-        {
+        if call.arguments.values().any(|v| {
+            v.provenance().policy().is_confidential() || v.provenance().policy().is_unknown()
+        }) {
             return Err(
-                "Remote exec does not support private arguments or unknown-policy arguments; argv can be retained by the remote service",
+                "Remote exec does not support confidential arguments or unknown-policy arguments; argv can be retained by the remote service",
             );
         }
         let mut argv = self.argv.clone();

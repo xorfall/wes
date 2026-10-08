@@ -23,3 +23,5 @@ mod ssh;
 pub mod storage;
 pub mod type_sources;
 pub mod workspaces;
+
+pub mod protected_storage;

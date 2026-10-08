@@ -114,6 +114,7 @@ pub struct ObjectFiles {
     objects: Dir,
     pending: Dir,
     store: String,
+    protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
     limits: ObjectLimits,
     used_bytes: u64,
     entries: usize,
@@ -189,7 +190,15 @@ impl ObjectFiles {
                     options.read(true);
                     let file = dir.open_with(&name, &options)?;
                     if metadata.len() < (HEADER + CHECKSUM) as u64
-                        || metadata.len() > (limit + HEADER + CHECKSUM) as u64
+                        || metadata.len()
+                            > (limit
+                                + HEADER
+                                + CHECKSUM
+                                + self
+                                    .protection
+                                    .as_ref()
+                                    .map_or(0, |_| crate::protected_storage::OVERHEAD))
+                                as u64
                     {
                         return Err(ObjectError::Corrupt);
                     }
@@ -197,7 +206,8 @@ impl ObjectFiles {
                     file.take(metadata.len() + 1).read_to_end(&mut bytes)?;
                     if bytes.len() as u64 != metadata.len()
                         || &bytes[..8] != MAGIC
-                        || u16::from_le_bytes(bytes[8..10].try_into().unwrap()) != 1
+                        || u16::from_le_bytes(bytes[8..10].try_into().unwrap())
+                            != if self.protection.is_some() { 2 } else { 1 }
                         || bytes[10] != kind as u8
                         || &bytes[11..27] != Uuid::parse_str(&self.store).unwrap().as_bytes()
                         || &bytes[27..43] != Uuid::parse_str(id).unwrap().as_bytes()
@@ -242,6 +252,14 @@ impl ObjectFiles {
         durability: Durability,
         limits: ObjectLimits,
     ) -> Result<Self, ObjectError> {
+        Self::open_protected(path, durability, limits, None)
+    }
+    pub fn open_protected(
+        path: &Path,
+        durability: Durability,
+        limits: ObjectLimits,
+        protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
+    ) -> Result<Self, ObjectError> {
         if limits.disk_bytes == 0 || limits.inventory_entries < 8 {
             return Err(ObjectError::Limit("configuration"));
         }
@@ -252,6 +270,7 @@ impl ObjectFiles {
                 _ => ObjectError::Ownership,
             },
         )?;
+        crate::protected_storage::check_mode(&directory, "datasets", protection.as_deref())?;
         let objects = child(&directory, "objects")?;
         let pending = child(&directory, "pending")?;
         let store = store_identity(&directory)?;
@@ -264,6 +283,7 @@ impl ObjectFiles {
             objects,
             pending,
             store,
+            protection,
             limits,
             used_bytes,
             entries,
@@ -339,7 +359,10 @@ impl ObjectFiles {
         manifest: &Manifest,
         policy: &FlowPolicy,
     ) -> Result<ObjectRef, ObjectError> {
-        check_policy(policy)?;
+        self.check_policy(policy)?;
+        if manifest.policy() != *policy {
+            return Err(FormatError::Restricted.into());
+        }
         if manifest.store != self.store {
             return Err(ObjectError::Corrupt);
         }
@@ -357,6 +380,7 @@ impl ObjectFiles {
             &self.read(Kind::Manifest, reference, self.limits.manifest.bytes, work)?,
             self.limits.manifest,
         )?;
+        self.check_policy(&manifest.policy())?;
         if manifest.store != self.store {
             return Err(ObjectError::Corrupt);
         }
@@ -367,9 +391,10 @@ impl ObjectFiles {
         checkpoint: &Checkpoint,
         policy: &FlowPolicy,
     ) -> Result<ObjectRef, ObjectError> {
-        check_policy(policy)?;
+        self.check_policy(policy)?;
         self.validate_checkpoint(checkpoint, None)?;
-        if checkpoint.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
+        if checkpoint.policy() != *policy
+            || checkpoint.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
             || checkpoint.dataset_reads
                 != policy.dataset_reads().iter().cloned().collect::<Vec<_>>()
         {
@@ -407,12 +432,17 @@ impl ObjectFiles {
         work: Option<&wes_engine::storage::datasets::ReadWork>,
     ) -> Result<(), ObjectError> {
         checkpoint.encode(self.limits.checkpoint)?;
+        self.check_policy(&checkpoint.policy())?;
         if checkpoint.store != self.store {
             return Err(ObjectError::Corrupt);
         }
         for snapshot in [&checkpoint.state, &checkpoint.context] {
             let schema = self.read_schema(&snapshot.schema, work)?;
             let value = snapshot.value(&schema, self.limits.checkpoint)?;
+            self.check_policy(value.provenance().policy())?;
+            if checkpoint.policy().join(value.provenance().policy()) != checkpoint.policy() {
+                return Err(FormatError::Restricted.into());
+            }
             if value
                 .provenance()
                 .policy()
@@ -450,7 +480,7 @@ impl ObjectFiles {
         node: &IndexNode,
         policy: &FlowPolicy,
     ) -> Result<ObjectRef, ObjectError> {
-        check_policy(policy)?;
+        self.check_policy(policy)?;
         if node.store != self.store {
             return Err(ObjectError::Corrupt);
         }
@@ -481,7 +511,7 @@ impl ObjectFiles {
         entry: IndexEntry,
         policy: &FlowPolicy,
     ) -> Result<(ObjectRef, IndexSummary), ObjectError> {
-        check_policy(policy)?;
+        self.check_policy(policy)?;
         if !valid_uuid(dataset) {
             return Err(ObjectError::Corrupt);
         }
@@ -599,7 +629,7 @@ impl ObjectFiles {
         schema: &ResolvedContractBundle,
         policy: &FlowPolicy,
     ) -> Result<ObjectRef, ObjectError> {
-        check_policy(policy)?;
+        self.check_policy(policy)?;
         // Independent storage validation, even for a locally captured bundle.
         ResolvedContractBundle::decode(schema.encoded(), self.limits.schema)?;
         self.publish(Kind::Schema, schema.encoded())
@@ -611,11 +641,17 @@ impl ObjectFiles {
         schema: &ResolvedContractBundle,
         policy: &FlowPolicy,
     ) -> Result<ObjectRef, ObjectError> {
-        check_policy(policy)?;
+        self.check_policy(policy)?;
         if header.store != self.store {
             return Err(ObjectError::Corrupt);
         }
         ResolvedContractBundle::decode(schema.encoded(), self.limits.schema)?;
+        if records
+            .iter()
+            .any(|r| policy.join(r.value.provenance().policy()) != *policy)
+        {
+            return Err(FormatError::Restricted.into());
+        }
         let bytes = encode_segment(header, records, schema, self.limits.segment)?;
         self.publish(Kind::Segment, &bytes)
     }
@@ -663,6 +699,19 @@ impl ObjectFiles {
         if self.uncertain {
             return Err(ObjectError::Unconfirmed);
         }
+        let id = Uuid::new_v4();
+        let sealed;
+        let payload = match &self.protection {
+            Some(p) => {
+                sealed = p.seal(
+                    &format!("dataset/{}/{}", self.store, kind.extension()),
+                    &id.to_string(),
+                    payload,
+                )?;
+                sealed.as_slice()
+            }
+            None => payload,
+        };
         let bytes = payload
             .len()
             .checked_add(HEADER + CHECKSUM)
@@ -683,11 +732,17 @@ impl ObjectFiles {
                     .is_some_and(|total| total <= self.limits.disk_bytes)
             })
             .ok_or(ObjectError::Limit("disk"))?;
-        let id = Uuid::new_v4();
         let store = Uuid::parse_str(&self.store).map_err(|_| ObjectError::Corrupt)?;
         let mut prefix = Vec::with_capacity(HEADER);
         prefix.extend_from_slice(MAGIC);
-        prefix.extend_from_slice(&1u16.to_le_bytes());
+        prefix.extend_from_slice(
+            &(if self.protection.is_some() {
+                2u16
+            } else {
+                1u16
+            })
+            .to_le_bytes(),
+        );
         prefix.push(kind as u8);
         prefix.extend_from_slice(store.as_bytes());
         prefix.extend_from_slice(id.as_bytes());
@@ -761,7 +816,14 @@ impl ObjectFiles {
             return Err(ObjectError::Corrupt);
         }
         let maximum = limit
-            .checked_add(HEADER + CHECKSUM)
+            .checked_add(
+                HEADER
+                    + CHECKSUM
+                    + self
+                        .protection
+                        .as_ref()
+                        .map_or(0, |_| crate::protected_storage::OVERHEAD),
+            )
             .ok_or(ObjectError::Limit("object"))?;
         if reference.bytes < (HEADER + CHECKSUM) as u64 {
             return Err(ObjectError::Corrupt);
@@ -805,7 +867,8 @@ impl ObjectFiles {
             return Err(ObjectError::Corrupt);
         }
         if &bytes[..8] != MAGIC
-            || u16::from_le_bytes(bytes[8..10].try_into().unwrap()) != 1
+            || u16::from_le_bytes(bytes[8..10].try_into().unwrap())
+                != if self.protection.is_some() { 2 } else { 1 }
             || bytes[10] != kind as u8
             || bytes[11..27] != *Uuid::parse_str(&self.store).unwrap().as_bytes()
             || bytes[27..43] != *Uuid::parse_str(&reference.id).unwrap().as_bytes()
@@ -819,14 +882,35 @@ impl ObjectFiles {
         if digest.as_slice() != &bytes[end..] || format!("sha256:{digest:x}") != reference.digest {
             return Err(ObjectError::Corrupt);
         }
-        Ok(bytes[HEADER..end].to_vec())
+        match &self.protection {
+            Some(p) => Ok(p
+                .open(
+                    &format!("dataset/{}/{}", self.store, kind.extension()),
+                    &reference.id,
+                    &bytes[HEADER..end],
+                    limit,
+                )?
+                .to_vec()),
+            None => Ok(bytes[HEADER..end].to_vec()),
+        }
     }
 }
-fn check_policy(policy: &FlowPolicy) -> Result<(), ObjectError> {
-    if policy.is_private() || policy.is_unknown() {
-        return Err(FormatError::Restricted.into());
+impl ObjectFiles {
+    pub(crate) fn protected(&self) -> bool {
+        self.protection.is_some()
     }
-    Ok(())
+    pub(crate) fn protection(&self) -> Option<&crate::protected_storage::ObjectProtection> {
+        self.protection.as_deref()
+    }
+    pub(crate) fn check_policy(&self, policy: &FlowPolicy) -> Result<(), ObjectError> {
+        if policy.is_private()
+            || policy.is_unknown()
+            || (policy.is_confidential() && self.protection.is_none())
+        {
+            return Err(FormatError::Restricted.into());
+        }
+        Ok(())
+    }
 }
 fn child(directory: &OwnedDirectory, name: &str) -> Result<Dir, ObjectError> {
     let mut builder = DirBuilder::new();

@@ -405,7 +405,7 @@ impl Value {
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.provenance.policy().is_private() {
+        if self.provenance.policy().is_confidential() {
             f.write_str("Value(private; payload and attribution withheld)")
         } else {
             f.debug_struct("Value")

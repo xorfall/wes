@@ -41,7 +41,7 @@ impl fmt::Display for ValueHandle {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("private values cannot be retained or exported")]
+    #[error("the output policy does not permit this storage or export operation")]
     Restricted,
     #[error("a value must be materialized before retention")]
     NonMaterialized,
@@ -183,6 +183,10 @@ pub struct EvictionBatch {
 
 /// Synchronous I/O port, called on storage workers rather than the runtime state owner.
 pub trait ValueStore: Send {
+    /// Authenticated local storage; does not grant retention or export.
+    fn supports_confidential(&self) -> bool {
+        false
+    }
     /// Minimum persistence established by a successful `keep`. Unspecified/memory stores MUST
     /// remain volatile; a journal receipt cannot make their retained bytes durable.
     fn retained_persistence(&self) -> crate::history::Persistence {

@@ -11,7 +11,7 @@ use wes_core::{Provenance, Shape};
 // It is not an authority proof; retained-result history and definition identity remain required.
 pub(crate) fn input_digest(value: &Value) -> String {
     use sha2::{Digest, Sha256};
-    if value.provenance().policy().is_private()
+    if value.provenance().policy().is_confidential()
         || crate::value_size::value_charge(value, 8 * 1024 * 1024).is_none()
     {
         return "0".repeat(64);
@@ -204,7 +204,7 @@ impl ViewRecord {
         if uuid::Uuid::parse_str(&self.id).is_err()
             || self.value.shape() != &Shape::Unknown
             || !self.value.data().is_storable_snapshot()
-            || self.value.provenance().policy().is_private()
+            || !public_input(&self.value)
             || crate::value_size::value_charge(&self.value, 4 * 1024 * 1024).is_none()
         {
             return Err(InvalidRecord("invalid view checkpoint"));
@@ -605,20 +605,20 @@ impl Workspace {
                     _ if s.query.is_some() => Data::List(vec![]),
                     None => Data::List(vec![]),
                     Some(input) => match &input.binding {
-                        InputBinding::Unlinked => Data::List(vec![match input
-                            .value
-                            .as_ref()
-                            .filter(|v| !v.provenance().policy().is_private())
-                        {
-                            Some(value) => record([
-                                ("kind", text("unlinked")),
-                                ("constant", value.data().clone()),
-                            ]),
-                            None => record([
-                                ("kind", text("unlinked")),
-                                ("unavailable", Data::Bool(true)),
-                            ]),
-                        }]),
+                        InputBinding::Unlinked => {
+                            Data::List(vec![
+                                match input.value.as_ref().filter(|v| public_input(v)) {
+                                    Some(value) => record([
+                                        ("kind", text("unlinked")),
+                                        ("constant", value.data().clone()),
+                                    ]),
+                                    None => record([
+                                        ("kind", text("unlinked")),
+                                        ("unavailable", Data::Bool(true)),
+                                    ]),
+                                },
+                            ])
+                        }
                         InputBinding::Current(source) => {
                             let current = self.runtime().graph().node(&source.output.node);
                             let valid = current
@@ -626,7 +626,7 @@ impl Workspace {
                                 && !self
                                     .runtime()
                                     .value_of(&source.output.node)
-                                    .is_some_and(|v| v.provenance().policy().is_private());
+                                    .is_some_and(|v| !public_input(v));
                             Data::List(vec![record([
                                 ("node", text(source.output.node.as_str())),
                                 ("port", text(port_name(source.output.port))),
@@ -839,7 +839,7 @@ impl Workspace {
                                     _ => None,
                                 },
                             }
-                            .filter(|v| !v.provenance().policy().is_private())
+                            .filter(|v| public_input(v))
                             .and_then(|v| project(v, &path))
                         } else {
                             None
@@ -895,7 +895,7 @@ impl Workspace {
                                     .flatten()
                                     .filter(|v| v.retention == crate::storage::Retention::Protected)
                                     .map(|v| v.loaded.value)
-                                    .filter(|v| !v.provenance().policy().is_private())
+                                    .filter(|v| public_input(v))
                                     .filter(|v| {
                                         if let Some(charge) =
                                             crate::value_size::value_charge(v, read_budget)
@@ -1180,43 +1180,52 @@ mod tests {
         );
     }
     #[test]
-    fn checkpoint_omits_private_payloads_and_retirement_prunes_owned_view_state() {
-        let mut workspace = Workspace::local(crate::providers::LocalScope::new("fixture").unwrap());
-        let card = wes_views::named("Metric").unwrap();
-        let private = Value::new(
-            card.input().shape(),
-            record([("view", text("metric")), ("value", Data::Int(987654321))]),
-            Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
-        )
-        .unwrap();
-        let id = NodeId::new("card").unwrap();
-        let child = workspace
-            .views
-            .create(
-                id.clone(),
-                "Metric",
-                &card.digest,
-                Some(Input::constant(private)),
+    fn checkpoint_omits_restricted_payloads_and_retirement_prunes_owned_view_state() {
+        use wes_core::flow::{FlowPolicy, Residence};
+        for policy in [
+            FlowPolicy::default().private(),
+            FlowPolicy::default().confidential(Residence::Temporary),
+            FlowPolicy::default().confidential(Residence::Retainable),
+            FlowPolicy::default().unknown(),
+        ] {
+            let mut workspace =
+                Workspace::local(crate::providers::LocalScope::new("fixture").unwrap());
+            let card = wes_views::named("Metric").unwrap();
+            let private = Value::new(
+                card.input().shape(),
+                record([("view", text("metric")), ("value", Data::Int(987654321))]),
+                Provenance::default().with_policy(&policy),
             )
             .unwrap();
-        let dashboard = wes_views::named("Dashboard").unwrap();
-        let parent = workspace
-            .views
-            .create(
-                NodeId::new("board").unwrap(),
-                "Dashboard",
-                &dashboard.digest,
-                None,
-            )
-            .unwrap();
-        workspace.views.connect(&child, &parent, None, 0).unwrap();
-        let mut saved = workspace.capture_views().unwrap();
-        assert!(!format!("{:?}", saved.value.data()).contains("987654321"));
-        assert!(format!("{:?}", saved.value.data()).contains("unavailable"));
-        saved.retire(&[id].into()).unwrap();
-        let parsed = parse(&saved.value).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert!(parsed[0].members["members"].is_empty());
-        assert_eq!(parsed[0].revision, 2);
+            let id = NodeId::new("card").unwrap();
+            let child = workspace
+                .views
+                .create(
+                    id.clone(),
+                    "Metric",
+                    &card.digest,
+                    Some(Input::constant(private)),
+                )
+                .unwrap();
+            let dashboard = wes_views::named("Dashboard").unwrap();
+            let parent = workspace
+                .views
+                .create(
+                    NodeId::new("board").unwrap(),
+                    "Dashboard",
+                    &dashboard.digest,
+                    None,
+                )
+                .unwrap();
+            workspace.views.connect(&child, &parent, None, 0).unwrap();
+            let mut saved = workspace.capture_views().unwrap();
+            assert!(!format!("{:?}", saved.value.data()).contains("987654321"));
+            assert!(format!("{:?}", saved.value.data()).contains("unavailable"));
+            saved.retire(&[id].into()).unwrap();
+            let parsed = parse(&saved.value).unwrap();
+            assert_eq!(parsed.len(), 1);
+            assert!(parsed[0].members["members"].is_empty());
+            assert_eq!(parsed[0].revision, 2);
+        }
     }
 }

@@ -344,10 +344,17 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
                 ));
             }
         };
-        let private_output = match bind.get("output").map(text).transpose()? {
-            None | Some("public") => false,
-            Some("private") => true,
-            _ => return Err(error("ENV001", "output must be public or private")),
+        let output_policy = match bind.get("output").map(text).transpose()? {
+            None | Some("public") => crate::flow::OutputPolicy::Public,
+            Some("private") => crate::flow::OutputPolicy::Private,
+            Some("confidential-temporary") => crate::flow::OutputPolicy::ConfidentialTemporary,
+            Some("confidential") => crate::flow::OutputPolicy::Confidential,
+            _ => {
+                return Err(error(
+                    "ENV001",
+                    "output must be public, private, confidential-temporary or confidential",
+                ));
+            }
         };
         let transport = bind.get("transport").map(text).transpose()?;
         if let Some(transport) = transport {
@@ -450,7 +457,7 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
                         Ok(hash.to_owned())
                     })
                     .transpose()?,
-                private_output,
+                output_policy,
                 source: SourceKey::new(kind, location)?,
                 target: if binding_mode != BindingMode::Explicit {
                     "local".into()

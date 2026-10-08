@@ -15,7 +15,8 @@ impl DatasetStore {
     ) -> Result<ObjectRef, DatasetError> {
         if let Some(followed) = &state.followed_source {
             let source = self.read_exact(&followed.prefix)?;
-            if source.kind != super::super::DatasetKind::EventLog
+            if policy.join(&source.policy()) != *policy
+                || source.kind != super::super::DatasetKind::EventLog
                 || source
                     .recording
                     .as_ref()
@@ -140,6 +141,7 @@ impl DatasetStore {
             duration: state.duration.clone(),
             finish_applied: state.finish_applied,
             lifecycle: manifest.lifecycle,
+            protection: manifest.protection,
             origins: manifest.origins.clone(),
             dataset_reads: manifest.dataset_reads.clone(),
         };
@@ -214,6 +216,13 @@ impl DatasetStore {
         manifest: &Manifest,
         reference: &ObjectRef,
     ) -> Result<Vec<ReferenceRootChange>, DatasetError> {
+        // Explicit durable work may protect an eligible prefix, but never raise
+        // a temporary input's residence ceiling through an internal root.
+        let retention = if manifest.policy().allows_retention() {
+            RootRetention::Protected
+        } else {
+            RootRetention::Temporary
+        };
         if manifest.recording.is_some() {
             // Record is an explicit protected-retention intent. Advance its exact
             // prefix with the manifest, never through a later Keep acknowledgement.
@@ -233,7 +242,7 @@ impl DatasetStore {
                     .ok_or(DatasetError::Limit("recording root generation"))?,
                 prefixes: vec![descriptor(reference, manifest)?],
                 captures: vec![],
-                retention: RootRetention::Protected,
+                retention,
                 transaction: manifest.transaction.clone(),
             };
             self.check_reference_successor(&change, previous)?;
@@ -287,7 +296,7 @@ impl DatasetStore {
                     digest: saved.bindings.source_digest.clone(),
                     bytes: saved.bindings.source_bytes,
                 }],
-                retention: RootRetention::Protected,
+                retention,
                 transaction: manifest.transaction.clone(),
             };
             self.check_reference_successor(&change, previous)?;

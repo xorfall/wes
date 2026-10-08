@@ -16,6 +16,9 @@ impl<S> PolicyValues<S> {
     }
 }
 impl<S: ValueStore> ValueStore for PolicyValues<S> {
+    fn supports_confidential(&self) -> bool {
+        self.backing.supports_confidential()
+    }
     fn retained_persistence(&self) -> crate::history::Persistence {
         self.backing.retained_persistence()
     }

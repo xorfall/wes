@@ -12,9 +12,18 @@ use std::{
 use wes_core::{Data, Primitive, Shape, Value};
 
 pub fn encode_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError> {
-    if value.provenance().policy().is_private() {
+    if value.provenance().policy().is_confidential() {
         return Err(CodecError::Invalid(
             "private values cannot be encoded for retention".into(),
+        ));
+    }
+    encode_protected_value(value, limits)
+}
+/// Operation-local encoding for authenticated storage, never a plaintext publication API.
+pub(crate) fn encode_protected_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError> {
+    if value.provenance().policy().is_private() {
+        return Err(CodecError::Invalid(
+            "memory-only values cannot be persisted".into(),
         ));
     }
     let nodes = limits
@@ -387,6 +396,8 @@ impl Serialize for Stored<'_> {
             struct Policy<'a> {
                 origins: &'a std::collections::BTreeSet<String>,
                 unknown: bool,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                confidential: Option<&'static str>,
                 #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
                 dataset_reads: &'a std::collections::BTreeSet<wes_core::flow::DatasetReadOrigin>,
             }
@@ -396,6 +407,15 @@ impl Serialize for Stored<'_> {
                 &Policy {
                     origins: policy.origins(),
                     unknown: policy.is_unknown(),
+                    confidential: policy
+                        .is_confidential()
+                        .then_some(match policy.residence() {
+                            wes_core::flow::Residence::Temporary => "temporary",
+                            wes_core::flow::Residence::Retainable => "retainable",
+                            wes_core::flow::Residence::Memory => {
+                                return Err(serde::ser::Error::custom("memory-only value"));
+                            }
+                        }),
                     dataset_reads: policy.dataset_reads(),
                 },
             )?;

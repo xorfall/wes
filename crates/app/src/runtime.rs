@@ -33,6 +33,8 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 pub struct RuntimeOptions {
     /// Private data directory holding workspaces and the tiered value store.
     pub home: PathBuf,
+    /// Startup-only, separately provisioned key file. None selects ordinary storage.
+    pub storage_key_file: Option<PathBuf>,
     /// Base directory for type sources, importers and shell completion.
     pub base: PathBuf,
     pub workspace: WorkspaceName,
@@ -56,6 +58,7 @@ impl RuntimeOptions {
     pub fn new(home: PathBuf, base: PathBuf) -> Self {
         Self {
             home,
+            storage_key_file: None,
             base,
             workspace: WorkspaceName::new("default".into()).expect("valid default workspace name"),
             concurrency: NonZeroUsize::new(wes_budgets::get("execution.operations") as usize)
@@ -89,6 +92,7 @@ pub struct LaunchedRuntime {
 pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
     let RuntimeOptions {
         home,
+        storage_key_file,
         base,
         workspace,
         concurrency,
@@ -111,6 +115,19 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
             .await??;
     let home = data_home.path.clone();
     let home_identity = data_home.identity.id.clone();
+    let protection = match storage_key_file {
+        Some(path) => {
+            let key_home = home.clone();
+            let key_identity = home_identity.clone();
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    crate::storage_key::load(&path, &key_home, &key_identity)
+                })
+                .await??,
+            )
+        }
+        None => None,
+    };
     let environment_base = base.clone();
     let documents = Arc::new(crate::api_library::ApiLibrary::new(home.clone()));
     let spec_documents = documents.clone();
@@ -154,11 +171,19 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
         tokio::task::spawn_blocking(move || {
             let credentials = Arc::new(MemoryCredentials::new(CredentialLimits::default()));
             Ok::<_, Error>((
-                TieredValues::open(&live, &archive, Limits::default(), durability, live_budget)?,
-                DatasetStore::open(
+                TieredValues::open_protected(
+                    &live,
+                    &archive,
+                    Limits::default(),
+                    durability,
+                    live_budget,
+                    protection.clone(),
+                )?,
+                DatasetStore::open_protected(
                     &dataset_directory,
                     durability,
                     DatasetStoreLimits::default(),
+                    protection,
                 )?,
                 Arc::new(FileTypeSources::new(&wiring_base)?.with_archive(spec_sources.clone())),
                 Arc::new(

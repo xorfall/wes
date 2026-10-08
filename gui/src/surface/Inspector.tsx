@@ -109,6 +109,7 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
     <div className="inspector-content">
       <div role="tabpanel" aria-label="inspect" hidden={tab!=="inspect"}>
         {node?.private && <p className="mono-warn">Private · memory only · readable in this workspace</p>}
+        {node?.confidential && !node.private && <p className="mono-warn">Confidential · encrypted storage · {node.residence === "temporary" ? "temporary only; Keep unavailable" : "Keep explicitly to retain"} · terminal and AI export unavailable</p>}
         <RecordProgress node={node} />
         <RecordingControls node={node} />
         <LocalReconciliationControls node={node} />

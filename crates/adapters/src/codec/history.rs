@@ -513,6 +513,8 @@ impl From<LocationWire> for wes_core::SourceLocation {
 #[serde(deny_unknown_fields)]
 struct ErrorPolicy {
     origins: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confidential: Option<wes_core::flow::Residence>,
     private: bool,
     unknown: bool,
 }
@@ -1205,6 +1207,8 @@ fn error_wire(error: &ErrorValue, limits: Limits) -> Result<ErrorWire<'_>, Codec
         policy: Some(ErrorPolicy {
             origins: error.policy().origins().iter().cloned().collect(),
             private: error.policy().is_private(),
+            confidential: (error.policy().is_confidential() && !error.policy().is_private())
+                .then_some(error.policy().residence()),
             unknown: error.policy().is_unknown(),
         }),
         id: error.id().as_str().into(),
@@ -1230,6 +1234,9 @@ fn read_error(error: ErrorWire<'_>) -> Result<ErrorValue, CodecError> {
         }
         for origin in wire.origins {
             policy = policy.from_origin(origin);
+        }
+        if let Some(residence) = wire.confidential {
+            policy = policy.confidential(residence);
         }
         if wire.private {
             policy = policy.private();

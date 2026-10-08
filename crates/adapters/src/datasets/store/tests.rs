@@ -382,6 +382,7 @@ fn create_with_schema(store: &mut DatasetStore, schema: &ResolvedContractBundle)
             Durability::FileAndDirectory => Persistence::FileAndDirectorySynced,
         },
         authorization_generation: 1,
+        protection: None,
         origins: vec![],
         dataset_reads: vec![],
     }
@@ -918,6 +919,7 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
         },
         finish_applied: false,
         lifecycle: manifest.lifecycle,
+        protection: manifest.protection,
         origins: vec![],
         dataset_reads: vec![],
     }
@@ -3722,4 +3724,161 @@ fn tagged_index_rejects_a_foreign_stream_before_cached_proof_or_inventory_admiss
     let mut missing = serde_json::to_value(&node).unwrap();
     missing.as_object_mut().unwrap().remove("stream");
     assert!(serde_json::from_value::<crate::datasets::IndexNode>(missing).is_err());
+}
+
+#[test]
+fn encrypted_dataset_reopens_rotates_and_preserves_read_and_retention_policy() {
+    use crate::protected_storage::ObjectProtection;
+    use wes_core::flow::Residence;
+    use wes_engine::storage::datasets::DatasetStorage;
+    let tmp = home();
+    let identity = uuid::Uuid::new_v4().to_string();
+    let key = ObjectProtection::new(&identity, [5; 32]).unwrap();
+    let open = |key| {
+        DatasetStore::open_protected(tmp.path(), Durability::File, StoreLimits::default(), key)
+    };
+    let mut store = open(Some(key.clone())).unwrap();
+    let policy = FlowPolicy::default().confidential(Residence::Temporary);
+    let mut manifest = create(&mut store);
+    manifest.protection = Some(Residence::Temporary);
+    manifest.source.identity = "dataset-confidential-sentinel".into();
+    append(&mut store, &mut manifest, 3);
+    store.commit(&manifest, &policy).unwrap();
+    let reference = store.descriptor(&manifest.dataset).unwrap();
+    assert_eq!(
+        DatasetStorage::inspect(&store, &reference)
+            .unwrap()
+            .policy
+            .residence(),
+        Residence::Temporary
+    );
+    let tx = uuid::Uuid::new_v4().to_string();
+    let root = ReferenceRootChange {
+        root: uuid::Uuid::new_v4().to_string(),
+        kind: RootKind::Keep,
+        owner_dataset: None,
+        owner_workspace: None,
+        expected_generation: 0,
+        generation: 1,
+        prefixes: vec![reference.clone()],
+        captures: vec![],
+        retention: RootRetention::Protected,
+        transaction: tx.clone(),
+    };
+    assert!(
+        store
+            .update_references(&tx, &[root.clone()], &policy)
+            .is_err()
+    );
+    assert!(
+        store
+            .update_references(&tx, &[root], &FlowPolicy::default())
+            .is_err()
+    );
+    let mut weakened = next(&store, &manifest);
+    weakened.protection = None;
+    assert!(store.commit(&weakened, &FlowPolicy::default()).is_err());
+    // Compact the authenticated append stream, then re-open the exact same committed prefix.
+    store.rotate().unwrap();
+    drop(store);
+    fn no_plaintext(path: &std::path::Path) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                no_plaintext(&p);
+            } else {
+                assert!(
+                    !std::fs::read(p)
+                        .unwrap()
+                        .windows(29)
+                        .any(|w| w == b"dataset-confidential-sentinel")
+                );
+            }
+        }
+    }
+    no_plaintext(tmp.path());
+    assert!(open(None).is_err());
+    assert!(open(Some(ObjectProtection::new(&identity, [6; 32]).unwrap())).is_err());
+    let mut restored = open(Some(key.clone())).unwrap();
+    assert_eq!(
+        restored
+            .page(&reference, 0, 10, PageLimits::default())
+            .unwrap()
+            .rows
+            .len(),
+        3
+    );
+    assert!(
+        DatasetStorage::inspect(&restored, &reference)
+            .unwrap()
+            .policy
+            .is_confidential()
+    );
+    restored.withdraw_owned(&reference).unwrap();
+    drop(restored);
+    let restored = open(Some(key)).unwrap();
+    assert!(
+        restored
+            .page(&reference, 0, 10, PageLimits::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn encrypted_catalog_reconciles_uncertainty_and_torn_tail_but_refuses_authenticated_corruption() {
+    use crate::protected_storage::ObjectProtection;
+    use wes_core::flow::Residence;
+    let tmp = home();
+    let key = ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [8; 32]).unwrap();
+    let open = || {
+        DatasetStore::open_protected(
+            tmp.path(),
+            Durability::File,
+            StoreLimits::default(),
+            Some(key.clone()),
+        )
+    };
+    let policy = FlowPolicy::default().confidential(Residence::Retainable);
+    let mut store = open().unwrap();
+    let mut manifest = create(&mut store);
+    manifest.protection = Some(Residence::Retainable);
+    append(&mut store, &mut manifest, 2);
+    assert!(matches!(
+        store.commit_with_sync(&manifest, &policy, |_| Err(io::Error::other(
+            "synthetic sync failure"
+        ))),
+        Err(DatasetError::CommitUnconfirmed { .. })
+    ));
+    assert!(store.prepare().is_err());
+    let Reconciliation::Committed(receipt) = store.reconcile(&manifest.transaction).unwrap() else {
+        panic!("complete encrypted frame was not recovered")
+    };
+    assert_eq!(receipt.records, 2);
+    let committed_bytes = store.charged_bytes();
+    assert_eq!(store.commit(&manifest, &policy).unwrap(), receipt);
+    assert_eq!(store.charged_bytes(), committed_bytes);
+    drop(store);
+    let active = tmp.path().join("catalog/active");
+    let mut bytes = std::fs::read(&active).unwrap();
+    let valid_length = bytes.len();
+    // A partial physical frame has no commit acknowledgement and cannot publish a root.
+    bytes.extend_from_slice(&[100, 0, 0, 0, 1]);
+    std::fs::write(&active, &bytes).unwrap();
+    let mut store = open().unwrap();
+    assert_eq!(store.root(&manifest.dataset).unwrap().unwrap().1, manifest);
+    assert!(store.prepare().is_err());
+    assert!(matches!(
+        store.reconcile(&manifest.transaction).unwrap(),
+        Reconciliation::Committed(_)
+    ));
+    assert_eq!(
+        std::fs::metadata(&active).unwrap().len(),
+        valid_length as u64
+    );
+    drop(store);
+    // A complete frame with an invalid authentication tag is corruption, not a torn append.
+    bytes.truncate(valid_length);
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&active, bytes).unwrap();
+    assert!(open().is_err());
 }

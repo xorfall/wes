@@ -52,7 +52,7 @@ impl InlineSnapshot {
         let mut work = limits.validation_work;
         validate_value(value, schema.root(), &schema.root().shape(), &mut work)?;
         validate_reference(&schema_reference)?;
-        let bytes = codec::encode_value(value, limits.inline)?;
+        let bytes = codec::encode_protected_value(value, limits.inline)?;
         Ok(Self {
             schema: schema_reference,
             schema_digest: schema.digest().into(),
@@ -139,10 +139,26 @@ pub struct Checkpoint {
     pub duration: wes_engine::storage::datasets::AnalysisDuration,
     pub finish_applied: bool,
     pub lifecycle: Lifecycle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<wes_core::flow::Residence>,
     pub origins: Vec<String>,
     pub dataset_reads: Vec<wes_core::flow::DatasetReadOrigin>,
 }
 impl Checkpoint {
+    pub(crate) fn policy(&self) -> wes_core::flow::FlowPolicy {
+        let p = self
+            .origins
+            .iter()
+            .fold(wes_core::flow::FlowPolicy::default(), |p, o| {
+                p.from_origin(o)
+            });
+        let p = self.protection.map_or(p.clone(), |r| p.confidential(r));
+        self.dataset_reads
+            .iter()
+            .cloned()
+            .fold(p, |p, o| p.with_dataset_read(o))
+    }
+
     pub(super) fn bindings_extend(&self, prior: &Self) -> bool {
         let follow = match (&self.followed_source, &prior.followed_source) {
             (None, None) => return self.bindings == prior.bindings,

@@ -78,7 +78,7 @@ impl TraceRecord {
         if self.node.as_str().len() > 256
             || self.run.as_str().len() > 256
             || value_charge(&self.value, max_trace_bytes()).is_none()
-            || self.value.provenance().policy().is_private()
+            || self.value.provenance().policy().is_confidential()
             || self.value.provenance().policy().is_unknown()
         {
             return false;

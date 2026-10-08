@@ -79,7 +79,7 @@ fn input_preview(
             text.push_str(&format!("{}.{}", reference(output), fields.join(".")))
         }
         Input::Literal(value)
-            if value.provenance().policy().is_private()
+            if value.provenance().policy().is_confidential()
                 || value.provenance().policy().is_unknown() =>
         {
             text.push_str("[private value]")
@@ -543,9 +543,9 @@ pub(super) fn build(
                     .or_else(|| execution.values.get(node.id()))
             {
                 state = if value.provenance().policy().is_private() {
-                    json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":{}, "cautions":["Private · memory only · unavailable after restart"], "kept":false,"private":true})
+                    json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":{}, "cautions":["Private · memory only · unavailable after restart"], "kept":false,"private":true,"confidential":true,"residence":"memory"})
                 } else {
-                    json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":value.provenance().facts(), "cautions":value.provenance().cautions(), "kept":kept,"retention":retention,"private":false})
+                    json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":value.provenance().facts(), "cautions":value.provenance().cautions(), "kept":kept,"retention":retention,"private":false,"confidential":value.provenance().policy().is_confidential(),"residence":value.provenance().policy().residence()})
                 };
             }
             if let Some(last) = stopped {

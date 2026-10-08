@@ -1598,7 +1598,7 @@ impl Actor {
                                     environment.is_protected()
                                 ));
                                 for (alias, import) in environment.imports() {
-                                    preview.push_str(&format!("  {alias}: origin={} target={} endpoint={} private={} credential-refs={:?}\n", import.origin().environment, import.target().name(), import.endpoint().unwrap_or("descriptor-defined"), import.declaration().private_output, import.credential_refs()));
+                                    preview.push_str(&format!("  {alias}: origin={} target={} endpoint={} output={} credential-refs={:?}\n", import.origin().environment, import.target().name(), import.endpoint().unwrap_or("descriptor-defined"), import.declaration().output_policy.as_str(), import.credential_refs()));
                                 }
                             }
                             if preview.len() > 256 * 1024 {

@@ -102,8 +102,10 @@ impl BoundCalculation {
     pub fn environments(&self) -> impl Iterator<Item = &wes_core::environments::Binding> {
         self.calls.values().filter_map(BoundCall::environment)
     }
-    pub(crate) fn private_output(&self) -> bool {
-        self.calls.values().any(BoundCall::private_output)
+    pub(crate) fn output_policy(&self) -> wes_core::flow::FlowPolicy {
+        self.calls
+            .values()
+            .fold(Default::default(), |p, call| p.join(&call.output_policy()))
     }
     pub(crate) fn bind(
         compiled: impl Into<Arc<Compiled>>,

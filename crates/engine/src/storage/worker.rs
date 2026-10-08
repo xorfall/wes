@@ -79,6 +79,8 @@ pub struct StoreWorker {
     budget: Arc<Semaphore>,
     limits: StoreWorkerLimits,
     dataset_read_charge: Option<u32>,
+    confidential_values: bool,
+    confidential_datasets: bool,
     dataset_access: tokio::sync::watch::Receiver<super::datasets::DatasetAccess>,
     dataset_changes: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>>,
 }
@@ -227,7 +229,9 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         initial_admission: bool,
     ) -> Result<(), StoreError> {
         use sha2::{Digest, Sha256};
-        if checkpoint.state.provenance().policy().is_private()
+        if policy.join(checkpoint.state.provenance().policy()) != *policy
+            || policy.join(checkpoint.context.provenance().policy()) != *policy
+            || checkpoint.state.provenance().policy().is_private()
             || checkpoint.state.provenance().policy().is_unknown()
             || checkpoint.context.provenance().policy().is_private()
             || checkpoint.context.provenance().policy().is_unknown()
@@ -255,8 +259,9 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         }
         if let Some(followed) = &checkpoint.followed_source {
             let info = self.datasets()?.inspect(&followed.prefix)?;
-            if info.recording.as_ref().map(|r| (&r.run, &r.epoch, r.first))
-                != Some((&followed.run, &followed.epoch, followed.first))
+            if policy.join(&info.policy) != *policy
+                || info.recording.as_ref().map(|r| (&r.run, &r.epoch, r.first))
+                    != Some((&followed.run, &followed.epoch, followed.first))
                 || info
                     .policy
                     .origins()
@@ -299,7 +304,8 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
                 return Err(StoreError::Conflict);
             }
         }
-        if source_policy.is_private()
+        if policy.join(source_policy) != *policy
+            || source_policy.is_private()
             || source_policy.is_unknown()
             || source_policy
                 .origins()
@@ -387,6 +393,8 @@ fn spawn_owner(
     datasets: Option<Box<dyn DatasetStorage>>,
     limits: StoreWorkerLimits,
 ) -> Result<(StoreWorker, StoreWorkerTask), StoreError> {
+    let confidential_values = store.supports_confidential();
+    let confidential_datasets = datasets.as_ref().is_some_and(|s| s.supports_confidential());
     let dataset_read_charge = datasets
         .as_ref()
         .map(|port| {
@@ -441,6 +449,8 @@ fn spawn_owner(
             budget,
             limits,
             dataset_read_charge,
+            confidential_values,
+            confidential_datasets,
             dataset_access,
             dataset_changes,
         },
@@ -459,6 +469,21 @@ impl StoreWorkerTask {
     }
 }
 impl StoreWorker {
+    /// Mandatory disk sinks call this before entering acquisition. No producer is restarted.
+    pub fn admit_dataset_policy(
+        &self,
+        policy: &wes_core::flow::FlowPolicy,
+    ) -> Result<(), StoreError> {
+        if policy.is_private()
+            || policy.is_unknown()
+            || (policy.is_confidential() && !self.confidential_datasets)
+        {
+            Err(StoreError::Restricted)
+        } else {
+            Ok(())
+        }
+    }
+
     pub(crate) fn dataset_changes(
         &self,
     ) -> Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>> {
@@ -553,7 +578,7 @@ impl StoreWorker {
         policy: PublicationPolicy,
     ) -> Result<StoredOutput, StoreError> {
         if policy == PublicationPolicy::Protected {
-            if value.provenance().policy().is_private() {
+            if !value.provenance().policy().allows_retention() {
                 return Err(StoreError::Restricted);
             }
             if !value.data().is_storable_snapshot() {
@@ -583,7 +608,7 @@ impl StoreWorker {
                     }
                     PublicationPolicy::AutomaticUpToBytes(limit)
                         if value.data().is_storable_snapshot()
-                            && !value.provenance().policy().is_private()
+                            && !value.provenance().policy().is_confidential()
                             && store.automatic_retention_allowed(&handle)?
                             && store
                                 .retention_size(&handle)?
@@ -1048,6 +1073,11 @@ impl StoreWorker {
             || value.shape().contains_meta()
             || value.provenance().policy().is_private()
             || value.provenance().policy().is_unknown()
+        {
+            return Err(StoreError::Restricted);
+        }
+        if !value.provenance().policy().allows_retention()
+            || (value.provenance().policy().is_confidential() && !self.confidential_values)
         {
             return Err(StoreError::Restricted);
         }

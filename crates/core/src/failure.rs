@@ -86,7 +86,7 @@ impl ErrorValue {
     }
     pub fn with_policy(mut self, policy: &crate::flow::FlowPolicy) -> Self {
         self.policy = Arc::new(self.policy.join(policy));
-        if self.policy.is_private() {
+        if self.policy.is_confidential() {
             if self.code == Self::REMOTE_OUTCOME_UNKNOWN {
                 self.message = "Private remote operation outcome is unknown; remote work may still be running.".into();
             } else {
@@ -118,7 +118,7 @@ impl ErrorValue {
         if locations.len() > 17 || locations.iter().any(|location| !location.valid()) {
             return Err(InvalidError("invalid or excessive source locations"));
         }
-        if !self.policy.is_private() {
+        if !self.policy.is_confidential() {
             self.locations = locations;
         }
         Ok(self)

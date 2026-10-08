@@ -916,10 +916,11 @@ pub(super) fn observe(
             _ => None,
         };
         let withheld = cooperative
-            && (typing.provenance.policy().is_private()
+            && (typing.provenance.policy().is_confidential()
                 || typing.provenance.policy().is_unknown()
                 || value.as_ref().is_some_and(|v| {
-                    v.provenance().policy().is_private() || v.provenance().policy().is_unknown()
+                    v.provenance().policy().is_confidential()
+                        || v.provenance().policy().is_unknown()
                 }));
         if withheld {
             if member.is_some() && !inspect {
@@ -978,7 +979,7 @@ pub(super) fn observe(
         {
             let error_value = failure.to_value();
             if !cooperative
-                || (!error_value.provenance().policy().is_private()
+                || (!error_value.provenance().policy().is_confidential()
                     && !error_value.provenance().policy().is_unknown())
             {
                 row.insert("error".into(), error_value.data().clone());

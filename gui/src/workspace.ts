@@ -37,6 +37,8 @@ export interface WorkspaceNode {
   readonly publication?: import("./protocol").ResultPublication;
   readonly traced?: boolean;
   readonly private?: boolean;
+  readonly confidential?: boolean;
+  readonly residence?: "memory" | "temporary" | "retainable";
   readonly environment?: Extract<Event, { event: "node-environment" }>;
   readonly id: string;
   readonly startedAt?: string;
@@ -350,6 +352,8 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         retention: event.retention,
         accessWithdrawn: undefined,
         private: event.private,
+        confidential: event.confidential,
+        residence: event.residence,
         // An incomplete analysis is still a failure; its record is the engine's, beside the partial value.
         failure: event.event === "evidence" && event.kind === "incomplete" ? event.reason ?? event.error?.message : undefined,
         failureRecord: event.event === "evidence" && event.kind === "incomplete" ? event.error : undefined,

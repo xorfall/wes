@@ -24,6 +24,7 @@ pub struct FileValues {
     // successive writes (Linux records equal times), so ties must not fall back to handle order.
     published: HashMap<ValueHandle, u64>,
     next_publication: u64,
+    protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
 }
 impl FileValues {
     /// Opens a private directory. Existing directories are never chmod'ed or recursively cleaned.
@@ -33,11 +34,27 @@ impl FileValues {
         durability: Durability,
         budget: Option<NonZeroU64>,
     ) -> Result<Self, StoreError> {
+        Self::open_protected(path, limits, durability, budget, None)
+    }
+    pub fn open_protected(
+        path: &Path,
+        limits: Limits,
+        durability: Durability,
+        budget: Option<NonZeroU64>,
+        protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
+    ) -> Result<Self, StoreError> {
+        let directory = OwnedDirectory::open(path, DirectoryKind::Values, durability)
+            .map_err(directory_error)?;
+        crate::protected_storage::check_mode(&directory, "values", protection.as_deref())
+            .map_err(|e| StoreError::backend("opening storage protection", e))?;
+        directory
+            .sync()
+            .map_err(|e| StoreError::backend("syncing storage protection", e))?;
         Ok(Self {
-            directory: OwnedDirectory::open(path, DirectoryKind::Values, durability)
-                .map_err(directory_error)?,
+            directory,
             limits,
             budget,
+            protection,
             evicted: VecDeque::new(),
             published: HashMap::new(),
             next_publication: 0,
@@ -62,8 +79,11 @@ impl FileValues {
         encoded: &[u8],
         sync: impl FnOnce(&cap_std::fs::File) -> io::Result<()>,
     ) -> Result<(), StoreError> {
-        codec::decode_value(encoded, self.limits)
+        let decoded = codec::decode_value(encoded, self.limits)
             .map_err(|e| StoreError::backend("validating adopted bytes", e))?;
+        if decoded.value.provenance().policy().is_confidential() && self.protection.is_none() {
+            return Err(StoreError::Restricted);
+        }
         if let Some(existing) = self.encoded(handle)? {
             return if existing == encoded {
                 self.confirm_existing(handle, sync)
@@ -71,6 +91,16 @@ impl FileValues {
                 Err(StoreError::Conflict)
             };
         }
+        let sealed;
+        let encoded = match &self.protection {
+            Some(protection) => {
+                sealed = protection
+                    .seal("values", handle.as_str(), encoded)
+                    .map_err(|e| StoreError::backend("encrypting a result", e))?;
+                &sealed
+            }
+            None => encoded,
+        };
         let temporary = format!(".wes-pending-{}", Uuid::new_v4());
         let mut options = private_options();
         options.write(true).create_new(true);
@@ -271,9 +301,15 @@ fn write_and_sync<W: Write>(
     sync(&file)
 }
 impl ValueStore for FileValues {
+    fn supports_confidential(&self) -> bool {
+        self.protection.is_some()
+    }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
-        let encoded = codec::encode_value(value, self.limits)
-            .map_err(|e| StoreError::backend("encoding a result", e))?;
+        let encoded = match &self.protection {
+            Some(_) => codec::encode_protected_value(value, self.limits),
+            None => codec::encode_value(value, self.limits),
+        }
+        .map_err(|e| StoreError::backend("encoding a result", e))?;
         let handle = ValueHandle::fresh();
         self.adopt(&handle, &encoded)?;
         Ok(handle)
@@ -297,21 +333,41 @@ impl ValueStore for FileValues {
             .metadata()
             .map_err(|e| StoreError::backend("sizing a result", e))?
             .len();
-        if size > self.limits.bytes as u64 {
+        let maximum = self
+            .limits
+            .bytes
+            .saturating_add(if self.protection.is_some() {
+                crate::protected_storage::OVERHEAD
+            } else {
+                0
+            });
+        if size > maximum as u64 {
             return Err(StoreError::backend(
                 "reading a result",
                 codec::CodecError::Bytes,
             ));
         }
         let mut bytes = vec![];
-        file.take((self.limits.bytes as u64).saturating_add(1))
+        file.take((maximum as u64).saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|e| StoreError::backend("reading a result", e))?;
-        if bytes.len() > self.limits.bytes {
+        if bytes.len() > maximum {
             return Err(StoreError::backend(
                 "reading a result",
                 codec::CodecError::Bytes,
             ));
+        }
+        let bytes = match &self.protection {
+            Some(p) => p
+                .open("values", handle.as_str(), &bytes, self.limits.bytes)
+                .map_err(|e| StoreError::backend("decrypting a result", e))?
+                .to_vec(),
+            None => bytes,
+        };
+        let value = codec::decode_value(&bytes, self.limits)
+            .map_err(|e| StoreError::backend("checking stored policy", e))?;
+        if value.value.provenance().policy().is_confidential() && self.protection.is_none() {
+            return Err(StoreError::Restricted);
         }
         Ok(Some(bytes))
     }
@@ -362,9 +418,25 @@ impl TieredValues {
         durability: Durability,
         live_budget: Option<NonZeroU64>,
     ) -> Result<Self, StoreError> {
+        Self::open_protected(live, archive, limits, durability, live_budget, None)
+    }
+    pub fn open_protected(
+        live: &Path,
+        archive: &Path,
+        limits: Limits,
+        durability: Durability,
+        live_budget: Option<NonZeroU64>,
+        protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
+    ) -> Result<Self, StoreError> {
         Ok(Self {
-            live: FileValues::open(live, limits, durability, live_budget)?,
-            archive: FileValues::open(archive, limits, durability, None)?,
+            live: FileValues::open_protected(
+                live,
+                limits,
+                durability,
+                live_budget,
+                protection.clone(),
+            )?,
+            archive: FileValues::open_protected(archive, limits, durability, None, protection)?,
         })
     }
     pub fn archived_handles(&self) -> Result<Vec<ValueHandle>, StoreError> {
@@ -424,6 +496,9 @@ impl TieredValues {
     }
 }
 impl ValueStore for TieredValues {
+    fn supports_confidential(&self) -> bool {
+        self.live.supports_confidential() && self.archive.supports_confidential()
+    }
     fn retained_persistence(&self) -> wes_engine::history::Persistence {
         match self.archive.directory.durability() {
             Durability::File => wes_engine::history::Persistence::FileSynced,
@@ -453,7 +528,18 @@ impl ValueStore for TieredValues {
             None => self.archive.size(handle),
         }
     }
+    fn automatic_retention_allowed(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        Ok(self
+            .read(handle)?
+            .is_some_and(|v| !v.value.provenance().policy().is_confidential()))
+    }
     fn keep(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self
+            .read(handle)?
+            .is_some_and(|v| !v.value.provenance().policy().allows_retention())
+        {
+            return Err(StoreError::Restricted);
+        }
         let Some(bytes) = self.live.encoded(handle)? else {
             if self.archive.read(handle)?.is_none() {
                 return Ok(false);

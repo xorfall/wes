@@ -160,7 +160,7 @@ pub fn encode_segment(
         // independently parsed copy in every row. Data and policy remain in
         // the exact retained-value codec. Reader restores metadata natively.
         let value = record.value.clone().with_metadata(None);
-        let payload = codec::encode_value(&value, value_limits)?;
+        let payload = codec::encode_protected_value(&value, value_limits)?;
         let ordinal = header
             .first
             .checked_add(index as u64)

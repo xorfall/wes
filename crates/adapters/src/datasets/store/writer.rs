@@ -56,9 +56,7 @@ impl DatasetStore {
     ) -> Result<wes_engine::storage::datasets::DatasetWriterAdmission, DatasetError> {
         self.ready()?;
         self.check_policy_reads(request.policy.dataset_reads())?;
-        if request.policy.is_private() || request.policy.is_unknown() {
-            return Err(DatasetError::Restricted);
-        }
+        self.files.check_policy(&request.policy)?;
         if !catalog::valid_uuid(&request.dataset) || !catalog::valid_uuid(&request.transaction) {
             return Err(DatasetError::Conflict);
         }
@@ -175,6 +173,10 @@ impl DatasetStore {
             requested: persistence,
             established: persistence,
             authorization_generation: 1,
+            protection: request
+                .policy
+                .is_confidential()
+                .then_some(request.policy.residence()),
             origins: request.policy.origins().iter().cloned().collect(),
             dataset_reads: request.policy.dataset_reads().iter().cloned().collect(),
         };
@@ -195,9 +197,7 @@ impl DatasetStore {
     ) -> Result<DatasetRef, DatasetError> {
         self.ready()?;
         self.check_policy_reads(request.policy.dataset_reads())?;
-        if request.policy.is_private() || request.policy.is_unknown() {
-            return Err(DatasetError::Restricted);
-        }
+        self.files.check_policy(&request.policy)?;
         if !catalog::valid_uuid(&request.transaction) {
             return Err(DatasetError::Conflict);
         }
@@ -217,6 +217,9 @@ impl DatasetStore {
             || manifest.transaction == request.transaction
         {
             return Err(DatasetError::Conflict);
+        }
+        if request.policy.join(&manifest.policy()) != request.policy {
+            return Err(DatasetError::Restricted);
         }
         let source = source(request.source);
         super::super::tree::validate_source(&source)?;
@@ -383,6 +386,10 @@ impl DatasetStore {
         manifest.source = source;
         manifest.lifecycle = next_lifecycle;
         manifest.recording = request.recording;
+        manifest.protection = request
+            .policy
+            .is_confidential()
+            .then_some(request.policy.residence());
         manifest.origins = request.policy.origins().iter().cloned().collect();
         manifest.dataset_reads = request.policy.dataset_reads().iter().cloned().collect();
         if let Some(checkpoint) = &request.checkpoint {
@@ -477,9 +484,7 @@ impl DatasetStore {
     ) -> Result<wes_engine::storage::datasets::DatasetWriterAdmission, DatasetError> {
         self.ready()?;
         self.check_policy_reads(request.policy.dataset_reads())?;
-        if request.policy.is_private() || request.policy.is_unknown() {
-            return Err(DatasetError::Restricted);
-        }
+        self.files.check_policy(&request.policy)?;
         let (previous, mut manifest) = self
             .root(request.previous.dataset())?
             .ok_or(DatasetError::Unavailable)?;
@@ -561,6 +566,10 @@ impl DatasetStore {
         )?;
         manifest.transaction = request.transaction;
         manifest.lifecycle = Lifecycle::Open;
+        manifest.protection = request
+            .policy
+            .is_confidential()
+            .then_some(request.policy.residence());
         manifest.origins = request.policy.origins().iter().cloned().collect();
         manifest.dataset_reads = request.policy.dataset_reads().iter().cloned().collect();
         manifest.checkpoint =
