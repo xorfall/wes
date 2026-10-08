@@ -24,6 +24,9 @@ async fn environment_help_explains_confidential_residence_without_execution() {
     let Data::Record(fields) = workspace.runtime().value_of(&node).unwrap().data() else {
         panic!("help record")
     };
+    let Data::Record(fields) = &fields["invocation"] else {
+        panic!("invocation guidance")
+    };
     let Data::Text(syntax) = &fields["syntax"] else {
         panic!("syntax guidance")
     };

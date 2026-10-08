@@ -62,10 +62,15 @@ async fn confidential_http_derivation_and_dataset_analysis_survive_without_repla
             let mut input = [0; 8192];
             stream.read(&mut input).await.unwrap();
             count.fetch_add(1, Ordering::SeqCst);
-            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Evidence: confidential-runtime-sentinel\r\nContent-Length: 7\r\nConnection: close\r\n\r\n[1,2,3]").await.unwrap();
+            let body = r#"["first","second","confidential-runtime-sentinel"]"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
         }
     });
-    std::fs::write(root.path().join("api.json"),r#"{"version":1,"provider":"evidence","types":{},"operations":[{"path":["read"],"method":"GET","route":"/samples","auth":[],"parameters":[],"responses":{"200":"List<Int>"}}]}"#).unwrap();
+    std::fs::write(root.path().join("api.json"),r#"{"version":1,"provider":"evidence","types":{},"operations":[{"path":["read"],"method":"GET","route":"/samples","auth":[],"parameters":[],"responses":{"200":"List<Text>"}}]}"#).unwrap();
     std::fs::write(root.path().join("env.yaml"),format!("version: 1\ntargets: {{local: {{kind: local}}}}\nenvironments: {{lab: {{imports: {{evidence: {{source: {{kind: spec, file: api.json}}, bind: {{target: local, endpoint: '{endpoint}', output: confidential}}}}}}}}}}\n")).unwrap();
     let options = || {
         let mut options = RuntimeOptions::new(home.clone(), root.path().into());
@@ -80,8 +85,8 @@ async fn confidential_http_derivation_and_dataset_analysis_survive_without_repla
         .unwrap();
     session.apply_environments(plan).await.unwrap();
     submit(&session, ":env use \"lab\"").await;
-    submit(&session,r#":package load source:"types: {IntStep: {base: Record, fields: {state: Int, outputs: 'List<Int>'}}}""#).await;
-    submit(&session,":def sum(state:Int, context:Int, item:Int) -> IntStep as :calc pure { return {state:state+item,outputs:[item]}; }").await;
+    submit(&session,r#":package load source:"types: {EvidenceStep: {base: Record, fields: {state: Text, outputs: 'List<Text>'}}}""#).await;
+    submit(&session,":def capture(state:Text, context:Int, item:Text) -> EvidenceStep as :calc pure { return {state:item,outputs:[item]}; }").await;
     submit(&session, "evidence read > response").await;
     let snapshot = session.snapshot().await.unwrap();
     let response = &snapshot.names["response"].node;
@@ -94,7 +99,7 @@ async fn confidential_http_derivation_and_dataset_analysis_survive_without_repla
         snapshot.execution.errors
     );
     submit(&session, ":calc pure { return $response.body; } > raw").await;
-    submit(&session,":scan source:$raw transition:sum initial:0 context:0 profile:TypedRecords sink:dataset > analysis").await;
+    submit(&session,r#":scan source:$raw transition:capture initial:"" context:0 profile:TypedRecords sink:dataset > analysis"#).await;
     let snapshot = session.snapshot().await.unwrap();
     let raw = snapshot.names["raw"].node.clone();
     let analysis = snapshot.names["analysis"].node.clone();
@@ -113,7 +118,12 @@ async fn confidential_http_derivation_and_dataset_analysis_survive_without_repla
     let Data::Record(fields) = result.data() else {
         panic!("scan result")
     };
-    assert_eq!(fields["state"], Data::Int(6));
+    // The confidential payload reaches both output segments and the retained
+    // inline state checkpoint; the disk scan below must cover both channels.
+    assert_eq!(
+        fields["state"],
+        Data::Text("confidential-runtime-sentinel".into())
+    );
     keep(&session, "raw").await;
     keep(&session, "analysis").await;
     let runs = snapshot.execution.runs.clone();
@@ -151,7 +161,11 @@ async fn confidential_http_derivation_and_dataset_analysis_survive_without_repla
     let snapshot = session.snapshot().await.unwrap();
     assert_eq!(
         snapshot.execution.values[&raw].data(),
-        &Data::List(vec![Data::Int(1), Data::Int(2), Data::Int(3)])
+        &Data::List(vec![
+            Data::Text("first".into()),
+            Data::Text("second".into()),
+            Data::Text("confidential-runtime-sentinel".into())
+        ])
     );
     assert_eq!(snapshot.execution.values[&analysis].data(), result.data());
     assert_eq!(snapshot.execution.runs[&raw], runs[&raw]);
