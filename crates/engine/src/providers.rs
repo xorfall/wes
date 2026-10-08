@@ -417,11 +417,8 @@ impl BoundCall {
             Some(origin) => carried.policy().clone().from_origin(origin),
             None => carried.policy().clone().unknown(),
         };
-        if self
-            .environment()
-            .is_some_and(|b| b.import().declaration().private_output)
-        {
-            policy = policy.private();
+        if let Some(binding) = self.environment() {
+            policy = policy.join(&binding.import().declaration().output_policy.policy());
         }
         carried.clone().with_policy(&policy)
     }
@@ -443,7 +440,7 @@ impl BoundCall {
     }
     pub(crate) fn private_output(&self) -> bool {
         self.environment()
-            .is_some_and(|b| b.import().declaration().private_output)
+            .is_some_and(|b| b.import().declaration().output_policy.is_sensitive())
     }
     pub(crate) fn with_inputs(mut self, inputs: IndexMap<String, Input>) -> Self {
         self.definition_changed = true;

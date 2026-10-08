@@ -224,7 +224,7 @@ pub struct ImportDefinition {
     pub auth: BTreeMap<String, Vec<String>>,
     pub binding_mode: BindingMode,
     pub source_sha256: Option<String>,
-    pub private_output: bool,
+    pub output_policy: crate::flow::OutputPolicy,
     pub source: SourceKey,
     pub target: String,
     pub endpoint: Option<Setting>,
@@ -296,7 +296,7 @@ impl Package {
                     auth: BTreeMap::new(),
                     binding_mode: BindingMode::Explicit,
                     source_sha256: None,
-                    private_output: false,
+                    output_policy: crate::flow::OutputPolicy::Public,
                     source,
                     target: "local".into(),
                     endpoint: content

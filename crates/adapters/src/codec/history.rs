@@ -1204,7 +1204,7 @@ fn error_wire(error: &ErrorValue, limits: Limits) -> Result<ErrorWire<'_>, Codec
         locations: error.locations().iter().map(LocationWire::from).collect(),
         policy: Some(ErrorPolicy {
             origins: error.policy().origins().iter().cloned().collect(),
-            private: error.policy().is_private(),
+            private: error.policy().is_confidential(),
             unknown: error.policy().is_unknown(),
         }),
         id: error.id().as_str().into(),

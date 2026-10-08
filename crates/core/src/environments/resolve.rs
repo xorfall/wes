@@ -23,7 +23,7 @@ impl EffectiveImport {
     pub fn same_execution(&self, other: &Self) -> bool {
         self.declaration.transport == other.declaration.transport
             && self.declaration.auth == other.declaration.auth
-            && self.declaration.private_output == other.declaration.private_output
+            && self.declaration.output_policy == other.declaration.output_policy
             && self.source == other.source
             && self.target.same_execution(&other.target)
             && self.endpoint == other.endpoint

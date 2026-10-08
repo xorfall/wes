@@ -38,10 +38,12 @@ fn read_value_node(
     let data = read_tagged(raw::required(&object, "data")?, context, depth)?;
     let mut provenance = read_provenance(raw::required(&object, "provenance")?, context)?;
     let fields = context.object(raw::required(&object, "policy")?)?;
-    if fields
-        .keys()
-        .any(|key| !matches!(key.as_str(), "origins" | "unknown" | "dataset_reads"))
-    {
+    if fields.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "origins" | "unknown" | "dataset_reads" | "confidential"
+        )
+    }) {
         return Err(invalid("invalid value policy"));
     }
     let origins = context.sequence(raw::required(&fields, "origins")?)?;
@@ -49,6 +51,14 @@ fn read_value_node(
         return Err(CodecError::Work);
     }
     let mut policy = wes_core::flow::FlowPolicy::default();
+    if let Some(confidential) = fields.get("confidential") {
+        let residence = match raw::string(confidential)?.as_str() {
+            "temporary" => wes_core::flow::Residence::Temporary,
+            "retainable" => wes_core::flow::Residence::Retainable,
+            _ => return Err(invalid("invalid confidential residence")),
+        };
+        policy = policy.confidential(residence);
+    }
     if let Some(reads) = fields.get("dataset_reads") {
         let reads = context.sequence(reads)?;
         if reads.len() > 128 {

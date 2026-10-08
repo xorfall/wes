@@ -620,7 +620,18 @@ fn build() -> Registry {
     d.insert("env.auth.schemes", list("text"));
     d.insert("env.credentials", named("env.credential"));
     d.insert("env.credential", object(&[("secret", "identifier", true)]));
-    d.insert("env.output", choices(Text, &["public", "private"]));
+    d.insert(
+        "env.output",
+        choices(
+            Text,
+            &[
+                "public",
+                "private",
+                "confidential-temporary",
+                "confidential",
+            ],
+        ),
+    );
     d.insert("env.overrides", object(&[("imports", "env.imports", true)]));
     d.insert("env.hide", object(&[("imports", "env.hidden", true)]));
     d.insert("env.hidden", list("identifier"));
