@@ -45,6 +45,18 @@ describe("the strict progress decoder", () => {
 });
 
 describe("the evidence decoder", () => {
+  it.each(["ready", "evidence"])("validates confidential residence for %s results", event => {
+    for (const residence of ["temporary", "retainable"]) {
+      const frame = evidence({ event, confidential: true, residence });
+      expect(decodeEvent(frame)).toMatchObject({ confidential: true, residence });
+    }
+    for (const policy of [
+      { confidential: "yes" }, { residence: "disk" }, { confidential: true },
+      { confidential: true, private: false, residence: "memory" },
+      { private: true, confidential: false }, { private: true, residence: "retainable" },
+      { confidential: false, residence: "temporary" },
+    ]) expect(() => decodeEvent(evidence({ event, ...policy }))).toThrow(/Malformed engine event/);
+  });
   it("keeps the kind, the terminal state and the failure record", () => {
     const error = { id: "e", code: "CAL006", message: "scan work limit reached", causeId: "", issues: [] };
     expect(decodeEvent(evidence({ error, reason: error.message }))).toMatchObject({ event: "evidence", kind: "incomplete", state: "failed", error, reason: error.message });

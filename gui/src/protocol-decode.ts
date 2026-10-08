@@ -105,6 +105,18 @@ export function decodeProgress(value: unknown): ExecutionProgress {
   return { kind: "records", phase, counters };
 }
 
+function decodeStoragePolicy(event: Record<string, unknown>) {
+  const policy = {
+    private: optional(event.private, value => typeof value === "boolean" ? value : refuse("result private")),
+    confidential: optional(event.confidential, value => typeof value === "boolean" ? value : refuse("result confidentiality")),
+    residence: optional(event.residence, value => oneOf(value, ["memory", "temporary", "retainable"] as const, "result residence")),
+  };
+  if (policy.private && (policy.confidential === false || policy.residence && policy.residence !== "memory")) refuse("private result storage policy");
+  if (policy.confidential === true && (!policy.residence || policy.private !== (policy.residence === "memory"))) refuse("confidential result storage policy");
+  if (policy.confidential === false && policy.residence && policy.residence !== "retainable") refuse("public result storage policy");
+  return policy;
+}
+
 function decodeEvidence(event: Record<string, unknown>): Event {
   const provenance = record(event.provenance, "evidence provenance");
   if (Object.values(provenance).some(value => typeof value !== "string")) refuse("evidence provenance");
@@ -131,7 +143,7 @@ function decodeEvidence(event: Record<string, unknown>): Event {
     provenance: provenance as Record<string, string>,
     cautions: event.cautions as string[],
     kept: event.kept as boolean,
-    private: optional(event.private, value => typeof value === "boolean" ? value : refuse("evidence private")),
+    ...decodeStoragePolicy(event),
     retention: optional(event.retention, value => oneOf(value, RETENTIONS, "evidence retention") as never),
     error,
     reason: optional(event.reason, value => text(value, "evidence reason")),
@@ -194,6 +206,10 @@ export function decodeEvent(raw: unknown): Event {
     return { event: "result-access", node: named(event.node, "result-access node"), readable: false };
   }
   if (event.event === "evidence") return decodeEvidence(event);
+  if (event.event === "ready") {
+    decodeStoragePolicy(event);
+    return event as unknown as Event;
+  }
   if (event.event === "created") return decodeCreated(event);
   // The retired event is refused, not silently re-read as evidence of an unknown kind.
   if (event.event === "stopped") refuse("retired stopped event");

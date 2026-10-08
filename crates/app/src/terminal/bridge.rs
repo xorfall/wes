@@ -117,7 +117,7 @@ pub(super) fn exported_bounded(
     bytes: usize,
 ) -> Result<String, BridgeReply> {
     let policy = value.provenance().policy();
-    if policy.is_private() || policy.is_unknown() {
+    if policy.is_confidential() || policy.is_unknown() {
         return Err(BridgeReply::error(
             1,
             "This value cannot be exported to terminal processes.",
@@ -152,6 +152,16 @@ pub(super) fn current_value<'a>(
         .flatten()
 }
 /// Display reads can return labelled terminal evidence; execution inputs still use current_value.
+fn require_export(value: &Value) -> Result<(), BridgeReply> {
+    if value.provenance().policy().is_confidential() || value.provenance().policy().is_unknown() {
+        Err(BridgeReply::error(
+            1,
+            "This value cannot be exported to terminal processes.",
+        ))
+    } else {
+        Ok(())
+    }
+}
 pub(super) fn named_observation<'a>(
     observation: &'a SessionObservation,
     name: &str,
@@ -173,6 +183,7 @@ pub(super) fn named_observation<'a>(
             )
         })?;
     if let Some(value) = current_value(observation, &output.node) {
+        require_export(value)?;
         return Ok((value, None));
     }
     if let Some(last) = observation
@@ -181,6 +192,7 @@ pub(super) fn named_observation<'a>(
         .evidence_values
         .get(&output.node)
     {
+        require_export(&last.value)?;
         return Ok((&last.value, Some(last)));
     }
     Err(BridgeReply::error(
@@ -351,7 +363,7 @@ async fn perform(
                             .map(|last| &last.value)
                     })?;
                     (output.port == OutputPort::Data
-                        && !value.provenance().policy().is_private()
+                        && !value.provenance().policy().is_confidential()
                         && !value.provenance().policy().is_unknown()
                         && value.data().is_storable_snapshot())
                     .then_some(name)
@@ -687,6 +699,10 @@ mod tests {
         for policy in [
             wes_core::flow::FlowPolicy::default().private(),
             wes_core::flow::FlowPolicy::default().unknown(),
+            wes_core::flow::FlowPolicy::default()
+                .confidential(wes_core::flow::Residence::Temporary),
+            wes_core::flow::FlowPolicy::default()
+                .confidential(wes_core::flow::Residence::Retainable),
         ] {
             let private = Value::new(
                 Shape::Primitive(Primitive::Text),
@@ -700,10 +716,12 @@ mod tests {
                 .values
                 .insert(node.clone(), private);
             for reference in &spellings {
-                let (value, _) = named_observation(&observation, reference)
-                    .unwrap_or_else(|e| panic!("{}", e.stderr));
-                assert!(exported(value, false).is_err());
-                assert!(exported(value, true).is_err());
+                assert!(
+                    named_observation(&observation, reference)
+                        .unwrap_err()
+                        .stderr
+                        .contains("cannot be exported")
+                );
             }
         }
         observation
@@ -834,7 +852,7 @@ pub(super) fn revalidate_read(
         ));
     }
     let policy = b.provenance().policy();
-    if policy.is_private() || policy.is_unknown() {
+    if policy.is_confidential() || policy.is_unknown() {
         return Err(BridgeReply::error(
             1,
             "This value cannot be exported to terminal processes.",

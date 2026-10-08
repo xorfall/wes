@@ -46,6 +46,8 @@ export type ResultPublication = {
 export interface ResultDescriptor {
   readonly publication?: ResultPublication;
   readonly private?: boolean;
+  readonly confidential?: boolean;
+  readonly residence?: "memory" | "temporary" | "retainable";
   readonly node: string;
   readonly type: string;
   readonly handle: string;

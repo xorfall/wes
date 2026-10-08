@@ -28,7 +28,7 @@ impl Report {
         self.wire.status == "passed"
     }
     pub fn export(&self) -> Option<serde_json::Value> {
-        if self.policy.is_private() || self.policy.is_unknown() {
+        if self.policy.is_confidential() || self.policy.is_unknown() {
             None
         } else {
             Some(serde_json::to_value(&self.wire).expect("report contains serializable metadata"))
