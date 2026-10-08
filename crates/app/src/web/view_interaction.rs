@@ -150,9 +150,17 @@ pub(super) async fn state(
     let Ok(node) = NodeId::new(node) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Ok(_permit) = shared.reads.clone().try_acquire_owned() else {
+    let Ok(_permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    // Admission may wait: refuse a workspace switch before reading or committing old state.
+    if !shared
+        .application
+        .current()
+        .is_ok_and(|now| now.generation == current.generation)
+    {
+        return StatusCode::CONFLICT.into_response();
+    }
     let Ok((mut owner, mut state)) = current
         .session
         .view_interaction(node.clone(), identity.clone(), None)

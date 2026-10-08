@@ -59,3 +59,22 @@ it("changes only the theme stylesheet while committed and local state, pending e
   expect(port.postMessage.mock.calls.map(([text])=>JSON.parse(text)).filter(message=>message.kind==="ack")).toEqual([{kind:"ack",sequence:1},{kind:"ack",sequence:2}]);
   act(()=>renderer!.unmount());
 });
+
+it("rejects a context whose active flag is not a boolean, and notifies the host when the frame window gains focus",()=>{
+  let connect:(event:unknown)=>void=()=>{};const windowListeners=new Map<string,()=>void>();
+  const parent={},style={tagName:"STYLE",textContent:""},rootElement={scrollHeight:100,dataset:{}};
+  vi.stubGlobal("parent",parent);
+  vi.stubGlobal("document",{getElementById:(id:string)=>id==="wes-view-theme"?style:rootElement,querySelectorAll:()=>[],addEventListener:()=>{},fonts:{ready:Promise.resolve()},documentElement:{clientWidth:800},createElement:()=>({getContext:()=>({font:'',measureText:()=>({width:80})})})});
+  vi.stubGlobal('getComputedStyle',()=>({getPropertyValue:()=>'',lineHeight:'20px'}));
+  vi.stubGlobal("window",{innerHeight:400,addEventListener:(name:string,callback:typeof connect)=>{if(name==="message")connect=callback;else windowListeners.set(name,callback as ()=>void);},removeEventListener:()=>{}});
+  vi.stubGlobal("ResizeObserver",class{observe(){} disconnect(){}});
+  const port={onmessage:undefined as undefined|((message:{data:string})=>void),postMessage:vi.fn(),start:vi.fn()};
+  host.render.mockImplementation(()=>{});
+  startFrame({definition:{interaction:null,digest:"fixture"},Component:()=>null} as unknown as Parameters<typeof startFrame>[0]);
+  connect({source:parent,data:"wes-view-connect",ports:[port]});
+  const kinds=()=>port.postMessage.mock.calls.map(([text])=>JSON.parse(text).kind);
+  windowListeners.get("focus")!();
+  expect(kinds()).toContain("focus");
+  port.onmessage!({data:JSON.stringify({kind:"render",input:{},sequence:1,context:{mode:"preview",instance:null,active:"yes"}})});
+  expect(kinds()).toContain("error");
+});

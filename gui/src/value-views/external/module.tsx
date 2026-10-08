@@ -90,8 +90,22 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const [document,setDocument]=useState<string>(),[problem,setProblem]=useState<string>(),[height,setHeight]=useState(100),[boxes,setBoxes]=useState<readonly Box[]>([]);
   const slots=Object.entries(model.slots).flatMap(([name,nodes])=>nodes.map((node,index)=>({key:`${name}/${index}`,node})));
   const heights=useRef<Record<string,number>>({}),children=new Map(slots.map(slot=>[slot.key,slot.node]));
-  const update=()=>delivery.current?.update(()=>({input:modelRef.current.input,context:{mode:modelRef.current.mode,instance:modelRef.current.identity??null,coordinated:modelRef.current.coordinated,inspectionOnly:!!mirror,inspectionActive:outletRef.current?.selected===inspectionKey,inspectionOutlet:!!outletRef.current && modelRef.current.coordinated && !mirror},slots:Object.fromEntries(Object.entries(modelRef.current.slots).map(([name,nodes])=>[name,nodes.map((_node,index)=>({key:`${name}/${index}`,height:heights.current[`${name}/${index}`]??120}))]))}));
+  const active=useRef(false);
+  const update=()=>delivery.current?.update(()=>({input:modelRef.current.input,context:{mode:modelRef.current.mode,instance:modelRef.current.identity??null,coordinated:modelRef.current.coordinated,inspectionOnly:!!mirror,inspectionActive:outletRef.current?.selected===inspectionKey,inspectionOutlet:!!outletRef.current && modelRef.current.coordinated && !mirror,active:active.current},slots:Object.fromEntries(Object.entries(modelRef.current.slots).map(([name,nodes])=>[name,nodes.map((_node,index)=>({key:`${name}/${index}`,height:heights.current[`${name}/${index}`]??120}))]))}));
   useLayoutEffect(update,[model,inspectionOutlet,inspectionActive]);
+  /** Whether the reader's focus is inside this presentation (its frame or a host slot) while the
+   *  application has focus. Every View hears the same signal, so none infers focus from its own clicks;
+   *  it never says where focus went. It is for appearance only: delivery is asynchronous and may skip
+   *  intermediate transitions, so no View may decide what a click means from it. */
+  useEffect(()=>{
+    const root=box.current,doc=root?.ownerDocument,win=doc?.defaultView;if(!root||!doc||!win)return;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const check=()=>{timer=undefined;const now=doc.hasFocus()&&root.contains(doc.activeElement);if(now!==active.current){active.current=now;update();}};
+    const soon=()=>{if(timer===undefined)timer=setTimeout(check,0);};
+    doc.addEventListener("focusin",soon,true);doc.addEventListener("focusout",soon,true);doc.addEventListener("pointerdown",soon,true);win.addEventListener("focus",soon);win.addEventListener("blur",soon);
+    check();
+    return()=>{clearTimeout(timer);doc.removeEventListener("focusin",soon,true);doc.removeEventListener("focusout",soon,true);doc.removeEventListener("pointerdown",soon,true);win.removeEventListener("focus",soon);win.removeEventListener("blur",soon);};
+  },[]);
   useEffect(()=>{
     if(!box.current)return;
     theme.current=currentTheme(box.current!);

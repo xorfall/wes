@@ -16,7 +16,9 @@ export interface ViewProps<Input, State, Event> {
   readonly revision: number;
   readonly emit: (event: Event) => void;
   readonly slots: Readonly<Record<string, readonly ReactNode[]>>;
-  readonly context: {readonly mode: "preview" | "expanded" | "window"; readonly instance: string | null;readonly allocation?:ViewAllocation; readonly coordinated?: boolean; readonly inspectionOnly?: boolean; readonly inspectionActive?: boolean; readonly inspect?: () => void};
+  readonly context: {readonly mode: "preview" | "expanded" | "window"; readonly instance: string | null;readonly allocation?:ViewAllocation; readonly coordinated?: boolean; readonly inspectionOnly?: boolean; readonly inspectionActive?: boolean;
+    /** True while the reader's focus is inside this View; a selection may stay but read as inactive. */
+    readonly active?: boolean; readonly inspect?: () => void};
 }
 
 export interface ViewRenderer<Input, Outputs, State, Event, EventOutputs> {

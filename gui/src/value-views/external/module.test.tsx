@@ -125,3 +125,42 @@ it("presents a member inspector beside window plots using its existing controlle
  act(()=>tree.root.findByProps({"aria-label":"Timeline source inspection"}).findByType("button").props.onClick());
  expect(channels[2].port1.close).toHaveBeenCalledOnce();expect(channels[1].port1.close).not.toHaveBeenCalled();act(()=>tree.unmount());
 });
+
+it("tells the View whether the reader's focus is inside it, without saying where focus went",async()=>{
+  vi.stubGlobal("ResizeObserver",class{observe(){} disconnect(){}});
+  vi.stubGlobal("getComputedStyle",()=>({lineHeight:"21px"}));
+  vi.useFakeTimers();
+  const channels:{port1:{onmessage?:(event:{data:string})=>void;postMessage:ReturnType<typeof vi.fn>;close:ReturnType<typeof vi.fn>;start:ReturnType<typeof vi.fn>}}[]=[];
+  vi.stubGlobal("MessageChannel",class{port1={onmessage:undefined,postMessage:vi.fn(),close:vi.fn(),start:vi.fn()};port2={close:vi.fn()};constructor(){channels.push(this);}});
+  const listeners=new Map<string,(()=>void)[]>(),on=(name:string,fn:()=>void)=>listeners.set(name,[...(listeners.get(name)??[]),fn]);
+  const frameElement={description:"frame"},elsewhere={description:"another cell"};
+  const doc={focused:true,hasFocus(){return this.focused;},activeElement:elsewhere as unknown,addEventListener:on,removeEventListener:()=>{},defaultView:{addEventListener:on,removeEventListener:()=>{}}};
+  const box={ownerDocument:doc,contains:(node:unknown)=>node===frameElement};
+  const definition=valueViewModules.named("timeline")!.definition!;
+  const module=externalModule({definition,digest:definition.artifact!,javascript:"void 0",css:""});
+  const value=timelineValue(),input=decodeContract(definition,definition.input,value.data,true,value.type) as Input;
+  const model={input,path:"view/chart",identity:"chart-instance",slots:{},mode:"preview",coordinated:false};
+  const iframe={set srcdoc(_value:string){},contentWindow:{postMessage:vi.fn()}};
+  let tree!:ReturnType<typeof create>;
+  await act(async()=>{tree=create(<InstanceInteractionHost.Provider value={()=>()=>{}}><module.Component model={model} children={[]} renderChild={()=>null}/></InstanceInteractionHost.Provider>,{createNodeMock:node=>node.type==="iframe"?iframe:box});});
+  act(()=>tree.root.findByType("iframe").props.onLoad());
+  const renders=()=>channels[0]!.port1.postMessage.mock.calls.map(([text])=>JSON.parse(text as string)).filter(m=>m.kind==="render");
+  /** Draw, then acknowledge it, as a frame does. */
+  const draw=()=>act(()=>{vi.advanceTimersByTime(200);const last=renders().at(-1);if(last)channels[0]!.port1.onmessage!({data:JSON.stringify({kind:"ack",sequence:last.sequence})});});
+  const fire=(name:string)=>{act(()=>{for(const fn of listeners.get(name)??[])fn();vi.advanceTimersByTime(0);});draw();};
+  draw();
+  expect(renders().at(-1)!.context.active).toBe(false);
+  doc.activeElement=frameElement;fire("focusin");
+  expect(renders().at(-1)!.context.active).toBe(true);
+  const drawn=renders().length;
+  fire("pointerdown");
+  expect(renders()).toHaveLength(drawn);
+  doc.focused=false;fire("blur");
+  expect(renders().at(-1)!.context.active).toBe(false);
+  doc.focused=true;fire("focus");
+  expect(renders().at(-1)!.context.active).toBe(true);
+  doc.activeElement=elsewhere;fire("focusin");
+  expect(renders().at(-1)!.context.active).toBe(false);
+  expect(JSON.stringify(renders())).not.toContain("another cell");
+  act(()=>tree.unmount());
+});

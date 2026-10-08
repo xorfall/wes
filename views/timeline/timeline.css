@@ -82,3 +82,6 @@
 .timeline-inspection-outlet .timeline-record-detail{border-left:0;border-top:var(--stroke-thin) solid var(--line)}
 .timeline-inspection-outlet .timeline-record{grid-template-columns:minmax(0,1fr);gap:0}
 .timeline-inspection-title{font-size:12px;font-weight:600;padding:6px 8px;border-bottom:var(--stroke-thin) solid var(--line);overflow-wrap:anywhere}
+/* Focus outside the View: the selection stays and reads as inactive. */
+[data-active=false] .timeline-selection,[data-active=false] .timeline-picked,[data-active=false] .timeline-cluster.selected,[data-active=false] .timeline-guide,[data-active=false] .timeline-event.selected{opacity:.45}
+[data-active=false] .timeline-record[aria-pressed=true]{opacity:.6}

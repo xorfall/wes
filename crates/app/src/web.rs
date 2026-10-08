@@ -16,6 +16,7 @@ mod live_view;
 mod preferences;
 mod presentations;
 mod projection;
+mod read_admission;
 mod services;
 mod site;
 mod telemetry;
@@ -32,7 +33,7 @@ mod workspaces;
 use crate::ApplicationHandle;
 use axum::{
     Router,
-    body::{Body, Bytes, to_bytes},
+    body::to_bytes,
     extract::{Path, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
@@ -1150,7 +1151,7 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
     let Ok(handle) = ValueHandle::new(&handle) else {
         return value_errors::Failure::InvalidHandle.response(None);
     };
-    let Ok(permit) = shared.reads.clone().try_acquire_owned() else {
+    let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return value_errors::Failure::Busy.response(Some(&handle));
     };
     let Ok(current) = shared.application.current() else {
@@ -1186,29 +1187,15 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
     let encoded = shared
         .encoders
         .spawn_blocking(move || {
-            (
-                encode_display_value(&value.value, Limits::default()),
-                permit,
-            )
+            // Admission bounds storage reads and encoding, not client delivery. Keep ownership
+            // in the tracked encoder even after disconnect, then release before returning bytes.
+            // A slow/unread HTTP body must not prevent frames or shared selection from loading.
+            let _permit = permit;
+            encode_display_value(&value.value, Limits::default())
         })
         .await;
     match encoded {
-        Ok((Ok(bytes), permit)) => {
-            let state = (Bytes::from(bytes), permit);
-            let chunks = stream::unfold(state, |(mut bytes, permit)| async move {
-                if bytes.is_empty() {
-                    None
-                } else {
-                    let next = bytes.split_to(bytes.len().min(64 * 1024));
-                    Some((Ok::<_, Infallible>(next), (bytes, permit)))
-                }
-            });
-            (
-                [(header::CONTENT_TYPE, "application/json")],
-                Body::from_stream(chunks),
-            )
-                .into_response()
-        }
+        Ok(Ok(bytes)) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),
         _ => value_errors::Failure::Encoding.response(Some(&handle)),
     }
 }
