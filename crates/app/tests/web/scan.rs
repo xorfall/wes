@@ -605,22 +605,6 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         .await
         .unwrap()
         .unwrap();
-    let snapshot = session.snapshot().await.unwrap();
-    let recording = snapshot.names["recording"].node.clone();
-    // Browser state is a current projection, not an exhaustive event history.
-    // Observe the real setup while creation is gated before cancelling it.
-    loop {
-        let event = events.next().await;
-        if event["node"] == recording.as_str() && event["event"] == "ready" {
-            let setup = session.snapshot().await.unwrap();
-            let wes_core::Data::Record(fields) = setup.execution.values[&recording].data() else {
-                panic!("recording setup must be a record");
-            };
-            assert!(fields.contains_key("sourceNode") && fields.contains_key("remainingMs"));
-            assert!(!fields.contains_key("dataset"));
-            break;
-        }
-    }
     assert_eq!(
         fixture
             .source(&generation, "cancel-before-dispatch", ":cancel $logs")
@@ -628,12 +612,34 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         202
     );
     release.send(()).unwrap();
-    let mut ready = 1;
+    let snapshot = session.snapshot().await.unwrap();
+    let recording = snapshot.names["recording"].node.clone();
     loop {
         let event = events.next().await;
         if event["node"] == recording.as_str() {
-            if event["event"] == "ready" {
-                ready += 1;
+            // A browser projection may coalesce the transient ready state with failure.
+            // Check the actual immutable value, rather than counting intermediate wakeups.
+            if event["event"] == "ready" || event["event"] == "evidence" {
+                let handle = event["handle"].as_str().expect("published setup handle");
+                let response = fixture
+                    .client
+                    .get(fixture.url(&format!("/values/{handle}")))
+                    .send()
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap();
+                let value: Value = serde_json::from_slice(&response).unwrap();
+                let fields = value["data"].as_object().expect("recording setup record");
+                assert_eq!(
+                    fields
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<std::collections::BTreeSet<_>>(),
+                    ["phase", "remainingMs", "sourceNode"].into_iter().collect(),
+                    "a refused writer must expose only its real setup, never an initial Dataset"
+                );
             }
             if event["event"] == "evidence" && event["state"] == "failed" {
                 break;
@@ -641,10 +647,6 @@ async fn native_recording_refused_producer_joins_prepared_storage_without_a_read
         }
     }
     session.wait_idle().await.unwrap();
-    assert_eq!(
-        ready, 1,
-        "only the real RecordingSetup is ready; a refused writer must not publish an initial Dataset"
-    );
     let snapshot = session.snapshot().await.unwrap();
     assert_eq!(
         snapshot.execution.graph.node(&recording).unwrap().state(),
