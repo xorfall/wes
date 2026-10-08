@@ -18,7 +18,11 @@ impl CleanupError {
         }
     }
 }
-fn confirm_cleanup(signalled: io::Result<()>, reaped: io::Result<()>) -> Result<(), CleanupError> {
+fn confirm_cleanup(
+    signalled: io::Result<()>,
+    reaped: io::Result<()>,
+    group_probe: impl FnOnce() -> io::Result<()>,
+) -> Result<(), CleanupError> {
     reaped.map_err(|source| CleanupError {
         phase: "wait",
         source,
@@ -29,7 +33,20 @@ fn confirm_cleanup(signalled: io::Result<()>, reaped: io::Result<()>) -> Result<
         if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) {
             return Ok(());
         }
+        // macOS can report EPERM for a group containing only an exited, unreaped
+        // leader. A successful wait alone says nothing about surviving descendants.
+        // Resolve that race only when a fresh, non-signalling probe proves the group
+        // is now absent. A live group, another refusal or an unreadable group fails.
+        if error.kind() == io::ErrorKind::PermissionDenied
+            && group_probe().is_err_and(|probe| {
+                probe.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error())
+            })
+        {
+            return Ok(());
+        }
     }
+    #[cfg(not(unix))]
+    let _ = group_probe;
     signalled.map_err(|source| CleanupError {
         phase: "signal",
         source,
@@ -39,6 +56,8 @@ fn confirm_cleanup(signalled: io::Result<()>, reaped: io::Result<()>) -> Result<
 pub(super) struct LocalChild {
     child: Box<dyn ChildWrapper>,
     completed: bool,
+    #[cfg(unix)]
+    group: Option<rustix::process::Pid>,
 }
 impl LocalChild {
     pub(super) fn spawn(command: Command, inherited_terminal: bool) -> io::Result<Self> {
@@ -56,9 +75,20 @@ impl LocalChild {
             // cannot spawn an escaping descendant in a spawn/assignment window.
             wrapped.wrap(process_wrap::tokio::JobObject);
         }
+        let child = wrapped.spawn()?;
+        #[cfg(unix)]
+        let group = if inherited_terminal {
+            None
+        } else {
+            child
+                .id()
+                .and_then(|id| rustix::process::Pid::from_raw(id as i32))
+        };
         Ok(Self {
-            child: wrapped.spawn()?,
+            child,
             completed: false,
+            #[cfg(unix)]
+            group,
         })
     }
     pub(super) fn inner(&mut self) -> &mut Child {
@@ -77,7 +107,16 @@ impl LocalChild {
     pub(super) async fn cancel(&mut self) -> Result<(), CleanupError> {
         let signalled = self.child.start_kill();
         let reaped = self.child.wait().await.map(|_| ());
-        confirm_cleanup(signalled, reaped)?;
+        confirm_cleanup(signalled, reaped, || {
+            #[cfg(unix)]
+            return match self.group {
+                Some(group) => rustix::process::test_kill_process_group(group).map_err(Into::into),
+                // A terminal handover does not own its host's process group.
+                None => Err(io::ErrorKind::PermissionDenied.into()),
+            };
+            #[cfg(not(unix))]
+            unreachable!("group probing is Unix-only")
+        })?;
         self.completed = true;
         Ok(())
     }
@@ -174,6 +213,50 @@ mod tests {
 #[cfg(test)]
 mod cleanup_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_signal_is_resolved_only_by_wait_and_confirmed_group_absence() {
+        let denied = || Err(io::ErrorKind::PermissionDenied.into());
+        let absent = || {
+            Err(io::Error::from_raw_os_error(
+                rustix::io::Errno::SRCH.raw_os_error(),
+            ))
+        };
+        assert!(confirm_cleanup(denied(), Ok(()), absent).is_ok());
+        for probe in [Ok(()), denied(), Err(io::ErrorKind::Interrupted.into())] {
+            let error = confirm_cleanup(denied(), Ok(()), || probe).unwrap_err();
+            assert_eq!(error.summary(), "signal: PermissionDenied");
+        }
+        assert_eq!(
+            confirm_cleanup(denied(), denied(), || panic!("failed wait must not probe"))
+                .unwrap_err()
+                .summary(),
+            "wait: PermissionDenied"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn cancelling_an_exited_unreaped_group_leader_confirms_cleanup() {
+        use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+        let mut command = Command::new("/usr/bin/true");
+        command.kill_on_drop(true);
+        let mut child = LocalChild::spawn(command, false).unwrap();
+        let pid = Pid::from_raw(child.inner().id().unwrap() as i32).unwrap();
+        // Observe exit without reaping. The cancellation now starts with a zombie
+        // group leader, independently of scheduler timing or pipe buffering.
+        waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+        )
+        .unwrap();
+        child.cancel().await.unwrap();
+        assert_eq!(
+            rustix::process::test_kill_process_group(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
+
     #[test]
     fn waiting_and_signalling_refusals_keep_their_phase_without_private_error_text() {
         let error = confirm_cleanup(
@@ -182,13 +265,21 @@ mod cleanup_tests {
                 io::ErrorKind::Interrupted,
                 "synthetic private text",
             )),
+            || panic!("failed wait must not probe"),
         )
         .unwrap_err();
         assert_eq!(error.summary(), "wait: Interrupted");
-        let error =
-            confirm_cleanup(Err(io::ErrorKind::PermissionDenied.into()), Ok(())).unwrap_err();
+        let error = confirm_cleanup(Err(io::ErrorKind::PermissionDenied.into()), Ok(()), || {
+            Ok(())
+        })
+        .unwrap_err();
         assert_eq!(error.summary(), "signal: PermissionDenied");
-        assert!(confirm_cleanup(Ok(()), Ok(())).is_ok());
+        assert!(
+            confirm_cleanup(Ok(()), Ok(()), || panic!(
+                "successful signal needs no probe"
+            ))
+            .is_ok()
+        );
     }
     #[cfg(unix)]
     #[test]
@@ -198,11 +289,17 @@ mod cleanup_tests {
                 rustix::io::Errno::SRCH.raw_os_error(),
             ))
         };
-        assert!(confirm_cleanup(absent(), Ok(())).is_ok());
+        assert!(
+            confirm_cleanup(absent(), Ok(()), || panic!("absent signal needs no probe")).is_ok()
+        );
         assert_eq!(
-            confirm_cleanup(absent(), Err(io::ErrorKind::PermissionDenied.into()))
-                .unwrap_err()
-                .summary(),
+            confirm_cleanup(
+                absent(),
+                Err(io::ErrorKind::PermissionDenied.into()),
+                || panic!("failed wait must not probe")
+            )
+            .unwrap_err()
+            .summary(),
             "wait: PermissionDenied"
         );
     }
