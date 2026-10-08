@@ -1,0 +1,9 @@
+version: 1
+types:
+  InvestigationKey: {base: Text, minLength: 1, maxLength: 1024}
+  InvestigationComparison:
+    base: Record
+    fields: {subject: InvestigationKey, baseline: InvestigationKey, target: InvestigationKey, inputComparable: Bool, environmentComparable: 'Option<Bool>', targetExercised: Bool, hypothesis: Text, rationale: Text, regressionRuledOut: Bool}
+  ExecutionComparisonReport:
+    base: Record
+    fields: {title: Text, comparisons: 'List<InvestigationComparison>'}

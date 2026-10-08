@@ -1,0 +1,111 @@
+version: 1
+types:
+  CiAccepted: {base: Bool, enum: [true]}
+  CiId: {base: Text, minLength: 1, maxLength: 1024}
+  CiOrdinal: {base: Int, min: 1}
+  CiDigest: {base: Text, pattern: '^[0-9a-f]{64}$'}
+  CiFailureKind: {base: Text, enum: [test, build, dependency, invocation, infrastructure, timeout, cancellation, unknown]}
+  CiConfidence: {base: Text, enum: [observed, inferred, uncertain]}
+  CiEdgeKind: {base: Text, enum: [wraps, reports, caused_by, blocked_by]}
+  CiVerificationState: {base: Text, enum: [unknown, pending, not_run, incomparable, failed, passed_suite, passed_check, passed_test]}
+  CiRunKey:
+    base: Record
+    fields: {provider: CiId, repositoryId: CiId, runId: CiId, attempt: CiOrdinal}
+  LogArtifactKey:
+    base: Record
+    fields: {run: CiId, attempt: CiOrdinal, job: CiId, origin: CiId, digest: CiDigest}
+  CiRun:
+    base: Record
+    fields:
+      key: CiRunKey
+      workflow: Text
+      workflowRevision: 'Option<CiBlobSha>'
+      event: Text
+      ref: Text
+      headSha: Text
+      executedSha: 'Option<Text>'
+      status: Text
+      conclusion: Text
+      createdAt: Instant
+      startedAt: Instant
+      updatedAt: Instant
+      url: Text
+      observedAt: 'Option<Instant>'
+      capturedOn: Text
+      completeness: Text
+      policy: Text
+  CiStep:
+    base: Record
+    fields: {id: CiId, job: CiId, number: CiOrdinal, name: Text, status: Text, conclusion: Text, startedAt: 'Option<Instant>', completedAt: 'Option<Instant>', command: 'Option<Text>', source: 'Option<Text>', directory: 'Option<Text>', environment: Record, limits: Record}
+  CiJob:
+    base: Record
+    fields: {id: CiId, run: CiRunKey, providerJobId: CiId, logicalJob: 'Option<Text>', name: Text, matrix: Record, needs: 'List<Text>', runner: 'Option<Text>', timeoutMinutes: 'Option<CiOrdinal>', workflowRevision: 'Option<CiBlobSha>', status: Text, conclusion: Text, startedAt: 'Option<Instant>', completedAt: 'Option<Instant>', url: Text, notAcquired: Bool, annotations: 'List<CiAnnotation>', steps: 'List<CiStep>', workflowEvidence: Text}
+  CiAnnotation:
+    base: Record
+    fields: {run: CiId, job: CiId, checkRun: CiId, message: Text, source: Text}
+  CiLogLine:
+    base: Record
+    fields: {artifact: LogArtifactKey, ordinal: CiOrdinal, job: CiId, jobName: 'Option<Text>', step: 'Option<Text>', stepName: 'Option<Text>', time: 'Option<Instant>', raw: Text, text: Text, level: 'Option<Text>', group: 'Option<Int>', byteStart: Int, byteEnd: Int, delimiterEnd: Int}
+  CiEvidence:
+    base: Record
+    fields: {artifact: LogArtifactKey, from: CiOrdinal, to: CiOrdinal}
+  CiRead:
+    base: Record
+    fields: {artifact: LogArtifactKey, from: CiOrdinal, to: CiOrdinal, scope: Text, complete: Bool}
+  CiNotRead:
+    base: Record
+    fields: {job: CiId, origin: Text, reason: Text}
+  CiCoverage:
+    base: Record
+    fields: {read: 'List<CiRead>', notRead: 'List<CiNotRead>'}
+  CiFailure:
+    base: Record
+    fields: {id: CiId, kind: CiFailureKind, title: Text, detail: Text, location: 'Option<Text>', job: CiId, step: 'Option<Text>', evidence: 'Option<CiEvidence>', confidence: CiConfidence, format: Text, parserVersion: Text}
+  CiEdge:
+    base: Record
+    fields: {from: CiId, to: CiId, kind: CiEdgeKind, confidence: CiConfidence, evidence: 'Option<Text>'}
+  CiFailures:
+    base: Record
+    fields: {failures: 'List<CiFailure>', edges: 'List<CiEdge>', originating: 'List<Text>', coverage: CiCoverage, parserVersion: Text}
+  CiVerification:
+    base: Record
+    fields: {run: CiId, sha: Text, relation: Text, state: CiVerificationState, why: Text, evidence: 'Option<Text>'}
+  CiFinding:
+    base: Record
+    fields: {findingId: CiId, revision: CiOrdinal, subject: Record, decision: Text, fix: Record, verification: 'List<CiVerification>', uncertainty: 'List<Text>', author: Text}
+  CiLogState:
+    base: Record
+    fields: {group: 'Option<Int>', job: Text, step: Text}
+  CiLogFrame:
+    base: Record
+    fields: {ordinal: Int, text: Text, start: Int, end: Int, delimiterEnd: Int}
+  CiLogContext:
+    base: Record
+    fields: {artifact: LogArtifactKey, jobs: 'List<CiJob>', first: CiOrdinal}
+  CiLogStep:
+    base: Record
+    fields: {state: CiLogState, outputs: 'List<CiLogLine>'}
+  CiDiagnosticState:
+    base: Record
+    fields: {active: Bool, job: Text, step: 'Option<Text>'}
+  CiDiagnostics:
+    base: Record
+    fields: {lines: 'List<CiLogLine>', state: CiDiagnosticState}
+  CiSha: {base: Text, pattern: '^[0-9a-f]{10,40}$'}
+  CiBlobSha: {base: Text, pattern: '^[0-9a-f]{40}$'}
+  CiWorkflowJob:
+    base: Record
+    fields: {id: CiId, name: Text, runner: Text, needs: 'List<Text>', timeoutMinutes: CiOrdinal}
+  CiWorkflowRevision:
+    base: Record
+    fields: {refSha: CiBlobSha, blobSha: CiBlobSha, source: CiId, jobs: 'List<CiWorkflowJob>'}
+  CiLogAvailabilityState: {base: Text, enum: [available, not_yet_available]}
+  CiLogAvailability:
+    base: Record
+    fields: {state: CiLogAvailabilityState, log: 'Option<Text>', reason: Text}
+  CiRepository: {base: Text, pattern: '^[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$'}
+  CiProviderId: {base: Text, pattern: '^[0-9]+$'}
+  CiComparison:
+    base: Record
+    fields: {base: CiSha, head: CiSha, status: Text, aheadBy: Int, source: CiId}
+  CiCheckTarget: {base: Text, enum: [examples/view-packages/check.py]}

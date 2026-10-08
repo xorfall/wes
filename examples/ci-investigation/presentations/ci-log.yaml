@@ -1,0 +1,20 @@
+version: 1
+type: CiLogLine
+applies: [list]
+fields:
+  artifact: LogArtifactKey
+  ordinal: Int
+  stepName: Option<Text>
+  time: Option<Instant>
+  level: Option<Text>
+  group: Option<Int>
+  text: Text
+present:
+  kind: log
+  mapping:
+    key: [artifact.digest, ordinal]
+    text: text
+    time: time
+    level: level
+    scope: stepName
+    group: group

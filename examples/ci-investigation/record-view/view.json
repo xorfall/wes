@@ -1,0 +1,65 @@
+{
+  "name": "CiRecords",
+  "id": "ci-records",
+  "input": "CiRecords",
+  "summary": "Read the committed log records of a CI log analysis one bounded page at a time, with original line and byte ranges.",
+  "renderer": "View.tsx",
+  "outputs": {},
+  "interaction": null,
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 32,
+        "rows": 4
+      },
+      "preferred": {
+        "columns": 80,
+        "rows": 6
+      },
+      "max": {
+        "columns": 320,
+        "rows": 8
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 40,
+        "rows": 10
+      },
+      "preferred": {
+        "columns": 96,
+        "rows": 16
+      },
+      "max": {
+        "columns": 320,
+        "rows": 28
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 48,
+        "rows": 16
+      },
+      "preferred": {
+        "columns": 120,
+        "rows": 32
+      },
+      "max": {
+        "columns": 512,
+        "rows": 120
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    }
+  }
+}

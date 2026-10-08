@@ -4062,3 +4062,87 @@ async fn dataset_retention_preview_reports_exact_transitive_cost_and_refuses_cha
     drop(events);
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn ci_records_view_reads_the_exact_native_normalization_contract() {
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let session = fixture.app.current().unwrap().session;
+    let manifest = include_str!("../../../../examples/ci-investigation/record-view/view.json");
+    let types = include_str!("../../../../examples/ci-investigation/record-view/types.yaml");
+    let package = wes_views::Package::parse(manifest, types).unwrap();
+    let artifact = json!({"format":1,"sdk":wes_views::sdk_version(),"manifest":manifest,"types":types,"definition":package.digest,"javascript":"throw new Error('not executed');","css":""});
+    let declarations = include_str!("../../../../examples/ci-investigation/types.yaml");
+    let install = format!(
+        ":package load source:{}\n:package load source:{}",
+        json!(declarations),
+        json!(artifact.to_string())
+    );
+    assert_eq!(
+        fixture.source(&generation, "ci-install", &install).await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let raw = "Unit checks\tCheck\t2026-01-02T03:04:05Z ##[group]Tests\nUnit checks\tCheck\t2026-01-02T03:04:06Z ##[error]Expected 7, received 9\nUnit checks\tCheck\t2026-01-02T03:04:07Z ##[endgroup]\n";
+    let key =
+        json!({"provider":"synthetic","repositoryId":"sample/service","runId":"run-1","attempt":1});
+    let job = json!({"id":"job-1","run":key,"providerJobId":"1","logicalJob":null,"name":"Unit checks","matrix":{},"needs":[],"runner":null,"timeoutMinutes":null,"workflowRevision":null,"status":"completed","conclusion":"failure","startedAt":null,"completedAt":null,"url":"","notAcquired":false,"annotations":[],"steps":[{"id":"step-1","job":"job-1","number":1,"name":"Check","status":"completed","conclusion":"failure","startedAt":null,"completedAt":null,"command":null,"source":null,"directory":null,"environment":{},"limits":{}}],"workflowEvidence":"Synthetic fixture"});
+    let context = json!({"artifact":{"run":"run-1","attempt":1,"job":"job-1","origin":"synthetic-log","digest":"a".repeat(64)},"jobs":[job],"first":1});
+    let normalize = include_str!("../../../../examples/ci-investigation/normalize.wes")
+        .split("// Workflow declarations")
+        .next()
+        .unwrap();
+    let source = format!(
+        "{normalize}\n:calc pure {{ return {}; }} > raw\n:calc pure {{ return {{group:none,job:'',step:''}}; }} > seed\n:calc pure {{ return parseJson({}, 'CiLogContext'); }} > context\n:scan source:$raw transition:NormalizeCiRecord initial:$seed context:$context profile:LinesUtf8 sink:dataset > normalized",
+        json!(raw),
+        json!(context.to_string())
+    );
+    assert_eq!(
+        fixture.source(&generation, "ci-normalize", &source).await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "ci-view",
+                ":view create CiRecords input:$normalized > records"
+            )
+            .await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    assert!(
+        snapshot.execution.errors.is_empty(),
+        "{:?}",
+        snapshot.execution.errors
+    );
+    let node = &snapshot.names["records"].node;
+    let frame = session.view_frame(node.clone()).await.unwrap();
+    let selected = &frame.instances[0];
+    let response = fixture
+        .client
+        .get(fixture.url(&format!(
+            "/view-datasets/{}/{}/{}?select=/outputs&from=1&limit=1",
+            node, selected.identity, selected.id
+        )))
+        .header("X-Wes-Session", &generation)
+        .header("X-Wes-View-Revision", selected.revision.to_string())
+        .header("X-Wes-Input-Revision", selected.input_revision.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    let line = &page["page"]["rows"][0]["value"]["data"];
+    assert_eq!(line["ordinal"], 2);
+    assert_eq!(line["raw"], raw.lines().nth(1).unwrap());
+    assert_eq!(line["byteStart"], raw.lines().next().unwrap().len() + 1);
+    assert_eq!(line["level"]["value"], "error");
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    drop(events);
+    fixture.close().await;
+}

@@ -150,8 +150,12 @@ fn shipped_descriptors_are_complete_and_have_unique_identity() {
         [
             "Choice",
             "Dashboard",
+            "ExecutionComparison",
+            "FailureSummary",
             "Histogram",
+            "LogExcerpt",
             "Metric",
+            "SpanTimeline",
             "Timeline",
             "TimelineGroup"
         ]

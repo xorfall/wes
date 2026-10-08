@@ -1,0 +1,14 @@
+.log-excerpt { display:grid; gap:var(--space-sm); min-width:0; min-height:0; }
+.log-excerpt-title { margin:0; font-size:13px; font-weight:600; overflow-wrap:anywhere; }
+.log-excerpt-source,.log-excerpt-missing,.log-excerpt-empty { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.log-excerpt-lines { list-style:none; margin:0; padding:0; overflow:auto; min-height:0; max-height:20em; font-family:var(--type-mono-family,ui-monospace,monospace); font-size:12px; }
+/* Each bound leaves the title, source and missing-line note inside the tier's preferred rows, so the list
+   scrolls to its focus within the visible frame. */
+.log-excerpt-preview { max-height:12em; }
+.log-excerpt-window { max-height:44em; }
+.log-excerpt-line { display:grid; grid-template-columns:5ch 8ch minmax(0,1fr); gap:8px; padding:0 4px; border-left:2px solid transparent; }
+.log-excerpt-focus { border-left-color:currentColor; background:color-mix(in srgb,currentColor 10%,transparent); }
+.log-excerpt-ordinal { text-align:right; }
+.log-excerpt-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.log-excerpt-gap,.log-excerpt-scope { padding:2px 4px; font-size:11px; }
+.log-excerpt-scope { border-top:1px solid var(--line); margin-top:2px; }

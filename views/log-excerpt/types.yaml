@@ -1,0 +1,24 @@
+version: 1
+types:
+  LogExcerptKind: {base: Text, enum: [log-excerpt]}
+  LogExcerptKey: {base: Text, minLength: 1, maxLength: 1024}
+  LogExcerptText: {base: Text, maxLength: 8192}
+  LogExcerptLine: {base: Int, min: 1}
+  LogExcerptArtifact:
+    base: Record
+    fields: {run: LogExcerptKey, attempt: LogExcerptLine, job: LogExcerptKey, origin: LogExcerptKey, digest: LogExcerptKey}
+  LogExcerptRange:
+    base: Record
+    fields: {from: LogExcerptLine, to: LogExcerptLine}
+  LogExcerptRow:
+    base: Record
+    fields: {ordinal: LogExcerptLine, time: 'Option<Instant>', step: 'Option<LogExcerptText>', level: 'Option<LogExcerptText>', text: LogExcerptText}
+  LogExcerptRows: {base: 'List<LogExcerptRow>', maxItems: 400}
+  LogExcerpt:
+    base: Record
+    fields:
+      view: LogExcerptKind
+      title: LogExcerptText
+      artifact: LogExcerptArtifact
+      focus: 'Option<LogExcerptRange>'
+      lines: LogExcerptRows

@@ -1,0 +1,84 @@
+{
+  "name": "FailureSummary",
+  "id": "failure-summary",
+  "input": "FailureSummary",
+  "summary": "Read a run's failures from where they originate outward, with each one's evidence lines and what was not read.",
+  "renderer": "View.tsx",
+  "outputs": {
+    "evidence": {
+      "type": "Option<FailureEvidence>",
+      "mode": "state",
+      "shared": true
+    },
+    "picked": {
+      "type": "FailureEvidence",
+      "mode": "event",
+      "shared": true
+    }
+  },
+  "interaction": {
+    "protocol": "FailureSelection",
+    "state": "FailureSelection",
+    "event": "FailureSelection",
+    "sharedFields": [
+      "failure",
+      "evidence"
+    ]
+  },
+  "layout": {
+    "preview": {
+      "min": {
+        "columns": 32,
+        "rows": 4
+      },
+      "preferred": {
+        "columns": 80,
+        "rows": 8
+      },
+      "max": {
+        "columns": 320,
+        "rows": 12
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "expanded": {
+      "min": {
+        "columns": 40,
+        "rows": 10
+      },
+      "preferred": {
+        "columns": 96,
+        "rows": 20
+      },
+      "max": {
+        "columns": 320,
+        "rows": 28
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    },
+    "window": {
+      "min": {
+        "columns": 48,
+        "rows": 16
+      },
+      "preferred": {
+        "columns": 120,
+        "rows": 32
+      },
+      "max": {
+        "columns": 512,
+        "rows": 120
+      },
+      "placement": {
+        "width": "fill",
+        "align": "start"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+/* Fixed one-line rows in a bounded area that owns its scroller; controls never move with arrivals. */
+.ci-records { display:grid; gap:var(--space-sm); min-width:0; min-height:0; --ci-records-line:1.5em; }
+.ci-records-head,.ci-records-receipt { display:grid; gap:2px; min-width:0; }
+.ci-records-title { margin:0; font-size:13px; font-weight:600; }
+.ci-records-head p,.ci-records-receipt p { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.ci-records-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-height:var(--ci-records-line); }
+.ci-records-range { font-size:12px; }
+.ci-records-status { margin:0; min-height:var(--ci-records-line); font-size:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.ci-records-rows { list-style:none; margin:0; padding:0; overflow:auto; overscroll-behavior:contain; min-width:0;
+  height:calc(var(--ci-records-rows) * var(--ci-records-line)); max-height:calc(var(--ci-records-rows) * var(--ci-records-line));
+  font-family:var(--type-mono-family,ui-monospace,monospace); font-size:12px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.ci-records[data-mode=preview] .ci-records-rows { height:calc(5 * var(--ci-records-line)); }
+.ci-records-row { display:grid; grid-template-columns:7ch 7ch 13ch 7ch minmax(8ch,18ch) 15ch minmax(0,1fr); gap:8px; height:var(--ci-records-line);
+  line-height:var(--ci-records-line); padding:0 4px; white-space:nowrap; }
+.ci-records-narrow .ci-records-row { grid-template-columns:7ch 7ch 7ch minmax(6ch,14ch) minmax(0,1fr); }
+.ci-records-row > span { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.ci-records-ordinal,.ci-records-line { text-align:right; }
+.ci-records-stale .ci-records-row { opacity:.6; }

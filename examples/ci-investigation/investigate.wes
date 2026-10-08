@@ -1,0 +1,190 @@
+// This recipe produces compact observations. Every frame is examined by Wes;
+// only recognized evidence is retained, with offsets into the captured source.
+:def InvestigateRecord(state: InvestigationState, context: InvestigationContext, item: InvestigationFrame) -> InvestigationStep as :calc pure {
+  check('InvestigationAccepted', context.attempt >= 1 && context.artifact.run == context.run && context.artifact.attempt == context.attempt);
+  check('InvestigationAccepted', !state.finished && length(item.text) <= 8192);
+  function starts(value, prefix) { return length(value) >= length(prefix) && slice(value, 0, length(prefix)) == prefix; }
+  const ordinal = item.ordinal + 1;
+  check('InvestigationAccepted', ordinal > state.lastOrdinal);
+  let prior = state;
+  let outputs = [];
+  if (ordinal != state.lastOrdinal + 1) {
+    if (state.pending != '') {
+      outputs = [{id: context.provider + '/' + context.run + '/' + text(context.attempt) + '/' + context.artifact.digest + '/' + text(state.pendingFrom) + '/incomplete', artifact: context.artifact, kind: 'unknown', format: state.pending, title: 'Diagnostic block interrupted by rejected input; cause unknown', from: state.pendingFrom, to: state.lastOrdinal, byteStart: state.pendingByte, byteEnd: state.lastByte, parent: state.outer, measurement: none, confidence: 'uncertain'}];
+    }
+    prior = withFields(state, {pending: '', outer: none, tapTitle: ''});
+  }
+  let message = item.text;
+  if (context.envelope == 'tabbed') {
+    const prefix = context.jobName + '\t' + context.stepName + '\t';
+    if (!starts(message, prefix)) {
+      const envelope = iter.captures(message, "^([^\\t]+)\\t([^\\t]+)\\t(.*)$").take(1).collect();
+      check('InvestigationAccepted', length(envelope) == 1);
+      let excluded = [];
+      if (prior.pending != '') {
+        excluded = [{id: context.provider + '/' + context.run + '/' + text(context.attempt) + '/' + context.artifact.digest + '/' + text(prior.pendingFrom) + '/incomplete', artifact: context.artifact, kind: 'unknown', format: prior.pending, title: 'Diagnostic block interrupted by another scope; cause unknown', from: prior.pendingFrom, to: prior.lastOrdinal, byteStart: prior.pendingByte, byteEnd: prior.lastByte, parent: prior.outer, measurement: none, confidence: 'uncertain'}];
+      }
+      outputs = concat(outputs, excluded);
+      return {state: withFields(prior, {lines: prior.lines + 1, lastOrdinal: ordinal, outsideScope: prior.outsideScope + 1, lastByte: item.delimiterEnd, recognized: prior.recognized + length(outputs), pending: '', outer: none, tapTitle: ''}), outputs: outputs};
+    }
+    message = slice(message, length(prefix), length(message));
+  }
+  if (length(message) >= 21 && slice(message, 4, 5) == '-' && slice(message, 10, 11) == 'T') {
+    const timed = iter.captures(message, "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+Z (.*)$").take(1).collect();
+    if (length(timed) == 1) { message = unwrapOr(timed[0].groups[0], ''); }
+  }
+  let next = withFields(prior, {lines: prior.lines + 1, lastOrdinal: ordinal, lastByte: item.delimiterEnd});
+  function observation(kind, format, title, first, byteStart, parent, measurement, confidence) {
+    return {id: context.provider + '/' + context.run + '/' + text(context.attempt) + '/' + context.artifact.digest + '/' + text(first) + '/' + format, artifact: context.artifact, kind: kind, format: format, title: title, from: first, to: ordinal, byteStart: byteStart, byteEnd: item.delimiterEnd, parent: parent, measurement: measurement, confidence: confidence};
+  }
+  const firstWord = iter.split(message, ' ').take(1).collect();
+  let word = '';
+  if (length(firstWord) > 0) { word = firstWord[0]; }
+  const transportSamples = starts(message, '{"before":{"transport":');
+  if (next.pending == '' && word != 'thread' && word != 'not' && word != 'AssertionError' && word != 'Traceback' && word != 'usage:' && word != 'npm' && word != 'TASK' && word != 'test' && !starts(message, '##[error]') && !transportSamples) {
+    return {state: withFields(next, {recognized: next.recognized + length(outputs)}), outputs: outputs};
+  }
+  const newBlock = starts(message, 'thread ') || starts(message, 'not ok ') || starts(message, 'AssertionError [ERR_ASSERTION]:') || message == 'Traceback (most recent call last):' || starts(message, 'usage:') || starts(message, 'npm error code ') || starts(message, '##[error]') || starts(message, 'TASK ') || starts(message, 'test result: ');
+  if (next.pending != '' && newBlock) {
+    const incomplete = observation('unknown', next.pending, 'Incomplete diagnostic block; cause unknown', next.pendingFrom, next.pendingByte, next.outer, none, 'uncertain');
+    outputs = [withFields(incomplete, {to: ordinal - 1, byteEnd: item.start})];
+    next = withFields(next, {pending: ''});
+  }
+  let panic = [];
+  if (word == 'thread') { panic = iter.captures(message, "^thread '([^']+)' .* panicked at (.+):$").take(1).collect(); }
+  if (transportSamples) {
+    const samples = parseJson(message, 'InvestigationTransportSamples');
+    let comparator = none; let threshold = none; let source = none;
+    if (isSome(context.constraint)) {
+      const constraint = unwrapOr(context.constraint, {});
+      check('InvestigationAccepted', constraint.metric == 'p95' && constraint.unit == 'ms');
+      comparator = some(constraint.comparator); threshold = some(constraint.threshold); source = some(constraint.source);
+    }
+    outputs = concat(outputs, [observation('unknown', 'transport-measurement', 'Observed p95; this does not establish a cause', ordinal, item.start, next.outer,
+      some({metric: 'p95', value: samples.after.p95_ms, unit: 'ms', comparator: comparator, threshold: threshold, baseline: some(samples.before.p95_ms), constraintSource: source}), 'observed')]);
+  } else if (length(panic) == 1) {
+    const row = observation('test', 'rust-panic', unwrapOr(panic[0].groups[0], ''), ordinal, item.start, none, none, 'observed');
+    outputs = concat(outputs, [row]); next = withFields(next, {outer: some(row.id)});
+  } else if (starts(message, 'not ok ')) {
+    next = withFields(next, {tapTitle: message});
+  } else if (starts(message, 'AssertionError [ERR_ASSERTION]:')) {
+    const measured = iter.captures(message, "p95 ([0-9.]+) ms is not (<|<=|>|>=) ([0-9.]+) ms; baseline ([0-9.]+) ms").take(1).collect();
+    let measurement = none;
+    if (length(measured) == 1) {
+      const fields = measured[0].groups;
+      measurement = some({metric: 'p95', value: decimal(unwrapOr(fields[0], '0.0')), unit: 'ms', comparator: some(unwrapOr(fields[1], '')), threshold: some(decimal(unwrapOr(fields[2], '0.0'))), baseline: some(decimal(unwrapOr(fields[3], '0.0'))), constraintSource: some('Captured assertion text')});
+    }
+    let title = message;
+    if (next.tapTitle != '') { title = next.tapTitle; }
+    outputs = concat(outputs, [observation('test', 'node-assertion', title, ordinal, item.start, next.outer, measurement, 'observed')]);
+    next = withFields(next, {tapTitle: ''});
+  } else if (message == 'Traceback (most recent call last):') {
+    next = withFields(next, {pending: 'python-traceback', pendingFrom: ordinal, pendingByte: item.start});
+  } else if (starts(message, 'usage:')) {
+    next = withFields(next, {pending: 'argparse', pendingFrom: ordinal, pendingByte: item.start});
+  } else if (next.pending == 'python-traceback' && iter.matches(message, "^[A-Za-z_.]+(?:Error|Exception):").take(1).count() == 1) {
+    outputs = concat(outputs, [observation('unknown', 'python-traceback', message, next.pendingFrom, next.pendingByte, next.outer, none, 'observed')]);
+    next = withFields(next, {pending: ''});
+  } else if (next.pending == 'argparse' && iter.matches(message, "^[^ ]+: error:").take(1).count() == 1) {
+    outputs = concat(outputs, [observation('invocation', 'argparse', message, next.pendingFrom, next.pendingByte, none, none, 'observed')]);
+    next = withFields(next, {pending: ''});
+  } else if (starts(message, 'npm error code ')) {
+    outputs = concat(outputs, [observation('dependency', 'npm', message, ordinal, item.start, none, none, 'observed')]);
+  } else if (starts(message, '##[error]')) {
+    outputs = concat(outputs, [observation('unknown', 'provider-report', message, ordinal, item.start, none, none, 'observed')]);
+  } else if (starts(message, 'TASK ') && iter.matches(message, "^TASK [^ ]+ outcome=(failed|cancelled|timeout)$").take(1).count() == 1) {
+    outputs = concat(outputs, [observation('unknown', 'task-outcome', message, ordinal, item.start, none, none, 'observed')]);
+  }
+  if (starts(message, 'test result: ')) { next = withFields(next, {outer: none, tapTitle: ''}); }
+  next = withFields(next, {recognized: next.recognized + length(outputs)});
+  return {state: next, outputs: outputs};
+}
+
+:def FinishInvestigation(state: InvestigationState, context: InvestigationContext, end: Unknown) -> InvestigationStep as :calc pure {
+  let outputs = [];
+  if (state.pending != '') {
+    outputs = [{id: context.provider + '/' + context.run + '/' + text(context.attempt) + '/' + context.artifact.digest + '/' + text(state.pendingFrom) + '/incomplete', artifact: context.artifact, kind: 'unknown', format: state.pending, title: 'Incomplete diagnostic block; cause unknown', from: state.pendingFrom, to: state.lastOrdinal, byteStart: state.pendingByte, byteEnd: state.lastByte, parent: state.outer, measurement: none, confidence: 'uncertain'}];
+  }
+  return {state: withFields(state, {finished: true, recognized: state.recognized + length(outputs), pending: ''}), outputs: outputs};
+}
+
+// A matching input does not establish target execution or environment equality.
+:def CompareExecutions(subject: InvestigationExecution, baseline: InvestigationExecution) -> InvestigationComparison as :calc pure {
+  check('InvestigationAccepted', subject.attempt >= 1 && baseline.attempt >= 1);
+  const sameInput = subject.provider == baseline.provider && subject.inputDigest == baseline.inputDigest;
+  const ran = subject.target == baseline.target && (subject.targetOutcome == 'passed' || subject.targetOutcome == 'failed') && (baseline.targetOutcome == 'passed' || baseline.targetOutcome == 'failed');
+  let environment = none;
+  if (isSome(subject.environmentDigest) && isSome(baseline.environmentDigest)) { environment = some(subject.environmentDigest == baseline.environmentDigest); }
+  let hypothesis = 'incomparable'; let rationale = 'Comparable target execution and input evidence are required';
+  if (sameInput && ran) {
+    hypothesis = 'different_outcomes'; rationale = 'The same target and input produced observed outcomes; environment and cause still require investigation';
+    if (subject.targetOutcome == baseline.targetOutcome) { hypothesis = 'same_observed_outcome'; rationale = 'Both executions report the same target outcome; this does not verify a fix'; }
+    else if (isSome(environment) && unwrapOr(environment, false)) { hypothesis = 'suspected_intermittence'; rationale = 'The captured target, input and environment match but outcomes differ; cause unknown'; }
+  }
+  return {subject: subject.run, baseline: baseline.run, target: subject.target, inputComparable: sameInput, environmentComparable: environment, targetExercised: ran, hypothesis: hypothesis, rationale: rationale, regressionRuledOut: false};
+}
+
+:def ExecutionComparisonInput(comparisons: List<InvestigationComparison>, title: Text) -> ExecutionComparisonReport as :calc pure {
+  return {title: title, comparisons: comparisons};
+}
+
+:def InvestigationSummary(observations: List<InvestigationObservation>, state: InvestigationState, receipt: Unknown, context: InvestigationContext) -> FailureSummary as :calc pure {
+  check('InvestigationAccepted', receipt.inputRecords >= state.lastOrdinal && receipt.inputRecords == state.lines + receipt.rejectedRecords);
+  let read = [];
+  let notRead = [];
+  if (receipt.inputRecords > 0) { read = [{artifact: context.artifact, from: 1, to: receipt.inputRecords, scope: text(state.lines) + ' valid framed records examined; ' + text(receipt.rejectedRecords) + ' rejected records were not interpreted. Recognized observations for ' + context.jobName + ' / ' + context.stepName + '. ' + text(state.outsideScope) + ' records outside that scope were excluded. Unclassified text is not a no-failure verdict.', complete: state.finished && receipt.status == 'complete' && receipt.rejectedRecords == 0}]; }
+  if (receipt.rejectedRecords > 0) { notRead = [{job: context.artifact.job, origin: context.artifact.origin, reason: text(receipt.rejectedRecords) + ' framed records rejected; inspect the analysis coverage for exact ranges and original bytes. No diagnostic is inferred from those records.'}]; }
+  return {view: 'failure-summary', title: 'Execution evidence · ' + context.run,
+    failures: observations.map(row => ({id: row.id, kind: row.kind, title: row.title, detail: row.format + '; original bytes ' + text(row.byteStart) + '..' + text(row.byteEnd), location: none, job: row.artifact.job, step: none, evidence: some({artifact: row.artifact, from: row.from, to: row.to}), excerpt: [], confidence: row.confidence})),
+    edges: observations.filter(row => isSome(row.parent) && observations.reduce((found, candidate) => found || some(candidate.id) == row.parent, false)).map(row => ({from: unwrapOr(row.parent, ''), to: row.id, kind: 'wraps', confidence: 'inferred'})),
+    originating: [],
+    coverage: {read: read, notRead: notRead}};
+}
+
+:def UnavailableInvestigation(context: InvestigationContext, availability: InvestigationAvailability) -> FailureSummary as :calc pure {
+  check('InvestigationAccepted', availability != 'available');
+  return {view: 'failure-summary', title: 'Execution evidence · ' + context.run, failures: [], edges: [], originating: [],
+    coverage: {read: [], notRead: [{job: context.artifact.job, origin: context.artifact.origin, reason: 'Captured log availability: ' + availability + '; no log was scanned and no failure cause is inferred'}]}};
+}
+
+// The source is the bounded Text returned by :scan excerpt, never a second log
+// acquisition. Native framing preserves the selected original line sequence.
+:def ReadEvidenceLine(state: Int, context: InvestigationEvidenceContext, item: InvestigationFrame) -> InvestigationEvidenceStep as :calc pure {
+  check('InvestigationAccepted', state < 400 && context.first >= 1);
+  let message = item.text;
+  if (context.envelope == 'tabbed') {
+    const prefix = context.jobName + '\t' + context.stepName + '\t';
+    check('InvestigationAccepted', length(message) >= length(prefix) && slice(message, 0, length(prefix)) == prefix);
+    message = slice(message, length(prefix), length(message));
+  }
+  let time = none;
+  const timed = iter.captures(message, "^([0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+Z) (.*)$").take(1).collect();
+  if (length(timed) == 1) {
+    time = some(instant(unwrapOr(timed[0].groups[0], ''))); message = unwrapOr(timed[0].groups[1], '');
+  }
+  return {state: state + 1, outputs: [{ordinal: context.first + item.ordinal, time: time, step: some(context.stepName), level: none, text: message}]};
+}
+
+:def EvidenceView(result: Unknown, context: InvestigationEvidenceContext) -> LogExcerpt as :calc pure {
+  check('InvestigationAccepted', result.receipt.status == 'complete' && context.focusFrom >= context.first && context.focusTo >= context.focusFrom);
+  return {view: 'log-excerpt', title: context.title, artifact: context.artifact, focus: some({from: context.focusFrom, to: context.focusTo}), lines: result.outputs};
+}
+
+// Missing timestamps stay missing. A declaration is drawn as a reference limit,
+// never as the observed reason why a task ended.
+:def ExecutionTimeline(tasks: List<InvestigationTask>, begin: Instant, end: Instant, title: Text) -> SpanTimeline as :calc pure {
+  check('InvestigationAccepted', begin <= end);
+  return {view: 'span-timeline', title: title, range: interval(begin, end), lanes: tasks.map(task => {
+    check('InvestigationAccepted', isSome(task.declaredLimit) == isSome(task.limitSource));
+    let spans = []; let limits = []; let note = some('Start timestamp unavailable; no interval inferred');
+    if (isSome(task.start)) {
+      const start = unwrapOr(task.start, begin);
+      check('InvestigationAccepted', start >= begin && start <= end);
+      if (isSome(task.end)) { check('InvestigationAccepted', unwrapOr(task.end, start) >= start && unwrapOr(task.end, start) <= end); }
+      spans = [{id: task.id, label: task.label, status: task.status, start: start, end: task.end}];
+      note = none;
+      if (isSome(task.declaredLimit)) { limits = [{at: start + unwrapOr(task.declaredLimit, duration('PT0S')), label: 'Declared limit; termination cause unknown', source: unwrapOr(task.limitSource, '')}]; }
+    }
+    return {id: task.id, label: task.job + ' · ' + task.label, status: task.status, note: note, spans: spans, limits: limits};
+  })};
+}
