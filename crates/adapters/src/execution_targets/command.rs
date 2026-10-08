@@ -1,5 +1,5 @@
 //! A finite POSIX command contract, independent of Docker/SSH wire encoding.
-//! Remote argv may be retained by a daemon/server; do not export private arguments.
+//! Remote argv may be retained by a daemon/server; do not export confidential arguments.
 use std::time::Duration;
 use wes_core::{
     Data, Primitive, Shape,
