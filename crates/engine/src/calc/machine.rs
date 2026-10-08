@@ -156,9 +156,16 @@ pub struct Machine {
     sequence: u64,
     calls: u64,
     halted: bool,
-    iter_regex: wes_core::IterRegexCache,
+    pub(super) iter_regex: wes_core::IterRegexCache,
 }
 impl Machine {
+    pub fn usage(&self) -> super::Usage {
+        super::Usage {
+            work: self.budget.work_limit.saturating_sub(self.budget.left),
+            allocated_bytes: self.budget.charged,
+            regex: self.iter_regex.usage(),
+        }
+    }
     /// A pipeline's selected input is a control dependency even when no parameter
     /// reads its data. Join attribution exactly as for the explicit VM inputs.
     pub(crate) fn capture_control_provenance(&mut self, provenance: Provenance) {
@@ -182,6 +189,34 @@ impl Machine {
         limits: Limits,
         token: CancellationToken,
     ) -> Result<Self, Failure> {
+        Self::new_owned(compiled, inputs, limits, token, None, None)
+    }
+    pub(crate) fn new_record(
+        compiled: Arc<Compiled>,
+        inputs: IndexMap<String, Value>,
+        limits: Limits,
+        token: CancellationToken,
+        parent: crate::work_budget::WorkCounter,
+        cache: wes_core::IterRegexCache,
+    ) -> Result<Self, Failure> {
+        Self::new_owned(compiled, inputs, limits, token, Some(parent), Some(cache))
+    }
+    pub(crate) fn into_regex_cache(self) -> wes_core::IterRegexCache {
+        self.iter_regex
+    }
+    /// Local host work belongs to both this invocation and its owning attempt.
+    /// The caller prepays before entering a bounded native service.
+    pub(crate) fn charge_native_work(&mut self, amount: u64, span: Span) -> Result<(), Failure> {
+        self.budget.work(amount, span)
+    }
+    fn new_owned(
+        compiled: Arc<Compiled>,
+        inputs: IndexMap<String, Value>,
+        limits: Limits,
+        token: CancellationToken,
+        parent_work: Option<crate::work_budget::WorkCounter>,
+        cache: Option<wes_core::IterRegexCache>,
+    ) -> Result<Self, Failure> {
         let span = compiled.program.span;
         if limits.work == 0
             || limits.work > 100_000_000
@@ -197,6 +232,7 @@ impl Machine {
         }
         let provenance = Provenance::agreed_by(inputs.values().map(Value::provenance));
         let mut budget = Budget {
+            parent_work,
             token,
             left: limits.work,
             work_limit: limits.work,
@@ -238,7 +274,13 @@ impl Machine {
         let root = compiled.program.root;
         Ok(Self {
             compiled,
-            iter_regex: Default::default(),
+            iter_regex: match cache {
+                Some(cache) => cache,
+                None => wes_core::IterRegexCache::with_capacity(
+                    wes_budgets::get("calc.patterns") as usize
+                )
+                .map_err(|e| Failure::iteration(e, span))?,
+            },
             budget,
             span,
             provenance,
@@ -1168,26 +1210,7 @@ impl Machine {
             return Ok(item.project_field_shape(value.clone(), name));
         }
         if let Some(spec) = self.compiled.program.package.operation(name)
-            && matches!(
-                spec.operation,
-                Operation::Map
-                    | Operation::Filter
-                    | Operation::Reduce
-                    | Operation::Join
-                    | Operation::WithFields
-                    | Operation::Slice
-                    | Operation::Concat
-                    | Operation::SortBy
-                    | Operation::Length
-                    | Operation::Keys
-                    | Operation::IsSome
-                    | Operation::UnwrapOr
-                    | Operation::Take
-                    | Operation::Skip
-                    | Operation::Collect
-                    | Operation::Count
-                    | Operation::Field
-            )
+            && spec.operation.supports_method()
         {
             return Ok(Item::Method(spec, Arc::new(item)));
         }

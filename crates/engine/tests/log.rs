@@ -109,7 +109,7 @@ fn observation() -> Observation {
         revision: 0,
         stale_reason: None,
         delivery: None,
-        stopped: None,
+        evidence: None,
         node: NodeId::new("node").unwrap(),
         run: Some(RunId::new("run").unwrap()),
         state: NodeState::Cancelled,

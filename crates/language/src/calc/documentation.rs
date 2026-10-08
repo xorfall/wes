@@ -19,6 +19,18 @@ impl Operation {
             _,
             _,
         ) = match self {
+            RegexTest => (
+                &[("source", "Text"), ("pattern", "Text")],
+                "Bool",
+                "Test a bounded regex without collecting matches or capture groups.",
+                "regexTest('status=503','status=[45][0-9]{2}')",
+            ),
+            StripAnsi => (
+                &[("source", "Text")],
+                "{text:Text,spans:List<Record>}",
+                "Remove explicit terminal escapes and retain mappings to original bytes.",
+                "stripAnsi('plain text').text",
+            ),
             Instant => (
                 &[("text", "Text")],
                 "Instant",
@@ -430,6 +442,12 @@ impl Operation {
             ),
         };
         let notes = match self {
+            RegexTest => {
+                "Unanchored unless the pattern explicitly uses anchors. Empty and zero-width patterns are valid. The entire bounded source is charged before searching; compilation uses a run-local bounded cache. Invalid syntax is CAL016 and work/memory/compiled-size limits are CAL006. Use function syntax, not a Text method."
+            }
+            StripAnsi => {
+                "Accepts 7-bit ESC[ CSI and ESC] OSC terminated by BEL or ESC-backslash. Unsupported or incomplete escapes fail with CAL016; other text and line endings are preserved. Use result.text explicitly. spans contain inputStart/inputEnd/outputStart/outputEnd, half-open UTF-8 byte offsets of unchanged runs. Keep original input for evidence: normalization is not a terminal emulator or a replacement for raw bytes. Function syntax only."
+            }
             IterCaptures => {
                 "Each item is {match:Text,groups:List<Option<Text>>}. match is the full matched text. The full match is excluded from groups; groups[0] is the first capture group, followed by pattern order (including named groups). Unmatched optional groups are none; present groups are some(Text). Use unwrapOr(item.groups[0],'') explicitly to obtain Text."
             }

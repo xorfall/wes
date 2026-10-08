@@ -279,7 +279,7 @@ fn capture(workspace: &Workspace, output: &OutputRef) -> Result<Captured, Sessio
                 .cloned()
                 .or_else(|| {
                     runtime
-                        .stopped_value(node)
+                        .evidence_value(node)
                         .map(|stopped| stopped.value.clone())
                 }),
             OutputPort::Error | OutputPort::Cancel => match runtime.output(output) {
@@ -426,7 +426,7 @@ mod tests {
                     error: None,
                     stale_reason: None,
                     delivery: None,
-                    stopped: None,
+                    evidence: None,
                 },
             );
             assert!(

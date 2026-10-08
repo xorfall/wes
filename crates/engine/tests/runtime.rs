@@ -150,7 +150,12 @@ fn readiness_and_input_snapshot_are_one_transition() {
     assert_eq!(next.len(), 1);
     assert_eq!(next[0].run.node(), &b);
     assert_eq!(next[0].inputs[&a], value(1));
+    let origin = next[0].input_origins[&a].clone();
+    assert_eq!(&origin.run, first[0].run.id());
+    assert_eq!(origin.port, OutputPort::Data);
     rt.refresh(&a, at(2)).unwrap();
+    assert_eq!(next[0].input_origins[&a].revision, origin.revision);
+    assert_eq!(next[0].input_origins[&a].run, origin.run);
     assert_eq!(next[0].inputs[&a], value(1)); // caller owns an immutable captured snapshot
     assert!(!rt.enter(&next[0].run)); // invalidated before entering executor
     assert_eq!(rt.output(&OutputRef::data(a)), OutputState::Pending);

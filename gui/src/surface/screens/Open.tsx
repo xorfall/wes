@@ -11,6 +11,9 @@ import { EncodedData, ReadableJson } from "../ResultInspection";
 import { viewsFor, type ResultView, type ViewSubject } from "../result-views";
 import { MonoLine, type Segment } from "../MonoLine";
 import { couldNotDraw } from "../open-model";
+import { evidenceLabel } from "../record-progress";
+import { RecordProgress } from "../RecordProgress";
+import { ScanReceiptDetails } from "../ScanReceiptDetails";
 import { leaving, Screen } from "../Screen";
 import { ValueView } from "../../views/Result";
 
@@ -131,12 +134,15 @@ export function OpenScreen({ top, subject, tab, onTab, json, viewing, value, det
         }}
         tabIndex={0}
       >
-        {viewing?.node?.stopped && <MonoLine segments={[{ text: "stream stopped · last value", role: "mono-warn" }]} />}
+        {evidenceLabel(viewing?.node) && <MonoLine segments={[{ text: evidenceLabel(viewing?.node)!, role: "mono-warn" }]} />}
+        {/* The same three rows on every tab; details is where they are drawn whole, with the receipt. */}
+        <RecordProgress node={viewing?.node} full={showing === "details"} />
         <Drawn tab={showing} key={showing}>
           {showing !== "details" && readStatus}
           {showing === "result" && (live ?? <OpenResult value={value} engine={viewing?.engine} />)}
           {showing === "json" && (value ? <ReadableJson value={value} /> : <pre className="inspection-text open-json" tabIndex={0}>{json ?? ""}</pre>)}
           {view && viewing && <view.Draw subject={viewing} />}
+          {showing === "details" && <ScanReceiptDetails value={value} open />}
           {showing === "details" && (details ?? []).map((line, at) => <MonoLine key={at} segments={line} />)}
           {showing === "details" && value && <EncodedData value={value} />}
         </Drawn>

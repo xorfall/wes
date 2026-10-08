@@ -23,7 +23,7 @@ import {
   Decoration, EditorView, GutterMarker, ViewPlugin, gutter, keymap, lineNumbers,
   type DecorationSet, type ViewUpdate,
 } from "@codemirror/view";
-import { completions, completionSource } from "./calc-complete";
+import { completionsAt, completionSource } from "./calc-complete";
 import { CLOSES, INDENT, indentAt, pairAt, readMode, wordAt } from "./calc-mode";
 import type { Language } from "./language";
 import { lineText } from "./MonoLine";
@@ -132,12 +132,12 @@ function marks(language: Language): Extension {
 function offering(language: Language, names: readonly string[]): Extension {
   const source = (context: CompletionContext): CompletionResult | null => {
     // The same word the prompt would complete: a dot ends it, and a leading `$` belongs to it.
-    const word = wordAt(context.state.doc.toString(), context.pos);
-    if (word.text === "" && !context.explicit) return null;
-    const offered = completions(word.text, language, names);
+    const source = context.state.doc.toString();
+    if (wordAt(source, context.pos).text === "" && !context.explicit) return null;
+    const { from, candidates: offered } = completionsAt(source, context.pos, language, names);
     if (offered.length === 0) return null;
     return {
-      from: word.from,
+      from,
       options: offered.map<Completion>((candidate) => ({
         label: candidate.text,
         displayLabel: candidate.label,

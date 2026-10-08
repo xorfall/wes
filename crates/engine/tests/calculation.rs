@@ -1180,6 +1180,220 @@ fn regex_capture_groups_are_lazy_optional_and_independently_reusable() {
 }
 
 #[test]
+fn boolean_regex_is_pure_bounded_unicode_and_does_not_collect() {
+    for (source, expected) in [
+        (
+            "return regexTest('é status=503','status=[45][0-9]{2}');",
+            true,
+        ),
+        (
+            "return regexTest('status=200','status=[45][0-9]{2}');",
+            false,
+        ),
+        ("return regexTest('','');", true),
+        ("return regexTest('é','^é$');", true),
+        ("return regexTest('é','^$');", false),
+    ] {
+        assert_eq!(evaluate(source).unwrap().data(), &Data::Bool(expected));
+    }
+    assert_eq!(
+        evaluate("return regexTest('x','[');").unwrap_err(),
+        "CAL016"
+    );
+    assert_eq!(evaluate("return regexTest(1,'x');").unwrap_err(), "CAL004");
+    assert_eq!(
+        evaluate("return 'x'.regexTest('x');").unwrap_err(),
+        "CAL002"
+    );
+    let result =
+        evaluate("return iter.items(['ok','bad']).filter(x=>regexTest(x,'^ok$')).collect();")
+            .unwrap();
+    assert_eq!(result.data(), &Data::List(vec![Data::Text("ok".into())]));
+    let mut low_work = machine(
+        "return regexTest('abcdefghijklmnopqrstuvwxyz','z');",
+        Limits {
+            work: 20,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let error = loop {
+        match low_work.poll(&CancellationToken::new()) {
+            Ok(Step::Yield) => {}
+            Err(e) => break e,
+            _ => panic!("work limit bypassed"),
+        }
+    };
+    assert_eq!(error.code, "CAL006");
+    assert_eq!(
+        low_work.usage().regex.compilations,
+        0,
+        "refuse before native compilation/search"
+    );
+    let mut low_memory = machine(
+        "return regexTest('x','x');",
+        Limits {
+            bytes: 1024,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        low_memory.poll(&CancellationToken::new()).unwrap_err().code,
+        "CAL006"
+    );
+    assert_eq!(low_memory.usage().regex.compilations, 0);
+}
+
+#[test]
+fn normalization_has_typed_empty_spans_and_requires_explicit_text_selection() {
+    let value = evaluate("return stripAnsi('');").unwrap();
+    assert_eq!(value.shape(), &wes_core::text::normalized_shape());
+    assert_eq!(
+        evaluate("return stripAnsi('plain').text;").unwrap().data(),
+        &Data::Text("plain".into())
+    );
+    let encoded = serde_json::to_string("é\x1b[31mERR\x1b[0m\r\n").unwrap();
+    let output = evaluate(&format!("return stripAnsi({encoded});")).unwrap();
+    let Data::Record(record) = output.data() else {
+        panic!("normalized record")
+    };
+    assert_eq!(record["text"], Data::Text("éERR\r\n".into()));
+    let Data::List(spans) = &record["spans"] else {
+        panic!("span list")
+    };
+    assert_eq!(spans.len(), 3);
+    for malformed in ["\x1b[", "\x1b]unterminated", "\x1b7"] {
+        let literal = serde_json::to_string(malformed).unwrap();
+        assert_eq!(
+            evaluate(&format!("return stripAnsi({literal});")).unwrap_err(),
+            "CAL016"
+        );
+    }
+}
+
+#[test]
+fn regex_admission_counts_full_long_regions_and_rejects_oversized_patterns_before_compiling() {
+    fn captured(source: &str, pattern: &str, limits: Limits) -> Machine {
+        let program = calc::parse_body(
+            "return regexTest($source,$pattern);",
+            0,
+            Package::standard(),
+        )
+        .unwrap();
+        let text = Shape::Primitive(wes_core::Primitive::Text);
+        let compiled = calc::analyze(
+            Arc::new(program),
+            calc::Environment {
+                catalogue: &Catalogue::new(),
+                contracts: &ContractRegistry::new(),
+                workspace: &|_| Some(text.clone()),
+            },
+        )
+        .unwrap();
+        let inputs = [("source", source), ("pattern", pattern)]
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    name.into(),
+                    Value::new(
+                        text.clone(),
+                        Data::Text(value.into()),
+                        Provenance::default(),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect();
+        Machine::new(Arc::new(compiled), inputs, limits).unwrap()
+    }
+    for (source, expected) in [
+        ("a".repeat(131_072), false),
+        ("a".repeat(131_072) + "z", true),
+    ] {
+        let mut vm = captured(&source, "z", Limits::default());
+        loop {
+            match vm.poll(&CancellationToken::new()).unwrap() {
+                Step::Yield => {}
+                Step::Complete(value) => {
+                    assert_eq!(value.data(), &Data::Bool(expected));
+                    break;
+                }
+                Step::Request(_) => panic!("native boolean test must not request host work"),
+            }
+        }
+        assert!(vm.usage().work >= source.len() as u64);
+    }
+    let mut vm = captured("x", &"a".repeat(16_385), Limits::default());
+    let error = loop {
+        match vm.poll(&CancellationToken::new()) {
+            Err(error) => break error,
+            Ok(Step::Yield) => {}
+            _ => panic!("oversized pattern was admitted"),
+        }
+    };
+    assert_eq!(error.code, "CAL006");
+    assert_eq!(vm.usage().regex.compilations, 0);
+}
+
+#[test]
+fn workload_metrics_distinguish_vm_charge_from_cache_compilation() {
+    let source = "let hits=0; for(const row of range(10)){ for(const pattern of ['status=[0-9]+','^WARN','^ERROR','latency','retry','^OK','complete$']){ if(regexTest('status=503 complete',pattern)) hits=hits+1; } } return hits;";
+    let mut machine = machine(source, Limits::default()).unwrap();
+    loop {
+        match machine.poll(&CancellationToken::new()).unwrap() {
+            Step::Yield => {}
+            Step::Complete(value) => {
+                assert_eq!(value.data(), &Data::Int(20));
+                break;
+            }
+            Step::Request(_) => panic!("pure native call"),
+        }
+    }
+    let usage = machine.usage();
+    assert_eq!(usage.regex.compilations, 7);
+    assert_eq!(usage.regex.hits, 63);
+    assert!(usage.allocated_bytes >= 7 * wes_core::IterRegexCache::COMPILED_CHARGE);
+    println!(
+        "work={} allocation-charge={} regex={:?}",
+        usage.work, usage.allocated_bytes, usage.regex
+    );
+}
+
+#[test]
+fn reopening_an_evicted_regex_plan_is_charged_and_empty_matches_terminate() {
+    let source = "const rows=iter.matches('z','z'); for(const n of range(20)){regexTest('x',text(n));} return rows.count();";
+    let mut vm = machine(source, Limits::default()).unwrap();
+    loop {
+        match vm.poll(&CancellationToken::new()).unwrap() {
+            Step::Yield => {}
+            Step::Complete(value) => {
+                assert_eq!(value.data(), &Data::Int(1));
+                break;
+            }
+            Step::Request(_) => panic!("native operation"),
+        }
+    }
+    assert_eq!(vm.usage().regex.compilations, 22);
+    assert!(vm.usage().allocated_bytes >= 22 * wes_core::IterRegexCache::COMPILED_CHARGE);
+    assert_eq!(
+        evaluate("return iter.matches('é','').count();")
+            .unwrap()
+            .data(),
+        &Data::Int(2)
+    );
+    let mut vm = machine(
+        "return regexTest('private synthetic text','.*');",
+        Limits::default(),
+    )
+    .unwrap();
+    let token = CancellationToken::new();
+    token.cancel();
+    assert_eq!(vm.poll(&token).unwrap_err().code, "CAL007");
+    assert_eq!(vm.usage().regex.compilations, 0);
+}
+
+#[test]
 fn capture_collection_preserves_declared_types_even_without_matching_groups_or_rows() {
     let capture = wes_core::IterMode::capture_shape();
     for source in [

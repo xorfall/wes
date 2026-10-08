@@ -135,13 +135,64 @@ pub enum IterPlanError {
     Limit(String),
 }
 /// Calculation-owned cache: no global/private pattern retention across runs.
-#[derive(Default)]
-pub struct IterRegexCache(std::collections::VecDeque<Arc<regex::Regex>>);
+pub struct IterRegexCache {
+    entries: std::collections::VecDeque<Arc<regex::Regex>>,
+    capacity: usize,
+    compilations: u64,
+    hits: u64,
+}
+impl Default for IterRegexCache {
+    fn default() -> Self {
+        Self::with_capacity(4).expect("default cache capacity")
+    }
+}
+/// Content-free counters scoped to one execution owner, never serialized with a value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegexCacheUsage {
+    pub compilations: u64,
+    pub hits: u64,
+    pub entries: usize,
+}
 impl IterRegexCache {
-    fn compile(&mut self, pattern: &str) -> Result<Arc<regex::Regex>, IterPlanError> {
-        if let Some(found) = self.0.iter().find(|r| r.as_str() == pattern) {
-            return Ok(found.clone());
+    pub fn with_capacity(capacity: usize) -> Result<Self, IterPlanError> {
+        if !(1..=64).contains(&capacity) {
+            return Err(IterPlanError::Limit(
+                "regex cache capacity must be within 1..=64".into(),
+            ));
         }
+        Ok(Self {
+            entries: Default::default(),
+            capacity,
+            compilations: 0,
+            hits: 0,
+        })
+    }
+    /// VM estimate, not actual RSS or the regex library's peak allocator usage.
+    pub const COMPILED_CHARGE: u64 = 1280 * 1024;
+    pub fn usage(&self) -> RegexCacheUsage {
+        RegexCacheUsage {
+            compilations: self.compilations,
+            hits: self.hits,
+            entries: self.entries.len(),
+        }
+    }
+    pub fn contains(&self, pattern: &str) -> bool {
+        self.entries.iter().any(|r| r.as_str() == pattern)
+    }
+    /// The owner admits compilation work/memory before calling this bounded compiler.
+    pub fn compile(&mut self, pattern: &str) -> Result<Arc<regex::Regex>, IterPlanError> {
+        if pattern.len() > 16 * 1024 {
+            return Err(IterPlanError::Limit(
+                "Iter pattern exceeds its 16384-byte limit".into(),
+            ));
+        }
+        if let Some(index) = self.entries.iter().position(|r| r.as_str() == pattern) {
+            self.hits = self.hits.saturating_add(1);
+            let found = self.entries.remove(index).expect("cache entry");
+            self.entries.push_back(found.clone());
+            return Ok(found);
+        }
+        self.compilations = self.compilations.saturating_add(1);
         let compiled = Arc::new(
             regex::RegexBuilder::new(pattern)
                 .size_limit(1024 * 1024)
@@ -153,10 +204,10 @@ impl IterRegexCache {
                     _=>IterPlanError::Parse("invalid Iter regex".into()),
                 })?,
         );
-        if self.0.len() == 4 {
-            self.0.pop_front();
+        if self.entries.len() == self.capacity {
+            self.entries.pop_front();
         }
-        self.0.push_back(compiled.clone());
+        self.entries.push_back(compiled.clone());
         Ok(compiled)
     }
 }

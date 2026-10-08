@@ -123,6 +123,12 @@ pub enum Outcome {
     /// Deliberate filtering: closes this delivery without selecting error or cancel.
     Skipped,
     Produced(Value),
+    /// Committed partial evidence from failed finite work. It remains display
+    /// only: the data graph port is closed and downstream work cannot consume it.
+    Incomplete {
+        value: Value,
+        error: ErrorValue,
+    },
     Failed(ErrorValue),
     Cancelled(ErrorValue),
 }
@@ -133,6 +139,16 @@ impl Outcome {
             Self::Produced(value) => {
                 let provenance = value.provenance().clone().with_policy(policy);
                 Self::Produced(value.with_provenance(provenance))
+            }
+            Self::Incomplete { value, error } => {
+                let joined = policy
+                    .join(value.provenance().policy())
+                    .join(error.policy());
+                let provenance = value.provenance().clone().with_policy(&joined);
+                Self::Incomplete {
+                    value: value.with_provenance(provenance),
+                    error: error.with_policy(&joined),
+                }
             }
             Self::Failed(error) => Self::Failed(error.with_policy(policy)),
             Self::Cancelled(error) => Self::Cancelled(error.with_policy(policy)),
@@ -157,12 +173,26 @@ impl DependencyLifetime {
     }
 }
 
-/// A display-only last success. It is never an available graph input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvidenceKind {
+    StoppedStream,
+    Incomplete,
+}
+impl EvidenceKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::StoppedStream => "stopped_stream",
+            Self::Incomplete => "incomplete",
+        }
+    }
+}
+/// Display-only committed data. It is never an available graph input.
 #[derive(Clone, Debug)]
-pub struct StoppedValue {
+pub struct EvidenceValue {
     pub value: Value,
     pub run: RunId,
     pub source: NodeId,
+    pub kind: EvidenceKind,
 }
 
 /// A snapshot at the transition, never a deferred lookup of mutable state.
@@ -172,7 +202,7 @@ pub struct Observation {
     pub revision: u64,
     pub stale_reason: Option<StaleReason>,
     pub delivery: Option<(NodeId, RunId, u64)>,
-    pub stopped: Option<StoppedValue>,
+    pub evidence: Option<EvidenceValue>,
     pub node: NodeId,
     pub run: Option<RunId>,
     pub state: NodeState,
@@ -214,10 +244,19 @@ impl WaitingInput {
 }
 
 #[derive(Clone, Debug)]
+pub struct InputOrigin {
+    pub run: RunId,
+    pub revision: u64,
+    pub port: OutputPort,
+}
+#[derive(Clone, Debug)]
 pub struct RunTicket<T> {
     pub run: Run,
     pub payload: T,
     pub inputs: IndexMap<NodeId, Value>,
+    /// Acknowledged revisions captured with the immutable input snapshot, never
+    /// guessed from a dependency's next attempt when the worker finally enters.
+    pub input_origins: IndexMap<NodeId, InputOrigin>,
 }
 
 /// Timer identity includes both run and replacement revision. Time is monotonic and driver-owned.
@@ -310,6 +349,7 @@ impl Attempt {
 }
 #[derive(Clone, Debug)]
 struct Entry {
+    progress: Option<crate::driver::progress::ExecutionProgress>,
     // Independent of graph presentation state: only admitted execution acknowledges this pause.
     automatic_pause: Option<StaleReason>,
     stale_reason: Option<StaleReason>,
@@ -317,7 +357,7 @@ struct Entry {
     value_run: Option<RunId>,
     display_revision: u64,
     stream_counts: Option<(u64, u64, usize)>,
-    stopped: Option<StoppedValue>,
+    evidence: Option<EvidenceValue>,
     actual_typing: Option<Arc<Typing>>,
     error: Option<ErrorValue>,
     last_run: Option<RunId>,
@@ -355,7 +395,7 @@ impl Entry {
     fn restore_state(&mut self, state: RestoredState, run: Option<RunId>) -> NodeState {
         self.restored = true;
         self.value_run = run.clone();
-        self.stopped = None;
+        self.evidence = None;
         self.last_run = run;
         self.value = None;
         self.error = None;
@@ -398,7 +438,8 @@ impl Entry {
             value_run: None,
             display_revision: 0,
             stream_counts: None,
-            stopped: None,
+            evidence: None,
+            progress: None,
             actual_typing: None,
             error: None,
             last_run: None,
@@ -612,8 +653,30 @@ impl<T: Clone> Runtime<T> {
     pub fn value_of(&self, node: &NodeId) -> Option<&Value> {
         self.entries.get(node)?.value.as_ref()
     }
-    pub fn stopped_value(&self, node: &NodeId) -> Option<&StoppedValue> {
-        self.entries.get(node)?.stopped.as_ref()
+    pub fn execution_progress(
+        &self,
+        node: &NodeId,
+    ) -> Option<&crate::driver::progress::ExecutionProgress> {
+        self.entries.get(node)?.progress.as_ref()
+    }
+    pub(crate) fn update_progress(
+        &mut self,
+        run: &Run,
+        progress: crate::driver::progress::ExecutionProgress,
+    ) -> bool {
+        if !self.accepts_live_io(run) {
+            return false;
+        }
+        let entry = self
+            .entries
+            .get_mut(run.node())
+            .expect("admitted progress entry");
+        let policy = entry.active.as_ref().expect("active attempt").flow.clone();
+        entry.progress = Some(progress.restricted(&policy));
+        true
+    }
+    pub fn evidence_value(&self, node: &NodeId) -> Option<&EvidenceValue> {
+        self.entries.get(node)?.evidence.as_ref()
     }
     /// Select once at cancellation, before the data branch is invalidated. Value clones share
     /// immutable payloads; no growing history or extra successful-result cache is introduced.
@@ -633,10 +696,11 @@ impl<T: Clone> Runtime<T> {
                 && !value.provenance().policy().is_unknown()
                 && value.data().is_materialized()
             {
-                entry.stopped = Some(StoppedValue {
+                entry.evidence = Some(EvidenceValue {
                     value: value.clone(),
                     run: run.clone(),
                     source: node.clone(),
+                    kind: EvidenceKind::StoppedStream,
                 });
             }
         }
@@ -1019,7 +1083,7 @@ impl<T: Clone> Runtime<T> {
         let entry = self.entries.get_mut(run.node()).expect("active entry");
         entry.value = Some(value.clone());
         entry.value_run = Some(run.id.clone());
-        entry.stopped = None;
+        entry.evidence = None;
         entry.actual_typing = Some(typing(&value));
         entry.error = None;
         let mut effects = vec![];
@@ -1176,20 +1240,27 @@ impl<T: Clone> Runtime<T> {
             }
             return effects;
         }
-        let outcome = match outcome {
+        let outcome = match outcome.with_policy(&wes_core::flow::FlowPolicy::default()) {
             Outcome::Produced(value) => match self.admit_value(run.node(), &value) {
                 Ok(()) => Outcome::Produced(value),
                 Err(error) => Outcome::Failed(error),
             },
+            Outcome::Incomplete { value, error } => match self.admit_value(run.node(), &value) {
+                Ok(()) => Outcome::Incomplete { value, error },
+                Err(refusal) => Outcome::Failed(refusal),
+            },
             other => other,
         };
-        if !matches!(outcome, Outcome::Produced(_)) {
+        if !matches!(outcome, Outcome::Produced(_) | Outcome::Incomplete { .. }) {
             self.private_charges.shift_remove(run.node());
         }
         let changed_window = stream
             && self.value_of(run.node()).is_some_and(|old| match &outcome {
                 Outcome::Produced(value) => old != value,
-                Outcome::Failed(_) | Outcome::Cancelled(_) | Outcome::Skipped => true,
+                Outcome::Failed(_)
+                | Outcome::Cancelled(_)
+                | Outcome::Skipped
+                | Outcome::Incomplete { .. } => true,
             });
         let succeeded = matches!(outcome, Outcome::Produced(_));
         let entry = self.entries.get_mut(&run.node).expect("active node exists");
@@ -1205,12 +1276,25 @@ impl<T: Clone> Runtime<T> {
                 entry.actual_typing = Some(typing(&value));
                 entry.creation_complete = entry.dependency_lifetime == DependencyLifetime::Creation;
                 entry.value_run = Some(run.id.clone());
-                entry.stopped = None;
+                entry.evidence = None;
                 entry.value = Some(value);
                 entry.error = None;
                 NodeState::Ready
             }
             Outcome::Failed(error) => {
+                entry.value = None;
+                entry.error = Some(error);
+                NodeState::Failed
+            }
+            Outcome::Incomplete { value, error } => {
+                entry.actual_typing = Some(typing(&value));
+                entry.value_run = Some(run.id.clone());
+                entry.evidence = Some(EvidenceValue {
+                    value,
+                    run: run.id.clone(),
+                    source: run.node().clone(),
+                    kind: EvidenceKind::Incomplete,
+                });
                 entry.value = None;
                 entry.error = Some(error);
                 NodeState::Failed
@@ -1405,7 +1489,7 @@ impl<T: Clone> Runtime<T> {
             let entry = self.entries.get_mut(marked).expect("graph entry");
             entry.refresh_pending = false;
             entry.explicitly_requested = false;
-            entry.stopped = None;
+            entry.evidence = None;
             entry.restored = false;
             entry.error = None;
             let next_reason = if marked == root {
@@ -1734,7 +1818,7 @@ impl<T: Clone> Runtime<T> {
         let Some(entry) = self.entries.get_mut(node) else {
             return vec![];
         };
-        let stopped = entry.stopped.take().is_some();
+        let stopped = entry.evidence.take().is_some();
         if entry.value.take().is_none() && !stopped {
             return vec![];
         }
@@ -1806,7 +1890,7 @@ impl<T: Clone> Runtime<T> {
             revision: entry.display_revision,
             stale_reason: entry.stale_reason,
             delivery: entry.last_delivery.clone(),
-            stopped: entry.stopped.clone(),
+            evidence: entry.evidence.clone(),
             node: node.clone(),
             run: entry.last_run.clone(),
             state,
@@ -1960,6 +2044,27 @@ impl<T: Clone> Runtime<T> {
             let Some(inputs) = inputs else {
                 continue;
             };
+            let input_origins = node
+                .dependencies()
+                .iter()
+                .filter_map(|(id, port)| {
+                    let run = if *port == OutputPort::Data {
+                        self.value_run(id)
+                    } else {
+                        self.run_of(id)
+                    };
+                    run.cloned().map(|run| {
+                        (
+                            id.clone(),
+                            InputOrigin {
+                                run,
+                                revision: self.display_revision(id),
+                                port: *port,
+                            },
+                        )
+                    })
+                })
+                .collect();
             let payload = node.payload().clone();
             let entry = self.entries.get_mut(&id).expect("graph entry");
             let run = Run {
@@ -1983,8 +2088,9 @@ impl<T: Clone> Runtime<T> {
             entry.explicitly_requested = false;
             entry.automatic_pause = None;
             entry.active = Some(attempt);
-            entry.stopped = None;
+            entry.evidence = None;
             entry.last_run = Some(run.id.clone());
+            entry.progress = None;
             entry.stream_start = None;
             entry.stream_counts = None;
             entry.error = None;
@@ -2019,6 +2125,7 @@ impl<T: Clone> Runtime<T> {
                 run,
                 payload,
                 inputs,
+                input_origins,
             }));
         }
         effects
@@ -2036,6 +2143,119 @@ pub(crate) fn valid_timeout(budget: Duration) -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wes_core::{Data, Provenance, Shape};
+    #[test]
+    fn progress_is_run_scoped_lossy_status_and_rejects_revoked_attempts() {
+        use crate::driver::progress::{ExecutionProgress, Phase};
+        let mut runtime = Runtime::new();
+        let traits = ExecutionTraits {
+            pure: false,
+            repeatable: false,
+            bounded: true,
+        };
+        let node = runtime.add((), [], traits).unwrap();
+        let take_run = |effects: Vec<Effect<()>>| {
+            effects
+                .into_iter()
+                .find_map(|e| {
+                    if let Effect::Spawn(ticket) = e {
+                        Some(ticket.run)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        let run = take_run(runtime.start(Duration::ZERO));
+        assert!(!runtime.update_progress(&run, ExecutionProgress::records(Phase::Reading, None)));
+        assert!(runtime.enter(&run));
+        for _ in 0..1000 {
+            assert!(
+                runtime.update_progress(&run, ExecutionProgress::records(Phase::Processing, None))
+            );
+        }
+        assert_eq!(runtime.graph().len(), 1);
+        runtime.cancel(&node, Duration::from_secs(1));
+        assert!(!runtime.update_progress(&run, ExecutionProgress::records(Phase::Complete, None)));
+        runtime.complete(
+            &run,
+            Outcome::Incomplete {
+                value: Value::new(Shape::Unknown, Data::Int(1), Provenance::default()).unwrap(),
+                error: RuntimeCode::ExecutionFailed.error("late", None),
+            },
+            Duration::from_secs(2),
+        );
+        assert!(runtime.evidence_value(&node).is_none());
+        let new = take_run(runtime.refresh(&node, Duration::from_secs(3)).unwrap());
+        assert!(runtime.execution_progress(&node).is_none());
+        assert!(runtime.enter(&new));
+        assert!(!runtime.update_progress(&run, ExecutionProgress::records(Phase::Stopped, None)));
+        assert!(runtime.update_progress(&new, ExecutionProgress::records(Phase::Reading, None)));
+    }
+    #[test]
+    fn incomplete_failure_policy_protects_both_evidence_and_error_before_publication() {
+        let mut runtime = Runtime::new();
+        let node = runtime
+            .add(
+                (),
+                [],
+                ExecutionTraits {
+                    pure: false,
+                    repeatable: false,
+                    bounded: true,
+                },
+            )
+            .unwrap();
+        let run = runtime
+            .start(Duration::ZERO)
+            .into_iter()
+            .find_map(|e| {
+                if let Effect::Spawn(ticket) = e {
+                    Some(ticket.run)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        runtime.enter(&run);
+        let error = RuntimeCode::ExecutionFailed
+            .error("protected diagnostic", None)
+            .with_policy(&wes_core::flow::FlowPolicy::default().private());
+        runtime.complete(
+            &run,
+            Outcome::Incomplete {
+                value: Value::new(Shape::Unknown, Data::Int(1), Provenance::default()).unwrap(),
+                error,
+            },
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            runtime.graph().node(&node).unwrap().state(),
+            NodeState::Failed
+        );
+        assert!(runtime.value_of(&node).is_none());
+        assert!(
+            runtime
+                .evidence_value(&node)
+                .unwrap()
+                .value
+                .provenance()
+                .policy()
+                .is_private()
+        );
+        assert!(
+            runtime.entries[&node]
+                .error
+                .as_ref()
+                .unwrap()
+                .policy()
+                .is_private()
+        );
+        assert!(matches!(
+            runtime.output(&OutputRef::data(node)),
+            OutputState::Closed
+        ));
+    }
 
     #[test]
     fn activation_waits_before_other_errors_and_preserves_ordinary_dependency_failures() {
@@ -2487,8 +2707,8 @@ mod creation_tests {
         assert_eq!(runtime.run_of(&created), Some(&construction_run));
         assert!(runtime.construction_complete(&created));
         runtime.cancel(&root, Duration::ZERO);
-        assert!(runtime.stopped_value(&root).is_some());
-        assert!(runtime.stopped_value(&created).is_none());
+        assert!(runtime.evidence_value(&root).is_some());
+        assert!(runtime.evidence_value(&created).is_none());
         assert_eq!(
             runtime.graph.node(&created).unwrap().state(),
             NodeState::Ready

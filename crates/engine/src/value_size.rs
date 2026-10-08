@@ -12,6 +12,22 @@ pub(crate) fn value_charge(value: &Value, limit: u64) -> Option<u64> {
         visited: 0,
         limit,
     };
+    charge_shell(value, &mut budget)?;
+    charge_data(value.data(), &mut budget)?;
+    Some(budget.charged)
+}
+/// Immutable attribution/declaration charge before projecting or copying a
+/// record. Payload ownership is admitted separately without cloning it first.
+pub(crate) fn value_shell_charge(value: &Value, limit: u64) -> Option<u64> {
+    let mut budget = Budget {
+        charged: 256,
+        visited: 0,
+        limit,
+    };
+    charge_shell(value, &mut budget)?;
+    Some(budget.charged)
+}
+fn charge_shell(value: &Value, budget: &mut Budget) -> Option<()> {
     for (key, value) in value.provenance().facts() {
         budget.text(key)?;
         budget.text(value)?;
@@ -26,8 +42,7 @@ pub(crate) fn value_charge(value: &Value, limit: u64) -> Option<u64> {
         budget.add(meta.charge())?;
     }
     budget.shape(value.shape())?;
-    charge_data(value.data(), &mut budget)?;
-    Some(budget.charged)
+    Some(())
 }
 pub(crate) fn data_charge(data: &Data, limit: u64) -> Option<u64> {
     let mut budget = Budget {

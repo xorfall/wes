@@ -18,6 +18,8 @@ mod repeat;
 mod requests;
 #[path = "session/sandbox.rs"]
 mod sandbox;
+#[path = "session/scan.rs"]
+mod scan;
 #[path = "session/sequential_requests.rs"]
 mod sequential_requests;
 #[path = "session/typed_calculations.rs"]

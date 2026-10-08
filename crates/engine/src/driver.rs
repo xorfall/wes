@@ -15,6 +15,7 @@ pub use tokio_util::sync::CancellationToken;
 use wes_core::{ErrorValue, Value, capability::Typing};
 pub(crate) mod conversations;
 mod io;
+pub mod progress;
 pub use conversations::ConversationEvent;
 mod capacity;
 pub(crate) mod streaming;
@@ -47,20 +48,43 @@ pub type StreamExecutionFuture = Pin<
     >,
 >;
 
+/// A resource reservation follows its result until coordinator admission. The
+/// executor cannot release it while a completion still owns unadmitted output.
+pub struct ExecutionHold {
+    _owner: Box<dyn Send + 'static>,
+}
+impl ExecutionHold {
+    pub(crate) fn retain(owner: impl Send + 'static) -> Self {
+        Self {
+            _owner: Box::new(owner),
+        }
+    }
+}
+impl std::fmt::Debug for ExecutionHold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExecutionHold")
+    }
+}
+
 /// Operational problems must not replace the provider's outcome after it has already run.
 #[derive(Debug)]
 pub struct ExecutionReport {
     pub outcome: Outcome,
+    pub holds: Vec<ExecutionHold>,
     pub notices: Vec<ErrorValue>,
     /// Absolute start of a terminal stream window, published atomically with its outcome.
     pub stream_start: Option<u64>,
+    /// Final status travels atomically with the accepted outcome; queue progress is lossy.
+    pub progress: Option<progress::ExecutionProgress>,
 }
 impl From<Outcome> for ExecutionReport {
     fn from(outcome: Outcome) -> Self {
         Self {
             outcome,
+            holds: vec![],
             notices: vec![],
             stream_start: None,
+            progress: None,
         }
     }
 }
@@ -75,6 +99,14 @@ pub struct ExecutionNotice {
 /// falsely release its lease. Metadata and bound provider handles belong in the ticket payload.
 pub trait Executor<T>: Send + Sync + 'static {
     fn execute(&self, ticket: RunTicket<T>, cancellation: CancellationToken) -> ExecutionFuture;
+    fn execute_reporting(
+        &self,
+        ticket: RunTicket<T>,
+        cancellation: CancellationToken,
+        _progress: progress::Reporter,
+    ) -> ExecutionFuture {
+        self.execute(ticket, cancellation)
+    }
     /// Resource classification must describe the captured payload, without performing I/O.
     fn streaming(&self, _payload: &T) -> bool {
         false
@@ -112,13 +144,14 @@ pub trait Executor<T>: Send + Sync + 'static {
 
 #[derive(Clone, Debug)]
 pub struct Snapshot<T> {
+    pub progress: IndexMap<NodeId, progress::ExecutionProgress>,
     pub waiting_inputs: IndexMap<NodeId, Vec<crate::runtime::WaitingInput>>,
     pub stale_reasons: IndexMap<NodeId, crate::runtime::StaleReason>,
     pub input_updates: IndexSet<NodeId>,
     pub creation_inputs: IndexMap<NodeId, bool>,
     pub graph: DependencyGraph<T>,
     pub values: IndexMap<NodeId, Value>,
-    pub stopped_values: IndexMap<NodeId, crate::runtime::StoppedValue>,
+    pub evidence_values: IndexMap<NodeId, crate::runtime::EvidenceValue>,
     pub actual_typings: IndexMap<NodeId, Arc<Typing>>,
     pub errors: IndexMap<NodeId, ErrorValue>,
     pub runs: IndexMap<NodeId, RunId>,
@@ -462,13 +495,17 @@ impl<T: Clone> Snapshot<T> {
         let mut creation_inputs = IndexMap::new();
         let mut waiting_inputs = IndexMap::new();
         let mut values = IndexMap::new();
-        let mut stopped_values = IndexMap::new();
+        let mut evidence_values = IndexMap::new();
+        let mut progress = IndexMap::new();
         let mut actual_typings = IndexMap::new();
         let mut errors = IndexMap::new();
         let mut runs = IndexMap::new();
         let mut executing = vec![];
         let mut streaming = vec![];
         for node in graph.nodes() {
+            if let Some(value) = runtime.execution_progress(node.id()) {
+                progress.insert(node.id().clone(), value.clone());
+            }
             if runtime.dependency_lifetime(node.id()) == Some(DependencyLifetime::Creation) {
                 creation_inputs.insert(node.id().clone(), runtime.construction_complete(node.id()));
             }
@@ -485,8 +522,8 @@ impl<T: Clone> Snapshot<T> {
             if let Some(typing) = runtime.actual_typing(node.id()) {
                 actual_typings.insert(node.id().clone(), typing.clone());
             }
-            if let Some(value) = runtime.stopped_value(node.id()) {
-                stopped_values.insert(node.id().clone(), value.clone());
+            if let Some(value) = runtime.evidence_value(node.id()) {
+                evidence_values.insert(node.id().clone(), value.clone());
             }
             if let Some(value) = runtime.value_of(node.id()) {
                 values.insert(node.id().clone(), value.clone());
@@ -505,13 +542,14 @@ impl<T: Clone> Snapshot<T> {
             }
         }
         Snapshot {
+            progress,
             waiting_inputs,
             stale_reasons,
             input_updates,
             creation_inputs,
             graph,
             values,
-            stopped_values,
+            evidence_values,
             actual_typings,
             errors,
             runs,

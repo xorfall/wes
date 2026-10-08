@@ -102,7 +102,7 @@ def main():
                 assert any(r['action'] in ['pause','unpause'] for r in events)
             for name in ['stats','events']:client.file('cancel-'+name+'.wes')
             for name in ['stats','events','resource_summary','event_summary']:
-                client.wait(lambda name=name:client.ready.get(client.names[name],{}).get('event')=='stopped')
+                client.wait(lambda name=name:client.ready.get(client.names[name],{}).get('event')=='evidence' and client.ready[client.names[name]].get('kind')=='stopped_stream')
                 client.value(name)
             if server:
                 with server.changed:assert server.changed.wait_for(lambda:server.active==0,5)

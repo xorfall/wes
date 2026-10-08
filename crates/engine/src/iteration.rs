@@ -29,11 +29,32 @@ pub struct SourceCursor {
     search: usize,
 }
 impl SourceCursor {
+    pub(crate) fn new_cached(
+        plan: Arc<IterValue>,
+        cache: &mut wes_core::IterRegexCache,
+    ) -> Result<Self, Failure> {
+        let regex = if matches!(
+            plan.mode(),
+            IterMode::RegexSplit | IterMode::Matches | IterMode::Captures
+        ) {
+            Some(
+                cache
+                    .compile(plan.argument().expect("validated pattern"))
+                    .map_err(|e| Failure::iteration(e, Span::at(0)))?,
+            )
+        } else {
+            None
+        };
+        Ok(Self::with_regex(plan, regex))
+    }
     pub fn new(plan: Arc<IterValue>) -> Result<Self, Failure> {
         let regex = plan
             .compiled_regex()
             .map_err(|e| Failure::new("CAL004", Span::at(0), e))?;
-        Ok(Self {
+        Ok(Self::with_regex(plan, regex))
+    }
+    fn with_regex(plan: Arc<IterValue>, regex: Option<Arc<regex::Regex>>) -> Self {
+        Self {
             plan,
             position: 0,
             index: 0,
@@ -41,7 +62,7 @@ impl SourceCursor {
             failed: None,
             regex,
             search: 0,
-        })
+        }
     }
     pub fn next_raw(
         &mut self,

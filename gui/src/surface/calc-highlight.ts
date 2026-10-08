@@ -192,7 +192,10 @@ function read(source: string, language: Language): Token[] {
       if (redirecting) {
         redirecting = false;
         push(word, "mono-ref");
-      } else if (property) push(word, operations.has(word) || operations.has(namespaced(tokens, word)) ? "mono-provider" : "mono-param");
+      } else if (property) {
+        // After a dot only a declared method is one; `stripAnsi(raw).text` reads a field, not `text`.
+        push(word, language.method(word) || operations.has(namespaced(tokens, word)) ? "mono-provider" : "mono-param");
+      }
       else if (word === "pure" && previous?.text === ":calc") push(word, "mono-meta");
       else if (keywords.has(word)) push(word, "mono-meta");
       else if (word === "none" || word === "true" || word === "false") push(word, "mono-meta");

@@ -10,6 +10,7 @@
 :help type
 :help env
 :help calc
+:help scan
 :help arguments
 :help errors
 :help def

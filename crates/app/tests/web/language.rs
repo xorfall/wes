@@ -23,15 +23,23 @@ async fn language_route_serves_the_package_the_engine_prepares_commands_with() {
     // Arity is the package's, not the client's guess: reduce takes three, filter and map two.
     assert_eq!(
         package["operations"]["reduce"],
-        json!({"operation":"reduce","min":3,"max":3})
+        json!({"operation":"reduce","min":3,"max":3,"method":true})
     );
     assert_eq!(
         package["operations"]["filter"],
-        json!({"operation":"filter","min":2,"max":2})
+        json!({"operation":"filter","min":2,"max":2,"method":true})
     );
     assert_eq!(
         package["operations"]["map"],
-        json!({"operation":"map","min":2,"max":2})
+        json!({"operation":"map","min":2,"max":2,"method":true})
+    );
+    assert_eq!(
+        package["operations"]["regexTest"],
+        json!({"operation":"regex-test","min":2,"max":2,"method":false})
+    );
+    assert_eq!(
+        package["operations"]["stripAnsi"],
+        json!({"operation":"strip-ansi","min":1,"max":1,"method":false})
     );
     assert_eq!(
         package["operators"]["||"],

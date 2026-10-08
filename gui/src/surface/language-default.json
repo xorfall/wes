@@ -74,323 +74,399 @@
     "instant": {
       "operation": "instant",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "duration": {
       "operation": "duration",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "interval": {
       "operation": "interval",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "around": {
       "operation": "around",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "fromEpochSeconds": {
       "operation": "fromEpochSeconds",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "fromEpochMillis": {
       "operation": "fromEpochMillis",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "fromEpochNanos": {
       "operation": "fromEpochNanos",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "toEpochSeconds": {
       "operation": "toEpochSeconds",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "toEpochMillis": {
       "operation": "toEpochMillis",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "toEpochNanos": {
       "operation": "toEpochNanos",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "durationSeconds": {
       "operation": "durationSeconds",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "durationMillis": {
       "operation": "durationMillis",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "durationNanos": {
       "operation": "durationNanos",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "toSeconds": {
       "operation": "toSeconds",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "toMillis": {
       "operation": "toMillis",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "toNanos": {
       "operation": "toNanos",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "utcParts": {
       "operation": "utcParts",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "some": {
       "operation": "some",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "isSome": {
       "operation": "is-some",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": true
     },
     "unwrapOr": {
       "operation": "unwrap-or",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "has": {
       "operation": "has",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "length": {
       "operation": "length",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": true
     },
     "keys": {
       "operation": "keys",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": true
     },
     "map": {
       "operation": "map",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "filter": {
       "operation": "filter",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "reduce": {
       "operation": "reduce",
       "min": 3,
-      "max": 3
+      "max": 3,
+      "method": true
     },
     "join": {
       "operation": "join",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "withFields": {
       "operation": "with-fields",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "slice": {
       "operation": "slice",
       "min": 2,
-      "max": 3
+      "max": 3,
+      "method": true
     },
     "concat": {
       "operation": "concat",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "sortBy": {
       "operation": "sort-by",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "range": {
       "operation": "range",
       "min": 1,
-      "max": 3
+      "max": 3,
+      "method": false
     },
     "decimal": {
       "operation": "decimal",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "int": {
       "operation": "int",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "text": {
       "operation": "text",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "div": {
       "operation": "div",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "rem": {
       "operation": "rem",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "roundDiv": {
       "operation": "round-div",
       "min": 3,
-      "max": 3
+      "max": 3,
+      "method": false
     },
     "httpStatus": {
       "operation": "http-status",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "httpError": {
       "operation": "http-error",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "httpCatalogue": {
       "operation": "http-catalogue",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "httpAnalysis": {
       "operation": "http-analysis",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "parseJson": {
       "operation": "parse-json",
       "min": 1,
-      "max": 2
+      "max": 2,
+      "method": false
+    },
+    "regexTest": {
+      "operation": "regex-test",
+      "min": 2,
+      "max": 2,
+      "method": false
+    },
+    "stripAnsi": {
+      "operation": "strip-ansi",
+      "min": 1,
+      "max": 1,
+      "method": false
     },
     "check": {
       "operation": "check",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "call": {
       "operation": "call",
       "min": 3,
-      "max": 3
+      "max": 3,
+      "method": false
     },
     "iter.items": {
       "operation": "iter-items",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.lines": {
       "operation": "iter-lines",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.chars": {
       "operation": "iter-chars",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.words": {
       "operation": "iter-words",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.split": {
       "operation": "iter-split",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "iter.regexSplit": {
       "operation": "iter-regex-split",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "iter.captures": {
       "operation": "iter-captures",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "iter.matches": {
       "operation": "iter-matches",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "iter.keys": {
       "operation": "iter-keys",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.values": {
       "operation": "iter-values",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.entries": {
       "operation": "iter-entries",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.jsonLines": {
       "operation": "iter-json-lines",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": false
     },
     "iter.use": {
       "operation": "iter-use",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "iter.checked": {
       "operation": "iter-checked",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": false
     },
     "take": {
       "operation": "take",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "skip": {
       "operation": "skip",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     },
     "collect": {
       "operation": "collect",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": true
     },
     "count": {
       "operation": "count",
       "min": 1,
-      "max": 1
+      "max": 1,
+      "method": true
     },
     "field": {
       "operation": "field",
       "min": 2,
-      "max": 2
+      "max": 2,
+      "method": true
     }
   },
-  "source": "version: 1\nlexical: {identifier: unicode, strings: quoted, comments: slash, numbers: exact}\nstatements:\n  const: binding\n  let: binding-mut\n  function: function\n  if: if\n  else: else\n  while: while\n  for: for\n  of: of\n  return: return\n  break: break\n  continue: continue\noperators:\n  \"||\": {operation: or, precedence: 1}\n  \"&&\": {operation: and, precedence: 2}\n  \"==\": {operation: eq, precedence: 3}\n  \"!=\": {operation: ne, precedence: 3}\n  \"<\": {operation: lt, precedence: 4}\n  \"<=\": {operation: le, precedence: 4}\n  \">\": {operation: gt, precedence: 4}\n  \">=\": {operation: ge, precedence: 4}\n  \"+\": {operation: add, precedence: 5}\n  \"-\": {operation: sub, precedence: 5}\n  \"*\": {operation: mul, precedence: 6}\n  \"/\": {operation: divide, precedence: 6}\noperations:\n  instant: {operation: instant, min: 1, max: 1}\n  duration: {operation: duration, min: 1, max: 1}\n  interval: {operation: interval, min: 2, max: 2}\n  around: {operation: around, min: 2, max: 2}\n  fromEpochSeconds: {operation: fromEpochSeconds, min: 1, max: 1}\n  fromEpochMillis: {operation: fromEpochMillis, min: 1, max: 1}\n  fromEpochNanos: {operation: fromEpochNanos, min: 1, max: 1}\n  toEpochSeconds: {operation: toEpochSeconds, min: 1, max: 1}\n  toEpochMillis: {operation: toEpochMillis, min: 1, max: 1}\n  toEpochNanos: {operation: toEpochNanos, min: 1, max: 1}\n  durationSeconds: {operation: durationSeconds, min: 1, max: 1}\n  durationMillis: {operation: durationMillis, min: 1, max: 1}\n  durationNanos: {operation: durationNanos, min: 1, max: 1}\n  toSeconds: {operation: toSeconds, min: 1, max: 1}\n  toMillis: {operation: toMillis, min: 1, max: 1}\n  toNanos: {operation: toNanos, min: 1, max: 1}\n  utcParts: {operation: utcParts, min: 1, max: 1}\n\n  some: {operation: some, min: 1, max: 1}\n  isSome: {operation: is-some, min: 1, max: 1}\n  unwrapOr: {operation: unwrap-or, min: 2, max: 2}\n  has: {operation: has, min: 2, max: 2}\n  length: {operation: length, min: 1, max: 1}\n  keys: {operation: keys, min: 1, max: 1}\n  map: {operation: map, min: 2, max: 2}\n  filter: {operation: filter, min: 2, max: 2}\n  reduce: {operation: reduce, min: 3, max: 3}\n  join: {operation: join, min: 2, max: 2}\n  withFields: {operation: with-fields, min: 2, max: 2}\n  slice: {operation: slice, min: 2, max: 3}\n  concat: {operation: concat, min: 2, max: 2}\n  sortBy: {operation: sort-by, min: 2, max: 2}\n  range: {operation: range, min: 1, max: 3}\n  decimal: {operation: decimal, min: 1, max: 1}\n  int: {operation: int, min: 1, max: 1}\n  text: {operation: text, min: 1, max: 1}\n  div: {operation: div, min: 2, max: 2}\n  rem: {operation: rem, min: 2, max: 2}\n  roundDiv: {operation: round-div, min: 3, max: 3}\n  httpStatus: {operation: http-status, min: 1, max: 1}\n  httpError: {operation: http-error, min: 1, max: 1}\n  httpCatalogue: {operation: http-catalogue, min: 1, max: 1}\n  httpAnalysis: {operation: http-analysis, min: 1, max: 1}\n  parseJson: {operation: parse-json, min: 1, max: 2}\n  check: {operation: check, min: 2, max: 2}\n  call: {operation: call, min: 3, max: 3}\n  iter.items: {operation: iter-items, min: 1, max: 1}\n  iter.lines: {operation: iter-lines, min: 1, max: 1}\n  iter.chars: {operation: iter-chars, min: 1, max: 1}\n  iter.words: {operation: iter-words, min: 1, max: 1}\n  iter.split: {operation: iter-split, min: 2, max: 2}\n  iter.regexSplit: {operation: iter-regex-split, min: 2, max: 2}\n  iter.captures: {operation: iter-captures, min: 2, max: 2}\n  iter.matches: {operation: iter-matches, min: 2, max: 2}\n  iter.keys: {operation: iter-keys, min: 1, max: 1}\n  iter.values: {operation: iter-values, min: 1, max: 1}\n  iter.entries: {operation: iter-entries, min: 1, max: 1}\n  iter.jsonLines: {operation: iter-json-lines, min: 1, max: 1}\n  iter.use: {operation: iter-use, min: 2, max: 2}\n  iter.checked: {operation: iter-checked, min: 2, max: 2}\n  take: {operation: take, min: 2, max: 2}\n  skip: {operation: skip, min: 2, max: 2}\n  collect: {operation: collect, min: 1, max: 1}\n  count: {operation: count, min: 1, max: 1}\n  field: {operation: field, min: 2, max: 2}\n"
+  "source": "version: 1\nlexical: {identifier: unicode, strings: quoted, comments: slash, numbers: exact}\nstatements:\n  const: binding\n  let: binding-mut\n  function: function\n  if: if\n  else: else\n  while: while\n  for: for\n  of: of\n  return: return\n  break: break\n  continue: continue\noperators:\n  \"||\": {operation: or, precedence: 1}\n  \"&&\": {operation: and, precedence: 2}\n  \"==\": {operation: eq, precedence: 3}\n  \"!=\": {operation: ne, precedence: 3}\n  \"<\": {operation: lt, precedence: 4}\n  \"<=\": {operation: le, precedence: 4}\n  \">\": {operation: gt, precedence: 4}\n  \">=\": {operation: ge, precedence: 4}\n  \"+\": {operation: add, precedence: 5}\n  \"-\": {operation: sub, precedence: 5}\n  \"*\": {operation: mul, precedence: 6}\n  \"/\": {operation: divide, precedence: 6}\noperations:\n  instant: {operation: instant, min: 1, max: 1}\n  duration: {operation: duration, min: 1, max: 1}\n  interval: {operation: interval, min: 2, max: 2}\n  around: {operation: around, min: 2, max: 2}\n  fromEpochSeconds: {operation: fromEpochSeconds, min: 1, max: 1}\n  fromEpochMillis: {operation: fromEpochMillis, min: 1, max: 1}\n  fromEpochNanos: {operation: fromEpochNanos, min: 1, max: 1}\n  toEpochSeconds: {operation: toEpochSeconds, min: 1, max: 1}\n  toEpochMillis: {operation: toEpochMillis, min: 1, max: 1}\n  toEpochNanos: {operation: toEpochNanos, min: 1, max: 1}\n  durationSeconds: {operation: durationSeconds, min: 1, max: 1}\n  durationMillis: {operation: durationMillis, min: 1, max: 1}\n  durationNanos: {operation: durationNanos, min: 1, max: 1}\n  toSeconds: {operation: toSeconds, min: 1, max: 1}\n  toMillis: {operation: toMillis, min: 1, max: 1}\n  toNanos: {operation: toNanos, min: 1, max: 1}\n  utcParts: {operation: utcParts, min: 1, max: 1}\n\n  some: {operation: some, min: 1, max: 1}\n  isSome: {operation: is-some, min: 1, max: 1}\n  unwrapOr: {operation: unwrap-or, min: 2, max: 2}\n  has: {operation: has, min: 2, max: 2}\n  length: {operation: length, min: 1, max: 1}\n  keys: {operation: keys, min: 1, max: 1}\n  map: {operation: map, min: 2, max: 2}\n  filter: {operation: filter, min: 2, max: 2}\n  reduce: {operation: reduce, min: 3, max: 3}\n  join: {operation: join, min: 2, max: 2}\n  withFields: {operation: with-fields, min: 2, max: 2}\n  slice: {operation: slice, min: 2, max: 3}\n  concat: {operation: concat, min: 2, max: 2}\n  sortBy: {operation: sort-by, min: 2, max: 2}\n  range: {operation: range, min: 1, max: 3}\n  decimal: {operation: decimal, min: 1, max: 1}\n  int: {operation: int, min: 1, max: 1}\n  text: {operation: text, min: 1, max: 1}\n  div: {operation: div, min: 2, max: 2}\n  rem: {operation: rem, min: 2, max: 2}\n  roundDiv: {operation: round-div, min: 3, max: 3}\n  httpStatus: {operation: http-status, min: 1, max: 1}\n  httpError: {operation: http-error, min: 1, max: 1}\n  httpCatalogue: {operation: http-catalogue, min: 1, max: 1}\n  httpAnalysis: {operation: http-analysis, min: 1, max: 1}\n  parseJson: {operation: parse-json, min: 1, max: 2}\n  regexTest: {operation: regex-test, min: 2, max: 2}\n  stripAnsi: {operation: strip-ansi, min: 1, max: 1}\n  check: {operation: check, min: 2, max: 2}\n  call: {operation: call, min: 3, max: 3}\n  iter.items: {operation: iter-items, min: 1, max: 1}\n  iter.lines: {operation: iter-lines, min: 1, max: 1}\n  iter.chars: {operation: iter-chars, min: 1, max: 1}\n  iter.words: {operation: iter-words, min: 1, max: 1}\n  iter.split: {operation: iter-split, min: 2, max: 2}\n  iter.regexSplit: {operation: iter-regex-split, min: 2, max: 2}\n  iter.captures: {operation: iter-captures, min: 2, max: 2}\n  iter.matches: {operation: iter-matches, min: 2, max: 2}\n  iter.keys: {operation: iter-keys, min: 1, max: 1}\n  iter.values: {operation: iter-values, min: 1, max: 1}\n  iter.entries: {operation: iter-entries, min: 1, max: 1}\n  iter.jsonLines: {operation: iter-json-lines, min: 1, max: 1}\n  iter.use: {operation: iter-use, min: 2, max: 2}\n  iter.checked: {operation: iter-checked, min: 2, max: 2}\n  take: {operation: take, min: 2, max: 2}\n  skip: {operation: skip, min: 2, max: 2}\n  collect: {operation: collect, min: 1, max: 1}\n  count: {operation: count, min: 1, max: 1}\n  field: {operation: field, min: 2, max: 2}\n"
 }

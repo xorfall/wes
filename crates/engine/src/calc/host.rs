@@ -266,6 +266,8 @@ impl BoundCalculation {
                             outcome: panic_failure(),
                             notices,
                             stream_start: None,
+                            holds: vec![],
+                            progress: None,
                         };
                     }
                 };
@@ -298,6 +300,8 @@ impl BoundCalculation {
                             outcome,
                             notices,
                             stream_start: None,
+                            holds: vec![],
+                            progress: None,
                         };
                     }
                     Err(error) => {
@@ -305,6 +309,8 @@ impl BoundCalculation {
                             outcome: failure(error),
                             notices,
                             stream_start: None,
+                            holds: vec![],
+                            progress: None,
                         };
                     }
                     Ok(Step::Request(request)) => request,
@@ -346,6 +352,8 @@ impl BoundCalculation {
                                     outcome: failure(error),
                                     notices,
                                     stream_start: None,
+                                    holds: vec![],
+                                    progress: None,
                                 };
                             }
                             Err(_) => {
@@ -353,6 +361,8 @@ impl BoundCalculation {
                                     outcome: panic_failure(),
                                     notices,
                                     stream_start: None,
+                                    holds: vec![],
+                                    progress: None,
                                 };
                             }
                         };
@@ -362,6 +372,7 @@ impl BoundCalculation {
                                     run: run.calculation_child(id),
                                     payload: bound,
                                     inputs: IndexMap::new(),
+                                    input_origins: IndexMap::new(),
                                 },
                                 token.clone(),
                             )
@@ -372,7 +383,7 @@ impl BoundCalculation {
                                 Err(Failure::new("CAL004", span, "provider returned no value"))
                             }
                             Outcome::Produced(value) => Ok(value),
-                            Outcome::Failed(error) => {
+                            Outcome::Failed(error) | Outcome::Incomplete { error, .. } => {
                                 notices.push(error.clone());
                                 Err(Failure::provider(span, error))
                             }
@@ -403,6 +414,8 @@ impl BoundCalculation {
                                     outcome: panic_failure(),
                                     notices,
                                     stream_start: None,
+                                    holds: vec![],
+                                    progress: None,
                                 };
                             }
                         }
@@ -431,6 +444,8 @@ impl BoundCalculation {
                                     outcome: panic_failure(),
                                     notices,
                                     stream_start: None,
+                                    holds: vec![],
+                                    progress: None,
                                 };
                             }
                         }
@@ -449,6 +464,8 @@ impl BoundCalculation {
                             outcome: panic_failure(),
                             notices,
                             stream_start: None,
+                            holds: vec![],
+                            progress: None,
                         };
                     }
                 };
@@ -457,6 +474,8 @@ impl BoundCalculation {
                         outcome: failure(error),
                         notices,
                         stream_start: None,
+                        holds: vec![],
+                        progress: None,
                     };
                 }
             }

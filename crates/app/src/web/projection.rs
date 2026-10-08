@@ -483,6 +483,9 @@ pub(super) fn build(
             out.push(format!("environment:{id}"), json!({"event":"node-environment","node":id,"environment":binding.environment().name(),"revision":binding.environment().revision().to_string(),"target":binding.import().target().name(),"endpoint":binding.import().endpoint(),"origin":binding.import().origin().environment}))?;
         }
         let mut state = json!({"event":"node", "node":id, "state":state(node.state())});
+        if let Some(progress) = execution.progress.get(node.id()) {
+            out.push(format!("progress:{id}"),json!({"event":"node-progress","node":id,"run":execution.runs.get(node.id()).map(|run|run.as_str()),"progress":progress}))?;
+        }
         if let Some(error) = execution.errors.get(node.id()) {
             state = match node.state() {
                 NodeState::Failed => {
@@ -503,7 +506,7 @@ pub(super) fn build(
                 crate::execution_status::waiting_inputs(waits, observation.state.names.iter());
         }
         // State and ready share a key: refresh replaces the ready announcement immediately.
-        let stopped = execution.stopped_values.get(node.id());
+        let stopped = execution.evidence_values.get(node.id());
         if node.state() == NodeState::Ready || stopped.is_some() {
             let published = observation
                 .values
@@ -540,10 +543,15 @@ pub(super) fn build(
             if let Some(last) = stopped {
                 // Historical visibility never overwrites the engine's terminal graph state.
                 if state["event"] == "ready" {
-                    state["event"] = json!("stopped");
+                    state["event"] = json!("evidence");
                     state["state"] = json!(self::state(node.state()));
                     state["source"] = json!(last.source.as_str());
                     state["run"] = json!(last.run.as_str());
+                    state["kind"] = json!(last.kind.name());
+                    if let Some(error) = execution.errors.get(node.id()) {
+                        state["error"] = self::error(error);
+                        state["reason"] = json!(error.message());
+                    }
                 }
             }
             // One frame carries both facts: execution completion is not publication success.
@@ -763,7 +771,7 @@ fn vocabulary(
     }).collect();
     let templates = template_vocabulary(&o.templates);
     let package = wes_language::calc::Package::standard();
-    json!({"calculation":{"keywords":package.keywords().collect::<Vec<_>>(),"operations":package.operations().map(|(name,_)|name).collect::<Vec<_>>()},"event":"vocabulary","commands":commands,"annotations":ANNOTATIONS.iter().map(|(n,_)|n).collect::<Vec<_>>(),"providers":providers,"templates":templates,"types":o.types.clone()})
+    json!({"calculation":{"keywords":package.keywords().collect::<Vec<_>>(),"operations":package.operations().map(|(name,_)|name).collect::<Vec<_>>(),"methods":package.operations().filter(|(_,spec)|spec.operation.supports_method()).map(|(name,_)|name).collect::<Vec<_>>()},"event":"vocabulary","commands":commands,"annotations":ANNOTATIONS.iter().map(|(n,_)|n).collect::<Vec<_>>(),"providers":providers,"templates":templates,"types":o.types.clone()})
 }
 fn public_endpoint(endpoint: &str) -> Option<String> {
     let mut url = url::Url::parse(endpoint).ok()?;

@@ -50,6 +50,42 @@ pub struct Contract {
 }
 
 impl Contract {
+    /// A declared container around already resolved contracts. Composition retains
+    /// child constraints and identities; it never infers contracts from values.
+    pub fn record(
+        name: &str,
+        fields: IndexMap<String, Field>,
+    ) -> Result<Self, super::ContractError> {
+        if name.is_empty() || name.encode_utf16().count() > 1024 || fields.len() > 128 {
+            return Err(super::ContractError::declaration(
+                "invalid composed record contract",
+            ));
+        }
+        RecordShape::new(
+            name,
+            fields.iter().map(|(k, f)| (k.clone(), f.contract.shape())),
+        )
+        .map_err(|_| super::ContractError::declaration("invalid composed record fields"))?;
+        Ok(Self::container(name, Kind::Record(fields)))
+    }
+    pub fn list(name: &str, element: Arc<Contract>) -> Result<Self, super::ContractError> {
+        if name.is_empty() || name.encode_utf16().count() > 1024 {
+            return Err(super::ContractError::declaration(
+                "invalid composed list contract",
+            ));
+        }
+        Ok(Self::container(name, Kind::List(element)))
+    }
+    fn container(name: &str, kind: Kind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            limits: Limits::default(),
+            display: Default::default(),
+            base_digest: None,
+            digest: Default::default(),
+        }
+    }
     /// Bounded presentation hints from the same resolved rules used by validation.
     /// These strings are documentation, never a second source of validation rules.
     pub fn constraint_hints(&self) -> Vec<String> {

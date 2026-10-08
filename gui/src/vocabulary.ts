@@ -6,7 +6,12 @@
  * which is why this may be approximate, and why the checking it looks like is not.
  */
 
-export interface CalculationVocabulary { readonly keywords: readonly string[]; readonly operations: readonly string[]; }
+export interface CalculationVocabulary {
+  readonly keywords: readonly string[];
+  readonly operations: readonly string[];
+  /** The exact operation names the engine also accepts after a receiver. Anything absent is function-only. */
+  readonly methods: readonly string[];
+}
 
 export interface Catalogue {
   readonly calculation?: CalculationVocabulary;

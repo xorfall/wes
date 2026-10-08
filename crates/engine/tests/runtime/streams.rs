@@ -318,14 +318,14 @@ fn cancellation_preserves_last_successes_without_reopening_the_data_branch() {
     );
     assert!(runtime.value_of(&source).is_none());
     assert!(runtime.value_of(&derived).is_none());
-    assert_eq!(runtime.stopped_value(&source).unwrap().value, value(2));
-    let last = runtime.stopped_value(&derived).unwrap();
+    assert_eq!(runtime.evidence_value(&source).unwrap().value, value(2));
+    let last = runtime.evidence_value(&derived).unwrap();
     assert_eq!(last.value, value(10));
     assert_eq!(&last.run, first.run.id());
     assert_eq!(last.source, source);
     runtime.complete(&second.run, Outcome::Produced(value(999)), at(3));
     runtime.complete(&stream.run, Outcome::Produced(value(999)), at(3));
-    assert_eq!(runtime.stopped_value(&derived).unwrap().value, value(10));
+    assert_eq!(runtime.evidence_value(&derived).unwrap().value, value(10));
     let new = runtime
         .add("new input", [output(&source, OutputPort::Data)], SAFE)
         .unwrap();
@@ -334,10 +334,10 @@ fn cancellation_preserves_last_successes_without_reopening_the_data_branch() {
         runtime.graph().node(&new).unwrap().state(),
         NodeState::Skipped
     );
-    assert!(runtime.stopped_value(&new).is_none());
+    assert!(runtime.evidence_value(&new).is_none());
     runtime.refresh(&source, at(4)).unwrap();
-    assert!(runtime.stopped_value(&source).is_none());
-    assert!(runtime.stopped_value(&derived).is_none());
+    assert!(runtime.evidence_value(&source).is_none());
+    assert!(runtime.evidence_value(&derived).is_none());
 }
 
 #[test]
@@ -356,18 +356,18 @@ fn stopped_display_observations_follow_forget_drop_and_private_lifetime() {
         };
         runtime.stream_window(&stream.run, v, at(0));
         runtime.cancel(&node, at(1));
-        assert_eq!(runtime.stopped_value(&node).is_some(), !private);
+        assert_eq!(runtime.evidence_value(&node).is_some(), !private);
         let effects = runtime.forget(&node);
-        assert!(runtime.stopped_value(&node).is_none());
+        assert!(runtime.evidence_value(&node).is_none());
         if !private {
             assert!(
                 effects
                     .iter()
-                    .any(|effect| matches!(effect, Effect::Observe(o) if o.stopped.is_none()))
+                    .any(|effect| matches!(effect, Effect::Observe(o) if o.evidence.is_none()))
             );
         }
         runtime.drop_node(&node).unwrap();
-        assert!(runtime.stopped_value(&node).is_none());
+        assert!(runtime.evidence_value(&node).is_none());
     }
 }
 
@@ -405,9 +405,9 @@ fn group_cancel_stops_open_sources_but_preserves_finished_finite_work() {
         runtime.graph().node(&derived).unwrap().state(),
         NodeState::Skipped
     );
-    assert_eq!(runtime.stopped_value(&derived).unwrap().value, value(10));
+    assert_eq!(runtime.evidence_value(&derived).unwrap().value, value(10));
     assert_eq!(runtime.value_of(&finite), Some(&value(7)));
-    assert!(runtime.stopped_value(&finite).is_none());
+    assert!(runtime.evidence_value(&finite).is_none());
 }
 
 #[test]

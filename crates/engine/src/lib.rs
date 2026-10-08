@@ -18,6 +18,7 @@ pub mod plan;
 pub mod providers;
 pub mod recording;
 pub mod runtime;
+pub mod scan;
 pub mod session;
 pub mod source;
 pub mod storage;
@@ -26,6 +27,7 @@ pub mod tasks;
 pub mod type_sources;
 mod value_size;
 pub mod views;
+mod work_budget;
 pub mod workspace;
 
 pub mod iteration;

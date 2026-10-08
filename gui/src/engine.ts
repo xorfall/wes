@@ -13,6 +13,7 @@ import type { SharedState, SharedCommit } from "./value-views/shared-state";
 import { ViewFrameReader, type ViewFrame, type FrameSample, type ViewInstance } from "./value-views/instances";
 import { freshPinName, pinCommand } from "./value-views/pin";
 import { WorkspaceEvents } from "./workspace-events";
+import { decodeEvent } from "./protocol-decode";
 import { diagnosticsSession, clientDiagnostic, timeClientSubmit } from "./local-telemetry";
 import { TerminalUnavailable, TerminalRequestError } from "./terminal-errors";
 import { EngineRefusal, SUBMISSION_OUTCOME_HEADER, recordEngineFailure, recordExecutionFailure, requestOperation } from "./engine-diagnostics";
@@ -202,7 +203,7 @@ export class Engine {
     const source = new WorkspaceEvents(this.binding === undefined ? "/events" : `/events?${new URLSearchParams({ workspace: this.binding })}`);
     source.onmessage = (message) => {
       try {
-        const event = parseExactJson(message.data) as Event;
+        const event = decodeEvent(parseExactJson(message.data));
         if (event.event === "session") {
           for (const waiter of this.documentWaiters.values()) if (waiter.generation !== event.generation) waiter.reject(new Error("Workspace changed while submitting the document; inspect its original workspace before retrying."));
         }
@@ -235,9 +236,13 @@ export class Engine {
         if (event.event === "dropped") for (const node of event.nodes) this.referable.delete(node);
         if (event.event === "environments") this.environments = event;
         if (event.event === "vocabulary") this.vocabulary = event;
-        if (["session","planned","ready","workspace-closed"].includes(event.event)) this.valuePackages.invalidate();
-        if (event.event === "failed") recordExecutionFailure(event, { workspace: this.viewWorkspaceName() ?? "Current workspace", generation: this.generation });
-        if (["session","ready","failed","cancelled","dropped","work-retired","workspace-closed"].includes(event.event)) this.viewFrames.invalidate();
+        if (["session","planned","ready","evidence","workspace-closed"].includes(event.event)) this.valuePackages.invalidate();
+        const logContext = { workspace: this.viewWorkspaceName() ?? "Current workspace", generation: this.generation };
+        if (event.event === "failed") recordExecutionFailure(event, logContext);
+        // An incomplete analysis is a failed run with a partial value; its failure is logged the same way.
+        if (event.event === "evidence" && event.kind === "incomplete" && event.error)
+          recordExecutionFailure({ event: "failed", node: event.node, reason: event.reason ?? event.error.message, error: event.error }, logContext);
+        if (["session","ready","evidence","failed","cancelled","dropped","work-retired","workspace-closed"].includes(event.event)) this.viewFrames.invalidate();
         if (event.event !== "vocabulary") onEvent(event);
         if ((event.event === "environments" || event.event === "vocabulary") && this.vocabulary) {
           const context = this.environmentContext();

@@ -39,6 +39,13 @@ impl Input {
         &'a self,
         inputs: &'a IndexMap<NodeId, Value>,
     ) -> Result<Cow<'a, Value>, InputResolutionError> {
+        self.resolve_with_limit(inputs, u64::MAX)
+    }
+    pub fn resolve_with_limit<'a>(
+        &'a self,
+        inputs: &'a IndexMap<NodeId, Value>,
+        limit: u64,
+    ) -> Result<Cow<'a, Value>, InputResolutionError> {
         let policy = self
             .literal_values()
             .into_iter()
@@ -50,12 +57,13 @@ impl Input {
             .fold(wes_core::flow::FlowPolicy::default(), |policy, value| {
                 policy.join(value.provenance().policy())
             });
-        self.resolve_inner(inputs)
+        self.resolve_inner(inputs, limit)
             .map_err(|error| error.with_policy(&policy))
     }
     fn resolve_inner<'a>(
         &'a self,
         inputs: &'a IndexMap<NodeId, Value>,
+        limit: u64,
     ) -> Result<Cow<'a, Value>, InputResolutionError> {
         match self {
             Self::Record(fields) => {
@@ -63,7 +71,7 @@ impl Input {
                 let mut remaining = 128 * 1024;
                 for (key, input) in fields {
                     let value = input
-                        .resolve(inputs)
+                        .resolve_with_limit(inputs, limit)
                         .map_err(|error| error.at_argument_field(key))?;
                     charge_part(&value, &mut remaining)
                         .map_err(|error| error.at_argument_field(key))?;
@@ -76,7 +84,7 @@ impl Input {
                 let mut remaining = 128 * 1024;
                 for (index, input) in items.iter().enumerate() {
                     let value = input
-                        .resolve(inputs)
+                        .resolve_with_limit(inputs, limit)
                         .map_err(|error| error.at_argument_field(&index.to_string()))?;
                     charge_part(&value, &mut remaining)
                         .map_err(|error| error.at_argument_field(&index.to_string()))?;
@@ -93,7 +101,7 @@ impl Input {
                 let root = inputs
                     .get(&output.node)
                     .ok_or_else(|| InputResolutionError::unavailable(output, fields))?;
-                project_value(root, fields)
+                projection::project_value_with_limit(root, fields, limit)
                     .map(Cow::Owned)
                     .map_err(|error| error.with_source(output))
             }

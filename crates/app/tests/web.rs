@@ -22,6 +22,8 @@ mod repeat;
 mod retention;
 #[path = "web/sandbox.rs"]
 mod sandbox;
+#[path = "web/scan.rs"]
+mod scan;
 #[path = "web/telemetry.rs"]
 mod telemetry;
 #[path = "web/view_instances.rs"]

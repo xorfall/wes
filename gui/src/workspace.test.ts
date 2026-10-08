@@ -85,15 +85,58 @@ it("keeps subcommand metadata from the wire available to completion", async () =
 
 
 it("keeps explicitly stopped results readable without changing graph validity and withdraws them on refresh", () => {
-  const stopped = apply(created(), { event: "stopped", state: "skipped", source: "source", run: "last-success", node: "id1", type: "Text", handle: "last", bytes: 4, provenance: {}, cautions: [], kept: false });
-  expect(stopped.nodes[0]).toMatchObject({ state: "skipped", handle: "last", kept: false, stopped: { source: "source", run: "last-success" } });
+  const stopped = apply(created(), { event: "evidence", kind: "stopped_stream", state: "skipped", source: "source", run: "last-success", node: "id1", type: "Text", handle: "last", bytes: 4, provenance: {}, cautions: [], kept: false });
+  expect(stopped.nodes[0]).toMatchObject({ state: "skipped", handle: "last", kept: false, evidence: { kind: "stopped_stream", source: "source", run: "last-success" } });
+  expect(stopped.nodes[0]?.failure).toBeUndefined();
   const refreshing = apply(stopped, { event: "node", constructionComplete: false, node: "id1", state: "stale" });
   expect(refreshing.nodes[0]?.handle).toBeUndefined();
-  expect(refreshing.nodes[0]?.stopped).toBeUndefined();
+  expect(refreshing.nodes[0]?.evidence).toBeUndefined();
   const live = apply(stopped, { event: "ready", node: "id1", type: "Text", handle: "new", bytes: 4, provenance: {}, cautions: [], kept: false });
-  expect(live.nodes[0]?.stopped).toBeUndefined();
+  expect(live.nodes[0]?.evidence).toBeUndefined();
   expect(live.nodes[0]?.state).toBe("ready");
   expect(apply(stopped, { event: "dropped", nodes: ["id1"] }).nodes).toHaveLength(0);
+});
+
+/*
+ * Structural inputs shaped by the declared Rust contract (driver/progress.rs, web/projection.rs).
+ * They test the reducer's rules only; they are not a captured engine payload.
+ */
+const scanCreated = (run: string) => apply(emptyWorkspace, {
+  event: "created", dependencyLifetime: "continuous", node: "scan1", name: "normalized", command: ":scan source:$raw", dependsOn: [], interactive: false, run,
+});
+const progressOf = (phase: "processing" | "stopped", committed: string) => ({ kind: "records" as const, phase, counters: {
+  committedPosition: committed, readPosition: "40", extent: "100", unit: "bytes" as const, inputRecords: "3", outputRecords: "2",
+  work: "900", workAllowance: "1000", workLimit: "5000", heldCharge: "64", highWaterCharge: "96", heldLimit: "4096", outputCharge: "32", outputLimit: "1024",
+} });
+const scanError = { id: "e-scan", code: "CAL006", message: "scan work limit reached (5000)", causeId: "", issues: [] };
+
+it("keeps an incomplete analysis failed while its committed partial result stays readable as evidence", () => {
+  const running = apply(scanCreated("run-a"), { event: "node", constructionComplete: false, node: "scan1", state: "running" });
+  const stopped = apply(running, { event: "evidence", kind: "incomplete", state: "failed", source: "scan1", run: "run-a", node: "scan1",
+    type: "ScanResult", handle: "partial", bytes: 12, provenance: {}, cautions: [], kept: false, error: scanError, reason: scanError.message });
+  expect(stopped.nodes[0]).toMatchObject({ state: "failed", handle: "partial", evidence: { kind: "incomplete", run: "run-a" },
+    failure: scanError.message, failureRecord: scanError });
+  // A later run withdraws the evidence and its handle; nothing carries it into the new run.
+  const again = apply(stopped, { event: "node", constructionComplete: false, node: "scan1", state: "running" });
+  expect(again.nodes[0]?.evidence).toBeUndefined();
+  expect(again.nodes[0]?.handle).toBeUndefined();
+  expect(again.nodes[0]?.failure).toBeUndefined();
+});
+
+it("applies progress only for the node's exact current run and forgets it when a new run is announced", () => {
+  const first = scanCreated("run-a");
+  const reported = apply(first, { event: "node-progress", node: "scan1", run: "run-a", progress: progressOf("processing", "10") });
+  expect(reported.nodes[0]?.progress).toEqual({ run: "run-a", value: progressOf("processing", "10") });
+  // A late report from another run, or one without a run, changes nothing.
+  expect(apply(reported, { event: "node-progress", node: "scan1", run: "run-old", progress: progressOf("stopped", "99") })).toEqual(reported);
+  expect(apply(reported, { event: "node-progress", node: "scan1", run: null, progress: progressOf("stopped", "99") })).toEqual(reported);
+  expect(apply(reported, { event: "node-progress", node: "unknown", run: "run-a", progress: progressOf("stopped", "99") })).toEqual(reported);
+  // The same run's next report replaces the slot; no history accumulates.
+  const next = apply(reported, { event: "node-progress", node: "scan1", run: "run-a", progress: progressOf("processing", "20") });
+  expect(next.nodes[0]?.progress?.value.counters?.committedPosition).toBe("20");
+  const rerun = apply(next, { event: "created", dependencyLifetime: "continuous", node: "scan1", name: "normalized", command: ":scan source:$raw", dependsOn: [], interactive: false, run: "run-b" });
+  expect(rerun.nodes[0]?.progress).toBeUndefined();
+  expect(rerun.nodes[0]?.run).toBe("run-b");
 });
 
 it("retirement forgets only the removed cell-to-node binding", () => {
@@ -131,7 +174,7 @@ it("should_ProjectTheEnginesUpdatePendingBit_When_AStateEventCarriesIt", () => {
     apply(running, { event: "node", constructionComplete: false, node: "id1", state: "running" }),
     apply(running, { event: "node", constructionComplete: false, node: "id1", state: "stale", staleReason: { code: "input_behind", message: "Behind." } }),
     apply(running, { event: "ready", node: "id1", type: "Text", handle: "h", bytes: 1, provenance: {}, cautions: [], kept: false }),
-    apply(running, { event: "stopped", state: "skipped", source: "s", run: "r", node: "id1", type: "Text", handle: "h", bytes: 1, provenance: {}, cautions: [], kept: false }),
+    apply(running, { event: "evidence", kind: "stopped_stream", state: "skipped", source: "s", run: "r", node: "id1", type: "Text", handle: "h", bytes: 1, provenance: {}, cautions: [], kept: false }),
     apply(running, { event: "failed", node: "id1", reason: "failed", error }),
     apply(running, { event: "cancelled", node: "id1", code: "RUN003", reason: "cancelled" }),
   ];

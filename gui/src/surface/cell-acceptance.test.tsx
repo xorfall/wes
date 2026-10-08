@@ -14,7 +14,7 @@ import { MonoLine, lineText } from "./MonoLine";
 import { ReadStatus } from "./ReadStatus";
 import { durationsOf, failureOf, joined, readSession, type SessionCell } from "./session-model";
 import { ValueBlock } from "./render/ValueBlock";
-import { Cell } from "./Cell";
+import { Cell, runAvailability } from "./Cell";
 
 /*
  * Cell acceptance over the session model and the block builder. Synthetic workspaces only:
@@ -214,7 +214,7 @@ describe("run state precedes value shape", () => {
   it("should_ShowTheLastWindowAndSayStopped_When_AStreamWasStopped", () => {
     const sample: TypeShape = { kind: "record", name: "Sample", fields: [{ name: "sequence", type: INT }] };
     const value: StoredValue = { type: { kind: "list", element: sample }, data: Array.from({ length: 213 }, (_, at) => ({ sequence: at + 1 })), provenance: {} };
-    const workspace = { ...emptyWorkspace, nodes: [node({ id: "s", name: "stats", state: "cancelled", stopped: { source: "s", run: "r" }, handle: "h", type: "List<Sample>" })] };
+    const workspace = { ...emptyWorkspace, nodes: [node({ id: "s", name: "stats", state: "cancelled", evidence: { kind: "stopped_stream", source: "s", run: "r" }, handle: "h", type: "List<Sample>" })] };
     const held = new Map([["h", value]]);
     const cell = session(workspace, client("docker stats container:$c > stats", ["s"]), held);
     expect(lineText(joined(cell.verdict))).toBe("stopped · stream stopped · last value · 213 · kept");
@@ -222,6 +222,80 @@ describe("run state precedes value shape", () => {
     const lastRow = tree.root.findAllByProps({ role: "row" }).filter((it) => it.type === "tr").at(-1)!;
     expect(lastRow.findAllByProps({ role: "cell" }).filter((it) => it.type === "td").map((it) => it.children.filter(child=>typeof child==="string").join(""))).toEqual(["213"]);
     expect(cell.rows[0]!.nodes[0]!.glyph).toBe("stopped");
+    expect(runAvailability(cell.state, cell.verdict, cell.rows.flatMap(row => row.nodes)).repeatVerb).toBe("restart…");
+  });
+});
+
+/*
+ * Finite record analysis. Node and counter inputs follow the declared Rust contract
+ * (driver/progress.rs, web/projection.rs evidence frames); the stored value is a minimal structural
+ * stand-in for a ScanResult, not a captured engine receipt.
+ */
+describe("finite record analysis", () => {
+  const counters = { committedPosition: "10", readPosition: "40", extent: "100", unit: "bytes" as const, inputRecords: "3", outputRecords: "2",
+    work: "900", workAllowance: "1000", workLimit: "5000", heldCharge: "64", highWaterCharge: "96", heldLimit: "4096", outputCharge: "32", outputLimit: "1024" };
+  const progress = (phase: "processing" | "stopped" | "complete", withheld = false) =>
+    ({ run: "r1", value: { kind: "records" as const, phase, counters: withheld ? null : counters } });
+  const partial: StoredValue = { type: { kind: "record", name: "ScanResult", fields: [{ name: "outputs", type: { kind: "list", element: INT } }] }, data: { outputs: [1, 2] }, provenance: {} };
+  const error = { id: "e", code: "CAL006", message: "scan work limit reached (5000)", causeId: "", issues: [] };
+  const incomplete = node({ id: "a", name: "normalized", command: ":scan source:$raw > normalized", run: "r1", state: "failed", kept: false,
+    failure: error.message, failureRecord: error, evidence: { kind: "incomplete", source: "a", run: "r1" }, handle: "h", type: "ScanResult", progress: progress("stopped") });
+
+  it("should_KeepTheCellFailedAndShowThePartialResultBesideIt_When_AnAnalysisStopped", () => {
+    const workspace = { ...emptyWorkspace, nodes: [incomplete] };
+    const held = new Map([["h", partial]]);
+    const cell = session(workspace, client(":scan source:$raw > normalized", ["a"]), held);
+    const verdict = lineText(joined(cell.verdict));
+    expect(cell.state).toBe("failed");
+    expect(verdict).toMatch(/^failed · /);
+    expect(verdict).toContain("partial result · incomplete");
+    // No success word of its own; the required "incomplete" is not a standalone "complete".
+    expect(verdict).not.toMatch(/\bok\b|stream stopped|\bcompleted?\b/);
+    expect(cell.rows[0]!.nodes[0]!.glyph).toBe("failed");
+    expect(runAvailability(cell.state, cell.verdict, cell.rows.flatMap(row => row.nodes)).repeatVerb).not.toBe("restart…");
+    const { blocks, tree, text } = blocksOf(cell, workspace, held);
+    expect(blocks.map(block => [block.key, block.zone])).toEqual([["a:progress", "run"], ["a:failure", "run"], ["a", undefined]]);
+    expect(blocks.at(-1)!.hasValue).toBe(true);
+    const said = text.join("\n");
+    expect(said).toContain("incomplete · committed partial result, not a completed run");
+    expect(said).toContain("stopped · committed through 10 of 100 bytes · read through 40 · read, not committed");
+    expect(said).toContain("3 records in · 2 outputs · work 900 used of 1,000 earned · cap 5,000");
+    expect(said).toContain("logical charge · held 64 · high-water 96 of cap 4,096 · output 32 of cap 1,024");
+    expect(said).not.toMatch(/no value · the run failed|stream stopped|restart|resume|dataset|KiB|MiB|RSS/i);
+    expect(tree.root.findAllByType(ValueBlock)).toHaveLength(1);
+    act(() => tree.unmount());
+  });
+
+  it("should_DrawTheSameThreeRows_When_CountersAreWithheldForANonPublicRun", () => {
+    const running = node({ ...incomplete, state: "running", evidence: undefined, failure: undefined, failureRecord: undefined, handle: undefined, private: true, progress: progress("processing", true) });
+    const workspace = { ...emptyWorkspace, nodes: [running] };
+    const cell = session(workspace, client(":scan source:$raw > normalized", ["a"]));
+    const { blocks, tree } = blocksOf(cell, workspace);
+    const rows = tree.root.findAllByProps({ className: "mono-line record-progress-row" });
+    expect(rows).toHaveLength(3);
+    const said = tree.root.findAllByType(MonoLine).map(line => lineText(line.props.segments)).join("\n");
+    expect(said).toContain("processing · counters withheld · the input is not public");
+    expect(said).not.toMatch(/\d{2,}/);
+    expect(blocks.some(block => block.key === "a:progress")).toBe(true);
+    // Running work is cancellable through the cell's existing cancel action; nothing else is offered.
+    expect(runAvailability(cell.state, cell.verdict, cell.rows.flatMap(row => row.nodes))).toMatchObject({ running: true, working: true });
+    act(() => tree.unmount());
+  });
+
+  it("should_CallALaggingReportOld_When_TheEnginesStateIsAlreadyTerminal", () => {
+    for (const [state, phase] of [["cancelled", "processing"], ["failed", "complete"]] as const) {
+      const workspace = { ...emptyWorkspace, nodes: [node({ ...incomplete, state, evidence: undefined, handle: undefined, progress: progress(phase) })] };
+      const { text, tree } = blocksOf(session(workspace, client(":scan source:$raw > normalized", ["a"])), workspace);
+      expect(text.join("\n")).toContain(`last reported ${phase} · committed through 10 of 100 bytes`);
+      act(() => tree.unmount());
+    }
+  });
+
+  it("should_IgnoreProgressOfAnotherRun_When_TheNodeHasMovedOn", () => {
+    const workspace = { ...emptyWorkspace, nodes: [node({ ...incomplete, run: "r2", state: "running", evidence: undefined, handle: undefined })] };
+    const { blocks, tree } = blocksOf(session(workspace, client(":scan source:$raw > normalized", ["a"])), workspace);
+    expect(blocks.some(block => block.key === "a:progress")).toBe(false);
+    act(() => tree.unmount());
   });
 });
 

@@ -26,7 +26,7 @@ describe("calc command colors", () => {
   });
 
   it("uses the engine's language metadata for both prompt and preview", () => {
-    const engine = readLanguage({ ...bundledPackage, operations: { ...bundledPackage.operations, fixtureOp: { operation: "fixtureOp", min: 1, max: 1 } } }, "engine");
+    const engine = readLanguage({ ...bundledPackage, operations: { ...bundledPackage.operations, fixtureOp: { operation: "fixtureOp", min: 1, max: 1, method: false } } }, "engine");
     for (const segments of [promptLine(":calc fixtureOp([1])", engine), commandLine(":calc fixtureOp([1])", undefined, engine)]) {
       expect(segments).toContainEqual({ text: "fixtureOp", role: "mono-provider" });
     }

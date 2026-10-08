@@ -642,6 +642,13 @@ impl Workspace {
     pub fn runtime(&self) -> &Runtime<BoundTask> {
         &self.runtime
     }
+    pub(crate) fn update_execution_progress(
+        &mut self,
+        run: &Run,
+        progress: crate::driver::progress::ExecutionProgress,
+    ) -> bool {
+        self.runtime.update_progress(run, progress)
+    }
     pub fn catalogue(&self) -> &Catalogue {
         self.providers.catalogue()
     }
@@ -1093,6 +1100,9 @@ impl Workspace {
         if let Some(start) = report.stream_start {
             self.runtime.set_stream_start(run, start);
         }
+        if let Some(progress) = report.progress {
+            self.runtime.update_progress(run, progress);
+        }
         self.complete(run, report.outcome, now)
     }
     pub fn cancel(&mut self, node: &NodeId, now: Duration) -> Vec<Effect<BoundTask>> {
@@ -1107,7 +1117,7 @@ impl Workspace {
         run: Option<&crate::runtime::RunId>,
     ) -> Vec<Effect<BoundTask>> {
         if self.runtime.run_of(node) != run
-            && self.runtime.stopped_value(node).map(|v| &v.run) != run
+            && self.runtime.evidence_value(node).map(|v| &v.run) != run
         {
             return vec![];
         }

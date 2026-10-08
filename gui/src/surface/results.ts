@@ -68,7 +68,8 @@ export class ResultObservations {
     for (const node of nodes) {
       const value = node.handle ? held.get(node.handle) : undefined;
       const previous = this.last.get(node.id);
-      const permitted = !node.private && !node.stopped && !node.doubt
+      // Evidence of either kind is fixed display data, never a "previous result" for a later run.
+      const permitted = !node.private && !node.evidence && !node.doubt
         && ["ready", "running", "pending", "stale"].includes(node.state)
         && node.publication?.state !== "unavailable";
       if (!permitted || previous && (previous.node.command !== node.command

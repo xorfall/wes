@@ -55,12 +55,14 @@ export function calculationCompletion(before: string, catalogue: Catalogue, name
   if (context.quoted) return { from: before.length, items: [] };
   const word = /[$\p{L}_][\p{L}\p{N}_:$-]*$/u.exec(before)?.[0] ?? "";
   if (word.startsWith("$")) return offer(word, names.map(name => ({ text: `$${name}`, kind: "reference" })));
-  const field = /([\p{L}_][\p{L}\p{N}_]*)\.([\p{L}\p{N}_]*)$/u.exec(mask);
+  // A call or index result is a receiver too: `stripAnsi(raw).te` reads a field, not a free operation.
+  const field = /([\p{L}_][\p{L}\p{N}_]*|[)\]])\.([\p{L}\p{N}_]*)$/u.exec(mask);
   if (field?.[1] === "iter") {
     return offer(field[2]!, (catalogue.calculation?.operations ?? []).filter(name => name.startsWith("iter.")).map(name => ({text:name.slice(5),kind:"operation"})));
   }
   if (field) {
-    const items: Suggestion[] = ["map", "filter", "reduce", "length", "keys", "isSome", "unwrapOr", "take", "skip", "collect", "count", "field"].filter(name => catalogue.calculation?.operations.includes(name)).map(text => ({ text, kind: "operation" }));
+    // Only names the vocabulary announces as methods; an operation it does not is function syntax only.
+    const items: Suggestion[] = (catalogue.calculation?.methods ?? []).map(text => ({ text, kind: "operation" }));
     // Approximate literal fields; the engine still validates scope, types and callable fields.
     for (const record of mask.matchAll(/(?:const|let)\s+([\p{L}_][\p{L}\p{N}_]*)\s*=\s*\{([^{}]*)/gu)) {
       if (record[1] === field[1]) for (const key of record[2]!.matchAll(/([\p{L}_][\p{L}\p{N}_]*)\s*:/gu)) items.push({ text: key[1]!, kind: "field" });

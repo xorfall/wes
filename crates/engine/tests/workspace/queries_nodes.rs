@@ -256,3 +256,23 @@ async fn names_snapshot_retains_entry_time_and_states_until_explicit_refresh() {
     );
     assert_eq!(state(&saved), Data::Text("RUNNING".into()));
 }
+
+#[tokio::test]
+async fn node_inspection_redacts_private_failure_text_at_the_shared_metadata_boundary() {
+    let (mut workspace, _) = workspace();
+    let root = commit(&mut workspace, "catalog echo value:hello > root").unwrap();
+    let work = ticket(workspace.start(Duration::ZERO));
+    assert_eq!(work.run.node(), &root);
+    workspace.enter(&work.run);
+    let error = RuntimeCode::ExecutionFailed
+        .error("restricted synthetic diagnostic", None)
+        .with_policy(&wes_core::flow::FlowPolicy::default().private());
+    workspace.complete(&work.run, Outcome::Failed(error), Duration::ZERO);
+    let inspected = commit(&mut workspace, ":inspect $root > inspected").unwrap();
+    run_all(&mut workspace).await;
+    let result = fields(workspace.runtime().value_of(&inspected).unwrap());
+    assert_eq!(
+        result["failure"],
+        Data::Text("Restricted failure; details are unavailable.".into())
+    );
+}

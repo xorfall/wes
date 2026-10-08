@@ -62,6 +62,10 @@
           "summary": "Accumulate each ordered event with a bounded, atomic checkpoint."
         },
         {
+          "name": "scan",
+          "summary": "Analyze captured finite records with declared pure transitions, coverage and cumulative limits."
+        },
+        {
           "name": "help",
           "summary": "Explain a command family, provider group or operation."
         },
@@ -571,6 +575,8 @@
           "httpCatalogue",
           "httpAnalysis",
           "parseJson",
+          "regexTest",
+          "stripAnsi",
           "check",
           "call",
           "iter.items",

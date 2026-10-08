@@ -1068,6 +1068,7 @@ fn validate_definition(definition: &Definition) -> Result<(), SessionError> {
                             | MetaCommand::Help
                             | MetaCommand::Info
                             | MetaCommand::Accumulate
+                            | MetaCommand::Scan
                             | MetaCommand::Stream
                     )
                 })

@@ -5,7 +5,7 @@ import { layoutTier } from '../value-views/layout';
 import { preparedValues } from '../surface/render/ValueBlock';
 import type { DashboardMember, DashboardSource } from './model';
 export function readableDashboardNode(node:WorkspaceNode|undefined):node is WorkspaceNode {
-  return !!node && !node.private && !node.stopped && !node.doubt
+  return !!node && !node.private && !node.evidence && !node.doubt
     && (!!node.handle || node.publication?.state==='pending') && node.publication?.state!=='unavailable';
 }
 export function dashboardSource(node:WorkspaceNode,generation:string,value?:StoredValue):DashboardSource {
@@ -26,7 +26,8 @@ export function memberProblem(member:DashboardMember,generation:string|undefined
   if(!node)return 'This result no longer exists. Its source command was not rerun.';
   if(node.private)return 'This result is private. Inspect it in the workspace.';
   if(node.doubt)return 'The outcome of this command is unconfirmed. Inspect it in the workspace.';
-  if(node.stopped)return 'This source was stopped. Its command was not restarted.';
+  if(node.evidence?.kind==='stopped_stream')return 'This source was stopped. Its command was not restarted.';
+  if(node.evidence?.kind==='incomplete')return 'This analysis stopped before completing. Inspect its partial result in the workspace.';
   // Publishing replaces the readable handle, not the public source reference. The
   // shared observation layer can retain its last display until the next commit.
   if((!node.handle&&node.publication?.state!=='pending')||node.publication?.state==='unavailable')return node.failure??'No readable result is available. Its source command was not rerun.';

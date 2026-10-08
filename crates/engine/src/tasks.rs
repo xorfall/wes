@@ -32,6 +32,7 @@ pub enum BoundTask {
     Call(BoundCall),
     Describe(crate::describe::BoundDescribe),
     Calculation(crate::calc::BoundCalculation),
+    Scan(crate::scan::BoundScan),
     Stream(crate::stream_ops::BoundOperator),
     TypeCheck(BoundTypeCheck),
     Accumulation(crate::accumulation::BoundAccumulation),
@@ -100,6 +101,7 @@ impl BoundTask {
             | Self::Describe(_)
             | Self::Stream(_)
             | Self::Calculation(_)
+            | Self::Scan(_)
             | Self::TypeCheck(_)
             | Self::Accumulation(_)
             | Self::Help(_)
@@ -123,6 +125,11 @@ impl BoundTask {
                 bounded: true,
             },
             Self::Calculation(calc) => calc.traits(),
+            Self::Scan(_) => ExecutionTraits {
+                pure: false,
+                repeatable: false,
+                bounded: true,
+            },
             Self::Input(_)
             | Self::Management(_)
             | Self::ImportPlan(_)
@@ -188,6 +195,14 @@ impl BoundTask {
             Self::Accumulation(accumulation) => Some(accumulation.dependency().clone()),
             _ => None,
         })
+        .chain(
+            match self {
+                Self::Scan(scan) => Some(scan),
+                _ => None,
+            }
+            .into_iter()
+            .flat_map(crate::scan::BoundScan::dependencies),
+        )
         .chain(
             match self {
                 Self::Query(query) => Some(query),
@@ -273,17 +288,30 @@ impl BoundTypeCheck {
 
 pub struct TaskExecutor {
     calls: CallExecutor,
+    scan_memory: crate::scan::ledger::MemoryPool,
 }
 impl TaskExecutor {
     pub fn ephemeral() -> Self {
         Self {
             calls: CallExecutor::ephemeral(),
+            scan_memory: crate::scan::ledger::MemoryPool::new(wes_budgets::get(
+                "scan.aggregate.bytes",
+            ))
+            .expect("positive scan aggregate budget"),
         }
     }
     pub fn recorded(journal: CallJournal) -> Self {
         Self {
             calls: CallExecutor::recorded(journal),
+            scan_memory: crate::scan::ledger::MemoryPool::new(wes_budgets::get(
+                "scan.aggregate.bytes",
+            ))
+            .expect("positive scan aggregate budget"),
         }
+    }
+    pub(crate) fn with_scan_memory(mut self, pool: crate::scan::ledger::MemoryPool) -> Self {
+        self.scan_memory = pool;
+        self
     }
 }
 impl Executor<BoundTask> for TaskExecutor {
@@ -301,6 +329,7 @@ impl Executor<BoundTask> for TaskExecutor {
                     payload: call,
                     run: ticket.run,
                     inputs: ticket.inputs,
+                    input_origins: ticket.input_origins,
                 },
                 cancellation,
             ),
@@ -327,6 +356,7 @@ impl Executor<BoundTask> for TaskExecutor {
                     payload: call,
                     run: ticket.run,
                     inputs: ticket.inputs,
+                    input_origins: ticket.input_origins,
                 },
                 cancellation,
             ),
@@ -345,6 +375,18 @@ impl Executor<BoundTask> for TaskExecutor {
         ticket: RunTicket<BoundTask>,
         cancellation: CancellationToken,
     ) -> ExecutionFuture {
+        self.execute_reporting(
+            ticket,
+            cancellation,
+            crate::driver::progress::Reporter::silent(),
+        )
+    }
+    fn execute_reporting(
+        &self,
+        ticket: RunTicket<BoundTask>,
+        cancellation: CancellationToken,
+        progress: crate::driver::progress::Reporter,
+    ) -> ExecutionFuture {
         let mut policy = ticket
             .inputs
             .values()
@@ -352,6 +394,7 @@ impl Executor<BoundTask> for TaskExecutor {
                 p.join(v.provenance().policy())
             });
         match &ticket.payload {
+            BoundTask::Scan(scan) => policy = policy.join(&scan.literal_policy()),
             BoundTask::Accumulation(accumulation) => {
                 policy = policy.join(&accumulation.captured_policy())
             }
@@ -375,6 +418,7 @@ impl Executor<BoundTask> for TaskExecutor {
         if private {
             policy = policy.private();
         }
+        let progress = progress.with_policy(&policy);
         let work: ExecutionFuture = match ticket.payload {
             BoundTask::Input(value) => Box::pin(async move { Outcome::Produced(value).into() }),
             BoundTask::View(task) => Box::pin(async move { task.outcome().into() }),
@@ -386,6 +430,7 @@ impl Executor<BoundTask> for TaskExecutor {
                     payload: call,
                     run: ticket.run,
                     inputs: ticket.inputs,
+                    input_origins: ticket.input_origins,
                 },
                 cancellation,
             ),
@@ -395,6 +440,17 @@ impl Executor<BoundTask> for TaskExecutor {
             BoundTask::Calculation(calc) => {
                 calc.execute(ticket.run, ticket.inputs, self.calls.clone(), cancellation)
             }
+            BoundTask::Scan(scan) => scan.execute(
+                RunTicket {
+                    payload: (),
+                    run: ticket.run,
+                    inputs: ticket.inputs,
+                    input_origins: ticket.input_origins,
+                },
+                self.scan_memory.clone(),
+                cancellation,
+                progress,
+            ),
             BoundTask::TypeCheck(checked) => local_work(cancellation, move |token| {
                 if token.is_cancelled() {
                     return cancelled();

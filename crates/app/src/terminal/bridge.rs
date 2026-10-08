@@ -151,11 +151,11 @@ pub(super) fn current_value<'a>(
         .then(|| execution.values.get(node))
         .flatten()
 }
-/// Display reads can return a labelled stopped observation; execution inputs still use current_value.
+/// Display reads can return labelled terminal evidence; execution inputs still use current_value.
 pub(super) fn named_observation<'a>(
     observation: &'a SessionObservation,
     name: &str,
-) -> Result<(&'a Value, Option<&'a wes_engine::runtime::StoppedValue>), BridgeReply> {
+) -> Result<(&'a Value, Option<&'a wes_engine::runtime::EvidenceValue>), BridgeReply> {
     let reference = name.strip_prefix('$').unwrap_or(name);
     let output = wes_engine::bindings::Bindings::resolve_names(
         &observation.state.names,
@@ -175,7 +175,12 @@ pub(super) fn named_observation<'a>(
     if let Some(value) = current_value(observation, &output.node) {
         return Ok((value, None));
     }
-    if let Some(last) = observation.state.execution.stopped_values.get(&output.node) {
+    if let Some(last) = observation
+        .state
+        .execution
+        .evidence_values
+        .get(&output.node)
+    {
         return Ok((&last.value, Some(last)));
     }
     Err(BridgeReply::error(
@@ -204,11 +209,11 @@ pub(super) fn named_observation<'a>(
 }
 pub(super) fn observed_result(
     value: serde_json::Value,
-    stopped: Option<&wes_engine::runtime::StoppedValue>,
+    stopped: Option<&wes_engine::runtime::EvidenceValue>,
 ) -> serde_json::Value {
     match stopped {
         Some(last) => {
-            json!({"status":"stopped", "source":last.source.as_str(), "run":last.run.as_str(), "value":value})
+            json!({"status":match last.kind {wes_engine::runtime::EvidenceKind::StoppedStream=>"stopped",wes_engine::runtime::EvidenceKind::Incomplete=>"incomplete"}, "source":last.source.as_str(), "run":last.run.as_str(), "value":value})
         }
         None => value,
     }
@@ -329,7 +334,7 @@ async fn perform(
     }
     if request.tool == "wes-value" {
         if request.args.as_slice() == ["--help"] || request.args.is_empty() {
-            return Ok("wesx value list | wesx value get REFERENCE [--wes-typed]\nReads permitted data by binding name or node ID (optional leading $), including labelled stopped observations, without invoking their producer.".into());
+            return Ok("wesx value list | wesx value get REFERENCE [--wes-typed]\nReads permitted data by binding name or node ID (optional leading $), including labelled incomplete results and stopped stream observations, without invoking their producer.".into());
         }
         if request.args.as_slice() == ["list"] {
             let names: Vec<_> = observation
@@ -341,7 +346,7 @@ async fn perform(
                         observation
                             .state
                             .execution
-                            .stopped_values
+                            .evidence_values
                             .get(&output.node)
                             .map(|last| &last.value)
                     })?;
@@ -714,10 +719,11 @@ mod tests {
             Provenance::default(),
         )
         .unwrap();
-        observation.state.execution.stopped_values.insert(
+        observation.state.execution.evidence_values.insert(
             node.clone(),
-            wes_engine::runtime::StoppedValue {
+            wes_engine::runtime::EvidenceValue {
                 value: last,
+                kind: wes_engine::runtime::EvidenceKind::StoppedStream,
                 source: node.clone(),
                 run: wes_engine::runtime::RunId::new("synthetic-run").unwrap(),
             },
@@ -730,7 +736,7 @@ mod tests {
             assert_eq!(data["source"], node.as_str());
             assert!(current_value(&observation, &node).is_none());
         }
-        observation.state.execution.stopped_values.clear();
+        observation.state.execution.evidence_values.clear();
         observation
             .state
             .execution
@@ -806,8 +812,8 @@ pub(super) fn revalidate_read(
 ) -> Result<(), BridgeReply> {
     let (a, stopped_a) = named_observation(before, name)?;
     let (b, stopped_b) = named_observation(after, name)?;
-    let identity = |s: Option<&wes_engine::runtime::StoppedValue>| {
-        s.map(|s| (s.source.clone(), s.run.clone()))
+    let identity = |s: Option<&wes_engine::runtime::EvidenceValue>| {
+        s.map(|s| (s.kind, s.source.clone(), s.run.clone()))
     };
     let publication = |observation: &SessionObservation| {
         let output = wes_engine::bindings::Bindings::resolve_names(

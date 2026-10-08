@@ -5270,6 +5270,7 @@ dependencies = [
  "indexmap 2.14.2",
  "regex",
  "secrecy",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.20",

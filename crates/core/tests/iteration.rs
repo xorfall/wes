@@ -144,6 +144,55 @@ fn compiled_patterns_are_bounded_run_local_and_not_value_identity() {
     assert!(make("[a-z]{1000000}", &mut cache).is_err());
 }
 #[test]
+fn seven_pattern_workload_measures_reuse_eviction_and_live_owners() {
+    use wes_core::IterRegexCache;
+    let patterns = [
+        "status=[0-9]+",
+        "^WARN",
+        "^ERROR",
+        "latency",
+        "retry",
+        "^OK",
+        "complete$",
+    ];
+    for (capacity, expected) in [(4, 70), (16, 7)] {
+        let mut cache = IterRegexCache::with_capacity(capacity).unwrap();
+        for _ in 0..10 {
+            for pattern in patterns {
+                cache.compile(pattern).unwrap();
+            }
+        }
+        let usage = cache.usage();
+        assert_eq!(usage.compilations, expected);
+        assert!(usage.entries <= capacity);
+        println!(
+            "capacity={capacity} compilations={} hits={}",
+            usage.compilations, usage.hits
+        );
+    }
+    let mut cache = IterRegexCache::with_capacity(2).unwrap();
+    let a = cache.compile("a").unwrap();
+    let weak = Arc::downgrade(&a);
+    cache.compile("b").unwrap();
+    cache.compile("a").unwrap(); // Touch protects a from the next LRU eviction.
+    cache.compile("c").unwrap();
+    assert!(cache.contains("a"));
+    assert!(!cache.contains("b"));
+    cache.compile("d").unwrap();
+    assert!(!cache.contains("a"));
+    assert!(a.is_match("a"), "an active cursor's Arc survives eviction");
+    drop(cache);
+    assert!(weak.upgrade().is_some());
+    drop(a);
+    assert!(
+        weak.upgrade().is_none(),
+        "last owner releases private compiled state"
+    );
+    assert!(IterRegexCache::with_capacity(0).is_err());
+    assert!(IterRegexCache::with_capacity(65).is_err());
+}
+
+#[test]
 fn iterator_failures_explain_pattern_and_source_without_dumping_the_pattern() {
     let source = || {
         Value::new(
