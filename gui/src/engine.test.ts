@@ -600,7 +600,7 @@ it("should_SubmitOneGuardedPinUnderAnUnusedName_When_AViewInputIsPinned", async 
   // Arrange
   vi.stubGlobal("EventSource", Events);
   const engine = new Engine(), disconnect = engine.listen(() => {}, () => {}); Events.current.say("g");
-  const created = (node: string, name: string, errorNames: string[] = []) => Events.current.onmessage?.({ data: JSON.stringify({ event: "created", node, name, dependsOn: [], command: ":calc", interactive: false, errorNames }) });
+  const created = (node: string, name: string, errorNames: string[] = []) => Events.current.onmessage?.({ data: JSON.stringify({ event: "created", node, name, dependsOn: [], dependencyLifetime: "continuous", command: ":calc", interactive: false, errorNames }) });
   created("chart", "chart"); created("id2", "chart_pin"); created("chart_pin2", ""); created("id4", "other", ["chart_pin3"]);
   const submit = vi.spyOn(engine, "submit").mockResolvedValue();
   // Act
@@ -632,8 +632,8 @@ it("should_FreeADroppedNodesNames_When_ChoosingTheNextPinName", async () => {
   vi.stubGlobal("EventSource", Events);
   const engine = new Engine(), disconnect = engine.listen(() => {}, () => {}); Events.current.say("g");
   const send = (event: object) => Events.current.onmessage?.({ data: JSON.stringify(event) });
-  send({ event: "created", node: "id2", name: "chart_pin", dependsOn: [], command: ":calc", interactive: false });
-  send({ event: "created", node: "id3", name: "chart_pin2", dependsOn: [], command: ":calc", interactive: false });
+  send({ event: "created", node: "id2", name: "chart_pin", dependsOn: [], dependencyLifetime: "continuous", command: ":calc", interactive: false });
+  send({ event: "created", node: "id3", name: "chart_pin2", dependsOn: [], dependencyLifetime: "continuous", command: ":calc", interactive: false });
   send({ event: "dropped", nodes: ["id2"] });
   vi.spyOn(engine, "submit").mockResolvedValue();
   // Act

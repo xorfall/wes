@@ -94,6 +94,8 @@ pub fn encode_selection(
             kind: &'static str,
             #[serde(skip_serializing_if = "Option::is_none")]
             length: Option<usize>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            records: Option<String>,
         }
         let (kind, length) = match data {
             Data::List(items) => ("list", Some(items.len())),
@@ -108,6 +110,7 @@ pub fn encode_selection(
             Data::Interval(_) => ("interval", None),
             Data::Option(_) => ("option", None),
             Data::Iter(_) => unreachable!(),
+            Data::Dataset(_) => ("dataset", None),
         };
         return write(
             &Summary {
@@ -115,13 +118,17 @@ pub fn encode_selection(
                 meta: meta.as_ref().and_then(|m| m.wire()),
                 kind,
                 length,
+                records: match data {
+                    Data::Dataset(reference) => Some(reference.records().to_string()),
+                    _ => None,
+                },
             },
             limits,
         );
     }
     let mut remaining = nodes;
     let mut check_data = |data: &Data| -> Result<(), CodecError> {
-        if !data.is_materialized() {
+        if !data.is_storable_snapshot() {
             return Err(CodecError::Export(
                 "Materialize the selected value before exporting it.".into(),
             ));
@@ -201,7 +208,8 @@ struct Page {
     next_offset: Option<usize>,
 }
 
-fn select<'a>(
+/// Borrow a bounded structural selection. Callers must enforce the root's egress policy first.
+pub fn select<'a>(
     value: &'a Value,
     pointer: &str,
 ) -> Result<(&'a Data, &'a Shape, String), CodecError> {

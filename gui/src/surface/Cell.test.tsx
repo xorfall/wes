@@ -224,6 +224,19 @@ describe("run action availability",()=>{
   const refused=draw({state:"failed",verdict:[...notRun,{segments:[{text:"previous results shown"}],keep:true}],actions:{repeat:vi.fn()}});
   expect(runLabels(refused)).toEqual(["r retry"]);act(()=>refused.unmount());
  });
+ it("takes cancel versus repeat from the model's run activity, never from the verdict word",()=>{
+  const ready={...pending,glyph:"ready" as const};
+  const base={state:"default" as const,rows:[{segments:[{text:"synthetic"}],nodes:[ready]}],blocks:[{...block("result"),identity:ready}]};
+  // A ready value whose owned run is still open: cancellable, never repeated or branched.
+  const actions=all(),open=draw({...base,verdict:[{segments:[{text:"ok"}],keep:true}],actions,runActive:true});
+  expect(runLabels(open)[0]).toBe("x cancel");
+  for(const value of ["r","b"])key(open,value);
+  expect(actions.repeat).not.toHaveBeenCalled();expect(actions.branch).not.toHaveBeenCalled();
+  key(open,"x");expect(actions.cancel).toHaveBeenCalledOnce();act(()=>open.unmount());
+  // A word that sounds active grants nothing once the model says the run has finished.
+  const done=draw({...base,verdict:[{segments:[{text:"analyzing"}],keep:true}],actions:all(),runActive:false});
+  expect(runLabels(done)).not.toContain("x cancel");expect(runLabels(done)[0]).toMatch(/^r /);act(()=>done.unmount());
+ });
 });
 
 describe("failed cell copy",()=>{

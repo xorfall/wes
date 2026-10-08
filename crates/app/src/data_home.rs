@@ -173,6 +173,7 @@ impl DataHome {
                     | ".wes-home.lock"
                     | "workspaces"
                     | "values"
+                    | "datasets"
                     | "api-library"
                     | "imports"
                     | "diagnostics"
@@ -191,7 +192,7 @@ impl DataHome {
             let file_type = entry.file_type()?;
             if !known
                 || file_type.is_symlink()
-                || (matches!(name, "edit" | "presentations") && !file_type.is_dir())
+                || (matches!(name, "edit" | "presentations" | "datasets") && !file_type.is_dir())
             {
                 return Err(io::Error::other("Choose an empty folder or an existing wes data folder; unrelated files and links are not adopted.").into());
             }
@@ -200,6 +201,7 @@ impl DataHome {
                     name,
                     "workspaces"
                         | "values"
+                        | "datasets"
                         | "api-library"
                         | "imports"
                         | "diagnostics"
@@ -224,6 +226,7 @@ impl DataHome {
             ("workspaces", ".wes-workspaces.lock"),
             ("values/live", ".wes-values.lock"),
             ("values/archive", ".wes-values.lock"),
+            ("datasets", ".wes-datasets.lock"),
         ] {
             let directory = path.join(folder);
             if directory.join(file).try_exists()? {

@@ -1,6 +1,9 @@
 //! Immutable physical objects. Owning this directory is not transport authorization.
 use super::catalog::{ObjectRef, valid_digest, valid_uuid};
+use super::tree::{Branch, Entries};
+use super::{Checkpoint, CheckpointLimits};
 use super::{FormatError, FormatLimits, Record, SegmentHeader, SegmentReader, encode_segment};
+use super::{IndexEntry, IndexLimits, IndexNode, IndexSummary, Manifest, ManifestLimits};
 use crate::filesystem::{
     DirectoryError, DirectoryKind, Durability, OwnedDirectory, private_options, sync_directory,
 };
@@ -8,6 +11,7 @@ use cap_fs_ext::DirExt;
 use cap_std::fs::{Dir, DirBuilder};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     io::{self, Read, Write},
     path::Path,
 };
@@ -25,12 +29,18 @@ const CHECKSUM: usize = 32;
 enum Kind {
     Schema = 1,
     Segment = 2,
+    Index = 3,
+    Manifest = 4,
+    Checkpoint = 5,
 }
 impl Kind {
     fn extension(self) -> &'static str {
         match self {
             Self::Schema => "schema",
             Self::Segment => "segment",
+            Self::Index => "index",
+            Self::Manifest => "manifest",
+            Self::Checkpoint => "checkpoint",
         }
     }
 }
@@ -42,14 +52,20 @@ pub struct ObjectLimits {
     pub inventory_entries: usize,
     pub schema: SnapshotLimits,
     pub segment: FormatLimits,
+    pub index: IndexLimits,
+    pub manifest: ManifestLimits,
+    pub checkpoint: CheckpointLimits,
 }
 impl Default for ObjectLimits {
     fn default() -> Self {
         Self {
-            disk_bytes: 1024 * 1024 * 1024,
-            inventory_entries: 65536,
+            disk_bytes: wes_budgets::get("dataset.disk.bytes"),
+            inventory_entries: wes_budgets::get("dataset.inventory.entries") as usize,
             schema: SnapshotLimits::default(),
             segment: FormatLimits::default(),
+            index: IndexLimits::default(),
+            manifest: ManifestLimits::default(),
+            checkpoint: CheckpointLimits::default(),
         }
     }
 }
@@ -81,6 +97,8 @@ pub enum ObjectError {
 /// Owned I/O component, to be composed into the home's shared storage worker.
 /// It creates no runtime task, capability grant, root or catalog commit by itself.
 pub struct ObjectFiles {
+    #[cfg(test)]
+    pub(super) manifest_reads: std::sync::atomic::AtomicUsize,
     directory: OwnedDirectory,
     objects: Dir,
     pending: Dir,
@@ -89,8 +107,125 @@ pub struct ObjectFiles {
     used_bytes: u64,
     entries: usize,
     uncertain: bool,
+    external_bytes: u64,
+    external_entries: usize,
 }
 impl ObjectFiles {
+    pub(crate) fn mutation_ready(&self) -> Result<(), ObjectError> {
+        if self.uncertain {
+            return Err(ObjectError::Unconfirmed);
+        }
+        Ok(())
+    }
+
+    /// Explicit owned cleanup. All committed reachability is established before
+    /// this call; unknown names or non-regular entries refuse without unlinking.
+    pub(crate) fn collect(
+        &mut self,
+        reachable: &BTreeMap<String, ObjectRef>,
+    ) -> Result<(u64, u64, u64), ObjectError> {
+        if self.uncertain {
+            return Err(ObjectError::Unconfirmed);
+        }
+        let mut candidates = Vec::new();
+        let mut shared = 0u64;
+        let mut entries = 0usize;
+        for (is_pending, dir) in [(false, &self.objects), (true, &self.pending)] {
+            for entry in dir.entries()? {
+                entries = entries
+                    .checked_add(1)
+                    .filter(|count| *count <= self.limits.inventory_entries)
+                    .ok_or(ObjectError::Limit("cleanup inventory"))?;
+                let entry = entry?;
+                let name = entry
+                    .file_name()
+                    .to_str()
+                    .ok_or(ObjectError::Corrupt)?
+                    .to_owned();
+                let (id, extension) = name.split_once('.').ok_or(ObjectError::Corrupt)?;
+                if !valid_uuid(id) {
+                    return Err(ObjectError::Corrupt);
+                }
+                let metadata = dir.symlink_metadata(&name)?;
+                if !metadata.is_file() {
+                    return Err(ObjectError::Corrupt);
+                }
+                if is_pending {
+                    if extension != "pending" {
+                        return Err(ObjectError::Corrupt);
+                    }
+                    candidates.push((true, name, metadata.len()));
+                    continue;
+                }
+                let (kind, limit) = match extension {
+                    "schema" => (Kind::Schema, self.limits.schema.bytes),
+                    "segment" => (Kind::Segment, self.limits.segment.segment_bytes),
+                    "index" => (Kind::Index, self.limits.index.bytes),
+                    "manifest" => (Kind::Manifest, self.limits.manifest.bytes),
+                    "checkpoint" => (Kind::Checkpoint, self.limits.checkpoint.bytes),
+                    _ => return Err(ObjectError::Corrupt),
+                };
+                if let Some(reference) = reachable.get(id) {
+                    // Validate even live entries; a mismatched name/size never licenses cleanup.
+                    self.read(kind, reference, limit)?;
+                    shared = shared
+                        .checked_add(metadata.len())
+                        .ok_or(ObjectError::Limit("cleanup bytes"))?;
+                } else {
+                    // Only the owned envelope is needed for unreachable bytes. A malformed
+                    // payload from an abandoned preparation is not committed evidence.
+                    let mut options = private_options();
+                    options.read(true);
+                    let file = dir.open_with(&name, &options)?;
+                    if metadata.len() < (HEADER + CHECKSUM) as u64
+                        || metadata.len() > (limit + HEADER + CHECKSUM) as u64
+                    {
+                        return Err(ObjectError::Corrupt);
+                    }
+                    let mut bytes = Vec::new();
+                    file.take(metadata.len() + 1).read_to_end(&mut bytes)?;
+                    if bytes.len() as u64 != metadata.len()
+                        || &bytes[..8] != MAGIC
+                        || u16::from_le_bytes(bytes[8..10].try_into().unwrap()) != 1
+                        || bytes[10] != kind as u8
+                        || &bytes[11..27] != Uuid::parse_str(&self.store).unwrap().as_bytes()
+                        || &bytes[27..43] != Uuid::parse_str(id).unwrap().as_bytes()
+                        || u64::from_le_bytes(bytes[43..51].try_into().unwrap())
+                            != (bytes.len() - HEADER - CHECKSUM) as u64
+                        || Sha256::digest(&bytes[..bytes.len() - CHECKSUM]).as_slice()
+                            != &bytes[bytes.len() - CHECKSUM..]
+                    {
+                        return Err(ObjectError::Corrupt);
+                    }
+                    candidates.push((false, name, metadata.len()));
+                }
+            }
+        }
+        let mut reclaimed = 0u64;
+        let mut pending = 0u64;
+        for (staging, name, bytes) in candidates {
+            let dir = if staging {
+                &self.pending
+            } else {
+                &self.objects
+            };
+            match dir.remove_file(&name) {
+                Ok(()) => {
+                    reclaimed = reclaimed
+                        .checked_add(bytes)
+                        .ok_or(ObjectError::Limit("cleanup bytes"))?
+                }
+                Err(_) => {
+                    pending = pending
+                        .checked_add(bytes)
+                        .ok_or(ObjectError::Limit("cleanup bytes"))?
+                }
+            }
+        }
+        self.uncertain = true;
+        self.reconcile()?;
+        Ok((reclaimed, shared, pending))
+    }
     pub fn open(
         path: &Path,
         durability: Durability,
@@ -112,6 +247,8 @@ impl ObjectFiles {
         directory.sync()?;
         let (used_bytes, entries) = inventory(&objects, &pending, limits)?;
         Ok(Self {
+            #[cfg(test)]
+            manifest_reads: std::sync::atomic::AtomicUsize::new(0),
             directory,
             objects,
             pending,
@@ -120,13 +257,365 @@ impl ObjectFiles {
             used_bytes,
             entries,
             uncertain: false,
+            external_bytes: 0,
+            external_entries: 0,
         })
     }
     pub fn store_id(&self) -> &str {
         &self.store
     }
+    pub(crate) fn has_objects(&self) -> bool {
+        self.entries != 0
+    }
     pub fn charged_bytes(&self) -> u64 {
-        self.used_bytes
+        self.used_bytes + self.external_bytes
+    }
+    /// Establish local publication evidence without allocating a replacement object.
+    /// Pending and unreachable files remain charged until an explicit collection.
+    pub(crate) fn reconcile(&mut self) -> Result<(), ObjectError> {
+        let (bytes, entries) = inventory(&self.objects, &self.pending, self.limits)?;
+        if bytes
+            .checked_add(self.external_bytes)
+            .is_none_or(|n| n > self.limits.disk_bytes)
+            || entries
+                .checked_add(self.external_entries)
+                .is_none_or(|n| n > self.limits.inventory_entries)
+        {
+            return Err(ObjectError::Limit("reconciliation inventory"));
+        }
+        if self.directory.durability() == Durability::FileAndDirectory {
+            sync_directory(&self.objects)?;
+            sync_directory(&self.pending)?;
+        }
+        self.directory.sync()?;
+        self.used_bytes = bytes;
+        self.entries = entries;
+        self.uncertain = false;
+        Ok(())
+    }
+    pub(crate) fn catalog_directory(&self) -> Result<Dir, ObjectError> {
+        child(&self.directory, "catalog")
+    }
+    pub(crate) fn durability(&self) -> Durability {
+        self.directory.durability()
+    }
+    /// Catalog/pointer/status bytes belong to the same admission budget as physical objects.
+    pub(crate) fn account_external(
+        &mut self,
+        bytes: u64,
+        entries: usize,
+    ) -> Result<(), ObjectError> {
+        if self
+            .used_bytes
+            .checked_add(bytes)
+            .is_none_or(|n| n > self.limits.disk_bytes)
+        {
+            return Err(ObjectError::Limit("disk"));
+        }
+        if self
+            .entries
+            .checked_add(entries)
+            .is_none_or(|n| n > self.limits.inventory_entries)
+        {
+            return Err(ObjectError::Limit("inventory"));
+        }
+        self.external_bytes = bytes;
+        self.external_entries = entries;
+        Ok(())
+    }
+    pub fn publish_manifest(
+        &mut self,
+        manifest: &Manifest,
+        policy: &FlowPolicy,
+    ) -> Result<ObjectRef, ObjectError> {
+        check_policy(policy)?;
+        if manifest.store != self.store {
+            return Err(ObjectError::Corrupt);
+        }
+        self.publish(Kind::Manifest, &manifest.encode(self.limits.manifest)?)
+    }
+    pub fn read_manifest(&self, reference: &ObjectRef) -> Result<Manifest, ObjectError> {
+        #[cfg(test)]
+        self.manifest_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let manifest = Manifest::decode(
+            &self.read(Kind::Manifest, reference, self.limits.manifest.bytes)?,
+            self.limits.manifest,
+        )?;
+        if manifest.store != self.store {
+            return Err(ObjectError::Corrupt);
+        }
+        Ok(manifest)
+    }
+    pub fn publish_checkpoint(
+        &mut self,
+        checkpoint: &Checkpoint,
+        policy: &FlowPolicy,
+    ) -> Result<ObjectRef, ObjectError> {
+        check_policy(policy)?;
+        self.validate_checkpoint(checkpoint)?;
+        if checkpoint.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
+            || checkpoint.dataset_reads
+                != policy.dataset_reads().iter().cloned().collect::<Vec<_>>()
+        {
+            return Err(FormatError::Restricted.into());
+        }
+        self.publish(
+            Kind::Checkpoint,
+            &checkpoint.encode(self.limits.checkpoint)?,
+        )
+    }
+    pub fn read_checkpoint(
+        &self,
+        reference: &ObjectRef,
+        dataset: &str,
+    ) -> Result<Checkpoint, ObjectError> {
+        let checkpoint = Checkpoint::decode(
+            &self.read(Kind::Checkpoint, reference, self.limits.checkpoint.bytes)?,
+            self.limits.checkpoint,
+        )?;
+        if checkpoint.dataset != dataset {
+            return Err(ObjectError::Corrupt);
+        }
+        self.validate_checkpoint(&checkpoint)?;
+        Ok(checkpoint)
+    }
+    fn validate_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), ObjectError> {
+        checkpoint.encode(self.limits.checkpoint)?;
+        if checkpoint.store != self.store {
+            return Err(ObjectError::Corrupt);
+        }
+        for snapshot in [&checkpoint.state, &checkpoint.context] {
+            let schema = self.read_schema(&snapshot.schema)?;
+            let value = snapshot.value(&schema, self.limits.checkpoint)?;
+            if value
+                .provenance()
+                .policy()
+                .origins()
+                .iter()
+                .any(|origin| !checkpoint.origins.contains(origin))
+                || value
+                    .provenance()
+                    .policy()
+                    .dataset_reads()
+                    .iter()
+                    .any(|o| !checkpoint.dataset_reads.contains(o))
+            {
+                return Err(FormatError::Restricted.into());
+            }
+        }
+        for (reference, digest) in [
+            (
+                &checkpoint.bindings.item_schema,
+                &checkpoint.bindings.item_schema_digest,
+            ),
+            (
+                &checkpoint.bindings.output_schema,
+                &checkpoint.bindings.output_schema_digest,
+            ),
+        ] {
+            if self.read_schema(reference)?.digest() != digest {
+                return Err(ObjectError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+    pub fn publish_index(
+        &mut self,
+        node: &IndexNode,
+        policy: &FlowPolicy,
+    ) -> Result<ObjectRef, ObjectError> {
+        check_policy(policy)?;
+        if node.store != self.store {
+            return Err(ObjectError::Corrupt);
+        }
+        self.publish(Kind::Index, &node.encode(self.limits.index)?)
+    }
+    pub fn read_index(
+        &self,
+        reference: &ObjectRef,
+        dataset: &str,
+    ) -> Result<IndexNode, ObjectError> {
+        let node = IndexNode::decode(
+            &self.read(Kind::Index, reference, self.limits.index.bytes)?,
+            self.limits.index,
+        )?;
+        if node.store != self.store || node.dataset != dataset {
+            return Err(ObjectError::Corrupt);
+        }
+        Ok(node)
+    }
+    /// A segment is already immutable before admission to this index. No reference list grows in a manifest.
+    pub fn append_index(
+        &mut self,
+        root: Option<&ObjectRef>,
+        dataset: &str,
+        entry: IndexEntry,
+        policy: &FlowPolicy,
+    ) -> Result<(ObjectRef, IndexSummary), ObjectError> {
+        check_policy(policy)?;
+        if !valid_uuid(dataset) {
+            return Err(ObjectError::Corrupt);
+        }
+        let (left, right) = if let Some(root) = root {
+            self.append_path(root, dataset, entry, policy, 0)?
+        } else {
+            let node = IndexNode {
+                version: 1,
+                store: self.store.clone(),
+                dataset: dataset.into(),
+                height: 0,
+                summary: entry.summary.clone(),
+                entries: Entries::Leaf {
+                    entries: vec![entry],
+                },
+            };
+            let reference = self.publish_index(&node, policy)?;
+            ((reference, node), None)
+        };
+        match right {
+            None => Ok((left.0, left.1.summary)),
+            Some(right) => {
+                let mut parent = IndexNode {
+                    version: 1,
+                    store: self.store.clone(),
+                    dataset: dataset.into(),
+                    height: left.1.height.checked_add(1).ok_or(ObjectError::Corrupt)?,
+                    summary: left.1.summary.clone(),
+                    entries: Entries::Branch {
+                        children: vec![
+                            Branch {
+                                summary: left.1.summary,
+                                node: left.0,
+                            },
+                            Branch {
+                                summary: right.1.summary,
+                                node: right.0,
+                            },
+                        ],
+                    },
+                };
+                parent.refresh_summary()?;
+                let reference = self.publish_index(&parent, policy)?;
+                Ok((reference, parent.summary))
+            }
+        }
+    }
+    #[allow(clippy::type_complexity)]
+    fn append_path(
+        &mut self,
+        reference: &ObjectRef,
+        dataset: &str,
+        entry: IndexEntry,
+        policy: &FlowPolicy,
+        depth: u8,
+    ) -> Result<((ObjectRef, IndexNode), Option<(ObjectRef, IndexNode)>), ObjectError> {
+        if depth > self.limits.index.depth {
+            return Err(ObjectError::Limit("index depth"));
+        }
+        let mut node = self.read_index(reference, dataset)?;
+        if entry.summary.first != node.summary.end {
+            return Err(ObjectError::Corrupt);
+        }
+        match &mut node.entries {
+            Entries::Leaf { entries } => entries.push(entry),
+            Entries::Branch { children } => {
+                let last = children.last().ok_or(ObjectError::Corrupt)?.clone();
+                let actual = self.read_index(&last.node, dataset)?;
+                if actual.height.checked_add(1) != Some(node.height)
+                    || actual.summary != last.summary
+                {
+                    return Err(ObjectError::Corrupt);
+                }
+                let (left, right) =
+                    self.append_path(&last.node, dataset, entry, policy, depth + 1)?;
+                *children.last_mut().unwrap() = Branch {
+                    summary: left.1.summary,
+                    node: left.0,
+                };
+                if let Some(right) = right {
+                    children.push(Branch {
+                        summary: right.1.summary,
+                        node: right.0,
+                    });
+                }
+            }
+        }
+        let count = match &node.entries {
+            Entries::Leaf { entries } => entries.len(),
+            Entries::Branch { children } => children.len(),
+        };
+        let right = if count > self.limits.index.fanout {
+            let mut right = node.clone();
+            right.entries = match &mut node.entries {
+                Entries::Leaf { entries } => Entries::Leaf {
+                    entries: entries.split_off(count.div_ceil(2)),
+                },
+                Entries::Branch { children } => Entries::Branch {
+                    children: children.split_off(count.div_ceil(2)),
+                },
+            };
+            right.refresh_summary()?;
+            Some((self.publish_index(&right, policy)?, right))
+        } else {
+            None
+        };
+        node.refresh_summary()?;
+        Ok(((self.publish_index(&node, policy)?, node), right))
+    }
+    pub fn locate(
+        &self,
+        root: &ObjectRef,
+        dataset: &str,
+        ordinal: u64,
+    ) -> Result<Option<IndexEntry>, ObjectError> {
+        self.locate_with_work(root, dataset, ordinal, None)
+    }
+    pub(crate) fn locate_with_work(
+        &self,
+        root: &ObjectRef,
+        dataset: &str,
+        ordinal: u64,
+        work: Option<&wes_engine::storage::datasets::ReadWork>,
+    ) -> Result<Option<IndexEntry>, ObjectError> {
+        let mut reference = root.clone();
+        let mut expected: Option<(u8, IndexSummary)> = None;
+        for _ in 0..=self.limits.index.depth {
+            if let Some(work) = work {
+                let cost = reference
+                    .bytes
+                    .checked_mul(64)
+                    .and_then(|n| n.checked_add(4096))
+                    .ok_or(ObjectError::Limit("analysis read work"))?;
+                work.charge(cost)
+                    .map_err(|_| ObjectError::Limit("analysis read work"))?;
+            }
+            let node = self.read_index(&reference, dataset)?;
+            if let Some((height, summary)) = expected.take() {
+                if node.height != height || node.summary != summary {
+                    return Err(ObjectError::Corrupt);
+                }
+            }
+            if ordinal < node.summary.first || ordinal >= node.summary.end {
+                return Ok(None);
+            }
+            match node.entries {
+                Entries::Leaf { entries } => {
+                    return Ok(entries
+                        .into_iter()
+                        .find(|e| e.summary.first <= ordinal && ordinal < e.summary.end));
+                }
+                Entries::Branch { children } => {
+                    let child = children
+                        .into_iter()
+                        .find(|e| e.summary.first <= ordinal && ordinal < e.summary.end)
+                        .ok_or(ObjectError::Corrupt)?;
+                    expected = Some((node.height - 1, child.summary));
+                    reference = child.node;
+                }
+            }
+        }
+        Err(ObjectError::Limit("index depth"))
     }
     pub fn publish_schema(
         &mut self,
@@ -188,7 +677,8 @@ impl ObjectFiles {
             .ok_or(ObjectError::Limit("object"))?;
         if self
             .entries
-            .checked_add(2)
+            .checked_add(self.external_entries)
+            .and_then(|n| n.checked_add(2))
             .is_none_or(|n| n > self.limits.inventory_entries)
         {
             return Err(ObjectError::Limit("inventory"));
@@ -196,7 +686,10 @@ impl ObjectFiles {
         let charged = self
             .used_bytes
             .checked_add(bytes as u64)
-            .filter(|n| *n <= self.limits.disk_bytes)
+            .filter(|n| {
+                n.checked_add(self.external_bytes)
+                    .is_some_and(|total| total <= self.limits.disk_bytes)
+            })
             .ok_or(ObjectError::Limit("disk"))?;
         let id = Uuid::new_v4();
         let store = Uuid::parse_str(&self.store).map_err(|_| ObjectError::Corrupt)?;
@@ -378,6 +871,14 @@ fn store_identity(directory: &OwnedDirectory) -> Result<String, ObjectError> {
                     return Err(ObjectError::Corrupt);
                 }
             }
+            match directory.open_dir_nofollow("catalog") {
+                Ok(catalog) if catalog.entries()?.next().is_some() => {
+                    return Err(ObjectError::Corrupt);
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
             let id = Uuid::new_v4().to_string();
             let mut options = private_options();
             options.write(true).create_new(true);
@@ -554,7 +1055,7 @@ mod tests {
         }
     }
     #[test]
-    fn complete_publication_without_sync_ack_poison_requires_local_reopen() {
+    fn complete_publication_without_sync_ack_requires_explicit_reconciliation() {
         let tmp = home();
         let mut files = ObjectFiles::open(
             tmp.path(),
@@ -575,6 +1076,14 @@ mod tests {
         ));
         let name = format!("{object}.schema");
         assert!(tmp.path().join("objects").join(&name).is_file());
+        files.reconcile().unwrap();
+        assert_eq!(files.objects.entries().unwrap().count(), 1);
+        assert_eq!(files.pending.entries().unwrap().count(), 0);
+        // Reconciliation preserves the original object rather than retrying its write.
+        assert!(tmp.path().join("objects").join(&name).is_file());
+        files
+            .publish_schema(&schema, &FlowPolicy::default())
+            .unwrap();
         drop(files);
         // Read presence is recovery evidence, not a fresh commit/durability acknowledgement.
         let reopened = ObjectFiles::open(
@@ -584,7 +1093,7 @@ mod tests {
         )
         .unwrap();
         assert!(reopened.charged_bytes() > 0);
-        assert_eq!(reopened.objects.entries().unwrap().count(), 1);
+        assert_eq!(reopened.objects.entries().unwrap().count(), 2);
     }
     #[test]
     fn pending_objects_count_against_quota_and_missing_store_identity_never_reinitializes() {

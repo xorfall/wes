@@ -919,7 +919,9 @@ fn spawn_owned(
             RecordingMode::Ephemeral => TaskExecutor::ephemeral(),
             RecordingMode::Required(journal) => TaskExecutor::recorded(journal.clone()),
         })
-        .with_scan_memory(capacity.scan_memory.clone()),
+        .with_recordings(workspace.recordings.clone())
+        .with_scan_memory(capacity.scan_memory.clone())
+        .with_storage(values.as_ref().map(SessionValues::worker)),
     );
     let io = ExecutionIo::with_capacity(executor, capacity.clone())?;
     let (sources, source_receiver) = mpsc::channel(32);
@@ -963,6 +965,7 @@ fn spawn_owned(
         value_updates: values.as_ref().map(SessionValues::updates),
     };
     let actor = Actor {
+        dataset_access: values.as_ref().map(|v| v.worker().dataset_access()),
         import_plans: Default::default(),
         active_import: None,
         view_queries: view_queries::Queries::default(),
@@ -1011,6 +1014,7 @@ enum Admission {
     Recorded(Result<PreparedSource, SessionError>),
 }
 struct Actor {
+    dataset_access: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetAccess>>,
     import_plans: import_plans::Plans,
     active_import: Option<import_plans::FrozenImport>,
     view_queries: view_queries::Queries,
@@ -1056,6 +1060,15 @@ struct Actor {
 }
 impl Actor {
     async fn run(mut self) {
+        // A restored session must observe gates already committed before it
+        // subscribed; watch notifications describe changes, not initial state.
+        if let Some(access) = self
+            .dataset_access
+            .as_mut()
+            .map(|r| r.borrow_and_update().clone())
+        {
+            self.apply_dataset_access(access);
+        }
         if self.initialize_default_namespace().await.is_err() {
             self.recording_failed = true;
         }
@@ -1160,6 +1173,13 @@ impl Actor {
                 .min();
             let mut changed = true;
             tokio::select! {
+                result = async { self.dataset_access.as_mut().expect("configured dataset access").changed().await }, if self.dataset_access.is_some() => {
+                    let access = match result {
+                        Ok(()) => self.dataset_access.as_mut().expect("dataset access").borrow_and_update().clone(),
+                        Err(_) => { self.dataset_access = None; crate::storage::datasets::DatasetAccess { withdrawn: Default::default(), closed: true } },
+                    };
+                    self.apply_dataset_access(access);
+                },
                 control = self.controls.recv(), if self.controls_open => match control {
                     Some(control) => {
                         changed = !matches!(&control, Control::SandboxRead { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
@@ -1994,6 +2014,14 @@ impl Actor {
             Control::Submit(submission) => self.immediate(*submission),
         }
     }
+    fn apply_dataset_access(&mut self, access: crate::storage::datasets::DatasetAccess) {
+        self.displays.withdraw_datasets(&access);
+        let (nodes, effects) = self.workspace.apply_dataset_access(access);
+        if let Some(values) = &mut self.values {
+            values.withdraw_nodes(&nodes);
+        }
+        self.io.effects(effects);
+    }
     fn close(&mut self) {
         self.import_plans.clear();
         self.workspace.views.stop_queries();
@@ -2401,6 +2429,13 @@ impl Actor {
                     .and_then(|node| node.payload().call());
                 let streaming = call.is_some_and(crate::providers::BoundCall::streaming);
                 let event_stage = self.workspace.runtime().is_event_stage(&observation.node);
+                let active_lifetime = self.workspace.runtime().is_executing(&observation.node)
+                    && self
+                        .workspace
+                        .runtime()
+                        .graph()
+                        .node(&observation.node)
+                        .is_some_and(|node| node.payload().lifetime());
                 let interactive = call.is_some_and(crate::providers::BoundCall::interactive);
                 let opening = effects.iter().any(|effect| matches!(effect, Effect::StreamReady { run, .. }
                     if run.node() == &observation.node && Some(run.id()) == observation.run.as_ref()));
@@ -2441,9 +2476,10 @@ impl Actor {
                 };
                 if let Some(snapshot) = &live {
                     self.log.observe_live(snapshot.clone());
-                } else if !streaming
-                    || !self.workspace.runtime().is_streaming(&observation.node)
-                    || opening
+                } else if !(active_lifetime && observation.state == crate::graph::NodeState::Ready)
+                    && (!streaming
+                        || !self.workspace.runtime().is_streaming(&observation.node)
+                        || opening)
                 {
                     self.log.capture(
                         log_time().and_then(|at| PreparedLog::observation(at, observation)),
@@ -2453,7 +2489,11 @@ impl Actor {
                     && let Some(notice) = if interactive {
                         values.observe_interactive(observation)
                     } else {
-                        values.observe_live(observation, streaming || event_stage, live.clone())
+                        values.observe_live(
+                            observation,
+                            streaming || event_stage || active_lifetime,
+                            live.clone(),
+                        )
                     }
                 {
                     self.storage_notice(notice);

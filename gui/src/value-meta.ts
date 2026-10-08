@@ -1,4 +1,4 @@
-import { compareNumeric, isNumeric, numericText, type NumericValue } from "./exact-json";
+import { compareNumeric, isNumeric, numericText, stringifyExactJson, type NumericValue } from "./exact-json";
 
 /**
  * Contract metadata that travels beside a value: the aliases and declared enum members of the
@@ -169,4 +169,26 @@ export function throughOptions(path: string, type: import("./protocol").TypeShap
   let out = path;
   for (let at = type, depth = 0; at.kind === "option" && depth < 64; at = at.element, depth++) out += OPTION;
   return out;
+}
+
+/**
+ * The same metadata described from a value that holds this one at `prefix` (a declaration path,
+ * such as `ELEMENT` for the elements of a List). Nothing is added or dropped; only where each
+ * declaration sits moves, so tones resolve the same way for the same scalars.
+ */
+export function metaWithin(meta: ValueMeta, prefix: string): ValueMeta {
+  const fields: Record<string, FieldMeta> = {};
+  for (const [path, described] of Object.entries(meta.fields)) fields[`${prefix}${path}`] = described;
+  return { ...meta, fields };
+}
+
+/**
+ * The one metadata every value carries, or undefined when any lacks it or they differ. Values
+ * presented together under one metadata must have captured the same declarations.
+ */
+export function sharedMeta(values: readonly { readonly meta?: ValueMeta }[]): ValueMeta | undefined {
+  const first = values[0]?.meta;
+  if (!first) return undefined;
+  const spelled = stringifyExactJson(first);
+  return values.every(value => value.meta === first || (value.meta !== undefined && stringifyExactJson(value.meta) === spelled)) ? first : undefined;
 }

@@ -37,6 +37,21 @@ pub enum MetaCommand {
     Change,
     Accumulate,
     Scan,
+    ScanResume,
+    ScanExcerpt,
+    ScanReconcile,
+    DatasetReconcile,
+    DatasetPage,
+    DatasetInspect,
+    DatasetSnapshot,
+    DatasetRetention,
+    DatasetPlanDelete,
+    DatasetDelete,
+    DatasetCollect,
+    DatasetRecord,
+    DatasetRecordingStatus,
+    DatasetStopRecording,
+    DatasetDiscardRecording,
     Stream,
     Fork,
     Sandbox,
@@ -89,6 +104,21 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::Change,
     MetaCommand::Accumulate,
     MetaCommand::Scan,
+    MetaCommand::ScanResume,
+    MetaCommand::ScanExcerpt,
+    MetaCommand::ScanReconcile,
+    MetaCommand::DatasetReconcile,
+    MetaCommand::DatasetPage,
+    MetaCommand::DatasetInspect,
+    MetaCommand::DatasetSnapshot,
+    MetaCommand::DatasetRetention,
+    MetaCommand::DatasetPlanDelete,
+    MetaCommand::DatasetDelete,
+    MetaCommand::DatasetCollect,
+    MetaCommand::DatasetRecord,
+    MetaCommand::DatasetRecordingStatus,
+    MetaCommand::DatasetStopRecording,
+    MetaCommand::DatasetDiscardRecording,
     MetaCommand::Stream,
     MetaCommand::Fork,
     MetaCommand::Sandbox,
@@ -193,6 +223,21 @@ impl MetaCommand {
             Self::Change => "change",
             Self::Accumulate => "accumulate",
             Self::Scan => "scan",
+            Self::ScanResume => "scan-resume",
+            Self::ScanExcerpt => "scan-excerpt",
+            Self::ScanReconcile => "scan-reconcile",
+            Self::DatasetReconcile => "dataset-reconcile",
+            Self::DatasetPage => "dataset-page",
+            Self::DatasetInspect => "dataset-inspect",
+            Self::DatasetSnapshot => "dataset-snapshot",
+            Self::DatasetRetention => "dataset-retention",
+            Self::DatasetPlanDelete => "dataset-plan-delete",
+            Self::DatasetDelete => "dataset-delete",
+            Self::DatasetCollect => "dataset-collect",
+            Self::DatasetRecord => "dataset-record",
+            Self::DatasetRecordingStatus => "dataset-recording-status",
+            Self::DatasetStopRecording => "dataset-stop-recording",
+            Self::DatasetDiscardRecording => "dataset-discard-recording",
             Self::Stream => "stream",
             Self::Fork => "fork",
             Self::Sandbox => "sandbox",
@@ -450,6 +495,112 @@ impl MetaCommand {
                 spec.parameters = scan::parameters();
                 spec.produces_value = true;
             }
+            Self::DatasetPage | Self::DatasetInspect => {
+                spec.summary = "Read an exact committed Dataset prefix without running its producer or analysis";
+                spec.operands = Arity::bounded(1, 1);
+                if self == Self::DatasetPage {
+                    spec.parameters = vec![
+                        text("from", false),
+                        Parameter::new("limit", Shape::Primitive(Primitive::Int), false),
+                    ];
+                }
+                spec.produces_value = true;
+            }
+            Self::DatasetRetention => {
+                spec.summary = "Preview one exact Dataset prefix's transitive retained footprint and current sharing; reading never Keeps or reserves storage";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![text("basis", true)];
+                spec.produces_value = true;
+            }
+            Self::DatasetSnapshot => {
+                spec.summary = "Capture an exact committed Dataset extension within the selected attempt or epoch; never substitute latest, run a producer or automatically Keep an open prefix";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![
+                    text("basis", true),
+                    text("generation", true),
+                    text("digest", true),
+                ];
+                spec.produces_value = true;
+            }
+            Self::ScanReconcile | Self::DatasetReconcile => {
+                spec.summary = "Reconcile the latest local dataset write of original owned analysis or recording work; join disk recovery without retrying its producer or claiming the whole execution succeeded";
+                spec.operands =
+                    Arity::bounded(if self == Self::DatasetReconcile { 0 } else { 1 }, 1);
+                spec.parameters = vec![text("run", false)];
+                spec.produces_value = true;
+            }
+            Self::ScanExcerpt => {
+                spec.summary = "Read a bounded original source range captured by an owned analysis, without acquiring or resuming its producer";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![
+                    text("from", true),
+                    Parameter::new("limit", Shape::Primitive(Primitive::Int), true),
+                ];
+                spec.produces_value = true;
+            }
+            Self::ScanResume => {
+                spec.summary = "Explicitly continue the captured checkpoint of an owned analysis without acquiring its producer; original limits and charged work are preserved";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![Parameter::new(
+                    "follow",
+                    Shape::Primitive(Primitive::Bool),
+                    false,
+                )];
+                spec.produces_value = true;
+            }
+            Self::DatasetPlanDelete => {
+                spec.summary = "Plan deletion of an owned Dataset, showing dependent roots, protected bytes and active readers/writers; no data is removed";
+                spec.operands = Arity::bounded(1, 1);
+                spec.produces_value = true;
+            }
+            Self::DatasetDelete => {
+                spec.summary = "Apply a live Dataset deletion plan once; explicitly approve dependent and protected root removal, never implicitly stop readers or writers";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![
+                    Parameter::new("references", Shape::Primitive(Primitive::Bool), false),
+                    Parameter::new("protected", Shape::Primitive(Primitive::Bool), false),
+                ];
+                spec.produces_value = true;
+            }
+            Self::DatasetRecord => {
+                spec.summary = "Prepare from:start on a held or physically joined source before explicit refresh, or attach from:next to an active owned subscription; setup never starts a producer and Stop never cancels it";
+                let mut registry = wes_core::contracts::ContractRegistry::new();
+                registry
+                    .load("types: {RecordingStart: {base: Text, enum: [start, next]}, RecordingBudget: {base: Text, enum: [Capture]}}")
+                    .expect("recording vocabulary");
+                spec.parameters = vec![
+                    Parameter::new("source", Shape::Unknown, true),
+                    text("from", true).constrained_by(
+                        &registry
+                            .resolve("RecordingStart")
+                            .expect("recording choice"),
+                    ),
+                    text("budget", false).constrained_by(
+                        &registry
+                            .resolve("RecordingBudget")
+                            .expect("recording budget choice"),
+                    ),
+                ];
+                spec.produces_value = true;
+            }
+            Self::DatasetRecordingStatus
+            | Self::DatasetStopRecording
+            | Self::DatasetDiscardRecording => {
+                spec.summary = if self == Self::DatasetDiscardRecording {
+                    "Discard only an unused process-local prepared recording setup; neither start nor cancel the source. Attached recording requires Stop instead"
+                } else if self == Self::DatasetStopRecording {
+                    "Stop the original owned recording, drain and join its accepted disk writes; do not cancel the source or release protected data"
+                } else {
+                    "Read the acknowledged prefix of original recording work without starting a source; restored descriptors grant no writer control"
+                };
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![text("run", false)];
+                spec.produces_value = true;
+            }
+            Self::DatasetCollect => {
+                spec.summary = "Explicitly collect unreachable objects in the owned dataset store; preserve all roots and active read/write lifetimes";
+                spec.produces_value = true;
+            }
             Self::Info => {
                 spec.summary = "shows retained provider constraints, advisories and source evidence; no API call";
                 spec.path_tail = Arity::bounded(1, 1);
@@ -621,6 +772,10 @@ impl MetaCommand {
 }
 
 pub const ANNOTATIONS: &[(&str, &str)] = &[
+    (
+        "hold",
+        "declares a streaming source without starting it; :refresh explicitly admits its first run",
+    ),
     (
         "trace",
         "collects bounded observations using an explicit provider-supported profile: @trace(profile)",

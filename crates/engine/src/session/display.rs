@@ -49,6 +49,15 @@ pub(super) struct Displays {
     entries: HashMap<OutputRef, Entry>,
 }
 impl Displays {
+    pub fn withdraw_datasets(&mut self, access: &crate::storage::datasets::DatasetAccess) {
+        self.entries.retain(|_, entry| {
+            !entry
+                .sample
+                .value
+                .as_ref()
+                .is_some_and(|v| access.blocks(v))
+        });
+    }
     pub fn deadline(&self) -> Option<Instant> {
         self.entries.values().map(|entry| entry.expires).min()
     }

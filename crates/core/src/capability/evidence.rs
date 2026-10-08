@@ -126,6 +126,7 @@ impl Debug for ShapeEvidence<'_> {
             Shape::List(s) => f.debug_tuple("List").field(&ShapeEvidence(s)).finish(),
             Shape::Option(s) => f.debug_tuple("Option").field(&ShapeEvidence(s)).finish(),
             Shape::Iter(s) => f.debug_tuple("Iter").field(&ShapeEvidence(s)).finish(),
+            Shape::Dataset(s) => f.debug_tuple("Dataset").field(&ShapeEvidence(s)).finish(),
             Shape::Record(r) => f.debug_tuple("Record").field(&RecordEvidence(r)).finish(),
         }
     }

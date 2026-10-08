@@ -123,7 +123,7 @@ pub(super) fn exported_bounded(
             "This value cannot be exported to terminal processes.",
         ));
     }
-    if !value.data().is_materialized() {
+    if !value.data().is_storable_snapshot() {
         return Err(BridgeReply::error(
             1,
             "Materialize this value in the workspace before exporting it.",
@@ -353,7 +353,7 @@ async fn perform(
                     (output.port == OutputPort::Data
                         && !value.provenance().policy().is_private()
                         && !value.provenance().policy().is_unknown()
-                        && value.data().is_materialized())
+                        && value.data().is_storable_snapshot())
                     .then_some(name)
                 })
                 .collect();

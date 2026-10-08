@@ -11,6 +11,22 @@
 :help env
 :help calc
 :help scan
+:help scan resume
+:help scan excerpt
+:help scan reconcile
+:help dataset
+:help dataset page
+:help dataset inspect
+:help dataset snapshot
+:help dataset retention
+:help dataset plan-delete
+:help dataset delete
+:help dataset collect
+:help dataset record
+:help dataset recording-status
+:help dataset stop
+:help dataset discard
+:help dataset reconcile
 :help arguments
 :help errors
 :help def

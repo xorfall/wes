@@ -58,6 +58,8 @@ enum Tool {
     Help(Help),
     ValuesList(Empty),
     ValueRead(ValueRead),
+    DatasetInspect(DatasetRead),
+    DatasetPage(DatasetRead),
     Validate(Source),
     Execute(Execute),
     ExecutionRead(ExecutionRead),
@@ -129,6 +131,12 @@ struct ValueRead {
     selection: wes_adapters::codec::ValueSelection,
     #[serde(default)]
     typed: bool,
+}
+#[derive(Deserialize)]
+struct DatasetRead {
+    name: String,
+    #[serde(flatten)]
+    read: crate::dataset_reads::Request,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -637,6 +645,7 @@ async fn perform(
         ));
     }
     check_current(terminal, application, &current)?;
+    let dataset_inspect = matches!(&tool, Tool::DatasetInspect(_));
     match tool {
         Tool::ViewAuthoring(input) => Ok(super::view_authoring::read(input)),
         Tool::ViewToolchain(_) => tokio::task::spawn_blocking(crate::view_toolchain::status)
@@ -803,6 +812,21 @@ async fn perform(
             let mut reply: serde_json::Value =
                 serde_json::from_str(&encoded).map_err(|_| fail("Help could not be encoded."))?;
             annotate_help(&mut reply);
+            Ok(reply)
+        }
+        Tool::DatasetInspect(mut input) | Tool::DatasetPage(mut input) => {
+            input.read.inspect = dataset_inspect;
+            let observation = observe_current(terminal, application, &current).await?;
+            let (value, _) = bridge::named_observation(&observation, &input.name)?;
+            let store = application
+                .storage
+                .as_ref()
+                .ok_or_else(|| fail("Dataset storage is unavailable in this application."))?;
+            let reply = crate::dataset_reads::read(store, value, input.read.clone(), 64 * 1024)
+                .await
+                .map_err(|error| fail(&error.to_string()))?;
+            let after = observe_current(terminal, application, &current).await?;
+            bridge::revalidate_read(&observation, &after, &input.name)?;
             Ok(reply)
         }
         Tool::ValueRead(input) => {
@@ -1076,6 +1100,18 @@ mod tests {
         {
             for all in [false, true] {
                 let mut request = json!({"name":declaration["name"],"arguments":sample(&declaration["inputSchema"],all)});
+                if all && declaration["name"] == "dataset_page" {
+                    // Independently constructed reference: schema validation cannot
+                    // manufacture a real committed capability from these identities.
+                    request["arguments"]["extent"] = json!({
+                        "store":"10000000-0000-4000-8000-000000000001",
+                        "dataset":"10000000-0000-4000-8000-000000000002",
+                        "generation":"1", "manifest":"10000000-0000-4000-8000-000000000003",
+                        "manifestDigest":format!("sha256:{}", "a".repeat(64)), "manifestBytes":"100",
+                        "schemaDigest":format!("sha256:{}", "b".repeat(64)), "records":"0",
+                        "authorizationGeneration":"1"
+                    });
+                }
                 super::super::protocol::validate_call(&request).unwrap();
                 request["arguments"]
                     .as_object_mut()

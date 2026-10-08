@@ -100,6 +100,35 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
                 );
             }
         }
+        if matches!(
+            path,
+            "dataset record" | "dataset recording-status" | "dataset stop" | "dataset discard"
+        ) {
+            let help = serde_json::to_string(data).unwrap();
+            assert!(help.contains("RecordingSetup"));
+            assert!(help.contains("@hold"));
+            assert!(help.contains("one-submit launch"));
+            assert!(help.contains("budget:Capture"));
+            assert!(!help.contains("launch recording are not available"));
+        }
+        if path == "dataset retention" {
+            let help = serde_json::to_string(data).unwrap();
+            assert!(help.contains("totalBytes"));
+            assert!(help.contains("exclusiveBytes"));
+            assert!(help.contains("not future reclaimable disk"));
+        }
+        if path == "dataset snapshot" {
+            let help = serde_json::to_string(data).unwrap();
+            assert!(help.contains("basis:"));
+            assert!(help.contains("anchor's own"));
+            assert!(help.contains("Keep or Pin is a separate action"));
+        }
+        if matches!(path, "scan reconcile" | "dataset reconcile") {
+            let help = serde_json::to_string(data).unwrap();
+            assert!(help.contains("local Dataset mutation"));
+            assert!(help.contains("never retries a producer"));
+            assert!(help.contains("unknown"));
+        }
         if path == "calc" {
             assert!(data["invocation"].get("example").is_none());
             assert_eq!(data["invocation"]["examples"].as_array().unwrap().len(), 5);

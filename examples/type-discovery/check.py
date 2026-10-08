@@ -28,7 +28,7 @@ def main():
 
         results = run("--file", str(root/"inspect.wes"))
         types = next(v for v in results if isinstance(v, list))
-        assert {r["name"] for r in types} >= {"Int", "Customer", "Positive", "List", "Map", "Option", "Iter"}
+        assert {r["name"] for r in types} >= {"Int", "Customer", "Positive", "List", "Map", "Option", "Iter", "Dataset"}
         customer = next(v for v in results if isinstance(v, dict) and v.get("name") == "Customer")
         fields = {f["name"]: f for f in customer["fields"]}
         assert fields["note"]["optional"] and not fields["id"]["optional"]
@@ -36,7 +36,7 @@ def main():
         generic = next(v for v in results if isinstance(v, dict) and v.get("kind") == "list")
         assert generic["element"] == customer
         constructor = next(v for v in results if isinstance(v, dict) and v.get("kind") == "constructor")
-        assert constructor["parameters"] == ["K", "V"]
+        assert constructor["parameters"] == ["Text", "T"]
         assert run("--command", ':workspace save "discovery"') == []
         (root/"types.yaml").unlink()
         assert run("--command", ':workspace load "discovery"') == []

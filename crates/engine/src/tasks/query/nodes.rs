@@ -99,6 +99,10 @@ pub(super) fn capture_nodes(
         charge.work(1)?;
         charge.work(node.dependencies().len())?;
         let task = match node.payload() {
+            BoundTask::SourceLaunch(launch) => TaskLabel::Call(
+                launch.source.invocation().provider.clone(),
+                launch.source.invocation().capability.clone(),
+            ),
             BoundTask::Input(_) => TaskLabel::Input,
             BoundTask::Call(call) => TaskLabel::Call(
                 call.invocation().provider.clone(),
@@ -125,6 +129,11 @@ pub(super) fn capture_nodes(
             BoundTask::TypeCheck(_) => TaskLabel::Meta(MetaCommand::Type),
             BoundTask::Accumulation(_) => TaskLabel::Meta(MetaCommand::Accumulate),
             BoundTask::Scan(_) => TaskLabel::Meta(MetaCommand::Scan),
+            BoundTask::ScanResume(_) => TaskLabel::Meta(MetaCommand::ScanResume),
+            BoundTask::ScanExcerpt(_) => TaskLabel::Meta(MetaCommand::ScanExcerpt),
+            BoundTask::Reconcile(reconcile) => TaskLabel::Meta(reconcile.command()),
+            BoundTask::Dataset(read) => TaskLabel::Meta(read.command()),
+            BoundTask::Recording(recording) => TaskLabel::Meta(recording.command()),
             BoundTask::Help(_) => TaskLabel::Meta(MetaCommand::Help),
             BoundTask::Management(_) => {
                 TaskLabel::Meta(wes_language::vocabulary::MetaCommand::WorkspacePlan)

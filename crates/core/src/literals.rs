@@ -15,8 +15,11 @@ pub fn read(text: &str, expected: &Shape) -> Option<Data> {
         Shape::Primitive(Primitive::Instant) => text.parse().ok().map(Data::Instant),
         Shape::Primitive(Primitive::Duration) => text.parse().ok().map(Data::Duration),
         Shape::Primitive(Primitive::Interval) => text.parse().ok().map(Data::Interval),
-        Shape::Meta(_) | Shape::Record(_) | Shape::List(_) | Shape::Option(_) | Shape::Iter(_) => {
-            None
-        }
+        Shape::Meta(_)
+        | Shape::Record(_)
+        | Shape::List(_)
+        | Shape::Option(_)
+        | Shape::Iter(_)
+        | Shape::Dataset(_) => None,
     }
 }

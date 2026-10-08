@@ -20,6 +20,7 @@ fn registry() -> ContractRegistry {
 fn fingerprint(data: &Data) -> Json {
     let (kind, body) = match data {
         Data::Iter(_) => panic!("foreign fixtures cannot produce native Iter"),
+        Data::Dataset(_) => panic!("foreign fixtures cannot produce an owned Dataset reference"),
         Data::Option(value) => (
             "Option",
             value.as_deref().map(fingerprint).unwrap_or(Json::Null),

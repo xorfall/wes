@@ -111,6 +111,7 @@ pub enum Constructor {
     Map,
     Option,
     Iter,
+    Dataset,
     Union,
 }
 #[derive(Clone, Copy, Debug)]
@@ -120,6 +121,11 @@ pub struct TypeConstructor {
     pub parameters: &'static [&'static str],
 }
 pub const TYPE_CONSTRUCTORS: &[TypeConstructor] = &[
+    TypeConstructor {
+        constructor: Constructor::Dataset,
+        name: "Dataset",
+        parameters: &["T"],
+    },
     TypeConstructor {
         constructor: Constructor::Union,
         name: "Union",

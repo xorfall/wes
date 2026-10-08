@@ -7,7 +7,7 @@ mod response;
 pub use decode::{DecodedValue, decode_value};
 pub use encode::{
     ValueSelection, encode_display_value, encode_json, encode_json_human, encode_json_pretty,
-    encode_request_data, encode_selection, encode_value,
+    encode_request_data, encode_selection, encode_value, select_value,
 };
 pub(crate) use encode::{check_arguments, check_arguments_detailed};
 pub use response::{decode_json_for_contract, decode_json_preserving};

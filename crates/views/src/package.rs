@@ -326,15 +326,27 @@ impl Package {
         {
             return Err("Event outputs require instance scope".into());
         }
+        // Output and interaction authority is independent of the name also used by input.
+        // Reusing the input contract must not make a Dataset-bearing output admissible.
+        for name in m.outputs.values().map(|p| p.r#type.as_str()).chain(
+            m.interaction
+                .iter()
+                .flat_map(|i| [i.state.as_str(), i.event.as_str()]),
+        ) {
+            if !contracts
+                .resolve(name)
+                .map_err(|e| e.to_string())?
+                .shape()
+                .is_inline()
+            {
+                return Err("View outputs and interaction state/events require inline data; Dataset is a read-only input port".into());
+            }
+        }
         let mut schemas = BTreeMap::new();
         let mut budget = 20_000;
         for name in roots {
-            project(
-                contracts.resolve(name).map_err(|e| e.to_string())?.as_ref(),
-                &mut schemas,
-                &mut budget,
-                0,
-            )?;
+            let contract = contracts.resolve(name).map_err(|e| e.to_string())?;
+            project(contract.as_ref(), &mut schemas, &mut budget, 0)?;
         }
         if !matches!(
             contracts
@@ -431,6 +443,23 @@ fn project(
     budget: &mut usize,
     depth: usize,
 ) -> Result<(), String> {
+    project_read(c, all, budget, depth, false)
+}
+fn project_read(
+    c: &Contract,
+    all: &mut BTreeMap<String, Json>,
+    budget: &mut usize,
+    depth: usize,
+    dataset_row: bool,
+) -> Result<(), String> {
+    // Dataset pages are validated by the native store against their exact
+    // frozen element digest. A browser receives read-only rows and must never
+    // reinterpret Wes regexes. Direct inputs and writable ports still refuse
+    // patterns, even when this same name was reached from a Dataset first.
+    let limits = c.constraints();
+    if !dataset_row && !limits.patterns.is_empty() {
+        return Err("Pattern-constrained view inputs require an explicit adapter; browser regex semantics are not Wes regex semantics".into());
+    }
     if all.contains_key(c.name()) {
         return Ok(());
     }
@@ -449,19 +478,22 @@ fn project(
             children.push(e.as_ref()); json!({"kind":if matches!(c.kind(),ContractKind::List(_)){"list"}else{"option"},"element":e.name()})
         }
         ContractKind::Union(a,b) => { children.extend([a.as_ref(),b.as_ref()]); json!({"kind":"union","alternatives":[a.name(),b.name()]}) }
-        ContractKind::Unknown | ContractKind::Map(_,_) | ContractKind::Iter(_) => return Err("View ports require finite scalar/record/list/option/union contracts; map, iterator and Unknown need an explicit adapter".into()),
+        ContractKind::Dataset(e) => { children.push(e.as_ref()); json!({"kind":"dataset","element":e.name()}) }
+        ContractKind::Unknown | ContractKind::Map(_,_) | ContractKind::Iter(_) => return Err("View ports require scalar/record/list/option/union or read-only Dataset input contracts; map, iterator and Unknown need an explicit adapter".into()),
     };
-    let limits = c.constraints();
-    if !limits.patterns.is_empty() {
-        return Err("Pattern-constrained view inputs require an explicit adapter; browser regex semantics are not Wes regex semantics".into());
-    }
     schema["constraints"] = json!({"min":limits.min.as_ref().map(ToString::to_string),"max":limits.max.as_ref().map(ToString::to_string),
         "minLength":limits.min_length,"maxLength":limits.max_length,"minItems":limits.min_items,"maxItems":limits.max_items,
         "patterns":limits.patterns.iter().map(|p|p.as_str()).collect::<Vec<_>>(),
         "enum":limits.enumeration.iter().map(|d| match d {Data::Text(s)=>json!(s.as_ref()),Data::Bool(b)=>json!(b),Data::Int(n)=>json!(n.to_string()),Data::Decimal(n)=>json!(n.to_string()),_=>unreachable!("scalar constraints")}).collect::<Vec<_>>()});
     all.insert(c.name().into(), schema);
     for child in children {
-        project(child, all, budget, depth + 1)?;
+        project_read(
+            child,
+            all,
+            budget,
+            depth + 1,
+            dataset_row || matches!(c.kind(), ContractKind::Dataset(_)),
+        )?;
     }
     Ok(())
 }

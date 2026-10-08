@@ -3,6 +3,7 @@ import { StreamBoundary, StreamControls, type StreamDisplayProps } from "./LiveV
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type MouseEvent } from "react";
 import { ResultSize } from "./ResultSize";
 import { ResultType } from "./ResultType";
+import { useWithdrawn, withdrawnHeader } from "./render/dataset-source";
 import type { TypeShape } from "../protocol";
 import type { CellView } from "../cells";
 import type { OfferName } from "../presentation/types";
@@ -116,6 +117,10 @@ export interface CellBlock {
   readonly content: ReactNode;
   readonly zone?: "run" | "data";
   readonly hasValue?: boolean;
+  /** The stored result the header describes; a withdrawal recorded for it clears the value-derived header. */
+  readonly stored?: import("./render/dataset-source").StoredIdentity;
+  /** The engine withdrew access to this result's node: its header says so, whatever it held. */
+  readonly accessWithdrawn?: true;
 }
 
 /** A block reports available views; omission counts stay with the data. */
@@ -163,6 +168,12 @@ export interface CellProps {
   readonly confirmRepeat?: RepeatGuard;
   /** More than one stage, so cancelling stops the pipeline and the verdict tail says so. */
   readonly pipeline?: boolean;
+  /**
+   * Whether any of this cell's current nodes runs, waits to run or owns a run the engine still calls
+   * open. It alone decides cancel versus repeat/branch; no displayed word does. Absent (static
+   * fixtures) falls back to the identity glyphs and the live cell state.
+   */
+  readonly runActive?: boolean;
   readonly view?: CellView;
   readonly onFocus?: () => void;
   /** Names the cell for the people reading the scrollback with a screen reader. */
@@ -202,11 +213,13 @@ const EXCEPTIONAL = ["cancelled","stopped","waiting","skipped","outcome unknown"
 const LIFECYCLE: ReadonlySet<keyof CellActions> = new Set(["repeat","branch","cancel","follow"]);
 
 /**
- * Whether a cell's work is running or waiting, and what running it again would be called.
+ * Whether a cell's work is active, and what running it again would be called.
  *
- * One decision for the footer, the action menu, the keys and the repeat confirmation. It is read
- * from the identity glyphs and the verdict the cell already shows, because a waiting node need not
- * make the cell `live`. Running or waiting work is never repeated or branched; it can be cancelled.
+ * One decision for the footer, the action menu, the keys and the repeat confirmation. Whether work
+ * is active comes from the model's semantic `runActive` (nodes running, waiting, or with an open
+ * lifetime), or, without it, from the identity glyphs and the live state — never from a word the
+ * verdict shows. Active work is never repeated or branched; it can be cancelled. The verdict word
+ * only names the repeat verb.
  */
 export interface RunAvailability {
   readonly said: string;
@@ -215,16 +228,17 @@ export interface RunAvailability {
   readonly failure: boolean;
   readonly repeatVerb: string;
 }
-export function runAvailability(state: CellState, verdict: readonly VerdictField[], identities: readonly Identity[]): RunAvailability {
+export function runAvailability(state: CellState, verdict: readonly VerdictField[], identities: readonly Identity[], runActive?: boolean): RunAvailability {
   const said = lineText(runBandOf(verdict).slots.state);
   const stopped = identities.some(node => node.glyph === "stopped");
+  // Running output (follow, stream chips) is what the glyphs show; it grants no lifecycle action.
   const running = identities.some(node => node.glyph === "running") || (state === "live" && !stopped);
-  const waiting = identities.some(node => node.glyph === "pending") || said === "waiting";
+  const waiting = identities.some(node => node.glyph === "pending");
   const failure = state === "failed" && !EXCEPTIONAL.includes(said);
   const previous = verdict.some(field => lineText(field.segments) === "previous results shown");
   const repeatVerb = said === "not run" ? previous ? "retry" : "run"
     : said === "outcome unknown" ? "repeat…" : said === "stopped" ? "restart…" : failure ? "retry" : state === "stale" ? "refresh" : "repeat";
-  return { said, running, working: running || waiting, failure, repeatVerb };
+  return { said, running, working: runActive ?? (running || waiting), failure, repeatVerb };
 }
 /** Whether a run-lifecycle action is meaningful now; other actions are decided by their callback. */
 function lifecycleAllows(action: keyof CellActions, run: RunAvailability): boolean {
@@ -241,7 +255,7 @@ export function identityText(nodes: readonly Identity[]): string {
 
 /** Ledger: command band, run evidence, data and two bottom action groups. */
 export function Cell({ streamOutput = false, streamSource = false, pipeline = false, outputIdentity, theme, tailKeys = true, state, pinned = false, rows, time, timestamp, verdict, attempt,
-  blocks = [], tail = [], marks = [], actions = {}, confirmRepeat, view = "preview", onFocus, label }: CellProps) {
+  blocks = [], tail = [], marks = [], actions = {}, confirmRepeat, view = "preview", onFocus, label, runActive }: CellProps) {
   const [asking, setAsking] = useState(false);
   const [cancelling, setCancelling] = useState<{ readonly token: number; readonly scope: string; readonly phase: "sending" | "requested" }>();
   // Each request's token; replacing the attempt or generation, ending the work or unmounting retires it.
@@ -268,7 +282,9 @@ export function Cell({ streamOutput = false, streamSource = false, pipeline = fa
   const [reports, setReports] = useState<ReadonlyMap<string, BlockReport>>(new Map());
   const section = useRef<HTMLElement>(null);
   const deletion = useRef<DeleteWorkHandle>(null);
-  const data = blocks.filter(block => block.zone !== "run");
+  const isWithdrawn = useWithdrawn();
+  // A withdrawn result keeps its place and controls; its type, metadata and facts become generic.
+  const data = blocks.filter(block => block.zone !== "run").map(block => block.accessWithdrawn || isWithdrawn(block.stored) ? withdrawnHeader(block) : block);
   const selected = data.find(block => block.key === target) ?? data.at(-1);
   const selectedNode = selected?.identity?.id;
   const several = data.length > 1;
@@ -281,7 +297,7 @@ export function Cell({ streamOutput = false, streamSource = false, pipeline = fa
   }), []);
   const offers = [...(reports.get(selected?.key ?? "")?.offers ?? [])];
   const viewName = offers.find(name => !LOCAL_OFFERS.has(name));
-  const availability = runAvailability(state, verdict, identities);
+  const availability = runAvailability(state, verdict, identities, runActive);
   // The request's acknowledgement is not the outcome: the node's state says when it is cancelled.
   // Without an attempt identity there is nothing to bind an acknowledgement to, so none is shown.
   const cancelScope = attempt === undefined ? undefined : `${outputIdentity ?? ""}\u0000${attempt}`;

@@ -144,3 +144,105 @@ async fn uncertain_current_save_stops_admission_even_when_names_refresh_fails() 
     assert!(app.current().is_err());
     assert!(!root.path().join("workspaces").exists());
 }
+
+struct DeferredCleanup(FileBackend);
+impl WorkspaceBackend for DeferredCleanup {
+    fn set_retained_dataset_publication(
+        &mut self,
+        publication: Arc<dyn wes_engine::history::RetainedDatasetPublication>,
+    ) -> Result<(), BackendError> {
+        self.0.set_retained_dataset_publication(publication)
+    }
+    fn capabilities(&self) -> wes::backend::BackendCapabilities {
+        wes::backend::BackendCapabilities {
+            automatic_cleanup: true,
+            retention: false,
+        }
+    }
+    fn names(&self) -> Result<Vec<WorkspaceName>, BackendError> {
+        self.0.names()
+    }
+    fn load(
+        &mut self,
+        name: &WorkspaceName,
+    ) -> Result<(BackendHistory, HistoryImage), BackendError> {
+        self.0.load(name)
+    }
+    fn save(&mut self, name: &WorkspaceName, image: &HistoryImage) -> Result<(), BackendError> {
+        self.0.save(name, image)
+    }
+    fn save_current(
+        &mut self,
+        name: &WorkspaceName,
+        image: &HistoryImage,
+    ) -> Result<(), BackendError> {
+        self.0.save_current(name, image)
+    }
+    fn collect_unused(&mut self) -> Result<wes::backend::CollectionReport, BackendError> {
+        Err(BackendError::Storage(Box::new(std::io::Error::other(
+            "synthetic deferred root cleanup",
+        ))))
+    }
+}
+
+#[tokio::test]
+async fn pending_startup_cleanup_keeps_the_owned_session_available_for_explicit_store_recovery() {
+    let root = temp();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let datasets = wes_adapters::datasets::DatasetStore::open(
+        &root.path().join("datasets"),
+        Durability::File,
+        wes_adapters::datasets::StoreLimits::default(),
+    )
+    .unwrap();
+    let values = TieredValues::open(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        Limits::default(),
+        Durability::File,
+        None,
+    )
+    .unwrap();
+    let (worker, storage_task) =
+        wes_engine::storage::spawn_storage(values, datasets, StoreWorkerLimits::default()).unwrap();
+    let backend = DeferredCleanup(
+        FileBackend::open(
+            &root.path().join("workspaces"),
+            ReadLimits::default(),
+            Durability::File,
+        )
+        .unwrap(),
+    );
+    let configuration = config(
+        root.path(),
+        calls.clone(),
+        Arc::new(AtomicBool::new(false)),
+        Some(SessionStorage {
+            worker: worker.clone(),
+            auto_keep: AutoKeep::default(),
+        }),
+    );
+    let (app, task) = wes::open_with_backend(configuration, backend)
+        .await
+        .unwrap();
+    assert!(
+        app.cleanup_warning()
+            .unwrap()
+            .contains("Workspace cleanup is pending")
+    );
+    accepted(
+        submit(&app, "repair", ":dataset reconcile > localRepair")
+            .await
+            .as_ref(),
+    );
+    idle(&app).await;
+    let current = app.current().unwrap();
+    let state = current.session.snapshot().await.unwrap();
+    let node = &state.names["localRepair"].node;
+    assert!(state.execution.values.contains_key(node));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.shutdown().await;
+    task.join().await.unwrap();
+    worker.shutdown().await.unwrap();
+    storage_task.join().await.unwrap();
+}

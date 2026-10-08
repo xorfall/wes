@@ -18,6 +18,7 @@ pub enum Kind {
     Map(Arc<Contract>, Arc<Contract>),
     Option(Arc<Contract>),
     Iter(Arc<Contract>),
+    Dataset(Arc<Contract>),
     Union(Arc<Contract>, Arc<Contract>),
 }
 
@@ -75,6 +76,14 @@ impl Contract {
             ));
         }
         Ok(Self::container(name, Kind::List(element)))
+    }
+    pub fn dataset(name: &str, element: Arc<Contract>) -> Result<Self, super::ContractError> {
+        if name.is_empty() || name.encode_utf16().count() > 1024 {
+            return Err(super::ContractError::declaration(
+                "invalid composed dataset contract",
+            ));
+        }
+        Ok(Self::container(name, Kind::Dataset(element)))
     }
     fn container(name: &str, kind: Kind) -> Self {
         Self {
@@ -226,6 +235,9 @@ impl Contract {
             Kind::Iter(element) => {
                 Shape::Iter(Box::new(element.project_shape(remaining, depth + 1)))
             }
+            Kind::Dataset(element) => {
+                Shape::Dataset(Box::new(element.project_shape(remaining, depth + 1)))
+            }
             Kind::Option(element) => {
                 Shape::Option(Box::new(element.project_shape(remaining, depth + 1)))
             }
@@ -298,6 +310,7 @@ impl Contract {
                 | (Kind::Map(_, _), Kind::Map(_, _))
                 | (Kind::Option(_), Kind::Option(_))
                 | (Kind::Iter(_), Kind::Iter(_))
+                | (Kind::Dataset(_), Kind::Dataset(_))
         ) || matches!((&self.kind,&expected.kind),(Kind::Scalar(a),Kind::Scalar(b)) if a == b);
         if !same_kind {
             return false;
@@ -344,6 +357,7 @@ impl Contract {
             (Kind::List(a), Kind::List(b))
             | (Kind::Option(a), Kind::Option(b))
             | (Kind::Iter(a), Kind::Iter(b)) => a.subtype(b, remaining, depth + 1),
+            (Kind::Dataset(a), Kind::Dataset(b)) => a.digest() == b.digest(),
             (Kind::Map(ak, av), Kind::Map(bk, bv)) => {
                 ak.subtype(bk, remaining, depth + 1)
                     && bk.subtype(ak, remaining, depth + 1)
@@ -459,6 +473,22 @@ impl Validation<'_> {
                 path,
                 "TYP008",
                 format!("{} requires a compatible typed Iter recipe", contract.name),
+            );
+            return Ok(());
+        }
+        if let Kind::Dataset(expected) = &contract.kind {
+            if let Data::Dataset(reference) = data
+                && reference.schema_digest() == expected.digest()
+            {
+                return Ok(());
+            }
+            self.issue(
+                path,
+                "TYP008",
+                format!(
+                    "{} requires an exact captured dataset element contract",
+                    contract.name
+                ),
             );
             return Ok(());
         }

@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dimension {
     Work,
+    WorkAllowance,
+    Duration,
     InputBytes,
     InputRecords,
     HeldMemory,
@@ -18,6 +20,8 @@ impl Dimension {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Work => "work",
+            Self::WorkAllowance => "work_allowance",
+            Self::Duration => "duration",
             Self::InputBytes => "input_charge",
             Self::InputRecords => "input_records",
             Self::HeldMemory => "held_charge",
@@ -35,7 +39,8 @@ pub struct Refusal {
     pub dimension: Dimension,
     pub limit: u64,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Limits {
     pub work: u64,
     pub input_bytes: u64,
@@ -154,11 +159,43 @@ impl Ledger {
             ..self.usage
         }
     }
+    pub(super) fn restored(
+        limits: Limits,
+        pool: &MemoryPool,
+        usage: Usage,
+        allowance: u64,
+    ) -> Result<Self, Refusal> {
+        let invalid = || Refusal {
+            dimension: Dimension::Work,
+            limit: limits.work,
+        };
+        if !limits.valid()
+            || usage.input_bytes > limits.input_bytes
+            || usage.input_records > limits.input_records
+            || usage.output_bytes > limits.output_bytes
+            || usage.output_records > limits.output_records
+            || usage.high_water_bytes > limits.memory_bytes
+            || usage.held_bytes > limits.memory_bytes
+        {
+            return Err(invalid());
+        }
+        let work = crate::work_budget::WorkCounter::restored(limits.work, allowance, usage.work)
+            .map_err(|_| invalid())?;
+        Ok(Self {
+            limits,
+            usage,
+            work,
+            _lease: pool.reserve(limits.memory_bytes)?,
+        })
+    }
     pub fn limits(&self) -> Limits {
         self.limits
     }
     pub fn remaining_work(&self) -> u64 {
         self.work.remaining()
+    }
+    pub(crate) fn prepaid_remaining(&self) -> u64 {
+        self.work.prepaid_remaining()
     }
     pub(crate) fn work_counter(&self) -> crate::work_budget::WorkCounter {
         self.work.clone()
@@ -169,17 +206,26 @@ impl Ledger {
     pub fn work_allowance(&self) -> u64 {
         self.work.allowance()
     }
+    pub(super) fn prepaid(&self, ceiling: u64) -> Result<(), Refusal> {
+        self.work.prepaid(ceiling).map_err(|_| Refusal {
+            dimension: Dimension::Work,
+            limit: self.limits.work,
+        })
+    }
     /// Admission of the next input precedes its callback. Consumption is committed
     /// with the candidate; this check alone grants neither input nor work credit.
     pub fn admit_input(&self, bytes: u64) -> Result<(), Refusal> {
+        self.admit_input_from(self.usage, bytes)
+    }
+    pub(crate) fn admit_input_from(&self, usage: Usage, bytes: u64) -> Result<(), Refusal> {
         add(
-            self.usage.input_bytes,
+            usage.input_bytes,
             bytes,
             self.limits.input_bytes,
             Dimension::InputBytes,
         )?;
         add(
-            self.usage.input_records,
+            usage.input_records,
             1,
             self.limits.input_records,
             Dimension::InputRecords,
@@ -253,7 +299,36 @@ impl Ledger {
         output_bytes: u64,
         held_after: u64,
     ) -> Result<(), Refusal> {
-        let mut candidate = self.usage;
+        self.usage =
+            self.candidate_usage(consumed_bytes, output_records, output_bytes, held_after)?;
+        Ok(())
+    }
+    /// Validate before handing a candidate to a sink. This does not advance any counter.
+    pub(crate) fn candidate_usage(
+        &self,
+        consumed_bytes: Option<u64>,
+        output_records: u64,
+        output_bytes: u64,
+        held_after: u64,
+    ) -> Result<Usage, Refusal> {
+        self.candidate_usage_from(
+            self.usage,
+            consumed_bytes,
+            output_records,
+            output_bytes,
+            held_after,
+        )
+    }
+    /// A private batch previews counters without publishing them or earning work.
+    pub(crate) fn candidate_usage_from(
+        &self,
+        usage: Usage,
+        consumed_bytes: Option<u64>,
+        output_records: u64,
+        output_bytes: u64,
+        held_after: u64,
+    ) -> Result<Usage, Refusal> {
+        let mut candidate = usage;
         if let Some(bytes) = consumed_bytes {
             candidate.input_bytes = add(
                 candidate.input_bytes,
@@ -287,9 +362,15 @@ impl Ledger {
             });
         }
         candidate.held_bytes = held_after;
-        candidate.high_water_bytes = candidate.high_water_bytes.max(held_after);
-        self.usage = candidate;
-        Ok(())
+        candidate.high_water_bytes = candidate
+            .high_water_bytes
+            .max(held_after)
+            .max(self.usage.high_water_bytes);
+        Ok(candidate)
+    }
+    pub(crate) fn acknowledge_usage(&mut self, mut usage: Usage) {
+        usage.high_water_bytes = usage.high_water_bytes.max(self.usage.high_water_bytes);
+        self.usage = usage;
     }
 }
 fn add(current: u64, amount: u64, limit: u64, dimension: Dimension) -> Result<u64, Refusal> {

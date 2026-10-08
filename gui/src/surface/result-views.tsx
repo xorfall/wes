@@ -31,6 +31,8 @@ export interface ViewSubject {
   readonly engine?: Engine;
   /** Which run this is, so a view that polls starts again rather than continuing an old one. */
   readonly generation?: string;
+  /** The stored result `value` was read from, in this session; absent for live samples. */
+  readonly stored?: import("./render/dataset-source").StoredIdentity;
 }
 
 export interface ResultView {

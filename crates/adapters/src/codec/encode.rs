@@ -107,7 +107,7 @@ pub(crate) fn check_arguments_detailed(
             name: Some(name.as_str()),
             error,
         };
-        if !value.data().is_materialized() {
+        if !value.data().is_inline() || !value.shape().is_inline() {
             return Err(fail(CodecError::Invalid(
                 "provider arguments require materialized data".into(),
             )));
@@ -132,8 +132,8 @@ struct RequestJson<'a>(&'a Data, usize);
 impl Serialize for RequestJson<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            Data::Iter(_) => Err(serde::ser::Error::custom(
-                "Iter cannot cross a provider boundary",
+            Data::Iter(_) | Data::Dataset(_) => Err(serde::ser::Error::custom(
+                "Iter and Dataset cannot cross a provider boundary; select a finite page first",
             )),
             Data::Option(None) => s.serialize_none(),
             Data::Option(Some(value)) => RequestJson(value, self.1).serialize(s),
@@ -181,9 +181,10 @@ fn check_shape(
         }
         remaining = remaining.checked_sub(1).ok_or(CodecError::Work)?;
         match shape {
-            Shape::List(element) | Shape::Option(element) | Shape::Iter(element) => {
-                shapes.push((element, depth + 1))
-            }
+            Shape::List(element)
+            | Shape::Option(element)
+            | Shape::Iter(element)
+            | Shape::Dataset(element) => shapes.push((element, depth + 1)),
             Shape::Record(record) => {
                 if record.fields().len() > remaining.saturating_sub(shapes.len()) {
                     return Err(CodecError::Work);
@@ -305,7 +306,7 @@ impl<T: fmt::Display + ?Sized> Serialize for Displayed<'_, T> {
     }
 }
 mod projection;
-pub use projection::{ValueSelection, encode_selection};
+pub use projection::{ValueSelection, encode_selection, select as select_value};
 
 struct Stored<'a> {
     shape: &'a Shape,
@@ -386,6 +387,8 @@ impl Serialize for Stored<'_> {
             struct Policy<'a> {
                 origins: &'a std::collections::BTreeSet<String>,
                 unknown: bool,
+                #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+                dataset_reads: &'a std::collections::BTreeSet<wes_core::flow::DatasetReadOrigin>,
             }
             let policy = self.provenance.policy();
             object.serialize_field(
@@ -393,6 +396,7 @@ impl Serialize for Stored<'_> {
                 &Policy {
                     origins: policy.origins(),
                     unknown: policy.is_unknown(),
+                    dataset_reads: policy.dataset_reads(),
                 },
             )?;
         }
@@ -452,6 +456,10 @@ impl Serialize for ShapeJson<'_> {
                 map.serialize_entry("kind", "iter")?;
                 map.serialize_entry("element", &ShapeJson(element))?;
             }
+            Shape::Dataset(element) => {
+                map.serialize_entry("kind", "dataset")?;
+                map.serialize_entry("element", &ShapeJson(element))?;
+            }
             Shape::Option(element) => {
                 map.serialize_entry("kind", "option")?;
                 map.serialize_entry("element", &ShapeJson(element))?;
@@ -503,6 +511,7 @@ impl Serialize for DataJson<'_> {
                 "kind",
                 match self.0 {
                     Data::Iter(_) => "iter",
+                    Data::Dataset(_) => "dataset",
                     Data::Option(_) => "option",
                     Data::Text(_) => "text",
                     Data::Int(_) => "int",
@@ -527,6 +536,12 @@ struct Payload<'a>(&'a Data, JsonDataMode);
 impl Serialize for Payload<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self.0 {
+            Data::Dataset(reference) => {
+                let mut map = s.serialize_map(Some(2))?;
+                map.serialize_entry("kind", "dataset")?;
+                map.serialize_entry("reference", reference.as_ref())?;
+                map.end()
+            }
             Data::Iter(iter) => {
                 let mut map = s.serialize_map(None)?;
                 map.serialize_entry("kind", "iter")?;

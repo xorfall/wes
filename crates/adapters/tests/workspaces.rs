@@ -97,6 +97,7 @@ fn saved_generations_preserve_both_streams_and_loaded_writer_ownership() {
 fn collection_preserves_referenced_and_active_generations_until_the_writer_finishes() {
     let root = temp();
     let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(DatasetPublicationProbe::new(root.path()));
     workspaces.save(&name("one"), &image("old")).unwrap();
     let (mut active, _) = workspaces.load(&name("one")).unwrap();
     workspaces.save(&name("one"), &image("new")).unwrap();
@@ -392,4 +393,264 @@ fn a_named_generation_claims_only_the_durability_this_host_establishes() {
     let mut workspaces = store(root.path());
     let (_, reopened) = workspaces.load(&name("kept")).unwrap();
     assert_eq!(reopened.journal(), image("source").journal());
+}
+
+struct DatasetPublicationProbe {
+    root: std::path::PathBuf,
+    calls: std::sync::Mutex<Vec<(String, Vec<wes_engine::storage::ValueHandle>, Option<u64>)>>,
+    fail_protect: std::sync::atomic::AtomicBool,
+    fail_retire: std::sync::atomic::AtomicBool,
+    retired: std::sync::Mutex<Vec<String>>,
+}
+impl DatasetPublicationProbe {
+    fn new(root: &Path) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            root: root.into(),
+            calls: Default::default(),
+            fail_protect: false.into(),
+            fail_retire: false.into(),
+            retired: Default::default(),
+        })
+    }
+}
+impl wes_engine::history::RetainedDatasetPublication for DatasetPublicationProbe {
+    fn protect(
+        &self,
+        generation: &str,
+        handles: &[wes_engine::storage::ValueHandle],
+    ) -> Result<Vec<wes_engine::storage::ValueHandle>, wes_engine::history::RecordError> {
+        let id = uuid::Uuid::parse_str(generation)
+            .unwrap()
+            .simple()
+            .to_string();
+        let before = fs::metadata(self.root.join(format!("generation-{id}/journal.jsonl")))
+            .ok()
+            .map(|m| m.len());
+        self.calls
+            .lock()
+            .unwrap()
+            .push((generation.into(), handles.to_vec(), before));
+        if self.fail_protect.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(wes_engine::history::RecordError::Limit(
+                "synthetic root refusal",
+            ));
+        }
+        Ok(handles.to_vec())
+    }
+    fn retire(&self, generation: &str) -> Result<(), wes_engine::history::RecordError> {
+        let id = uuid::Uuid::parse_str(generation)
+            .unwrap()
+            .simple()
+            .to_string();
+        assert!(!self.root.join(format!("generation-{id}")).exists());
+        assert!(!self.root.join(format!(".wes-retired-{id}")).exists());
+        assert!(self.root.join(format!(".wes-retirement-{id}")).is_file());
+        if self.fail_retire.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(wes_engine::history::RecordError::Limit(
+                "synthetic root retirement refusal",
+            ));
+        }
+        self.retired.lock().unwrap().push(generation.into());
+        Ok(())
+    }
+}
+fn retained_record() -> Record {
+    Record::Journal(JournalEntry::Result(wes_engine::history::RetainedResult {
+        node: NodeId::new("id0").unwrap(),
+        run: wes_engine::runtime::RunId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        handle: wes_engine::storage::ValueHandle::new(&uuid::Uuid::new_v4().to_string()).unwrap(),
+        retention: wes_engine::storage::Retention::Protected,
+    }))
+}
+
+#[test]
+fn retained_dataset_protection_precedes_seed_and_live_append_without_retaining_temporary_payloads()
+{
+    let root = temp();
+    let probe = DatasetPublicationProbe::new(root.path());
+    let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(probe.clone());
+    workspaces.save(&name("one"), &image("initial")).unwrap();
+    assert!(probe.calls.lock().unwrap().is_empty());
+    let (mut history, _) = workspaces.load(&name("one")).unwrap();
+    let before = history
+        .capture(HistoryCaptureLimits::default())
+        .unwrap()
+        .checkpoint()
+        .journal
+        .end_offset;
+    let kept = retained_record();
+    history.append(&kept).unwrap();
+    assert_eq!(probe.calls.lock().unwrap()[0].2, Some(before));
+    let Record::Journal(JournalEntry::Result(retained)) = &kept else {
+        panic!()
+    };
+    history
+        .append(&Record::Journal(JournalEntry::Payload {
+            node: retained.node.clone(),
+            run: retained.run.clone(),
+            handle: retained.handle.clone(),
+        }))
+        .unwrap();
+    assert_eq!(probe.calls.lock().unwrap().len(), 1);
+    let captured = history.capture(HistoryCaptureLimits::default()).unwrap();
+    workspaces.save(&name("two"), &captured).unwrap();
+    let calls = probe.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].1, vec![retained.handle.clone()]);
+    assert_eq!(calls[1].2, None); // Dataset protection before any seed journal file.
+}
+
+#[test]
+fn failed_dataset_protection_writes_no_retained_history_and_publishes_no_new_pointer() {
+    let root = temp();
+    let probe = DatasetPublicationProbe::new(root.path());
+    let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(probe.clone());
+    workspaces.save(&name("one"), &image("initial")).unwrap();
+    let (mut history, _) = workspaces.load(&name("one")).unwrap();
+    let before = history.capture(HistoryCaptureLimits::default()).unwrap();
+    probe
+        .fail_protect
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(history.append(&retained_record()).is_err());
+    let after = history.capture(HistoryCaptureLimits::default()).unwrap();
+    assert_eq!(after.journal(), before.journal());
+    assert_eq!(
+        after.checkpoint().journal.end_offset,
+        before.checkpoint().journal.end_offset
+    );
+    assert_eq!(
+        after.checkpoint().recovery.end_offset,
+        before.checkpoint().recovery.end_offset
+    );
+    let mut capture = HistoryCapture::new(HistoryCaptureLimits::default());
+    capture.push(retained_record()).unwrap();
+    let candidate = capture.finish(before.checkpoint());
+    let identity = workspaces.identity(&name("one")).unwrap();
+    assert!(workspaces.save(&name("one"), &candidate).is_err());
+    assert_eq!(workspaces.identity(&name("one")).unwrap(), identity);
+}
+
+#[test]
+fn physical_generation_retirement_preserves_identity_and_retries_root_release_after_restart() {
+    let root = temp();
+    let probe = DatasetPublicationProbe::new(root.path());
+    let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(probe.clone());
+    workspaces.save(&name("one"), &image("old")).unwrap();
+    let old = workspaces
+        .identity(&name("one"))
+        .unwrap()
+        .unwrap()
+        .generation;
+    let (history, _) = workspaces.load(&name("one")).unwrap();
+    workspaces.save(&name("one"), &image("new")).unwrap();
+    assert_eq!(workspaces.collect_unused().unwrap().active, 1);
+    assert!(probe.retired.lock().unwrap().is_empty());
+    drop(history);
+    probe
+        .fail_retire
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(workspaces.collect_unused().is_err());
+    assert!(!root.path().join(format!("generation-{old}")).exists());
+    assert!(root.path().join(format!(".wes-retirement-{old}")).exists());
+    drop(workspaces);
+    probe
+        .fail_retire
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(probe.clone());
+    workspaces.collect_unused().unwrap();
+    assert_eq!(
+        *probe.retired.lock().unwrap(),
+        vec![uuid::Uuid::parse_str(&old).unwrap().to_string()]
+    );
+    assert!(!root.path().join(format!(".wes-retirement-{old}")).exists());
+    assert_eq!(workspaces.names().unwrap(), vec![name("one")]);
+}
+
+#[test]
+fn owned_retirement_marker_recovers_the_empty_directory_window_but_preserves_unknown_content() {
+    let root = temp();
+    let probe = DatasetPublicationProbe::new(root.path());
+    let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(probe.clone());
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let retired = root.path().join(format!(".wes-retired-{id}"));
+    fs::create_dir(&retired).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&retired, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::write(
+        root.path().join(format!(".wes-retirement-{id}")),
+        format!("wes.workspace.retirement\n1\n{id}\n"),
+    )
+    .unwrap();
+    fs::write(retired.join("unknown"), b"keep").unwrap();
+    assert_eq!(workspaces.collect_unused().unwrap().preserved, 1);
+    assert!(probe.retired.lock().unwrap().is_empty());
+    fs::remove_file(retired.join("unknown")).unwrap();
+    assert_eq!(workspaces.collect_unused().unwrap().removed, 1);
+    assert!(!retired.exists());
+    assert_eq!(probe.retired.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn collection_uses_reserved_capacity_when_normal_publication_is_full() {
+    let root = temp();
+    let mut workspaces = store(root.path());
+    workspaces.set_retained_dataset_publication(DatasetPublicationProbe::new(root.path()));
+    for version in 0..4 {
+        workspaces
+            .save(&name("one"), &image(&format!("version-{version}")))
+            .unwrap();
+    }
+    let limit = wes_budgets::get("workspace.catalogue") as usize;
+    let occupied = fs::read_dir(root.path()).unwrap().count();
+    for index in occupied..limit {
+        fs::write(root.path().join(format!("capacity-{index}")), []).unwrap();
+    }
+    assert!(matches!(
+        workspaces.save(&name("two"), &image("full")),
+        Err(WorkspaceFileError::Capacity)
+    ));
+    let pending = root
+        .path()
+        .join(format!(".wes-pending-{}", uuid::Uuid::new_v4().simple()));
+    fs::write(&pending, b"interrupted partial write").unwrap();
+    let report = workspaces.collect_unused().unwrap();
+    assert_eq!(report.removed, 3);
+    assert!(!pending.exists());
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), limit - 3);
+    workspaces
+        .save(&name("two"), &image("after-cleanup"))
+        .unwrap();
+}
+
+#[test]
+fn collection_without_dataset_port_preserves_retirement_for_a_later_owned_retry() {
+    let root = temp();
+    let mut workspaces = store(root.path());
+    workspaces.save(&name("one"), &image("first")).unwrap();
+    let old = fs::read_dir(root.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|s| s.starts_with("generation-"))
+        .unwrap();
+    workspaces.save(&name("one"), &image("second")).unwrap();
+    assert_eq!(workspaces.collect_unused().unwrap().removed, 1);
+    let marker = root.path().join(format!(
+        ".wes-retirement-{}",
+        old.strip_prefix("generation-").unwrap()
+    ));
+    assert!(marker.exists());
+    let probe = DatasetPublicationProbe::new(root.path());
+    workspaces.set_retained_dataset_publication(probe.clone());
+    workspaces.collect_unused().unwrap();
+    assert!(!marker.exists());
+    assert_eq!(probe.retired.lock().unwrap().len(), 1);
 }

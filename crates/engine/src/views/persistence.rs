@@ -78,6 +78,26 @@ pub(crate) fn input_digest(value: &Value) -> String {
             }
             // Such inputs fail the common materialized contract check before installation.
             Data::Iter(_) => hash.update(b"unmaterialized"),
+            Data::Dataset(reference) => {
+                hash.update(b"dataset");
+                for field in [
+                    reference.store(),
+                    reference.dataset(),
+                    reference.manifest(),
+                    reference.manifest_digest(),
+                    reference.schema_digest(),
+                ] {
+                    bytes(hash, field.as_bytes());
+                }
+                for number in [
+                    reference.generation(),
+                    reference.manifest_bytes(),
+                    reference.records(),
+                    reference.authorization_generation(),
+                ] {
+                    hash.update(number.to_be_bytes());
+                }
+            }
         }
     }
     let mut hash = Sha256::new();
@@ -183,7 +203,7 @@ impl ViewRecord {
     pub fn validate(&self) -> Result<(), InvalidRecord> {
         if uuid::Uuid::parse_str(&self.id).is_err()
             || self.value.shape() != &Shape::Unknown
-            || !self.value.data().is_materialized()
+            || !self.value.data().is_storable_snapshot()
             || self.value.provenance().policy().is_private()
             || crate::value_size::value_charge(&self.value, 4 * 1024 * 1024).is_none()
         {

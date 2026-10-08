@@ -2,6 +2,8 @@ import type { TypeShape } from "../protocol";
 import { ELEMENT, OPTION, field as fieldSegment, fieldMeta, membersLabel, type ValueMeta } from "../value-meta";
 import { ellipsizeEnd, width } from "../presentation/columns";
 
+const WRAPPERS = { list: "List", option: "Option", iter: "Iter", dataset: "Dataset" } as const;
+
 /** Keep outer containers visible; reduce record detail before reducing names. */
 export function compactType(shape: TypeShape, columns = 40, omitFieldCount = false): string {
   const budget = Math.max(1, Math.min(40, columns));
@@ -9,8 +11,8 @@ export function compactType(shape: TypeShape, columns = 40, omitFieldCount = fal
   const print = (type: TypeShape, stage: number, room: number, recordDepth = 0, depth = 0, count = 40): string => {
     if (--visits < 0 || depth > 64) return "…";
     switch (type.kind) {
-      case "list": case "option": case "iter": {
-        const name = type.kind === "list" ? "List" : type.kind === "option" ? "Option" : "Iter";
+      case "list": case "option": case "iter": case "dataset": {
+        const name = WRAPPERS[type.kind];
         const inner = type.kind === "iter" && type.contract ? (stage ? ellipsizeEnd(type.contract, Math.max(1, room - name.length - 2)) : type.contract)
           : print(type.element, stage, room - name.length - 2, recordDepth, depth + 1, count);
         return `${name}<${inner}>`;
@@ -53,13 +55,15 @@ export function typeOutlineSegments(shape: TypeShape, meta?: ValueMeta): import(
     const members = membersLabel(described);
     if (members) { add(" · ", "mono-faint"); add(members, "mono-dim"); }
   };
-  const walk = (type: TypeShape, depth: number, path = "") => {
+  // `path` is the declaration path for captured metadata; undefined inside a Dataset, whose
+  // element declarations are not captured with the value.
+  const walk = (type: TypeShape, depth: number, path: string | undefined) => {
     if (--visits < 0 || depth > 64) { add("… [type display limit]"); return; }
     switch (type.kind) {
-      case "list": case "option": case "iter":
-        add(`${type.kind === "list" ? "List" : type.kind === "option" ? "Option" : "Iter"}<`);
+      case "list": case "option": case "iter": case "dataset":
+        add(`${WRAPPERS[type.kind]}<`);
         if (type.kind === "iter" && type.contract !== undefined) add(type.contract, "mono-ref");
-        else walk(type.element, depth, path + (type.kind === "option" ? OPTION : ELEMENT));
+        else walk(type.element, depth, type.kind === "dataset" || path === undefined ? undefined : path + (type.kind === "option" ? OPTION : ELEMENT));
         add(">"); break;
       case "record":
         if (type.name) add(`${type.name} `, "mono-ref");
@@ -70,15 +74,15 @@ export function typeOutlineSegments(shape: TypeShape, meta?: ValueMeta): import(
           add("  ".repeat(depth + 1));
           if (visits <= 0) { add("… [type display limit]"); break; }
           const field = type.fields[at]!;
-          add(field.name, "mono-param"); add(": "); walk(field.type, depth + 1, path + fieldSegment(field.name));
+          add(field.name, "mono-param"); add(": "); walk(field.type, depth + 1, path === undefined ? undefined : path + fieldSegment(field.name));
         }
         add(`\n${"  ".repeat(depth)}}`); break;
-      case "primitive": add(type.name.charAt(0) + type.name.slice(1).toLowerCase(), "mono-meta"); declared(path); break;
+      case "primitive": add(type.name.charAt(0) + type.name.slice(1).toLowerCase(), "mono-meta"); if (path !== undefined) declared(path); break;
       case "meta": add(type.name, "mono-ref"); break;
       default: add("Unknown");
     }
   };
-  walk(shape, 0);
+  walk(shape, 0, "");
   return result;
 }
 

@@ -218,6 +218,7 @@ pub enum Data {
     List(Vec<Data>),
     Option(Option<Box<Data>>),
     Iter(Arc<crate::IterValue>),
+    Dataset(Arc<crate::DatasetRef>),
     Record(IndexMap<String, Data>),
 }
 
@@ -242,23 +243,40 @@ impl Data {
         Some(current)
     }
 
-    /// Whether this value is finite materialized data with no embedded traversal recipe.
+    /// Whether this value is inline data with no traversal recipe or dataset reference.
     /// Excessive nesting/work also refuses this boundary (128 levels / one million nodes).
-    pub fn is_materialized(&self) -> bool {
-        fn visit(data: &Data, depth: usize, left: &mut usize) -> bool {
+    pub fn is_inline(&self) -> bool {
+        self.snapshot_kind(false)
+    }
+    /// A finite value snapshot may contain immutable dataset descriptors. Resolving or
+    /// protecting their bytes still requires the owning store and current actor authority.
+    pub fn is_storable_snapshot(&self) -> bool {
+        self.snapshot_kind(true)
+    }
+    fn snapshot_kind(&self, datasets: bool) -> bool {
+        fn visit(data: &Data, depth: usize, left: &mut usize, datasets: bool) -> bool {
             if depth > 128 || *left == 0 {
                 return false;
             }
             *left -= 1;
             match data {
                 Data::Iter(_) => false,
-                Data::List(xs) => xs.iter().all(|x| visit(x, depth + 1, left)),
-                Data::Record(xs) => xs.values().all(|x| visit(x, depth + 1, left)),
-                Data::Option(Some(x)) => visit(x, depth + 1, left),
-                _ => true,
+                Data::Dataset(_) => datasets,
+                Data::List(xs) => xs.iter().all(|x| visit(x, depth + 1, left, datasets)),
+                Data::Record(xs) => xs.values().all(|x| visit(x, depth + 1, left, datasets)),
+                Data::Option(Some(x)) => visit(x, depth + 1, left, datasets),
+                Data::Text(_)
+                | Data::Int(_)
+                | Data::Decimal(_)
+                | Data::Bool(_)
+                | Data::Instant(_)
+                | Data::Duration(_)
+                | Data::Interval(_)
+                | Data::Bytes(_)
+                | Data::Option(None) => true,
             }
         }
-        visit(self, 0, &mut 1_000_000)
+        visit(self, 0, &mut 1_000_000, datasets)
     }
 
     /// An inexpensive constructor guard, deliberately not deep contract validation.
@@ -277,6 +295,7 @@ impl Data {
             | (Self::List(_), Shape::List(_)) => true,
             (Self::Option(_), Shape::Option(_)) => true,
             (Self::Iter(iter), Shape::Iter(item)) => iter.item_shape().is_assignable_to(item),
+            (Self::Dataset(_), Shape::Dataset(_)) => true,
             (Self::Record(fields), Shape::Record(record)) => {
                 record.fields().all(|(key, _)| fields.contains_key(key))
             }

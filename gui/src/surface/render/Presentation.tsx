@@ -22,6 +22,7 @@ import { CustomDrawing } from "./custom";
 import { TableGrid } from "./TableGrid";
 import { ViewLayout } from "./ViewLayout";
 import { JsonTree } from "./JsonTree";
+import { DatasetRegion } from "./DatasetBrowser";
 import { MoreRows, PinButton, resizeColumn, TableToolbar } from "./TableControls";
 import "./presentation.css";
 
@@ -189,9 +190,14 @@ function Pagination({ node, props }: { node: PresentationNode; props: DrawProps 
 
 const RENDERERS: { readonly [K in Kind]: Renderer<K> } = {
   line: (node, props) => <Line runs={node.runs} before={disclosure(node, props)} />,
-  fields: (node, props) => node.tree ? <JsonTree {...node.tree}/> : <div className="value-fields">
-    {node.rows.map((row, at) => <Row key={at} row={row} nameWidth={node.nameWidth} props={props} />)}
-  </div>,
+  fields: (node, props) => {
+    if (node.tree) return <JsonTree {...node.tree}/>;
+    const fields = <div className="value-fields">
+      {node.rows.map((row, at) => <Row key={at} row={row} nameWidth={node.nameWidth} props={props} />)}
+    </div>;
+    // A Dataset's descriptor carries its page reader beneath it, wherever it is drawn.
+    return node.dataset ? <DatasetRegion anchor={node.dataset}>{fields}</DatasetRegion> : fields;
+  },
   table: (node, props) => <Table node={node} props={props} />,
   items: (node) => node.lines && node.lines.length > 1
     ? <div className="value-text">{node.lines.map((line, at) => <Line key={at} runs={line} />)}</div>

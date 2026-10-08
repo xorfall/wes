@@ -25,6 +25,16 @@ async fn main() -> ExitCode {
     if let Some(code) = wes::view_toolchain::entry() {
         return ExitCode::from(code);
     }
+    // The executable captures its operating policy before argument defaults
+    // or runtime admission. Embedders remain explicit; changing a data home
+    // must not replace this process-start policy.
+    let initialized = std::env::home_dir()
+        .ok_or_else(|| io::Error::other("User home is unavailable for operating budgets."))
+        .and_then(|home| wes::budgets::initialize(&home));
+    if let Err(error) = initialized {
+        eprintln!("wes: {error}");
+        return ExitCode::FAILURE;
+    }
     let args = match arguments() {
         Ok(Some(args)) => args,
         Ok(None) => {

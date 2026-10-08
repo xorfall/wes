@@ -26,6 +26,8 @@ import { load, resolveSurfacePalette, save, type Settings, surfaceTypeStyle } fr
 import { read, type EditFileContext, type Summoned } from "./commands";
 import type { PeekWhat } from "./peek";
 import { peekOf, PeekScreen } from "./screens/Peek";
+import { storedIdentity } from "./render/dataset-source";
+import { ComposeContext, type Composer } from "./dataset-management";
 import { Hints } from "./Hints";
 import { returnFocusToPane } from "./pane-focus";
 import type { TerminalTarget } from "../terminal-target";
@@ -399,6 +401,12 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
       if (!mine || mine.document) return;
       if (sessionCommands.answer(mine.text)) return;
       if (mine.state === "running") { setTrouble("Wait for the submission acknowledgement before running again."); return; }
+      // Every entry point (r, ⌘R, the editor, the graph, refresh) meets the cell's own rule: work that
+      // is running, waiting or owns a run the engine still calls open is cancelled or allowed to finish
+      // first, never repeated over. The model derives this from the nodes, not from any shown word.
+      if (modelRef.current?.cells.find(cell => cell.id === id)?.runActive) {
+        setTrouble("This work is still active. Cancel it or let it finish before running it again."); return;
+      }
       const guard = modelRef.current?.cells.find(cell => cell.id === id)?.guard;
       if (mine.state !== "unanswered" && guard && !acknowledgeEffects) {
         setRepeatAsked({ id, attempt: mine.lastRun }); return;
@@ -936,6 +944,8 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
           key={`${generation}:${node.id}:${node.command}:${JSON.stringify(node.environment)}`}
           sourceLabel={source => { const named = workspace.nodes.find(candidate => candidate.id === source)?.name; return named ? `$${named}` : source; }} />
       : undefined;
+    // The handle the shown value was read from, as the cell names it, for this session.
+    const stored = storedIdentity(value, observation?.handle ?? handle, generation);
     return {
       value,
       live,
@@ -945,6 +955,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
         ...(node ? { node } : {}),
         engine,
         ...(generation ? { generation } : {}),
+        ...(stored ? { stored } : {}),
       } satisfies ViewSubject,
       ...readOpen({
         ...(node ? { node } : {}),
@@ -956,7 +967,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
       }),
       reading: live ? undefined : observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retryRead(handle) : undefined} /></div> :
         handle && !value
-          ? <ReadStatus problem={reads.get(handle)?.problem} onRetry={() => retryRead(handle)} />
+          ? <ReadStatus problem={reads.get(handle)?.problem} withdrawn={reads.get(handle)?.withdrawn} onRetry={() => retryRead(handle)} />
           : undefined,
     };
   };
@@ -1122,6 +1133,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
                     actions={actionsFor(boundCell)}
                     {...(boundCell.guard ? { confirmRepeat: boundCell.guard } : {})}
                     pipeline={boundCell.pipeline}
+                    runActive={boundCell.runActive}
                     view={boundCell.view}
                     blocks={output(boundCell)}
                     label={boundCell.id}
@@ -1137,7 +1149,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
           top={model.top}
           subject={[{ text: sourceCell ?? (peekedNode?.name ? `$${peekedNode.name}` : peekedNode?.id ?? ""), role: "mono-ref" }]}
           what={peek}
-          {...peekOf(peekedNode, forOpen.value)}
+          {...peekOf(peekedNode, forOpen.value, forOpen.viewing.stored)}
           {...(sourceCell === undefined ? {} : { source: peekedCell?.source })}
           readStatus={forOpen.reading}
           onClose={leave}
@@ -1355,6 +1367,14 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
    * caret would fall to the document body, where no pane hears `⌘L` or a typed character.
    */
   const leaveScreen = () => { setScreen(undefined); returnFocusToPane(screenPane ?? sessionPane); };
+  /*
+   * Management actions write their exact command into the session prompt for review. Nothing is
+   * submitted here: the person submits it through the ordinary admission, like any typed command.
+   */
+  const composer: Composer = {
+    compose: text => { if (screen) leaveScreen(); changeDraft(text, "prompt"); setSplit(was => focus(was, sessionPane)); },
+    taken: new Set(workspace.nodes.flatMap(node => node.name ? [node.name, node.id] : [node.id])),
+  };
 
   const scopedSurface: WorkspaceSurface = {
     openGraph: () => summonScreen("graph"),
@@ -1363,7 +1383,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
     capacity: connection === "connected" ? workspace.capacity : undefined,
     newTerminalTab,
     command: pane => screen && pane.id === screenPane ? null : paneCommandSurface(pane),
-    content: pane => <div className="workspace-pane-content" onKeyDown={event => {
+    content: pane => <ComposeContext.Provider value={composer}><div className="workspace-pane-content" onKeyDown={event => {
       if (!event.defaultPrevented && event.key === "Escape" && screen && pane.id === screenPane) {
         event.preventDefault(); event.stopPropagation();
         if (screen === "edit" && !fileContext) returnEditorDraft();
@@ -1381,12 +1401,13 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
       {pane.id === sessionPane && <DraftNotice engine={engine} scope={screen === "edit" && !fileContext ? "editor" : "prompt"}
         environments={environments} onReview={() => contextChanged(n => n + 1)} onTrouble={setTrouble} />}
       {generation === undefined && <MonoLine segments={[{ text: "waiting for this workspace…", role: "mono-faint" }]} />}
-    </div>,
+    </div></ComposeContext.Provider>,
   };
   useLayoutEffect(() => { renderWorkspace?.(scopedSurface); });
   if (renderWorkspace) return null;
 
   return (
+    <ComposeContext.Provider value={composer}>
     <div
       className="wes-terminal surface-terminal surface-app"
       data-palette={palette}
@@ -1430,5 +1451,6 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
         <MonoLine segments={[{ text: "waiting for the engine…", role: "mono-faint" }]} className="surface-trouble" />
       )}
     </div>
+    </ComposeContext.Provider>
   );
 }

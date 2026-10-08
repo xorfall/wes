@@ -8,6 +8,7 @@
  */
 import { matchesHttp } from "../views/http-response";
 import type { TypeShape } from "../protocol";
+import { datasetFacts } from "./dataset";
 import { grouped } from "./format";
 import { cleanType } from "./prepare";
 import type { Registry } from "./registry";
@@ -26,6 +27,8 @@ export function summarize(type: TypeShape | undefined, data: unknown, registry: 
     value = value.value;
     shape = shape.element;
   }
+  // A Dataset's fact is its committed count, read from the descriptor; no registry entry applies.
+  if (shape.kind === "dataset") return datasetFacts(value);
   if (matchesHttp(shape, value)) {
     const status = (value as { status: number }).status;
     return [{ text: String(status), tone: status < 400 ? "ok" : "warn" }];

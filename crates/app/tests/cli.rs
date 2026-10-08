@@ -9,6 +9,54 @@ mod interactive;
 #[path = "cli/workflows.rs"]
 mod workflows;
 
+#[test]
+fn cli_captures_user_operating_policy_before_opening_an_explicit_data_home() {
+    let root = tempfile::tempdir().unwrap();
+    let settings = wes::budgets::Store::for_user_home(root.path());
+    settings
+        .save(wes::budgets::Change {
+            revision: 0,
+            values: [("scan.work".into(), 1)].into(),
+        })
+        .unwrap();
+    let source = ":package load source:\"types: {Step: {base: Record, fields: {state: Int, outputs: 'List<Int>'}}}\"\n:def fold(state:Int, context:Int, item:Int) -> Step as :calc pure { return {state:state+item,outputs:[item]}; }\n:calc pure { return [1,2]; } > raw\n:scan source:$raw transition:fold initial:0 context:0 profile:TypedRecords sink:memory > analysis";
+    let run = |data: &str| {
+        Command::new(env!("CARGO_BIN_EXE_wes"))
+            .env("HOME", root.path())
+            .env("USERPROFILE", root.path())
+            .arg("--home")
+            .arg(root.path().join(data))
+            .args(["--sequential", "--command", source])
+            .output()
+            .unwrap()
+    };
+    for data in ["first", "second"] {
+        let result = run(data);
+        assert!(
+            !result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("CAL006"),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    settings
+        .save(wes::budgets::Change {
+            revision: 1,
+            values: [("scan.work".into(), 64_000_000)].into(),
+        })
+        .unwrap();
+    let result = run("third");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn managed_batch_file_lock_and_explicit_restored_activation() {

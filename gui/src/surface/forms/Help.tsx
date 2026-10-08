@@ -72,7 +72,7 @@ export function readHelp(value: FormValue): HelpModel {
     if (!shape) return "Unknown";
     if (depth >= MAX_DEPTH) { truncated = true; return "…"; }
     const kind = string(shape.kind);
-    if (["list", "option", "iter"].includes(kind)) {
+    if (["list", "option", "iter", "dataset"].includes(kind)) {
       return `${labelOf(kind)}<${typeName(shape.element, depth + 1)}>`;
     }
     if (kind === "record" || kind === "meta") return string(shape.name).slice(0, 256) || "Record";

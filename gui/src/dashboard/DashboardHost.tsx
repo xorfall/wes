@@ -24,10 +24,10 @@ function MemberResult({member,node,engine,generation,onValue}:{member:DashboardM
   if(live&&node&&generation)return <LiveView mode="expanded" engine={engine} generation={generation} node={node} cellHold={false}
     key={`${generation}:${node.id}:${node.command}:${JSON.stringify(node.environment)}`}/>;
   const read=handle?reads.get(handle):undefined;
-  const failure=read?.problem?<p role="status">{read.problem} <button className="cell-action" onClick={()=>retry(handle!)}>Read again</button></p>:undefined;
+  const failure=read?.problem?<p role="status">{read.problem}{!read.withdrawn&&<> <button className="cell-action" onClick={()=>retry(handle!)}>Read again</button></>}</p>:undefined;
   if(!value&&failure)return failure;
   if(!value)return <p className="mono-dim" role="status">Reading existing result…</p>;
-  return <>{failure}{observation?.state!=='current'&&observation&&<p className="mono-dim" role="status">{observation.staleReason??'Waiting for the latest publication…'}</p>}<ValueBlock engine={engine} value={value} cacheKey={`${generation}:${observation?.handle??handle}`} bindingKey={`dashboard:${member.id}`} mode="expanded" inCell={false}/></>;
+  return <>{failure}{observation?.state!=='current'&&observation&&<p className="mono-dim" role="status">{observation.staleReason??'Waiting for the latest publication…'}</p>}<ValueBlock engine={engine} value={value} cacheKey={`${generation}:${observation?.handle??handle}`} {...((observation?.handle??handle)&&generation?{stored:{handle:(observation?.handle??handle)!,generation}}:{})} bindingKey={`dashboard:${member.id}`} mode="expanded" inCell={false}/></>;
 }
 function useReportValue(node:string,value:StoredValue|undefined,onValue:(node:string,value:StoredValue)=>void){useEffect(()=>{if(value)onValue(node,value);},[node,value,onValue]);}
 

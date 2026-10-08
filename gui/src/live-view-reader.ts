@@ -53,6 +53,20 @@ export class LiveViewReader {
     if(snapshot) { if(this.held.size<16 || this.held.has(key))this.held.set(key,snapshot); }
     else this.held.delete(key);
   }
+  /**
+   * Access to `node`'s result was withdrawn: drop its held snapshots in every session and give its
+   * watchers an empty, withdrawn sample at once. A read in flight lands nowhere; nothing is read again.
+   */
+  withdraw(node: string) {
+    for (const key of [...this.held.keys()]) if (key.endsWith(`:${node}`)) this.held.delete(key);
+    for (const watch of this.watches) {
+      if (watch.node !== node) continue;
+      watch.controller?.abort();
+      watch.failed = true;
+      watch.sample = { revision: watch.sample.revision, withdrawn: true, problemCode: "withdrawn", problem: "Result · Access withdrawn" };
+      watch.changed(watch.sample);
+    }
+  }
   watch(node: string, generation: string, changed: Watch["changed"], initial?:LiveSample): () => void {
     if (this.watches.size >= 16) { changed({ revision: 0, problem: "Live view limit reached (16). Close another view before reading this one." }); return () => {}; }
     const watch: Watch = { node, generation, changed, sample:initial??{revision:0}, failed: false };
@@ -81,7 +95,8 @@ export class LiveViewReader {
         watch.sample={value:read.value ?? (changedEpoch ? undefined : watch.sample.value),revision:watch.sample.revision+(changedValue?1:0),metadata:read.metadata};
         watch.changed(watch.sample);
       }).catch(error => {
-        if (!this.watches.has(watch)) return;
+        // A read aborted by a withdrawal already said so; its abort is not a budget failure.
+        if (!this.watches.has(watch) || watch.sample.withdrawn) return;
         // Busy admission is transient; it does not replace or count a sample.
         if(error instanceof DisplayReadError && error.code==="busy")return;
         watch.failed = true;

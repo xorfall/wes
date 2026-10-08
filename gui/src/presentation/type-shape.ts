@@ -8,7 +8,7 @@
  */
 import type { TypeShape } from "../protocol";
 
-const KINDS = new Set(["meta", "primitive", "list", "option", "iter", "record", "unknown"]);
+const KINDS = new Set(["meta", "primitive", "list", "option", "iter", "dataset", "record", "unknown"]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -21,7 +21,7 @@ export function typeShapeOf(data: unknown, depth = 0): TypeShape | undefined {
     case "unknown": return Object.keys(data).length === 1 ? { kind: "unknown" } : undefined;
     case "meta": return typeof data.name === "string" && Object.keys(data).length === 2 ? { kind: "meta", name: data.name } : undefined;
     case "primitive": return typeof data.name === "string" && Object.keys(data).length === 2 ? { kind: "primitive", name: data.name } : undefined;
-    case "list": case "option": case "iter": {
+    case "list": case "option": case "iter": case "dataset": {
       const element = typeShapeOf(data.element, depth + 1);
       return element && Object.keys(data).length === 2 ? { kind: data.kind, element } : undefined;
     }
@@ -50,6 +50,7 @@ export function typeStructure(shape: TypeShape | undefined, depth = 0): string {
     case "list": return `List<${typeStructure(shape.element, depth)}>`;
     case "option": return `Option<${typeStructure(shape.element, depth)}>`;
     case "iter": return `Iter<${shape.contract ?? typeStructure(shape.element, depth)}>`;
+    case "dataset": return `Dataset<${typeStructure(shape.element, depth)}>`;
     case "record": {
       const head = shape.name === "" ? "" : `${shape.name} `;
       if (shape.fields.length === 0) return `${head}{}`;
@@ -69,6 +70,7 @@ export function typeLine(shape: TypeShape): string {
     case "list": return `List<${typeLine(shape.element)}>`;
     case "option": return `Option<${typeLine(shape.element)}>`;
     case "iter": return `Iter<${shape.contract ?? typeLine(shape.element)}>`;
+    case "dataset": return `Dataset<${typeLine(shape.element)}>`;
     case "record": return shape.name !== "" ? shape.name : shape.fields.length === 0 ? "{}" : `{ ${shape.fields.map((field) => `${field.name}: ${typeLine(field.type)}`).join(", ")} }`;
     default: return "Unknown";
   }

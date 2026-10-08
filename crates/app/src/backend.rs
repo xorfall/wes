@@ -93,6 +93,12 @@ pub struct BackendCapabilities {
     pub automatic_cleanup: bool,
 }
 pub trait WorkspaceBackend: Send {
+    fn set_retained_dataset_publication(
+        &mut self,
+        _: std::sync::Arc<dyn wes_engine::history::RetainedDatasetPublication>,
+    ) -> Result<(), BackendError> {
+        Err(BackendError::Unsupported("workspace dataset retention"))
+    }
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities::default()
     }
@@ -223,6 +229,13 @@ impl FileBackend {
     }
 }
 impl WorkspaceBackend for FileBackend {
+    fn set_retained_dataset_publication(
+        &mut self,
+        publication: std::sync::Arc<dyn wes_engine::history::RetainedDatasetPublication>,
+    ) -> Result<(), BackendError> {
+        self.0.set_retained_dataset_publication(publication);
+        Ok(())
+    }
     fn identity(&self, name: &WorkspaceName) -> Result<Option<WorkspaceIdentity>, BackendError> {
         Ok(self.0.identity(name)?)
     }

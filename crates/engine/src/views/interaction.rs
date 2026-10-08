@@ -156,7 +156,7 @@ fn validate(
     if *charge > 16384 {
         return Err(Error::Capacity);
     }
-    if !data.is_materialized() || !contract.issues(data).is_empty() {
+    if !data.is_inline() || !contract.issues(data).is_empty() {
         return Err(Error::Interaction);
     }
     Ok(())

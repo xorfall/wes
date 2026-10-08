@@ -5,13 +5,7 @@ use wes_core::contracts::{
     Contract, ContractError, ContractKind as Kind, ContractRegistry, TypeExpression,
 };
 
-pub(super) const CONSTRUCTORS: &[(&str, &[&str])] = &[
-    ("List", &["T"]),
-    ("Map", &["K", "V"]),
-    ("Option", &["T"]),
-    ("Iter", &["T"]),
-    ("Union", &["A", "B"]),
-];
+pub(super) use wes_core::contracts::TYPE_CONSTRUCTORS as CONSTRUCTORS;
 #[derive(Clone, Debug)]
 pub(crate) enum Captured {
     Contract(Arc<Contract>),
@@ -21,9 +15,9 @@ pub(crate) enum Captured {
 pub(crate) fn capture(registry: &ContractRegistry, name: &str) -> Captured {
     if let Ok(expression) = TypeExpression::parse(name)
         && expression.arguments.is_empty()
-        && let Some((name, parameters)) = CONSTRUCTORS.iter().find(|(n, _)| *n == expression.name)
+        && let Some(constructor) = CONSTRUCTORS.iter().find(|c| c.name == expression.name)
     {
-        return Captured::Constructor(name, parameters);
+        return Captured::Constructor(constructor.name, constructor.parameters);
     }
     match registry.resolve(name) {
         Ok(contract) => Captured::Contract(contract),
@@ -36,7 +30,7 @@ pub(crate) fn completion_names(registry: &ContractRegistry) -> Vec<String> {
         .keys()
         .take(super::max_rows().saturating_sub(CONSTRUCTORS.len()))
         .cloned()
-        .chain(CONSTRUCTORS.iter().map(|(name, _)| (*name).to_owned()))
+        .chain(CONSTRUCTORS.iter().map(|c| c.name.to_owned()))
         .collect()
 }
 fn kind(contract: &Contract) -> &'static str {
@@ -48,6 +42,7 @@ fn kind(contract: &Contract) -> &'static str {
         Kind::Map(_, _) => "map",
         Kind::Option(_) => "option",
         Kind::Iter(_) => "iter",
+        Kind::Dataset(_) => "dataset",
         Kind::Union(_, _) => "union",
     }
 }
@@ -87,7 +82,8 @@ pub(super) fn list(contracts: &[Arc<Contract>], budget: &mut Budget<'_>) -> Resu
             ("parameters", Data::List(vec![])),
         ]));
     }
-    for (name, parameters) in CONSTRUCTORS {
+    for c in CONSTRUCTORS {
+        let (name, parameters) = (c.name, c.parameters);
         rows.push(constructor(name, parameters, budget)?);
     }
     Ok(Data::List(rows))
@@ -128,7 +124,10 @@ fn description(
             }
             result.insert("fields".into(), Data::List(rows));
         }
-        Kind::List(element) | Kind::Option(element) | Kind::Iter(element) => {
+        Kind::List(element)
+        | Kind::Option(element)
+        | Kind::Iter(element)
+        | Kind::Dataset(element) => {
             result.insert("element".into(), description(element, budget, depth + 1)?);
         }
         Kind::Map(key, value) => {
@@ -264,7 +263,8 @@ mod tests {
     #[test]
     fn descriptions_obey_query_budgets_and_cancellation_and_constructor_inventory_resolves() {
         let registry = ContractRegistry::new();
-        for (name, parameters) in CONSTRUCTORS {
+        for c in CONSTRUCTORS {
+            let (name, parameters) = (c.name, c.parameters);
             let args = parameters
                 .iter()
                 .map(|_| "Text")

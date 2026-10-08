@@ -15,7 +15,7 @@ it("labels evidence by kind and never calls an incomplete analysis a stream", ()
 });
 
 it("lets a terminal phase speak only for the engine state it belongs to", () => {
-  const phaseOf = (state: WorkspaceNode["state"], phase: "processing" | "complete" | "stopped" | "cancelled") =>
+  const phaseOf = (state: WorkspaceNode["state"], phase: "processing" | "committing" | "complete" | "stopped" | "cancelled") =>
     lineText(progressRows({ ...base, state, progress: { run: "r1", value: { kind: "records", phase, counters } } })![0]!).split(" · ")[0];
   expect(phaseOf("ready", "complete")).toBe("complete");
   expect(phaseOf("failed", "stopped")).toBe("stopped");
@@ -27,6 +27,10 @@ it("lets a terminal phase speak only for the engine state it belongs to", () => 
   expect(phaseOf("failed", "complete")).toBe("last reported complete");
   expect(phaseOf("ready", "stopped")).toBe("last reported stopped");
   expect(phaseOf("failed", "processing")).toBe("last reported processing");
+  // Committing is still work in progress: shown while running, and never as the settled outcome.
+  expect(phaseOf("running", "committing")).toBe("committing");
+  expect(phaseOf("ready", "committing")).toBe("last reported committing");
+  expect(phaseOf("cancelled", "committing")).toBe("last reported committing");
 });
 
 it("groups exact integers beyond a JavaScript number without rounding", () => {
@@ -36,7 +40,7 @@ it("groups exact integers beyond a JavaScript number without rounding", () => {
 });
 
 it("keeps three rows in every phase and says equal committed and read positions without a pending note", () => {
-  for (const phase of ["reading", "processing", "finishing", "complete", "stopped", "cancelled"] as const) {
+  for (const phase of ["reading", "processing", "finishing", "committing", "complete", "stopped", "cancelled"] as const) {
     const rows = progressRows({ ...base, progress: { run: "r1", value: { kind: "records", phase, counters } } })!;
     expect(rows).toHaveLength(PROGRESS_ROWS);
     expect(lineText(rows[0]!)).not.toContain("read, not committed");

@@ -4,6 +4,8 @@ import { isExactNumber, stringifyExactJson } from "../../exact-json";
 import type { TypeShape } from "../../protocol";
 import { DecodedBytes } from "../../presentation/bytes";
 import { formatWire } from "../../presentation/format";
+import { datasetSelect, datasetSummary, decodeDatasetData } from "../../presentation/dataset";
+import { DatasetRegion } from "./DatasetBrowser";
 import { useColumns } from "./measure";
 import { declarationPath, declaredTone, fieldMeta, type Tone } from "../../value-meta";
 
@@ -28,6 +30,7 @@ const EXACT_TEXT = { locale: "en-GB", timeZone: "UTC" } as const;
  * every other value keep the generic `jsonSummary`; raw JSON and copy are unaffected.
  */
 export function typedJsonSummary(value: unknown, type?: TypeShape): string {
+  if (type?.kind === "dataset" && value !== undefined && value !== null) return datasetSummary(type, value);
   if (type?.kind !== "primitive" || typeof value !== "string") return jsonSummary(value);
   return formatWire(type.name, value, EXACT_TEXT.locale, EXACT_TEXT.timeZone) ?? jsonSummary(value);
 }
@@ -39,13 +42,15 @@ function unwrap(value:unknown,type?:TypeShape):{value:unknown;type?:TypeShape;no
   }
   return {value,type};
 }
+/** A Dataset descriptor that does not validate opens to nothing: its summary already says so. */
+const invalidDataset=(value:unknown,type?:TypeShape)=>type?.kind==="dataset" && !decodeDatasetData(value);
 const keysOf=(value:unknown,type?:TypeShape):string[]=>{
-  if(!structure(value) || Array.isArray(value))return [];
+  if(!structure(value) || Array.isArray(value) || invalidDataset(value,type))return [];
   const declared=type?.kind==="record" ? type.fields.map(field=>field.name) : [];
   const seen=new Set(declared);
   return [...declared,...Object.keys(value as object).filter(key=>!seen.has(key))];
 };
-const countOf=(value:unknown,type?:TypeShape)=>Array.isArray(value) ? value.length : keysOf(value,type).length;
+const countOf=(value:unknown,type?:TypeShape)=>Array.isArray(value) && !invalidDataset(value,type) ? value.length : keysOf(value,type).length;
 const entryOf=(value:unknown,type:TypeShape|undefined,key:string):[string,unknown,TypeShape|undefined]=>[key,(value as Record<string,unknown>)[key],type?.kind==="list" ? type.element : type?.kind==="record" ? type.fields.find(field=>field.name===key)?.type : undefined];
 const entries=(value:unknown,type:TypeShape|undefined,limit:number):[string,unknown,TypeShape|undefined][]=>
   Array.isArray(value) ? value.slice(0,limit).map((item,at)=>[String(at),item,type?.kind==="list"?type.element:undefined])
@@ -53,7 +58,7 @@ const entries=(value:unknown,type:TypeShape|undefined,limit:number):[string,unkn
 
 
 /** Exact data in a bounded, path-addressable tree; narrow boxes use one level at a time. */
-export function JsonTree({ data, type, mode="window", collapsed=false, declared }: {data:unknown;type?:TypeShape;mode?:string;collapsed?:boolean;declared?:import("../../presentation/types").Declared}) {
+export function JsonTree({ data, type, mode="window", collapsed=false, declared, datasets }: {data:unknown;type?:TypeShape;mode?:string;collapsed?:boolean;declared?:import("../../presentation/types").Declared;datasets?:{readonly root:TypeShape;readonly at:string}}) {
   /** A scalar's declared tone at its pointer, when the tree carries metadata for its declaration. */
   const toned=(address:string,item:unknown)=>{
     if(!declared||!type)return undefined;
@@ -70,6 +75,8 @@ export function JsonTree({ data, type, mode="window", collapsed=false, declared 
   const [path,setPath]=useState<{key:string}[]>([]);
   const [selected,setSelected]=useState("");
   const [whole,setWhole]=useState<ReadonlySet<string>>(new Set());
+  // Datasets whose records were opened by hand; nothing is read for one until then.
+  const [reading,setReading]=useState<ReadonlySet<string>>(new Set());
   const narrow=columns<40 && mode!=="preview";
   // A breadcrumb stores addresses, never an old live payload.
   let current=unwrap(data,type);
@@ -101,16 +108,29 @@ export function JsonTree({ data, type, mode="window", collapsed=false, declared 
             <span className={`json-value ${structure(item) ? "json-shape" : item==null ? "mono-faint" : toned(address, item) ?? (typeof item === "string" ? "mono-literal" : typeof item === "boolean" ? "mono-ref" : "mono-meta")}`}>{cut ? `${summary.slice(0,80)}…` : summary}{cut && <button className="cell-action json-chars" onClick={()=>setWhole(was=>new Set(was).add(address))}>+{summary.length-80} chars</button>}</span></span>
           </div>
           {!narrow && children && opened.has(address) && <div className="json-indent">{branch(item,itemType,address,depth+1)}</div>}
+          {datasetRecords(address,item,itemType)}
         </div>;
       })}
       {(limit>=2000 || visited>=2000) && total>list.length ? <p className="mono-faint">Tree limit reached · {total-list.length} items not shown · select a smaller branch in JSON</p> : total>limit && <button className="cell-action json-more" onClick={()=>setShown(was=>new Map(was).set(at,limit+50))}>show {Math.min(50,total-limit)} more · {total-limit} not shown</button>}
     </div>;
   };
-  const previewGrown=mode==="preview" && (opened.size>0 || shown.size>0 || whole.size>0);
+  /** A valid Dataset's explicit records action and, once used, its page reader under the entry. */
+  const datasetRecords=(address:string,item:unknown,itemType:TypeShape|undefined)=>{
+    const reference=itemType?.kind==="dataset" && datasets ? decodeDatasetData(item) : undefined;
+    if(!reference || itemType?.kind!=="dataset" || !datasets)return null;
+    const select=datasetSelect(datasets.root,`${datasets.at}${address}`);
+    const open=reading.has(address);
+    return <div className="json-indent">
+      <button type="button" className="cell-action" aria-expanded={open} aria-label={`${open?"Close":"Read"} records at ${address}`}
+        onClick={()=>setReading(was=>{const next=new Set(was);if(next.has(address))next.delete(address);else next.add(address);return next;})}>{open?"close records":"read records"}</button>
+      {open && <DatasetRegion anchor={{reference,type:itemType,...(select===undefined?{}:{select})}}>{null}</DatasetRegion>}
+    </div>;
+  };
+  const previewGrown=mode==="preview" && (opened.size>0 || shown.size>0 || whole.size>0 || reading.size>0);
   return <div ref={root} className={`json-tree json-${mode}${columns<48 ? " json-stacked" : ""}${previewGrown ? " json-preview-grown" : ""}`}>
     {collapsed ? <p className="json-facts">{unwrapped.none ? "none" : typedJsonSummary(unwrapped.value,unwrapped.type)}</p> : <>
       {narrow && <nav className="json-breadcrumb" aria-label="JSON location"><button className="cell-action" onClick={()=>setPath([])}>root</button>{path.map((part,at)=><button key={at} className="cell-action" onClick={()=>setPath(was=>was.slice(0,at+1))}>/ {part.key}</button>)}</nav>}
-      {structure(current.value) ? branch(current.value,current.type,narrow ? `/${path.map(part=>pointerPart(part.key)).join("/")}`.replace(/\/$/,"") : "",0) : <p className="json-facts">{current.none ? "none" : typedJsonSummary(current.value,current.type)}</p>}
+      {structure(current.value) && !invalidDataset(current.value,current.type) ? branch(current.value,current.type,narrow ? `/${path.map(part=>pointerPart(part.key)).join("/")}`.replace(/\/$/,"") : "",0) : <p className="json-facts">{current.none ? "none" : typedJsonSummary(current.value,current.type)}</p>}
       {clipboard.notice && <p className="mono-dim" role="status">{clipboard.notice}</p>}
       {mode === "window" && selected && <footer className="json-location"><span>{selected}</span><button className="cell-action" onClick={()=>void clipboard.copy(selected)}>copy pointer</button></footer>}
     </>}

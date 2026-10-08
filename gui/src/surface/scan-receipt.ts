@@ -26,7 +26,16 @@ export interface ScanReceipt {
   readonly inputChargeUnit: "raw_bytes" | "logical_charge";
   readonly inputCharge: string; readonly inputRecords: string;
   readonly outputCharge: string; readonly outputRecords: string;
-  readonly work: string; readonly workAllowance: string;
+  /** `work` is the conservatively charged total; `measuredWork` is what was actually measured. */
+  readonly work: string; readonly measuredWork: string; readonly workAllowance: string;
+  /** The acknowledged prepaid work grant: a reservation, not lost work. `undefined` without a durable checkpoint. */
+  readonly outstandingWork?: string;
+  /** Elapsed time including conservatively charged interrupted intervals; never an estimate of what remains. */
+  readonly durationChargedMs: string;
+  /** The acknowledged prepaid interval. `undefined` without a durable checkpoint. */
+  readonly durationOutstandingMs?: string;
+  /** The durable checkpoint attempt and its actual predecessor, as the engine recorded them. */
+  readonly attempt?: string; readonly previousAttempt?: string;
   readonly heldCharge: string; readonly highWaterCharge: string;
   readonly finishApplied: boolean;
   /** `undefined` is the engine's none: whether the producer completed is not known. */
@@ -37,20 +46,23 @@ export interface ScanReceipt {
   readonly profile: string; readonly profileRevision: string;
   readonly sourceNode?: string; readonly sourceRun?: string; readonly sourceRevision?: string;
   readonly sourcePort?: string; readonly sourcePath: readonly string[];
+  /** The engine's offer of ordinary resume; independent of whether a durable `attempt` exists. */
   readonly durableResume: boolean;
   readonly limits: ScanLimits;
 }
 
 const FIELDS = ["status", "position", "readPosition", "extent", "positionUnit", "inputChargeUnit", "inputCharge", "inputRecords",
-  "outputCharge", "outputRecords", "work", "workAllowance", "heldCharge", "highWaterCharge", "finishApplied", "sourceComplete",
-  "failureCode", "failureMessage", "exhausted", "rejectedStart", "rejectedEnd", "analysisId", "transitionRevision", "finishRevision",
+  "outputCharge", "outputRecords", "work", "measuredWork", "workAllowance", "outstandingWork", "durationChargedMs", "durationOutstandingMs",
+  "heldCharge", "highWaterCharge", "finishApplied", "sourceComplete",
+  "failureCode", "failureMessage", "exhausted", "rejectedStart", "rejectedEnd", "analysisId", "attempt", "previousAttempt",
+  "transitionRevision", "finishRevision",
   "profile", "profileRevision", "sourceNode", "sourceRun", "sourceRevision", "sourcePort", "sourcePath", "durableResume", "limits"] as const;
 const LIMITS = ["work", "inputCharge", "inputRecords", "heldCharge", "outputCharge", "outputRecords", "recordWork", "recordCharge",
   "stateCharge", "contextCharge", "durationMs"] as const;
 /** The engine's stable dimension names (scan/ledger.rs), said in words. An unlisted name is shown as written. */
 const DIMENSIONS: Readonly<Record<string, string>> = {
-  work: "work", input_charge: "input charge", input_records: "input records", held_charge: "held charge",
-  output_charge: "output charge", output_records: "output records", aggregate_charge: "aggregate held charge",
+  work: "work absolute cap", work_allowance: "earned work allowance", duration: "duration",
+  input_charge: "input charge", input_records: "input records", held_charge: "held charge", output_charge: "output charge", output_records: "output records", aggregate_charge: "aggregate held charge",
 };
 /** The failure message is the engine's bounded text; the summary bounds it again for its rows. */
 const MESSAGE_CHARS = 512;
@@ -96,7 +108,10 @@ export function scanReceiptOf(value: StoredValue | undefined): ScanReceipt | und
       inputChargeUnit: oneOf(raw.inputChargeUnit, ["raw_bytes", "logical_charge"] as const),
       inputCharge: int(raw.inputCharge), inputRecords: int(raw.inputRecords),
       outputCharge: int(raw.outputCharge), outputRecords: int(raw.outputRecords),
-      work: int(raw.work), workAllowance: int(raw.workAllowance),
+      work: int(raw.work), measuredWork: int(raw.measuredWork), workAllowance: int(raw.workAllowance),
+      outstandingWork: option(raw.outstandingWork, int),
+      durationChargedMs: int(raw.durationChargedMs), durationOutstandingMs: option(raw.durationOutstandingMs, int),
+      attempt: option(raw.attempt, text), previousAttempt: option(raw.previousAttempt, text),
       heldCharge: int(raw.heldCharge), highWaterCharge: int(raw.highWaterCharge),
       finishApplied: bool(raw.finishApplied),
       sourceComplete: option(raw.sourceComplete, bool),
@@ -120,6 +135,8 @@ const SEP: Segment = { text: " · ", role: "mono-faint" };
 const dim = (text: string): Segment => ({ text, role: "mono-dim" });
 const ink = (text: string, role: MonoRole = "mono-ink"): Segment => ({ text, role });
 const n = (digits: string) => ink(grouped(digits));
+/** An exact count the engine may not have: its none is said as none, never as zero. */
+const optional = (digits: string | undefined) => digits === undefined ? ink("none") : n(digits);
 
 /** One line: what the run ended as, and how far it got. For a disclosure's own summary. */
 export function receiptHeadline(receipt: ScanReceipt): Segment[] {
@@ -145,8 +162,12 @@ export function receiptRows(receipt: ScanReceipt): Segment[][] {
     ...(pending ? [dim(" · read, not committed")] : [])]);
   rows.push([n(receipt.inputRecords), dim(" records in"), SEP, dim(receipt.inputChargeUnit === "raw_bytes" ? "input raw bytes " : "input logical charge "),
     n(receipt.inputCharge), SEP, n(receipt.outputRecords), dim(" outputs"), SEP, dim("output logical charge "), n(receipt.outputCharge)]);
-  rows.push([dim("work "), n(receipt.work), dim(" used"), SEP, n(receipt.workAllowance), dim(" earned allowance"), SEP,
-    dim("absolute cap "), n(receipt.limits.work)]);
+  rows.push([dim("work charged "), n(receipt.work), SEP, dim("measured "), n(receipt.measuredWork), SEP,
+    dim("prepaid reservation "), optional(receipt.outstandingWork)]);
+  rows.push([dim("earned allowance "), n(receipt.workAllowance), SEP, dim("absolute cap "), n(receipt.limits.work)]);
+  rows.push([dim("duration charged "), n(receipt.durationChargedMs), dim(" ms elapsed"), SEP, dim("prepaid reservation "),
+    ...(receipt.durationOutstandingMs === undefined ? [ink("none")] : [n(receipt.durationOutstandingMs), dim(" ms")]), SEP,
+    dim("limit "), n(receipt.limits.durationMs), dim(" ms")]);
   rows.push([dim("logical held charge "), n(receipt.heldCharge), SEP, dim("high-water "), n(receipt.highWaterCharge), SEP,
     dim("cap "), n(receipt.limits.heldCharge), dim(" · not memory use or stored bytes")]);
   if (receipt.failureCode !== undefined || receipt.failureMessage !== undefined) {
@@ -161,6 +182,9 @@ export function receiptRows(receipt: ScanReceipt): Segment[][] {
       dim("–"), ink(receipt.rejectedEnd === undefined ? "?" : grouped(receipt.rejectedEnd)), dim(" (half-open)")]);
   }
   rows.push([dim("analysis "), ink(receipt.analysisId, "mono-ref")]);
+  // Each identity as recorded; a missing predecessor is said as none, never inferred from the attempt.
+  rows.push([dim("checkpoint attempt "), receipt.attempt === undefined ? ink("none") : ink(receipt.attempt, "mono-dim"), SEP,
+    dim("previous attempt "), receipt.previousAttempt === undefined ? ink("none") : ink(receipt.previousAttempt, "mono-dim")]);
   rows.push(receipt.sourceNode === undefined
     ? [dim("source "), ink("literal input · no producing node")]
     : [dim("source "), ink(receipt.sourceNode, "mono-ref"),
@@ -174,7 +198,8 @@ export function receiptRows(receipt: ScanReceipt): Segment[][] {
   rows.push([dim("captured limits · input "), n(l.inputRecords), dim(" records, "), n(l.inputCharge), dim(" charge"), SEP,
     dim("output "), n(l.outputRecords), dim(" records, "), n(l.outputCharge), dim(" charge")]);
   rows.push([dim("per record · work "), n(l.recordWork), SEP, dim("charge "), n(l.recordCharge), SEP,
-    dim("state "), n(l.stateCharge), SEP, dim("context "), n(l.contextCharge), SEP, dim("duration "), n(l.durationMs), dim(" ms")]);
-  rows.push([dim("durable checkpoint "), ink(receipt.durableResume ? "yes" : "none")]);
+    dim("state "), n(l.stateCharge), SEP, dim("context "), n(l.contextCharge)]);
+  // Whether a durable attempt exists, not whether resuming is offered: a deterministic stop keeps one.
+  rows.push([dim("durable checkpoint "), ink(receipt.attempt !== undefined ? "yes" : "none")]);
   return rows;
 }

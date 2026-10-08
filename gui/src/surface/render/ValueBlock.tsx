@@ -21,7 +21,7 @@ import type { InstanceDisplay } from "../../value-views/InstancePlacement";
  * while the block keeps its preview form; clicking the counts line presents the block whole, in
  * its expanded form. Both last until the cell's view changes.
  */
-import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import type { StoredValue } from "../../protocol";
 import { PreparedCache } from "../../presentation/prepare";
 import { present, tailOf } from "../../presentation/present";
@@ -33,6 +33,8 @@ import { useBlockReport } from "../Cell";
 import { MonoLine } from "../MonoLine";
 import { useColumns } from "./measure";
 import { Presented, segments } from "./Presentation";
+import { DeletePlanReview, isDeletePlan } from "../DeletePlanReview";
+import { DatasetHostContext, datasetWithdrawals, WITHDRAWN_FACTS, WITHDRAWN_TYPE_LABEL } from "./dataset-source";
 
 /** One preparation per handle and generation, shared by every place a value is shown. */
 export const preparedValues = new PreparedCache();
@@ -66,6 +68,13 @@ export interface ValueBlockProps {
   readonly lines?: number;
   /** Whether counts go to a cell's tail (in a cell) or are drawn under the value (in the window). */
   readonly inCell?: boolean;
+  /**
+   * The stored result this value was read from, for the session it was read in. Datasets inside
+   * the value page through it; without it they show their descriptor only.
+   */
+  readonly stored?: { readonly handle: string; readonly generation: string };
+  /** The result's workspace name, which management commands use to refer to it. */
+  readonly name?: string;
 }
 
 const NO_FACTS: Facts = {};
@@ -79,7 +88,35 @@ export function ValueBlock(props:ValueBlockProps) {
   return log ? <LogView value={props.value} mode={props.mode} identity={props.bindingKey} collapsed={props.collapsed} {...(log.mapping?{mapping:log.mapping}:{})}/> : isViewInstance(props.value) ? <div className="value-instance-block">{props.collapsed && <p className="mono-dim">View · ${id}</p>}<div hidden={props.collapsed}><InstanceView value={props.value} engine={props.engine} mode={props.mode}
     display={props.inCell===false?undefined:props.instanceDisplay??{label:`$${id}`}}/></div></div> : <DataValueBlock {...props}/>;
 }
-function DataValueBlock({ value, cacheKey, bindingKey, collapsed = false, facts = NO_FACTS, mode, lines = 6, inCell = true }: ValueBlockProps) {
+function DataValueBlock(props: ValueBlockProps) {
+  const { engine, stored, collapsed = false, mode } = props;
+  useSyncExternalStore(datasetWithdrawals.subscribe, datasetWithdrawals.snapshot, datasetWithdrawals.snapshot);
+  const handle = stored?.handle, generation = stored?.generation;
+  const source = useMemo(() => engine && handle !== undefined && generation ? { engine, handle, generation } : undefined, [engine, handle, generation]);
+  const name = props.name;
+  const host = useMemo(() => ({ ...(source ? { source } : {}), ...(name ? { name } : {}), mode, collapsed }), [source, name, mode, collapsed]);
+  const frame = useRef<HTMLDivElement>(null);
+  const height = useRef(0);
+  const withdrawn = source !== undefined && datasetWithdrawals.has(source);
+  useLayoutEffect(() => { if (!withdrawn && frame.current) height.current = frame.current.getBoundingClientRect().height; });
+  useEffect(() => { if (withdrawn) preparedValues.forget(props.cacheKey, props.value); }, [withdrawn, props.cacheKey, props.value]);
+  // Withdrawn access clears every detail the value showed; the block keeps its place and height.
+  return <div ref={frame} className="value-block-frame">
+    {withdrawn ? <WithdrawnBlock height={height.current} />
+      : <DatasetHostContext.Provider value={host}>{isDeletePlan(props.value)
+        ? <div className="value-block"><DeletePlanReview value={props.value} {...(name ? { name } : {})} collapsed={collapsed} /></div>
+        : <PresentedValueBlock {...props} />}</DatasetHostContext.Provider>}
+  </div>;
+}
+
+/** What stays of a value whose Dataset access was withdrawn: a generic notice, nothing read from it. */
+function WithdrawnBlock({ height }: { readonly height: number }) {
+  return <div className="value-block dataset-withdrawn" role="status" style={height > 0 ? { minHeight: `${height}px` } : undefined}>
+    <MonoLine segments={[{ text: WITHDRAWN_TYPE_LABEL, role: "mono-dim" }, { text: " · ", role: "mono-faint" }, ...WITHDRAWN_FACTS]} className="value-line" />
+  </div>;
+}
+
+function PresentedValueBlock({ value, cacheKey, bindingKey, collapsed = false, facts = NO_FACTS, mode, lines = 6, inCell = true }: ValueBlockProps) {
   const registry = useRegistry();
   const modules = useSyncExternalStore(valueViewModules.subscribe, valueViewModules.get, valueViewModules.get);
   const box = useRef<HTMLDivElement>(null);

@@ -52,6 +52,7 @@ pub fn operation_arity(
 /// Describe only the outer kind, without traversing schemas or exposing record fields.
 pub fn kind(shape: &Shape) -> String {
     match shape {
+        Shape::Dataset(_) => "Dataset".into(),
         Shape::Primitive(p) => p.to_string(),
         Shape::List(_) => "List".into(),
         Shape::Option(_) => "Option".into(),

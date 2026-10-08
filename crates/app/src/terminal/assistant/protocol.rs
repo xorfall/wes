@@ -51,6 +51,30 @@ pub(super) fn registry() -> &'static Value {
 }
 fn build_tools() -> Value {
     let string = json!({"type":"string"});
+    let extent = schema(
+        json!({
+            "store": {"type":"string","maxLength":36},
+            "dataset": {"type":"string","maxLength":36},
+            "generation": {"type":"string","maxLength":20},
+            "manifest": {"type":"string","maxLength":36},
+            "manifestDigest": {"type":"string","maxLength":71},
+            "manifestBytes": {"type":"string","maxLength":20},
+            "schemaDigest": {"type":"string","maxLength":71},
+            "records": {"type":"string","maxLength":20},
+            "authorizationGeneration": {"type":"string","maxLength":20}
+        }),
+        &[
+            "store",
+            "dataset",
+            "generation",
+            "manifest",
+            "manifestDigest",
+            "manifestBytes",
+            "schemaDigest",
+            "records",
+            "authorizationGeneration",
+        ],
+    );
     let key = schema(
         json!({"service":string,"apiVersion":string,"scope":string}),
         &["service", "apiVersion", "scope"],
@@ -73,6 +97,8 @@ fn build_tools() -> Value {
         tool("help","Discover provider operations or a meta command. No execution. depth:1..3 includes descendant signatures in one bounded read (128 entries, 64 KiB); choose a narrower path if too large. Use command import with tail [openapi] for OpenAPI JSON/YAML or [spec] for a ready Wes descriptor; both require endpoint and exactly one of file/url. For calculation functions use command calc with tail [iter.matches] (or another listed operation): signatures, returns, behavior and examples.",json!({"provider":string,"command":string,"tail":{"type":"array","items":{"type":"string"}},"depth":{"type":"integer","minimum":0,"maximum":3,"default":0}}),&[]),
         tool("values_list","List current public materialized values without rerunning producers.",json!({}),&[]),
         tool("value_read","Read an existing public data result by binding name or node ID, with an optional leading $ (e.g. total, $total, id1005, $id1005). No new cells or reruns. Error-output references are not data; use cell_read for errors. Omit selection options for full value (8 MiB). select is a JSON Pointer; offset/limit page a selected list. shape_only returns kind/length; typed:true adds the schema and optional captured contract meta (also for shape_only). Missing meta means unknown. Selected responses wrap value and optional page; 64 KiB budget. typed preserves scalar kinds. Terminal evidence returns {status:stopped|incomplete,source,run,value}; stopped labels a stopped stream observation and incomplete labels committed partial data from a failed analysis. Neither is a successful calc input; the producer remains stopped or failed. Use calc for filtering/aggregation.",json!({"name":string,"typed":{"type":"boolean"},"select":{"type":"string","maxLength":2048,"description":"JSON Pointer, e.g. /body/items/0; empty selects root. Record keys and list indices only."},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":"List page size; default 50 when paging."},"shape_only":{"type":"boolean","description":"Metadata only; cannot combine with offset/limit."}}),&["name"]),
+        tool("dataset_inspect","Inspect a public Dataset selected from an existing result. name is a binding or node ID; select is a JSON Pointer (for example /outputs). Returns the exact committed prefix, lifecycle, protection and persistence. head:true explicitly reads the newer committed head within the same recording epoch or analysis attempt; it refuses a changed attempt. Omit head for the saved input. Does not start, resume or rerun any work.",json!({"name":string,"select":{"type":"string","maxLength":2048},"head":{"type":"boolean"}}),&["name"]),
+        tool("dataset_page","Read a bounded typed Dataset page selected from an existing public result. from is a canonical unsigned decimal STRING; never use a floating point ordinal. limit is 1–100, default 50. Optional extent is the exact reference returned by dataset_inspect head:true; it remains constrained to the existing result and never grants control. Returned cursor binds the exact manifest and selection; use cursor OR from, never both. extentExhausted means end of this snapshot, not source EOF. No source start, recording, analysis or automatic refresh. Replies obey 64 KiB; reduce limit on an encoding refusal.",json!({"name":string,"select":{"type":"string","maxLength":2048},"from":{"type":"string","maxLength":20},"cursor":{"type":"string","maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":100},"extent":extent}),&["name"]),
         tool("validate","Check source syntax and assistant admission only. Does not execute or guarantee type/runtime success.",json!({"source":string}),&["source"]),
         tool("execute","Execute up to 64 declarations/calls, including streams and pipelines. Immediate env/refresh/cancel/wait commands run separately. Shared work is protected at commit. reactive applies only to created nodes. Results default to summary; request full only when needed. sequential:true waits for each top-level statement to finish before the next; stops on failure, cancellation or open stream, without rollback. Prechecks syntax/admission; binding/types are checked per step. Use it for create/connect workflows. Reuse workspace/request_id/source/context/reactive/sequential on lost replies; response includes next context.",json!({"source":string,"context":string,"request_id":string,"wait_ms":wait,"reactive":{"type":"boolean","default":false},"sequential":{"type":"boolean","default":false},"results":{"type":"string","enum":["summary","full"],"default":"summary"}}),&["source","context","request_id"]),
         tool("execution_read","Read a request in this saved terminal pane and workspace, including after reopening. Public results/errors and optional trace. Does not rerun or restore grants.",json!({"request_id":string,"trace":{"type":"boolean"},"wait_ms":wait,"results":{"type":"string","enum":["summary","full"],"default":"summary"}}),&["request_id"]),
@@ -383,18 +409,15 @@ mod tests {
             )
             .is_none()
         );
-        assert_eq!(
-            p.receive(
+        let listed = p
+            .receive(
                 json!({"jsonrpc":"2.0","id":"list","method":"tools/list"}),
-                forbidden
+                forbidden,
             )
-            .unwrap()["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .len(),
-            22
-        );
+            .unwrap();
         let advertised = tools();
+        assert_eq!(listed["id"], "list");
+        assert_eq!(listed["result"], advertised);
         let pane = advertised["tools"]
             .as_array()
             .unwrap()

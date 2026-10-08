@@ -31,7 +31,8 @@ export interface ErrorRecord {
 /** Engine publication evidence, separate from execution state and HTTP read failures. */
 /** A Pin's view binding, separate from whether its result was kept. Refusal never un-keeps the result. */
 export type PinBinding = { readonly state: "pending" } | { readonly state: "bound" } | { readonly state: "refused"; readonly problem: string };
-export type DependencyLifetime = "continuous" | "creation";
+export type DependencyLifetime = "continuous" | "creation" | "captured";
+export const DEPENDENCY_LIFETIMES: readonly DependencyLifetime[] = ["continuous", "creation", "captured"];
 export type ResultPublication = {
   readonly run: string | null;
   readonly uncertainHandle: string | null;
@@ -58,7 +59,8 @@ export interface ResultDescriptor {
 }
 
 export type EvidenceKind = "stopped_stream" | "incomplete";
-export type RecordPhase = "reading" | "processing" | "finishing" | "complete" | "stopped" | "cancelled";
+/** `committing` means outputs are being made durable; it is a working phase, never success. */
+export type RecordPhase = "reading" | "processing" | "finishing" | "committing" | "complete" | "stopped" | "cancelled";
 /**
  * Committed and read positions share `unit`. Charges are conservative logical charges, never RSS or
  * encoded bytes. `workAllowance` is the work earned so far, under the fixed `workLimit`. Integers are
@@ -71,11 +73,54 @@ export interface RecordCounters {
   readonly heldCharge: string; readonly highWaterCharge: string; readonly heldLimit: string;
   readonly outputCharge: string; readonly outputLimit: string;
 }
-export interface ExecutionProgress {
-  readonly kind: "records";
-  readonly phase: RecordPhase;
-  readonly counters: RecordCounters | null;
+/**
+ * What the engine says a node's current recording run accepts: an attached writer, or a recording
+ * setup prepared before its source runs. A prepared setup may be discarded; an attached writer is
+ * stopped. Neither is ever offered for a run that has finished, and never both at once.
+ */
+export interface RecordingControl {
+  /** The run (setup or physical writer) has not finished; it stays true while a stop drains. */
+  readonly active: boolean;
+  readonly statusAvailable: boolean;
+  /** Never true once the run has finished. */
+  readonly stopAvailable: boolean;
+  /** Only an unused prepared setup can be discarded; never true once the run has finished. */
+  readonly discardAvailable: boolean;
 }
+/**
+ * Which local reconciliation command the engine accepts for a node's original owned run: `scan` for
+ * a bound scan or resume, `dataset` for the recording that starts a lifetime. It concerns the joined
+ * local store only; it never reruns a producer or resumes analysis.
+ */
+export interface ReconciliationControl {
+  readonly command: "scan" | "dataset";
+  /** True only after the original run has physically joined; never while it is active, open or waiting. */
+  readonly available: boolean;
+}
+/** A recording writer's own state; each maps to exactly one shared phase. */
+export type RecordingWriterState = "prepared" | "recording" | "draining" | "stopped" | "incomplete" | "unconfirmed";
+/**
+ * The latest status a recording writer acknowledged, as exact decimal strings. Lossy and at most a
+ * few times a second: not a stored receipt, not the source's state, not a live queue count and not
+ * a permission. Charges are conservative value/work charges against the run's captured limits.
+ */
+export interface RecordingCounters {
+  readonly state: RecordingWriterState;
+  readonly first: string; readonly acceptedThrough: string; readonly committedThrough: string;
+  /** Accepted but not yet committed, or null when unknown. */
+  readonly pending: string | null;
+  readonly rejected: string;
+  readonly termination: import("./dataset-read").RecordingTermination | null;
+  readonly chargedBytes: string; readonly chargedWork: string; readonly bytesLimit: string; readonly workLimit: string;
+}
+/**
+ * One run's progress. A finite analysis reports positions and charges; a recording reports its
+ * writer status. For a recording, an absent `recording` means the counters are withheld because the
+ * source is not public, never zero.
+ */
+export type ExecutionProgress =
+  | { readonly kind: "records"; readonly phase: RecordPhase; readonly counters: RecordCounters | null }
+  | { readonly kind: "recording"; readonly phase: RecordPhase; readonly counters: null; readonly recording?: RecordingCounters };
 
 export interface ExecutionRecord {
   readonly id: string;
@@ -242,8 +287,17 @@ export type Event =
       /**
        * How the node's input edges govern it. `creation` edges order its one construction; once that
        * succeeds, upstream refreshes no longer reach it (a view then follows its Current input).
+       * `captured` (an analysis) takes its inputs once when its run starts: later producer updates
+       * neither cancel nor recompute that run, and an explicit refresh captures the new inputs. It is
+       * not a construction and is never "constructed".
        */
       readonly dependencyLifetime: DependencyLifetime;
+      /**
+       * Whether a `captured` node's current run has actually taken its inputs at guarded entry. False
+       * before entry (a spawned run that has not entered), true afterwards and after restoration.
+       * Never true for another lifetime. Absent is read as false.
+       */
+      readonly inputsCaptured?: boolean;
       readonly currentDefinition?: string | null;
       readonly run?: string | null;
       readonly errorNames?:readonly string[];
@@ -261,6 +315,23 @@ export type Event =
       readonly streamOutput?: boolean;
       /** The node's own bound call opens a stream: it is a source, not a consumer of one. */
       readonly streamSource?: boolean;
+      /**
+       * Which recording commands this exact run's admitted writer accepts now, or null/absent for none.
+       * Metadata for offering a reviewed command only, never a permission: commands are checked again.
+       */
+      readonly recordingControl?: RecordingControl | null;
+      /**
+       * The local reconciliation this exact original run accepts, or null/absent for none (copies,
+       * selections and other commands have none). Metadata for a reviewed command only, never a permission.
+       */
+      readonly reconciliationControl?: ReconciliationControl | null;
+      /**
+       * For work with an owned lifetime (a recording, or a scan following a committed EventLog):
+       * whether this run is still open. Null/absent for other work. A ready node may be lifetime
+       * active: its value is an acknowledged immutable prefix, not a stream, and is not re-read per
+       * event. Restored or reopened work is never active.
+       */
+      readonly lifetimeActive?: boolean | null;
     }
   | { readonly event: "node"; readonly node: string; readonly state: NodeState; readonly waiting?:readonly WaitingInput[]; readonly staleReason?: StaleReason; readonly publication?: ResultPublication;
       /** Newer committed input arrived while this captured calculation runs; it is computed after this one completes. */
@@ -276,6 +347,11 @@ export type Event =
       readonly error?: ErrorRecord; readonly reason?: string; readonly constructionComplete?: boolean } & ResultDescriptor)
   /** Lossy status of one run; counters are null when they are not public. Never a value or history entry. */
   | { readonly event: "node-progress"; readonly node: string; readonly run: string | null; readonly progress: ExecutionProgress }
+  /**
+   * Access to a node's current result was withdrawn. Carries no value, type, count or reason: every
+   * cached value, value-derived fact and display of that node is dropped. Never a request to rerun.
+   */
+  | { readonly event: "result-access"; readonly node: string; readonly readable: false }
   | {
       /**
        * The rule in force: what this session keeps without being asked, and up to what size.
@@ -444,6 +520,8 @@ export type TypeShape =
   | { readonly kind: "list"; readonly element: TypeShape }
   | { readonly kind: "option"; readonly element: TypeShape }
   | { readonly kind: "iter"; readonly element: TypeShape; readonly contract?: string }
+  /** A committed dataset extent: its data is a descriptor, never the records, and it is not a List. */
+  | { readonly kind: "dataset"; readonly element: TypeShape }
   | { readonly kind: "record"; readonly name: string; readonly fields: TypeField[] }
   | { readonly kind: "unknown" };
 
@@ -461,6 +539,8 @@ export function describeType(shape: TypeShape | undefined): string {
       return shape.name.charAt(0) + shape.name.slice(1).toLowerCase();
     case "iter":
       return `Iter<${describeType(shape.element)}>`;
+    case "dataset":
+      return `Dataset<${describeType(shape.element)}>`;
     case "option":
       return `Option<${describeType(shape.element)}>`;
     case "list":

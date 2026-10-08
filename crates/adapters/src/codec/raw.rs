@@ -16,7 +16,7 @@ use wes_core::{
 pub(crate) struct Context {
     pub limits: Limits,
     pub options: bool,
-    pub iterators: bool,
+    pub retained: bool,
     left: usize,
     work: usize,
     validation_left: usize,
@@ -25,7 +25,7 @@ impl Context {
     pub fn new(limits: Limits) -> Self {
         Self {
             options: false,
-            iterators: false,
+            retained: false,
             left: limits.nodes,
             validation_left: limits.nodes.min(100_000),
             work: limits.bytes.saturating_mul(16),

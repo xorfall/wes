@@ -75,6 +75,11 @@ export function grouped(value: number): string {
   return value.toLocaleString("en-US").replace(/,/g, " ");
 }
 
+/** The same grouping for an exact unsigned decimal string, which never passes through a float. */
+export function groupedDigits(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+$)/g, " ");
+}
+
 /** A value formatted by a registry format, or undefined when it is not a number the format fits. */
 export function formatWith(format: Format, value: unknown, locale: string, timeZone: string): string | undefined {
   if (typeof value !== "number" && typeof value !== "string" && typeof value !== "bigint") return undefined;

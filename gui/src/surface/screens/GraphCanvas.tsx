@@ -110,8 +110,10 @@ export function GraphCanvas({ nodes, edges, direction, onSelect }: GraphCanvasPr
       id: `${edge.from}>${edge.to}`,
       source: edge.from,
       target: edge.to,
-      className: edge.lifetime === "creation" ? `graph-edge graph-edge-creation${edge.constructed ? " graph-edge-constructed" : ""}` : "graph-edge",
-      ...(edge.lifetime === "creation" ? { label: edge.constructed ? "created from" : "creates", ariaLabel: edge.constructed ? "Created from this input; refreshes do not re-create it" : "Construction waits for this input" } : {}),
+      className: edge.lifetime === "creation" ? `graph-edge graph-edge-creation${edge.constructed ? " graph-edge-constructed" : ""}`
+        : edge.captured ? "graph-edge graph-edge-captured" : "graph-edge",
+      ...(edge.lifetime === "creation" ? { label: edge.constructed ? "created from" : "creates", ariaLabel: edge.constructed ? "Created from this input; refreshes do not re-create it" : "Construction waits for this input" }
+        : edge.captured ? { label: "captured", ariaLabel: "Input captured when the run started; later updates do not change this run" } : {}),
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
     }));
     return { flowNodes, flowEdges };

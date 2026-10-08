@@ -22,7 +22,8 @@ import { valueViewModules } from "../value-views/registry";
 import type { TypeShape } from "../protocol";
 import { describeType } from "../protocol";
 import { clusters, ellipsizeEnd, pad, width } from "./columns";
-import { compactDecimal, formatWire, formatWith, grouped, isIdentifier, prettyType, shortIdentifier } from "./format";
+import { compactDecimal, formatWire, formatWith, grouped, groupedDigits, isIdentifier, prettyType, shortIdentifier } from "./format";
+import { DATASET_COUNTS, DATASET_REFERENCE_FIELDS, datasetFacts, datasetSelect, datasetSummary, decodeDatasetData } from "./dataset";
 import { DecodedBytes, type Prepared } from "./prepare";
 import { typeLine, typeShapeOf, typeStructure } from "./type-shape";
 import type { Entry, Format, Registry } from "./registry";
@@ -118,6 +119,8 @@ interface Walk {
   /** The declaration path of a data pointer, when the value carries contract metadata. */
   readonly declared: (pointer: string) => string | undefined;
   readonly meta?: import("../value-meta").ValueMeta;
+  /** The type of the whole value, against which a nested Dataset's select pointer is resolved. */
+  readonly root: TypeShape;
 }
 
 const childPath = (path: string, key: string | number) => `${path}/${String(key).replace(/~/g, "~0").replace(/\//g, "~1")}`;
@@ -237,6 +240,7 @@ function plainScalarRuns(type: TypeShape, data: unknown, walk: Walk, format?: Fo
   const value = open.data;
   if (value === null) return [run("null", "faint")];
   if (value === undefined) return [run("missing", "faint")];
+  if (open.type.kind === "dataset") return [run(datasetSummary(open.type, value), decodeDatasetData(value) ? "faint" : "bad")];
   if (value instanceof DecodedBytes) {
     if (value.pending) return [run("decoding…", "faint")];
     if (value.text !== undefined) return textRuns(value.text, "literal", walk);
@@ -471,7 +475,7 @@ function fieldsNode(path: string, type: TypeShape, data: Readonly<Record<string,
     shown += 1;
   }
   const left = order.length - shown;
-  return { kind: "fields", path, rows, nameWidth, tree: { type, data, mode: walk.context.mode, ...declaredAt(walk, path) }, ...(left > 0 ? { more: { fields: left, exact: walk.facts.whole !== false } } : {}) };
+  return { kind: "fields", path, rows, nameWidth, tree: { type, data, mode: walk.context.mode, ...declaredAt(walk, path), datasets: { root: walk.root, at: path } }, ...(left > 0 ? { more: { fields: left, exact: walk.facts.whole !== false } } : {}) };
 }
 
 /** A multi-line text field: drawn beside its name, continued under the value column. */
@@ -687,6 +691,45 @@ function isGraph(data: unknown): boolean {
 }
 
 /**
+ * A Dataset's descriptor as fields under its wire names: the committed count first, then the
+ * identity of the generation it names. Its records are never read here — the descriptor carries
+ * none — and an invalid descriptor is said to be one instead of being drawn as if it were valid.
+ */
+function datasetNode(path: string, type: Extract<TypeShape, { kind: "dataset" }>, data: unknown, walk: Walk): PresentationNode | undefined {
+  const reference = decodeDatasetData(data);
+  if (!reference) return spend(walk) ? lineNode(path, [run("invalid dataset descriptor", "bad")], walk) : undefined;
+  // The labels are a fixed set, so the name column fits the longest one instead of cutting it.
+  const nameWidth = Math.max(...DATASET_REFERENCE_FIELDS.map((name) => width(name)));
+  const inner = narrowed(walk, nameWidth + GAP);
+  const at = childPath(path, "reference");
+  const rows: FieldRow[] = [];
+  for (const name of DATASET_REFERENCE_FIELDS) {
+    const text = DATASET_COUNTS.has(name) ? groupedDigits(reference[name]) : reference[name];
+    const node = scalarNode(childPath(at, name), { kind: "primitive", name: "TEXT" }, text, inner);
+    if (!node) break;
+    rows.push({ name, node });
+  }
+  const left = DATASET_REFERENCE_FIELDS.length - rows.length;
+  const select = datasetSelect(walk.root, path);
+  const dataset = { reference, type, ...(select === undefined ? {} : { select }) };
+  return { kind: "fields", path, rows, nameWidth, dataset, ...(left > 0 ? { more: { fields: left, exact: true } } : {}) };
+}
+
+/**
+ * A Dataset where a value sits: whole at the root, else its one-line summary. Nested, it stays
+ * closed until opened by hand, so a record holding one does not spend its budget on identifiers.
+ */
+function datasetAt(path: string, type: Extract<TypeShape, { kind: "dataset" }>, data: unknown, walk: Walk, label?: string): PresentationNode | undefined {
+  if (label === undefined) return datasetNode(path, type, data, walk);
+  const summary = datasetSummary(type, data);
+  if (!decodeDatasetData(data)) return spend(walk) ? lineNode(path, [run(summary, "bad")], walk) : undefined;
+  if (!walk.context.open?.has(path) || walk.context.closed?.has(path)) return closedNested(path, summary, walk);
+  if (!spend(walk)) return undefined;
+  const body = datasetNode(path, type, data, narrowed(disclosureWalk(walk, path, data), INDENT));
+  return { kind: "nested", path, summary, disclosure: "folds", ...(body ? { body } : {}) };
+}
+
+/**
  * The presentation of one value at `path`, or undefined when the budget has no line left for it.
  * `label` names a nested value: text is drawn beside its name; anything bigger is a `nested` node
  * whose summary sits in the value column and whose body, when open, sits under the name,
@@ -698,6 +741,7 @@ function presentAt(path: string, type: TypeShape, data: unknown, walk: Walk, dep
   const value = open.data;
   const shape = open.type;
   if (value === null || value === undefined) return spend(walk) ? { kind: "empty", path, text: value === null ? "null" : "empty" } : undefined;
+  if (shape.kind === "dataset") return datasetAt(path, shape, value, walk, label);
   if (value instanceof DecodedBytes) return bytesNode(path, value, walk);
   if (typeof value === "string") {
     if (value.replace(/\n$/, "").includes("\n")) return textNode(path, value, walk, false);
@@ -724,6 +768,8 @@ function presentAt(path: string, type: TypeShape, data: unknown, walk: Walk, dep
 
 /** The selection order for a value that is not a string, Bytes or empty. */
 function presentValue(path: string, shape: TypeShape, value: unknown, walk: Walk, depth: number, requested?: string): PresentationNode | undefined {
+  // Before any registry entry or value view: neither may read a descriptor as a record or a list.
+  if (shape.kind === "dataset") return datasetNode(path, shape, value, walk);
   if (isHelp(shape, value)) {
     if (!spend(walk)) return undefined;
     return { kind: "custom", path, name: "help", data: value };
@@ -770,7 +816,8 @@ function presentValue(path: string, shape: TypeShape, value: unknown, walk: Walk
   if (Array.isArray(value)) {
     const element = elementOf(shape);
     if (value.length === 0) return spend(walk) ? { kind: "empty", path, text: "no items" } : undefined;
-    if (value.every((item) => isObject(unwrap(element, item).data))) return tableNode(path, element, value, walk);
+    // Descriptors are not rows: a list of Datasets lists each one by its summary.
+    if (element.kind !== "dataset" && value.every((item) => isObject(unwrap(element, item).data))) return tableNode(path, element, value, walk);
     if(value.some(item=>!isScalarLike(element,item))) {
       const page=walk.context.pages?.get(path);
       const offset=Math.min(Math.max(0,Math.ceil(value.length/pageSize())-1),page??0)*pageSize();
@@ -796,6 +843,7 @@ function presentValue(path: string, shape: TypeShape, value: unknown, walk: Walk
 
 /** What a closed nested value says beside its `▸`. */
 function summaryText(shape: TypeShape, value: unknown): string {
+  if (shape.kind === "dataset") return datasetSummary(shape, value);
   if (Array.isArray(value)) return value.length === 0 ? "no items" : `${shape.kind==="unknown"?"List":describeType(shape)} · ${grouped(value.length)}`;
   if (isObject(value)) return braces(Object.keys(value));
   return describeType(shape);
@@ -806,6 +854,7 @@ function summaryOf(root: PresentationNode, shape: TypeShape, value: unknown): Su
   if (root.kind === "process" && root.exit !== undefined) return { facts: [run(`exit ${root.exit}`, root.exit === 0 ? "ok" : "warn")] };
   if (root.kind === "view") return { facts: root.summary };
   const open = unwrap(shape, value);
+  if (open.type.kind === "dataset" && !open.none) return { facts: datasetFacts(open.data) };
   if (Array.isArray(open.data)) return { facts: [run(grouped(open.data.length), "dim")] };
   return { facts: [] };
 }
@@ -845,7 +894,7 @@ export function linesOf(node: PresentationNode): number {
 
 export function present({ prepared, facts = {}, context, registry, skipViews = new Set<string>() }: PresentInput): Presentation {
   const meta = prepared.meta;
-  const walk: Walk = { viewModules: prepared.viewModules, skipViews, context, policy: POLICIES[context.mode], registry, facts, budget: { left: Math.max(1, context.lines) }, offers: [], notices: [],
+  const walk: Walk = { viewModules: prepared.viewModules, skipViews, context, policy: POLICIES[context.mode], registry, facts, budget: { left: Math.max(1, context.lines) }, offers: [], notices: [], root: prepared.type,
     ...(meta ? { meta } : {}), declared: pointer => meta ? declarationPath(prepared.type, pointer) : undefined };
   const root = presentAt("", prepared.type, prepared.data, walk, 0) ?? { kind: "empty", path: "", text: "empty" };
   return { root, lines: linesOf(root), summary: summaryOf(root, prepared.type, prepared.data), notices: walk.notices, offers: walk.offers };

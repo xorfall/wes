@@ -170,7 +170,10 @@ fn check_json(value: &Json, depth: usize, remaining: &mut usize) -> Result<(), S
 fn children(contract: &Contract) -> Vec<&Arc<Contract>> {
     match contract.kind() {
         ContractKind::Record(fields) => fields.values().map(|f| &f.contract).collect(),
-        ContractKind::List(c) | ContractKind::Option(c) | ContractKind::Iter(c) => vec![c],
+        ContractKind::List(c)
+        | ContractKind::Option(c)
+        | ContractKind::Iter(c)
+        | ContractKind::Dataset(c) => vec![c],
         ContractKind::Map(a, b) | ContractKind::Union(a, b) => vec![a, b],
         ContractKind::Scalar(_) | ContractKind::Unknown => vec![],
     }
@@ -361,6 +364,7 @@ fn restore(
         ("list", 2) => ContractKind::List(child(&k[1])?),
         ("option", 2) => ContractKind::Option(child(&k[1])?),
         ("iter", 2) => ContractKind::Iter(child(&k[1])?),
+        ("dataset", 2) => ContractKind::Dataset(child(&k[1])?),
         ("map", 3) => ContractKind::Map(child(&k[1])?, child(&k[2])?),
         ("union", 3) => ContractKind::Union(child(&k[1])?, child(&k[2])?),
         _ => return Err(SnapshotError::Invalid),

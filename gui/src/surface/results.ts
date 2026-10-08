@@ -3,10 +3,13 @@ import { useEffect, useMemo, useReducer } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
 import type { WorkspaceNode } from "../workspace";
+import { ResultWithdrawnError } from "../result-reader";
 
 export interface ResultRead {
   value?: StoredValue;
   problem?: string;
+  /** The read was refused because access to the result was withdrawn; reading again cannot help. */
+  withdrawn?: boolean;
   pending?: Promise<void>;
 }
 
@@ -31,7 +34,7 @@ export class ResultDemand {
       this.reads.set(handle, entry);
       this.active++;
       entry.pending = this.fetch(handle).then(value => { entry.value = value; },
-        error => { entry.problem = error instanceof Error ? error.message : String(error); })
+        error => { entry.problem = error instanceof Error ? error.message : String(error); entry.withdrawn = error instanceof ResultWithdrawnError; })
         .finally(() => {
           entry.pending = undefined;
           this.active--;
@@ -56,6 +59,7 @@ export interface ResultObservation {
   readonly state: "current" | "updating" | "stale";
   readonly staleReason?: string;
   readonly problem?: string;
+  readonly withdrawn?: boolean;
 }
 
 /** Presentation only: one public last observation per node, never a calculation input. */
@@ -69,7 +73,7 @@ export class ResultObservations {
       const value = node.handle ? held.get(node.handle) : undefined;
       const previous = this.last.get(node.id);
       // Evidence of either kind is fixed display data, never a "previous result" for a later run.
-      const permitted = !node.private && !node.evidence && !node.doubt
+      const permitted = !node.private && !node.evidence && !node.doubt && !node.accessWithdrawn
         && ["ready", "running", "pending", "stale"].includes(node.state)
         && node.publication?.state !== "unavailable";
       if (!permitted || previous && (previous.node.command !== node.command
@@ -82,7 +86,7 @@ export class ResultObservations {
         const last = this.last.get(node.id);
         const replacing = node.state === "stale" || node.handle !== undefined || node.publication?.state === "pending" || node.state === "pending" || node.state === "running";
         if (last && replacing) result.set(node.id, { value: last.value, handle: last.handle, state: staleReason ? "stale" : "updating", staleReason,
-          problem: node.handle ? reads.get(node.handle)?.problem : undefined });
+          problem: node.handle ? reads.get(node.handle)?.problem : undefined, withdrawn: node.handle ? reads.get(node.handle)?.withdrawn === true : false });
         else this.last.delete(node.id);
       }
     }

@@ -51,7 +51,7 @@ export function cleanType(type: unknown, depth = 0): TypeShape {
   switch (shape.kind) {
     case "meta": return typeof shape.name === "string" ? { kind: "meta", name: shape.name } : { kind: "unknown" };
     case "primitive": return typeof shape.name === "string" ? { kind: "primitive", name: shape.name } : { kind: "unknown" };
-    case "list": case "option": return { kind: shape.kind, element: cleanType(shape.element, depth + 1) };
+    case "list": case "option": case "dataset": return { kind: shape.kind, element: cleanType(shape.element, depth + 1) };
     case "iter": {
       const element = cleanType(shape.element, depth + 1), contract = shape.contract;
       return nominal(contract) ? { kind: "iter", element, contract } : { kind: "iter", element };
@@ -91,6 +91,8 @@ function max_visits():number { return budget("ui.presentation.visits"); }
 function walk(type: TypeShape, data: unknown, budget: { visits: number }, depth: number): unknown {
   if (data instanceof DecodedBytes || isExactNumber(data)) return data;
   if (--budget.visits < 0 || depth > 64 || data === null || data === undefined) return data;
+  // A dataset descriptor holds no records or Bytes to decode; it is presented exactly as received.
+  if (type.kind === "dataset") return data;
   if (type.kind === "primitive" && type.name === "BYTES" && typeof data === "string") return readBytes(data);
   if (type.kind === "option" && isObject(data) && (data.kind === "some" || data.kind === "none")) {
     return data.kind === "some" ? { kind: "some", value: walk(type.element, data.value, budget, depth + 1) } : data;
@@ -147,6 +149,8 @@ export class PreparedCache {
   private readonly byValue = new WeakMap<StoredValue, CacheEntry>();
   constructor(private readonly limit = 512) {}
 
+  /** Drops a preparation, so nothing of a withdrawn value stays held for a later draw. */
+  forget(key: string, value: StoredValue): void { this.entries.delete(key); this.byValue.delete(value); }
   read(key: string, value: StoredValue, onReady?: () => void): Prepared {
     const modules = valueViewModules.get();
     let entry = this.byValue.get(value);

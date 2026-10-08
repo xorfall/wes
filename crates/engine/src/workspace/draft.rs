@@ -378,7 +378,33 @@ impl Workspace {
             removed: vec![],
             unbound: vec![],
         };
-        for change in batch.changes {
+        let mut installation_changes = batch.changes;
+        // Launch plans retain written node order for journal/replay identities,
+        // but install their control prerequisite before the dependent producer.
+        // Both are still installed before the coordinator can consume effects.
+        for index in (0..installation_changes.len()).rev() {
+            let gate = match &installation_changes[index] {
+                BatchChange::Declaration(PreparedChange {
+                    operation:
+                        Change::Node {
+                            task: BoundTask::SourceLaunch(launch),
+                            ..
+                        },
+                    ..
+                }) => Some(launch.setup.node.clone()),
+                _ => None,
+            };
+            if let Some(gate) = gate {
+                let next = installation_changes
+                    .get(index + 1)
+                    .and_then(BatchChange::node);
+                if next != Some(&gate) {
+                    return Err(WorkspaceError::AdmissionMismatch);
+                }
+                installation_changes.swap(index, index + 1);
+            }
+        }
+        for change in installation_changes {
             // Only this consuming, revision-checked boundary can rebase private draft stamps.
             match change {
                 BatchChange::Declaration(mut prepared) => {
@@ -981,8 +1007,14 @@ impl DeclarationDraft {
                 );
             }
             Control::Change { node, call, typing } => {
+                let replacement = self
+                    .graph
+                    .node(node)
+                    .expect("prepared target")
+                    .payload()
+                    .with_replaced_call(call.clone());
                 self.graph
-                    .replace_payload(node, BoundTask::Call(call.clone()))
+                    .replace_payload(node, replacement)
                     .map_err(|error| WorkspaceError::Runtime(error.into()))?;
                 self.graph.mark_stale(node).expect("prepared target exists");
                 if !self.actual_typings.contains(node) {

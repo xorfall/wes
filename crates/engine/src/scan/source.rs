@@ -17,6 +17,9 @@ pub enum SourcePoll {
         input_charge: u64,
     },
     Pending,
+    ReadPage,
+    ReadHead,
+    Incomplete,
     End,
 }
 #[derive(Debug)]
@@ -76,6 +79,9 @@ pub fn framing_charge(profile: &Profile) -> Option<u64> {
         .checked_add(4096)
 }
 pub struct CapturedSource {
+    /// Admission evidence stays frozen while the read cursor advances committed heads.
+    /// Only Dataset descriptors need a second copy; finite inline sources retain one tree.
+    admitted: Option<Value>,
     value: Value,
     framer: Option<Framer>,
     position: usize,
@@ -83,8 +89,23 @@ pub struct CapturedSource {
     ended: bool,
     record_charge: u64,
     total: u64,
+    page: std::collections::VecDeque<Value>,
+    lease: Option<crate::storage::datasets::DatasetReadLease>,
+    follow: Option<(crate::storage::datasets::FollowedSource, FollowEnd)>,
+}
+#[derive(Clone, Copy)]
+enum FollowEnd {
+    Waiting,
+    Natural,
+    Incomplete,
 }
 impl CapturedSource {
+    pub(super) fn value(&self) -> &Value {
+        self.admitted.as_ref().unwrap_or(&self.value)
+    }
+    pub(super) fn profile(&self) -> Option<&Profile> {
+        self.framer.as_ref().map(Framer::profile)
+    }
     /// `value_charge` admits the whole source tree before traversal/cloning; framing
     /// profile limits separately bound raw carry, decoded text and mapping storage.
     pub fn new(
@@ -94,6 +115,18 @@ impl CapturedSource {
         record_charge: u64,
         span: Span,
     ) -> Result<Self, Failure> {
+        let value = match value.data() {
+            Data::Dataset(reference) => value.with_provenance(
+                value.provenance().clone().with_policy(
+                    &value
+                        .provenance()
+                        .policy()
+                        .clone()
+                        .read_from_dataset(reference),
+                ),
+            ),
+            _ => value,
+        };
         if crate::value_size::value_charge(&value, source_charge).is_none() {
             return Err(Failure::new(
                 "CAL006",
@@ -101,20 +134,25 @@ impl CapturedSource {
                 "captured scan source exceeds its declared charge limit",
             ));
         }
-        if !value.data().is_materialized()
+        let dataset = matches!(
+            (value.data(), value.shape()),
+            (Data::Dataset(_), Shape::Dataset(_))
+        );
+        if (!dataset && (!value.data().is_inline() || !value.shape().is_inline()))
             || value.shape().contains_meta()
             || value.management_authority().is_some()
         {
             return Err(Failure::new(
                 "CAL004",
                 span,
-                "scan source must be materialized captured Text, Bytes or List data",
+                "scan source must be captured Text, Bytes, List or an owned Dataset prefix",
             ));
         }
         let (total, framer) = match (value.data(), profile) {
             (Data::Text(text), Some(profile)) => (text.len() as u64, Some(profile)),
             (Data::Bytes(bytes), Some(profile)) => (bytes.len() as u64, Some(profile)),
             (Data::List(items), None) => (items.len() as u64, None),
+            (Data::Dataset(reference), None) => (reference.records(), None),
             _ => {
                 return Err(Failure::new(
                     "CAL004",
@@ -135,6 +173,7 @@ impl CapturedSource {
             .transpose()
             .map_err(|error| framing_failure(error, span).failure)?;
         Ok(Self {
+            admitted: None,
             value,
             framer,
             position: 0,
@@ -142,10 +181,148 @@ impl CapturedSource {
             ended: false,
             record_charge,
             total,
+            page: Default::default(),
+            lease: None,
+            follow: None,
         })
     }
     pub fn total(&self) -> u64 {
         self.total
+    }
+    pub(super) fn stop_following(&mut self) {
+        if let Some((_, ending)) = &mut self.follow {
+            *ending = FollowEnd::Incomplete;
+        }
+    }
+    pub(super) fn followed_source(&self) -> Option<&crate::storage::datasets::FollowedSource> {
+        self.follow.as_ref().map(|(source, _)| source)
+    }
+    pub(super) fn follow(
+        &mut self,
+        source: crate::storage::datasets::FollowedSource,
+        span: Span,
+    ) -> Result<(), Failure> {
+        let reference = self.dataset().ok_or_else(|| {
+            Failure::new(
+                "CAL004",
+                span,
+                "live scan requires an owned EventLog Dataset",
+            )
+        })?;
+        if &source.prefix != reference || self.framer.is_some() || self.ordinal != 0 {
+            return Err(Failure::new(
+                "CAL004",
+                span,
+                "live source does not match its admitted prefix",
+            ));
+        }
+        self.admitted = Some(self.value.clone());
+        self.follow = Some((source, FollowEnd::Waiting));
+        Ok(())
+    }
+    pub(super) fn acknowledge_head(
+        &mut self,
+        info: crate::storage::datasets::DatasetInfo,
+        span: Span,
+    ) -> Result<bool, Failure> {
+        use crate::storage::datasets::{DatasetLifecycle as L, FollowedSource, RecordingEnd as E};
+        let invalid = || {
+            Failure::new(
+                "CAL004",
+                span,
+                "EventLog head changed its committed identity, epoch or schema",
+            )
+        };
+        let (prior, _) = self.follow.as_ref().ok_or_else(invalid)?;
+        let coverage = info.recording.as_ref().ok_or_else(invalid)?;
+        let next = FollowedSource {
+            prefix: info.reference.clone(),
+            run: coverage.run.clone(),
+            epoch: coverage.epoch.clone(),
+            first: coverage.first,
+        };
+        if !next.extends(prior)
+            || info.schema.digest() != info.reference.schema_digest()
+            || info.schema.root().shape() != self.item_shape()
+            || info.reference.records() > i64::MAX as u64
+            || !self.page.is_empty()
+        {
+            return Err(invalid());
+        }
+        let ending = match (info.lifecycle, coverage.termination) {
+            (L::Open | L::Prefix, None) => FollowEnd::Waiting,
+            (L::Sealed, Some(E::Natural))
+                if coverage.pending == Some(0) && coverage.rejected == 0 =>
+            {
+                FollowEnd::Natural
+            }
+            _ => FollowEnd::Incomplete,
+        };
+        let provenance = self.value.provenance().clone().with_policy(
+            &self
+                .value
+                .provenance()
+                .policy()
+                .join(&info.policy)
+                .read_from_dataset(&info.reference),
+        );
+        self.value = Value::new(
+            self.value.shape().clone(),
+            Data::Dataset(info.reference.clone().into()),
+            provenance,
+        )
+        .map_err(|_| invalid())?
+        .with_metadata(self.value.metadata().cloned());
+        self.total = info.reference.records();
+        self.follow = Some((next, ending));
+        self.ended = false;
+        self.lease = None;
+        Ok(self.ordinal() < self.total || !matches!(ending, FollowEnd::Waiting))
+    }
+    pub(super) fn producer_complete(&self) -> bool {
+        self.follow
+            .as_ref()
+            .is_some_and(|(_, end)| matches!(end, FollowEnd::Natural))
+    }
+    pub(super) fn producer_status(&self) -> Option<bool> {
+        self.follow.as_ref().and_then(|(_, end)| match end {
+            FollowEnd::Waiting => None,
+            FollowEnd::Natural => Some(true),
+            FollowEnd::Incomplete => Some(false),
+        })
+    }
+    pub(super) fn restore_boundary(
+        &mut self,
+        position: u64,
+        ordinal: u64,
+        span: Span,
+    ) -> Result<(), Failure> {
+        let invalid = || {
+            Failure::new(
+                "CAL004",
+                span,
+                "captured scan cursor is not a committed source boundary",
+            )
+        };
+        if position > self.total {
+            return Err(invalid());
+        }
+        if let Some(framer) = &self.framer {
+            // A byte boundary is attested by the protected checkpoint/source digest, never a
+            // user-provided offset. Fresh framing retains its original profile and ordinals.
+            self.framer = Some(
+                Framer::at_boundary(framer.profile().clone(), position, ordinal)
+                    .map_err(|_| invalid())?,
+            );
+            self.position = usize::try_from(position).map_err(|_| invalid())?;
+        } else {
+            if position != ordinal {
+                return Err(invalid());
+            }
+            self.ordinal = usize::try_from(ordinal).map_err(|_| invalid())?;
+        }
+        self.ended = false;
+        Ok(())
     }
     pub fn position(&self) -> u64 {
         self.framer
@@ -157,7 +334,7 @@ impl CapturedSource {
             frame_shape()
         } else {
             match self.value.shape() {
-                Shape::List(item) => item.as_ref().clone(),
+                Shape::List(item) | Shape::Dataset(item) => item.as_ref().clone(),
                 _ => Shape::Unknown,
             }
         }
@@ -167,6 +344,61 @@ impl CapturedSource {
     }
     pub fn provenance(&self) -> &Provenance {
         self.value.provenance()
+    }
+    pub(super) fn dataset(&self) -> Option<&wes_core::DatasetRef> {
+        match self.value.data() {
+            Data::Dataset(r) => Some(r),
+            _ => None,
+        }
+    }
+    pub(super) fn ordinal(&self) -> u64 {
+        self.ordinal as u64
+    }
+    pub(super) fn acknowledge_page(
+        &mut self,
+        page: crate::storage::datasets::DatasetPage,
+        span: Span,
+    ) -> Result<(), Failure> {
+        let invalid = || {
+            Failure::new(
+                "CAL004",
+                span,
+                "dataset source page does not match its captured prefix and ordinal",
+            )
+        };
+        let reference = self.dataset().ok_or_else(invalid)?;
+        if &page.reference != reference
+            || page.first != self.ordinal()
+            || !self.page.is_empty()
+            || page.schema.root().shape() != self.item_shape()
+            || page.next
+                != page
+                    .first
+                    .checked_add(page.rows.len() as u64)
+                    .ok_or_else(invalid)?
+            || page.next > reference.records()
+            || page.rows.is_empty()
+        {
+            return Err(invalid());
+        }
+        let mut charge = 0u64;
+        for (i, row) in page.rows.iter().enumerate() {
+            if row.ordinal != page.first + i as u64
+                || row.value.shape() != &self.item_shape()
+                || !row.value.data().is_inline()
+            {
+                return Err(invalid());
+            }
+            let part = crate::value_size::value_charge(&row.value, self.record_charge)
+                .ok_or_else(invalid)?;
+            charge = charge
+                .checked_add(part)
+                .filter(|n| *n <= self.record_charge)
+                .ok_or_else(invalid)?;
+        }
+        self.page = page.rows.into_iter().map(|row| row.value).collect();
+        self.lease = page.lease;
+        Ok(())
     }
     /// Maximum bytes examined in the next read; caller prepays native work.
     pub fn next_bytes(&self, block: usize) -> usize {
@@ -204,6 +436,42 @@ impl CapturedSource {
                 "scan read block must be from 1 to 65536 bytes",
             )
             .into());
+        }
+        if self.dataset().is_some() {
+            if self.ordinal() >= self.total {
+                self.lease = None;
+                if let Some((_, ending)) = &self.follow {
+                    match ending {
+                        FollowEnd::Waiting => return Ok(SourcePoll::ReadHead),
+                        FollowEnd::Incomplete => return Ok(SourcePoll::Incomplete),
+                        FollowEnd::Natural => {}
+                    }
+                }
+                self.ended = true;
+                return Ok(SourcePoll::End);
+            }
+            let Some(value) = self.page.front() else {
+                return Ok(SourcePoll::ReadPage);
+            };
+            let input_charge = crate::value_size::value_charge(value, self.record_charge)
+                .ok_or_else(|| {
+                    SourceFailure::record_limit(
+                        "dataset source row exceeds its record charge",
+                        span,
+                        None,
+                    )
+                })?;
+            admit(input_charge).map_err(|e| budget_failure(e, span))?;
+            let value = self.page.pop_front().expect("admitted source row");
+            let value = value.with_provenance(self.value.provenance().merge(value.provenance()));
+            let start = self.ordinal as u64;
+            self.ordinal += 1;
+            return Ok(SourcePoll::Record {
+                value,
+                start,
+                end: self.ordinal as u64,
+                input_charge,
+            });
         }
         let Some(framer) = &mut self.framer else {
             let Data::List(items) = self.value.data() else {

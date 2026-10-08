@@ -24,6 +24,9 @@ describe("the strict progress decoder", () => {
   it("accepts withheld counters and a missing run as stated, not as zero", () => {
     expect(decodeEvent({ event: "node-progress", node: "n", run: null, progress: { kind: "records", phase: "reading", counters: null } }))
       .toEqual({ event: "node-progress", node: "n", run: null, progress: { kind: "records", phase: "reading", counters: null } });
+    // The engine reports committing while it makes outputs durable; it decodes like any working phase.
+    expect(decodeEvent({ event: "node-progress", node: "n", run: "r", progress: { kind: "records", phase: "committing", counters: null } }))
+      .toEqual({ event: "node-progress", node: "n", run: "r", progress: { kind: "records", phase: "committing", counters: null } });
   });
 
   it.each([

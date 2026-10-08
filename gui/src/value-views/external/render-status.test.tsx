@@ -109,6 +109,20 @@ it("should_ReportOnlyEnumFailure_When_RendererFailsWithPrivateDetails",async()=>
   act(()=>h.tree().unmount());
 });
 
+it("should_AnswerDatasetReadWithoutFailingReceipt_When_DrawingHasNoDatasetSource",async()=>{
+  // Arrange
+  const h=await harness();
+  await h.mount([h.model("r1")],h.observation("g1"));
+  h.load(0);h.advance(100);h.ready(0);h.receive(0,{kind:"ack",sequence:1});
+  // Act
+  h.receive(0,{kind:"dataset-read",request:1,operation:"page",select:"/synthetic",position:{from:"0"},limit:20});
+  // Assert
+  const replies=h.channels[0]!.port1.postMessage.mock.calls.map(([text])=>JSON.parse(text)).filter(message=>message.kind==="dataset-reply");
+  expect(replies).toEqual([{kind:"dataset-reply",request:1,ok:false,error:"unavailable"}]);
+  expect(h.registry.receipts(scope)[0]).toMatchObject({status:"drawn",error:null,drawnInputRevision:"r1"});
+  act(()=>h.tree().unmount());
+});
+
 it("should_ReportDrawTimeout_When_FlightIsNeverAcknowledged",async()=>{
   const h=await harness();
   await h.mount([h.model("r1")],h.observation("g1"));

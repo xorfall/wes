@@ -3,11 +3,12 @@ use std::{fmt, sync::Arc};
 use thiserror::Error;
 use uuid::Uuid;
 use wes_core::Value;
+pub mod datasets;
 mod private;
 mod worker;
 pub use worker::{
     AutoKeep, PendingStore, PublicationPolicy, StoreDrain, StoreWorker, StoreWorkerLimits,
-    StoreWorkerTask, StoredOutput, spawn_store,
+    StoreWorkerTask, StoredOutput, spawn_storage, spawn_store,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -61,6 +62,37 @@ pub enum StoreError {
     NotRegular,
     #[error("the handle already contains different data")]
     Conflict,
+    #[error("this storage owner has no dataset capability")]
+    DatasetUnavailable,
+    #[error("the dataset descriptor is unavailable or belongs to another home")]
+    DatasetMissing,
+    #[error(
+        "the owned analysis has no exact latest local-write witness; an unknown suffix cannot be resumed"
+    )]
+    DatasetRecoveryUnknown,
+    #[error(
+        "a newer analysis attempt owns the latest checkpoint; select that owned continuation instead"
+    )]
+    DatasetNewerAttempt,
+    #[error(
+        "dataset storage needs explicit local reconciliation; stop its writers, then run :dataset reconcile"
+    )]
+    DatasetNeedsReconciliation,
+    #[error("invalid source excerpt range: {0}")]
+    SourceRange(&'static str),
+    #[error("the dataset read has been withdrawn")]
+    DatasetWithdrawn,
+    #[error("committed dataset storage is corrupt")]
+    DatasetCorrupt,
+    #[error("dataset commit {transaction} has an unconfirmed outcome")]
+    DatasetUnconfirmed { transaction: String },
+    #[error(
+        "dataset write {transaction} has an unconfirmed admission {admission}; no data mutation entered"
+    )]
+    DatasetAdmissionUnconfirmed {
+        transaction: String,
+        admission: String,
+    },
     #[error("value storage failed during {operation}")]
     Backend {
         operation: &'static str,
@@ -151,6 +183,13 @@ pub trait ValueStore: Send {
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError>;
     fn encoded(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError>;
     fn size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError>;
+    /// Automatic retention must account for referenced data, not just the descriptor encoding.
+    fn retention_size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {
+        self.size(handle)
+    }
+    fn automatic_retention_allowed(&self, _handle: &ValueHandle) -> Result<bool, StoreError> {
+        Ok(true)
+    }
     fn release(&mut self, handle: &ValueHandle) -> Result<bool, StoreError>;
     fn keep(&mut self, _handle: &ValueHandle) -> Result<bool, StoreError> {
         Ok(false)

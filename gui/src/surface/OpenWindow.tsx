@@ -25,6 +25,7 @@ import { topLine, type SessionContext } from "./session-model";
 import type { OpenRoute } from "./open-route";
 import { announceSettings, followSettings } from "./settings-channel";
 import { useTableViewOwner } from "./table-view-owner";
+import { storedIdentity } from "./render/dataset-source";
 import "./surface.css";
 
 export function OpenWindow({ route }: { readonly route: OpenRoute }) {
@@ -41,6 +42,8 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
   const { held, reads, observations, retry } = useResults(engine, generation, handle ? [handle] : [], node ? [node] : []);
   const observation = node ? observations.get(node.id) : undefined;
   const stored = observation?.value ?? (handle ? held.get(handle) : undefined);
+  // Read in this window's own session: withdrawal learned here is this document's, keyed the same way.
+  const identity = storedIdentity(stored, observation?.handle ?? handle, generation);
 
   /* The window's own name in the switcher and the dock, which is what somebody is looking for. */
   useEffect(() => {
@@ -53,6 +56,7 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
     ...(node ? { node } : {}),
     engine,
     ...(generation ? { generation } : {}),
+    ...(identity ? { stored: identity } : {}),
   };
 
   const context: SessionContext = {
@@ -90,9 +94,9 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
         top={topLine(context)}
         subject={missing ? couldNotDraw("subject", `no ${route.cell === undefined ? "result" : "cell"} called ${route.cell ?? route.node} is here any more`) : [{ text: node?.name ? `$${node.name}` : route.cell ?? route.node ?? "", role: "mono-ref" }]}
         what={route.peek}
-        {...peekOf(node, stored)}
+        {...peekOf(node, stored, identity)}
         {...(route.cell === undefined ? {} : { source: cell?.document?.source ?? cell?.text })}
-        readStatus={observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retry(handle) : undefined} /></div> : handle && !stored ? <ReadStatus problem={reads.get(handle)?.problem} onRetry={() => retry(handle)} /> : undefined}
+        readStatus={observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retry(handle) : undefined} /></div> : handle && !stored ? <ReadStatus problem={reads.get(handle)?.problem} withdrawn={reads.get(handle)?.withdrawn} onRetry={() => retry(handle)} /> : undefined}
         onClose={() => window.close()}
       /> : <OpenScreen
         top={topLine(context)}
@@ -103,7 +107,7 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
         viewing={viewing}
         json={drawn.json}
         details={drawn.details}
-        readStatus={observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retry(handle) : undefined} /></div> : handle && !stored ? <ReadStatus problem={reads.get(handle)?.problem} onRetry={() => retry(handle)} /> : undefined}
+        readStatus={observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retry(handle) : undefined} /></div> : handle && !stored ? <ReadStatus problem={reads.get(handle)?.problem} withdrawn={reads.get(handle)?.withdrawn} onRetry={() => retry(handle)} /> : undefined}
         onClose={() => window.close()}
       />}
       {trouble && <MonoLine segments={[{ text: trouble, role: "mono-bad" }]} className="surface-trouble" />}

@@ -2,6 +2,7 @@ import { isNumeric, isExactNumber, numericText, compareNumeric, type NumericValu
 import { nanos, range } from "./temporal";
 import { ViewInputError } from "./contract";
 import type { TypeShape } from "../protocol";
+import { decodeDatasetData } from "../presentation/dataset";
 
 import type { ViewDefinition, ContractSchema } from "../../../packages/view-sdk/contract";
 export type { ViewDefinition, ContractSchema } from "../../../packages/view-sdk/contract";
@@ -25,6 +26,16 @@ export function decodeContract(definition: ViewDefinition, name: string, value: 
         return v.kind === "none" ? null : visit(s.element!,v.value,depth+1,type?.kind==="option"?type.element:undefined);
       }
       return v === null ? null : visit(s.element!,v,depth+1,type?.kind==="option"?type.element:undefined);
+    }
+    if (s.kind === "dataset") {
+      // Only engine input carries a Dataset, and only as the exact descriptor of one snapshot; a
+      // View's own outputs, state and events never hold one. Its declared row contract must match
+      // the captured element shape, so pages are read against what the View was compiled for.
+      if (!wire || type && type.kind !== "dataset") return fail();
+      const reference = decodeDatasetData(v);
+      if (!reference) return fail();
+      if (type && !conforms(definition, s.element!, type.element, 0)) return fail();
+      return Object.freeze({ kind: "dataset", reference });
     }
     if (s.kind === "union") {
       // The native shape model erases a declared union to Unknown. Its explicit alternatives
@@ -75,6 +86,30 @@ export function decodeContract(definition: ViewDefinition, name: string, value: 
     return v;
   };
   return visit(name,value,0,shape);
+}
+
+/**
+ * Whether a captured element shape is the declared contract's shape: same kinds, same primitives,
+ * every declared record field present (required ones non-optional in shape terms is not knowable,
+ * so presence is checked). Unknown alternatives of a union accept any one matching alternative.
+ */
+function conforms(definition: ViewDefinition, name: string, shape: TypeShape, depth: number): boolean {
+  const s = definition.contracts[name];
+  if (!s || depth > 32) return false;
+  switch (s.kind) {
+    case "scalar": return shape.kind === "primitive" && shape.name === s.primitive?.toUpperCase();
+    case "list": return shape.kind === "list" && conforms(definition, s.element!, shape.element, depth + 1);
+    case "option": return shape.kind === "option" && conforms(definition, s.element!, shape.element, depth + 1);
+    case "union": return shape.kind === "unknown" || s.alternatives!.some(alternative => conforms(definition, alternative, shape, depth + 1));
+    case "record": {
+      if (shape.kind !== "record") return false;
+      return Object.entries(s.fields!).every(([key, field]) => {
+        const found = shape.fields.find(item => item.name === key);
+        return found ? conforms(definition, field.type, found.type, depth + 1) : field.optional;
+      });
+    }
+    default: return false;
+  }
 }
 
 /** Canonical protocol identity includes its reachable contracts, not unrelated view input types. */

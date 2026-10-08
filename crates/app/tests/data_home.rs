@@ -1055,3 +1055,56 @@ fn unidentified_settings_are_not_adopted_or_given_an_identity() {
     assert!(!home.join("identity.json").exists());
     assert_eq!(fs::read(file).unwrap(), bytes);
 }
+
+#[test]
+fn dataset_store_is_recognized_on_reopen_but_its_standalone_owner_is_respected() {
+    use wes_adapters::{
+        datasets::{DatasetStore, StoreLimits},
+        storage::Durability,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("dataset-home");
+    let home = DataHome::open(&path).unwrap();
+    let identity = home.identity.id.clone();
+    drop(home);
+    let dataset_path = path.join("datasets");
+    let store =
+        DatasetStore::open(&dataset_path, Durability::File, StoreLimits::default()).unwrap();
+    assert!(
+        DataHome::open(&path).is_err(),
+        "standalone dataset ownership must block another home owner"
+    );
+    drop(store);
+    let reopened = DataHome::open(&path).unwrap();
+    assert_eq!(reopened.identity.id, identity);
+}
+
+#[test]
+fn dataset_directory_cannot_adopt_an_unidentified_folder_file_or_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let unidentified = temp.path().join("unidentified-dataset");
+    fs::create_dir_all(unidentified.join("datasets")).unwrap();
+    assert!(DataHome::open(&unidentified).is_err());
+    assert!(!unidentified.join("identity.json").exists());
+    let file_home = temp.path().join("file-dataset");
+    drop(DataHome::open(&file_home).unwrap());
+    fs::write(file_home.join("datasets"), b"original unrelated contents").unwrap();
+    assert!(DataHome::open(&file_home).is_err());
+    assert_eq!(
+        fs::read(file_home.join("datasets")).unwrap(),
+        b"original unrelated contents"
+    );
+    #[cfg(unix)]
+    {
+        let linked = temp.path().join("linked-dataset");
+        drop(DataHome::open(&linked).unwrap());
+        std::os::unix::fs::symlink(&unidentified, linked.join("datasets")).unwrap();
+        assert!(DataHome::open(&linked).is_err());
+        assert!(
+            fs::symlink_metadata(linked.join("datasets"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+}

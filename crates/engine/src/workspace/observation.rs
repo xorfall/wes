@@ -47,7 +47,7 @@ impl Workspace {
             .get("input")
             .ok_or_else(|| invalid("View query input must have an explicit type"))?;
         if input.shape().contains_meta()
-            || !input.data().is_materialized()
+            || !input.data().is_storable_snapshot()
             || input.provenance().policy().is_private()
             || crate::value_size::value_charge(&input, 64 * 1024).is_none()
             || !input.shape().is_assignable_to(&contract.shape())

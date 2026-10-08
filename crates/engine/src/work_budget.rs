@@ -13,6 +13,7 @@ pub(crate) struct WorkCounter {
 struct Counters {
     allowance: AtomicU64,
     used: AtomicU64,
+    prepaid: AtomicU64,
 }
 impl WorkCounter {
     pub(crate) fn earned(limit: u64, startup: u64) -> Self {
@@ -21,11 +22,29 @@ impl WorkCounter {
             counters: Arc::new(Counters {
                 allowance: AtomicU64::new(startup.min(limit)),
                 used: AtomicU64::new(0),
+                prepaid: AtomicU64::new(limit),
             }),
         }
     }
+    pub(crate) fn restored(limit: u64, allowance: u64, used: u64) -> Result<Self, ()> {
+        if used > allowance || allowance > limit {
+            return Err(());
+        }
+        Ok(Self {
+            limit,
+            counters: Arc::new(Counters {
+                allowance: AtomicU64::new(allowance),
+                used: AtomicU64::new(used),
+                prepaid: AtomicU64::new(limit),
+            }),
+        })
+    }
     pub(crate) fn charge(&self, amount: u64) -> Result<(), ()> {
-        let allowance = self.counters.allowance.load(Ordering::Acquire);
+        let allowance = self
+            .counters
+            .allowance
+            .load(Ordering::Acquire)
+            .min(self.counters.prepaid.load(Ordering::Acquire));
         self.counters
             .used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
@@ -48,6 +67,21 @@ impl WorkCounter {
         let used = self.used();
         self.allowance() - used
     }
+    pub(crate) fn prepaid_remaining(&self) -> u64 {
+        self.counters
+            .prepaid
+            .load(Ordering::Acquire)
+            .min(self.allowance())
+            .saturating_sub(self.used())
+    }
+    /// A durable owner can enter only work prepaid by an acknowledged catalog grant.
+    pub(crate) fn prepaid(&self, ceiling: u64) -> Result<(), ()> {
+        if ceiling < self.used() || ceiling > self.allowance() {
+            return Err(());
+        }
+        self.counters.prepaid.store(ceiling, Ordering::Release);
+        Ok(())
+    }
     pub(crate) fn allowance(&self) -> u64 {
         self.counters.allowance.load(Ordering::Acquire)
     }
@@ -62,6 +96,20 @@ impl WorkCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_prepaid_ceiling_blocks_work_even_when_more_input_credit_was_earned() {
+        let work = WorkCounter::earned(1000, 900);
+        work.prepaid(30).unwrap();
+        work.charge(30).unwrap();
+        assert!(work.charge(1).is_err());
+        work.grant(100);
+        assert!(work.charge(1).is_err());
+        assert_eq!(work.used(), 30);
+        work.prepaid(60).unwrap();
+        work.charge(30).unwrap();
+        assert!(work.prepaid(59).is_err());
+        assert_eq!(work.used(), 60);
+    }
     #[test]
     fn concurrent_owners_share_monotonic_work_and_cannot_overdraw_or_refund() {
         let work = WorkCounter::earned(1000, 100);

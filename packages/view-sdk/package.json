@@ -19,6 +19,7 @@
     "index.ts",
     "contract.ts",
     "values.ts",
+    "datasets.ts",
     "time.ts",
     "geometry.ts",
     "frame.tsx",

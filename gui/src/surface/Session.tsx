@@ -296,6 +296,7 @@ export function Session({
       actions={cellActions(cell)}
       confirmRepeat={cell.guard}
       pipeline={cell.pipeline}
+      runActive={cell.runActive}
       view={cell.view}
       blocks={output?.(cell) ?? []}
       onFocus={() => onFocus?.(cell.id)}

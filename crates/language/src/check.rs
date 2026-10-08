@@ -71,6 +71,21 @@ pub fn check(
             );
         }
     }
+    let held: Vec<_> = annotations
+        .iter()
+        .filter(|a| a.name.text == "hold")
+        .collect();
+    if !held.is_empty()
+        && (held.len() != 1
+            || !held[0].targets.is_empty()
+            || !matches!(resolution, Resolution::Capability { capability, .. } if capability.streaming)
+            || annotations.iter().any(|a| a.name.text == "interactive"))
+    {
+        diagnostics.push(Diagnostic::error(
+            "CHK014", held[0].name.span,
+            "Use one @hold without arguments on a non-interactive streaming source. It declares work, not producer execution.",
+        ));
+    }
     let traces: Vec<_> = annotations
         .iter()
         .filter(|a| a.name.text == "trace")

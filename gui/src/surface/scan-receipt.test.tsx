@@ -16,10 +16,11 @@ const none = { kind: "none" };
 const some = (value: unknown) => ({ kind: "some", value });
 const receipt = (over: Record<string, unknown> = {}) => ({
   status: "stopped", position: 1, readPosition: 2, extent: 3, positionUnit: "records", inputChargeUnit: "logical_charge",
-  inputCharge: 128, inputRecords: 1, outputCharge: 128, outputRecords: 1, work: 17100, workAllowance: 16524288,
+  inputCharge: 128, inputRecords: 1, outputCharge: 128, outputRecords: 1, work: 17100, measuredWork: 16000, workAllowance: 16524288,
+  outstandingWork: some(1048576), durationChargedMs: 58912, durationOutstandingMs: some(1200),
   heldCharge: 2000, highWaterCharge: 5000, finishApplied: false, sourceComplete: none,
   failureCode: some("CAL005"), failureMessage: some("division by zero"), exhausted: none, rejectedStart: none, rejectedEnd: none,
-  analysisId: "analysis-synthetic", transitionRevision: "sha256:transition-synthetic", finishRevision: none,
+  analysisId: "analysis-synthetic", attempt: some("synthetic-attempt-2"), previousAttempt: some("synthetic-attempt-1"), transitionRevision: "sha256:transition-synthetic", finishRevision: none,
   profile: "TypedRecords", profileRevision: "sha256:profile-synthetic",
   sourceNode: some("node-synthetic"), sourceRun: some("run-synthetic"), sourceRevision: some(1), sourcePort: some("data"), sourcePath: [],
   durableResume: false,
@@ -45,12 +46,16 @@ describe("the analysis receipt", () => {
     expect(rows).toContain("outcome stopped · finish not applied");
     expect(rows).toContain("selected extent 3 records · producer completion unknown");
     expect(rows).toContain("committed through 1 · read through 2 records · read, not committed");
-    expect(rows).toContain("work 17,100 used · 16,524,288 earned allowance · absolute cap 64,000,000");
+    expect(rows).toContain("work charged 17,100 · measured 16,000 · prepaid reservation 1,048,576");
+    expect(rows).toContain("earned allowance 16,524,288 · absolute cap 64,000,000");
+    expect(rows).toContain("duration charged 58,912 ms elapsed · prepaid reservation 1,200 ms · limit 60,000 ms");
+    expect(rows).toContain("checkpoint attempt synthetic-attempt-2 · previous attempt synthetic-attempt-1");
     expect(rows).toContain("logical held charge 2,000 · high-water 5,000 · cap 134,217,728 · not memory use or stored bytes");
     expect(rows).toContain("failure CAL005 · division by zero");
     expect(rows).toContain("source node-synthetic data · run run-synthetic · revision 1");
     expect(rows).toContain("finish definition none");
-    expect(rows).toContain("durable checkpoint none");
+    // A deterministic stop keeps its durable attempt even though the engine does not offer resuming.
+    expect(rows).toContain("durable checkpoint yes");
     expect(rows.join("\n")).not.toMatch(/resume|dataset|RSS|KiB|MiB|%/i);
     expect(lineText(receiptHeadline(scanReceiptOf(stopped)!))).toBe("analysis receipt · stopped · committed through 1 of 3 records");
   });
@@ -65,10 +70,82 @@ describe("the analysis receipt", () => {
     expect(said(stopped).some(row => row.startsWith("limit reached") || row.startsWith("rejected"))).toBe(false);
   });
 
+  it.each([
+    ["duration", "limit reached duration"],
+    ["work_allowance", "limit reached earned work allowance"],
+    ["work", "limit reached work absolute cap"],
+    ["synthetic_future_dimension", "limit reached synthetic_future_dimension"],
+  ])("names the exhausted dimension %s in words, and an unlisted one as written", (dimension, row) => {
+    expect(said(scanResult({ state: 0, outputs: [], receipt: receipt({ exhausted: some(dimension) }) }))).toContain(row);
+  });
+
+  it("says a memory analysis has no attempt, no predecessor and no reservation, never zero or an invented one", () => {
+    const memory = scanResult({ state: 1, outputs: [1], receipt: receipt({
+      attempt: none, previousAttempt: none, outstandingWork: none, durationOutstandingMs: none }) });
+    const read = scanReceiptOf(memory)!;
+    expect(read).toMatchObject({ attempt: undefined, previousAttempt: undefined, outstandingWork: undefined, durationOutstandingMs: undefined,
+      measuredWork: "16000", durationChargedMs: "58912" });
+    const rows = said(memory);
+    expect(rows).toContain("checkpoint attempt none · previous attempt none");
+    expect(rows).toContain("durable checkpoint none");
+    expect(rows).toContain("work charged 17,100 · measured 16,000 · prepaid reservation none");
+    expect(rows).toContain("duration charged 58,912 ms elapsed · prepaid reservation none · limit 60,000 ms");
+    expect(rows.join("\n")).not.toMatch(/reservation 0|unknown work|lost/);
+  });
+
+  it.each([
+    ["a refusing stop", { status: "stopped", durableResume: false }],
+    ["a permitting cancellation", { status: "cancelled", durableResume: true }],
+  ])("says the durable checkpoint from the attempt alone, for %s", (_, over) => {
+    expect(said(scanResult({ state: 1, outputs: [1], receipt: receipt(over) }))).toContain("durable checkpoint yes");
+  });
+
+  it("says a first durable attempt's predecessor as none rather than deriving one", () => {
+    const first = scanResult({ state: 1, outputs: [1], receipt: receipt({ attempt: some("synthetic-attempt-1"), previousAttempt: none }) });
+    expect(said(first)).toContain("checkpoint attempt synthetic-attempt-1 · previous attempt none");
+  });
+
   it("reads exact integers beyond a JavaScript number without rounding", () => {
     const wire = JSON.stringify(receipt()).replace('"extent":3', '"extent":9223372036854775807');
     const value = scanResult({ state: 1, outputs: [1], receipt: parseExactJson(wire) });
     expect(scanReceiptOf(value)?.extent).toBe("9223372036854775807");
+  });
+
+  it("reads the new work and duration counts exactly up to the largest u64", () => {
+    const max = "18446744073709551615";
+    const wire = JSON.stringify(receipt())
+      .replace('"measuredWork":16000', `"measuredWork":${max}`)
+      .replace('"outstandingWork":{"kind":"some","value":1048576}', `"outstandingWork":{"kind":"some","value":${max}}`)
+      .replace('"durationChargedMs":58912', `"durationChargedMs":${max}`)
+      .replace('"durationOutstandingMs":{"kind":"some","value":1200}', `"durationOutstandingMs":{"kind":"some","value":${max}}`);
+    const value = scanResult({ state: 1, outputs: [1], receipt: parseExactJson(wire) });
+    expect(scanReceiptOf(value)).toMatchObject({ measuredWork: max, outstandingWork: max, durationChargedMs: max, durationOutstandingMs: max });
+    expect(said(value)).toContain("duration charged 18,446,744,073,709,551,615 ms elapsed · prepaid reservation 18,446,744,073,709,551,615 ms · limit 60,000 ms");
+    const over = parseExactJson(wire.replace(`"measuredWork":${max}`, '"measuredWork":18446744073709551616'));
+    expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: over }))).toBeUndefined();
+  });
+
+  const without = (field: string) => Object.fromEntries(Object.entries(receipt()).filter(([key]) => key !== field));
+  it.each(["attempt", "previousAttempt", "measuredWork", "outstandingWork", "durationChargedMs", "durationOutstandingMs"])(
+    "gives no summary when the mandatory %s is missing", (field) => {
+      expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: without(field) }))).toBeUndefined();
+    });
+
+  it.each([
+    ["a bare attempt text", { attempt: "synthetic-attempt-2" }],
+    ["a numeric attempt", { attempt: some(2) }],
+    ["null for the previous attempt", { previousAttempt: null }],
+    ["a some without its value", { previousAttempt: { kind: "some" } }],
+    ["an Option with an extra key", { outstandingWork: { kind: "none", value: 0 } }],
+    ["a bare reservation number", { outstandingWork: 1048576 }],
+    ["a reservation as decimal text", { outstandingWork: some("1048576") }],
+    ["measured work as decimal text", { measuredWork: "16000" }],
+    ["a fractional charged duration", { durationChargedMs: 1.5 }],
+    ["a negative reserved duration", { durationOutstandingMs: some(-1) }],
+    ["an Option for the measured work", { measuredWork: some(16000) }],
+    ["an unknown Option kind", { durationOutstandingMs: { kind: "unknown" } }],
+  ])("gives no summary for %s", (_, over) => {
+    expect(scanReceiptOf(scanResult({ state: 1, outputs: [1], receipt: receipt(over) }))).toBeUndefined();
   });
 
   it.each([

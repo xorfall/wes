@@ -7,7 +7,7 @@
   },
   "sourceFiles": {
     "view.json": "Declarative identity, input, state/event output ports, optional interaction and slots, plus all three layout tiers with min/preferred/max sizes and placement.",
-    "types.yaml": "Wes type package under types. view.json.input must name a Record contract; wrap lists/scalars in named fields. Read view_authoring types for syntax, constructors, constraints and time rules.",
+    "types.yaml": "Wes type package under types. view.json.input must name a Record contract; wrap lists/scalars in named fields. Record inputs may contain Dataset<T> fields: immutable descriptors read through context.datasets.page/inspect, never full Lists. Outputs and interaction state/events remain inline. Read view_authoring types for syntax, constructors, constraints and time rules.",
     "View.tsx": "Default export: defineView(definition, renderer). Import the generated definition from ./contract.",
     "view.css": "Optional author styles. Import from the renderer to include them in the artifact.",
     "contract.ts": "Generated before TypeScript checking. Input, Outputs, State, Event and EventOutputs types come from Wes contracts."
@@ -83,5 +83,12 @@
       "theme/resize preserve selected state and emit no commands"
     ]
   },
-  "verification": "A checked/installed artifact is not proof of a successful UI render. Use view_render_status for a named live instance on the connected originating UI; draw acknowledgement confirms delivery, not visual correctness. No connected UI means unverified."
+  "verification": "A checked/installed artifact is not proof of a successful UI render. Use view_render_status for a named live instance on the connected originating UI; draw acknowledgement confirms delivery, not visual correctness. No connected UI means unverified.",
+  "datasetReads": {
+    "input": "Declare Dataset<T> inside the record input. Bind one owned input result; compose ordinary inline values with a named pure calculation or adapter before binding. A view never constructs Dataset descriptors or redirects reads to another source.",
+    "api": "context.datasets is optional. If present, page(select, {from: canonicalDecimal} or {cursor}, limit) and inspect(select) read the Dataset at a JSON Pointer inside the current drawn input. Unsupported hosts expose no capability.",
+    "limits": "At most two pending reads per drawing, 100 rows and 1 MiB per reply. Ordinals, counts and sizes are exact decimal strings. Read one needed page; do not collect the entire Dataset on render.",
+    "identity": "Each read binds the exact committed snapshot and drawn input revisions. New input, session, withdrawal or closure aborts pending reads. Handle changed/withdrawn/unavailable explicitly and discard obsolete page copies. Dataset element patterns are validated only by the native store under its frozen schema digest; the browser must not execute them as JavaScript regexes. Ordinary input and writable port patterns still require an adapter.",
+    "authority": "Read-only MessagePort capability, no fetch, filesystem, arbitrary Dataset IDs, commands, refresh, recording, stop, resume or deletion. Read following and recording are separate operations."
+  }
 }

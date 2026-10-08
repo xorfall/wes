@@ -6,6 +6,7 @@ import { isExactNumber } from "../exact-json";
  */
 import { describeType, type TypeShape } from "../protocol";
 import { byteSize, decodeBytes } from "./prepare";
+import { decodeDatasetData } from "./dataset";
 
 function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value) && !isExactNumber(value);
@@ -23,6 +24,8 @@ export function readableData(type: TypeShape, data: unknown, depth = 0): unknown
   if (isExactNumber(data)) return data;
   if (depth > 64 || data === null || data === undefined) return data;
   if (type.kind === "iter") return { type: describeType(type), mode: isObject(data) ? data.mode : undefined, note: "Explicit collection required" };
+  // The descriptor is the value; an invalid one is named as such rather than shown as if it were one.
+  if (type.kind === "dataset") return decodeDatasetData(data) ? data : { type: describeType(type), note: "Invalid dataset descriptor" };
   if (type.kind === "primitive" && type.name === "BYTES" && typeof data === "string") {
     return decodeBytes(data) ?? { bytes: byteSize(data), note: "Binary data; download original data to preserve the bytes" };
   }

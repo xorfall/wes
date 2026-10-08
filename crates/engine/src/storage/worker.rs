@@ -1,4 +1,7 @@
 //! Serial storage ownership off the runtime loop. Receipt cancellation does not retract admitted I/O.
+use super::datasets::{
+    DatasetAppend, DatasetCreate, DatasetInfo, DatasetPage, DatasetStorage, PageRequest,
+};
 use super::{
     EvictionBatch, LoadedValue, Retention, RetentionUsage, StoreError, ValueHandle, ValueStore,
 };
@@ -10,6 +13,7 @@ use std::{
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use wes_core::Value;
+mod owner;
 #[cfg(test)]
 mod tests;
 
@@ -74,10 +78,46 @@ pub struct StoreWorker {
     sender: mpsc::Sender<Request>,
     budget: Arc<Semaphore>,
     limits: StoreWorkerLimits,
+    dataset_read_charge: Option<u32>,
+    dataset_access: tokio::sync::watch::Receiver<super::datasets::DatasetAccess>,
+    dataset_changes: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>>,
 }
 pub struct StoreWorkerTask {
     thread: thread::JoinHandle<()>,
     stopped: oneshot::Receiver<()>,
+}
+struct WorkspacePublication {
+    worker: StoreWorker,
+    runtime: tokio::runtime::Handle,
+}
+impl crate::history::RetainedDatasetPublication for WorkspacePublication {
+    fn protect(
+        &self,
+        generation: &str,
+        handles: &[ValueHandle],
+    ) -> Result<Vec<ValueHandle>, crate::history::RecordError> {
+        if handles.len() > 100_000 {
+            return Err(crate::history::RecordError::Limit(
+                "workspace dataset references",
+            ));
+        }
+        self.runtime
+            .block_on(
+                self.worker
+                    .workspace_roots(generation.into(), Some(handles.to_vec())),
+            )
+            .map_err(|e| {
+                crate::history::RecordError::backend("protecting workspace datasets", false, e)
+            })
+    }
+    fn retire(&self, generation: &str) -> Result<(), crate::history::RecordError> {
+        self.runtime
+            .block_on(self.worker.workspace_roots(generation.into(), None))
+            .map(|_| ())
+            .map_err(|e| {
+                crate::history::RecordError::backend("retiring workspace datasets", false, e)
+            })
+    }
 }
 struct Credited<T> {
     result: Result<T, StoreError>,
@@ -95,23 +135,226 @@ impl<T> PendingStore<T> {
 // Type erasure is private to the mailbox. The public port exposes only ValueStore operations,
 // never arbitrary closures or mutable access to the store from another thread.
 trait Job: Send {
-    fn perform(self: Box<Self>, store: &mut dyn ValueStore) -> bool;
+    fn perform(self: Box<Self>, store: &mut dyn OwnedStorage) -> bool;
+}
+trait OwnedStorage {
+    fn validate_read(&self, handle: &ValueHandle, captured: &Value) -> Result<bool, StoreError>;
+    fn refresh_access(&self);
+    fn values(&mut self) -> &mut dyn ValueStore;
+    fn retained_value_exists(&self, handle: &ValueHandle) -> Result<bool, StoreError>;
+    fn datasets(&self) -> Result<&dyn DatasetStorage, StoreError>;
+    fn datasets_mut(&mut self) -> Result<&mut dyn DatasetStorage, StoreError>;
+    fn captured_analysis(
+        &mut self,
+        run: &str,
+        limit: u32,
+    ) -> Result<super::datasets::DatasetContinuation, StoreError> {
+        let reference = self.datasets()?.continuation(run)?;
+        let info = self.datasets()?.inspect(&reference)?;
+        let checkpoint = self
+            .datasets()?
+            .checkpoint(&reference)?
+            .ok_or(StoreError::DatasetMissing)?;
+        self.validate_checkpoint(&checkpoint, &info.policy, true, false)?;
+        let source = self
+            .values()
+            .read(&ValueHandle::new(&checkpoint.source.handle)?)?
+            .ok_or(StoreError::MissingValue)?
+            .value;
+        let source = source.with_provenance(source.provenance().clone().with_policy(&info.policy));
+        value_charge(&source, u64::from(limit) / 2)
+            .ok_or(StoreError::Limit("checkpoint source"))?;
+        Ok(super::datasets::DatasetContinuation {
+            reference,
+            checkpoint,
+            source,
+        })
+    }
+    fn validate_checkpoint(
+        &self,
+        checkpoint: &super::datasets::AnalysisCheckpoint,
+        policy: &wes_core::flow::FlowPolicy,
+        validate_source: bool,
+        initial_admission: bool,
+    ) -> Result<(), StoreError>;
+}
+struct Owner<V> {
+    values: super::private::PolicyValues<V>,
+    datasets: Option<Box<dyn DatasetStorage>>,
+    pending_evictions: std::collections::VecDeque<ValueHandle>,
+    evictions_more: bool,
+    dataset_access: tokio::sync::watch::Sender<super::datasets::DatasetAccess>,
+}
+impl<V: ValueStore> OwnedStorage for Owner<V> {
+    fn validate_read(&self, handle: &ValueHandle, captured: &Value) -> Result<bool, StoreError> {
+        self.validate_prefixes(captured)?;
+        // A ValueHandle identifies immutable bytes. Revalidate existence and
+        // current read gates without decoding the same ordinary value again.
+        Ok(self.values.size(handle)?.is_some())
+    }
+    fn refresh_access(&self) {
+        let access = match self
+            .datasets
+            .as_ref()
+            .map(|port| port.read_access())
+            .transpose()
+        {
+            Ok(withdrawn) => super::datasets::DatasetAccess {
+                withdrawn: withdrawn.unwrap_or_default(),
+                closed: false,
+            },
+            Err(_) => super::datasets::DatasetAccess {
+                withdrawn: Default::default(),
+                closed: true,
+            },
+        };
+        self.dataset_access.send_if_modified(|previous| {
+            if previous == &access {
+                false
+            } else {
+                *previous = access;
+                true
+            }
+        });
+    }
+    fn validate_checkpoint(
+        &self,
+        checkpoint: &super::datasets::AnalysisCheckpoint,
+        policy: &wes_core::flow::FlowPolicy,
+        validate_source: bool,
+        initial_admission: bool,
+    ) -> Result<(), StoreError> {
+        use sha2::{Digest, Sha256};
+        if checkpoint.state.provenance().policy().is_private()
+            || checkpoint.state.provenance().policy().is_unknown()
+            || checkpoint.context.provenance().policy().is_private()
+            || checkpoint.context.provenance().policy().is_unknown()
+            || checkpoint
+                .state
+                .provenance()
+                .policy()
+                .origins()
+                .iter()
+                .chain(checkpoint.context.provenance().policy().origins())
+                .any(|o| !policy.origins().contains(o))
+            || checkpoint
+                .state
+                .provenance()
+                .policy()
+                .dataset_reads()
+                .iter()
+                .chain(checkpoint.context.provenance().policy().dataset_reads())
+                .any(|o| !policy.dataset_reads().contains(o))
+        {
+            return Err(StoreError::Restricted);
+        }
+        if !checkpoint.state.data().is_inline() || !checkpoint.context.data().is_inline() {
+            return Err(StoreError::NonMaterialized);
+        }
+        if let Some(followed) = &checkpoint.followed_source {
+            let info = self.datasets()?.inspect(&followed.prefix)?;
+            if info.recording.as_ref().map(|r| (&r.run, &r.epoch, r.first))
+                != Some((&followed.run, &followed.epoch, followed.first))
+                || info
+                    .policy
+                    .origins()
+                    .iter()
+                    .any(|o| !policy.origins().contains(o))
+                || info
+                    .policy
+                    .dataset_reads()
+                    .iter()
+                    .any(|o| !policy.dataset_reads().contains(o))
+            {
+                return Err(StoreError::Restricted);
+            }
+        }
+        if !validate_source {
+            return Ok(());
+        }
+        let handle = ValueHandle::new(&checkpoint.source.handle)?;
+        if !self.values.is_kept(&handle)? {
+            return Err(StoreError::MissingValue);
+        }
+        let loaded = self.values.read(&handle)?.ok_or(StoreError::MissingValue)?;
+        let source_policy = loaded.value.provenance().policy();
+        if let Some(followed) = &checkpoint.followed_source {
+            let wes_core::Data::Dataset(initial) = loaded.value.data() else {
+                return Err(StoreError::Conflict);
+            };
+            if initial.store() != followed.prefix.store()
+                || initial.dataset() != followed.prefix.dataset()
+                || initial.schema_digest() != followed.prefix.schema_digest()
+                || initial.authorization_generation() != followed.prefix.authorization_generation()
+                || initial.generation() > followed.prefix.generation()
+                || initial.records() > followed.prefix.records()
+            {
+                return Err(StoreError::Conflict);
+            }
+            // Create anchors the immutable capture exactly. Successor checks preserve
+            // ancestry thereafter; resume never walks back through the entire recording.
+            if initial_admission && initial.as_ref() != &followed.prefix {
+                return Err(StoreError::Conflict);
+            }
+        }
+        if source_policy.is_private()
+            || source_policy.is_unknown()
+            || source_policy
+                .origins()
+                .iter()
+                .any(|o| !policy.origins().contains(o))
+            || source_policy
+                .dataset_reads()
+                .iter()
+                .any(|o| !policy.dataset_reads().contains(o))
+        {
+            return Err(StoreError::Restricted);
+        }
+        let bytes = self
+            .values
+            .encoded(&handle)?
+            .ok_or(StoreError::MissingValue)?;
+        if bytes.len() as u64 != checkpoint.source.bytes
+            || format!("sha256:{:x}", Sha256::digest(&bytes)) != checkpoint.source.digest
+        {
+            return Err(StoreError::Conflict);
+        }
+        Ok(())
+    }
+    fn values(&mut self) -> &mut dyn ValueStore {
+        self
+    }
+    fn retained_value_exists(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        self.values.is_kept(handle)
+    }
+    fn datasets(&self) -> Result<&dyn DatasetStorage, StoreError> {
+        self.datasets
+            .as_deref()
+            .ok_or(StoreError::DatasetUnavailable)
+    }
+    fn datasets_mut(&mut self) -> Result<&mut dyn DatasetStorage, StoreError> {
+        match self.datasets.as_mut() {
+            Some(port) => Ok(port.as_mut()),
+            None => Err(StoreError::DatasetUnavailable),
+        }
+    }
 }
 struct Operation<T, F> {
     work: F,
     reply: oneshot::Sender<Credited<T>>,
     credit: OwnedSemaphorePermit,
 }
-impl<T: Send, F: FnOnce(&mut dyn ValueStore) -> Result<T, StoreError> + Send> Job
+impl<T: Send, F: FnOnce(&mut dyn OwnedStorage) -> Result<T, StoreError> + Send> Job
     for Operation<T, F>
 {
-    fn perform(self: Box<Self>, store: &mut dyn ValueStore) -> bool {
+    fn perform(self: Box<Self>, store: &mut dyn OwnedStorage) -> bool {
         let Self {
             work,
             reply,
             credit,
         } = *self;
         let result = work(store);
+        store.refresh_access();
         let failed = result.is_err();
         let _ = reply.send(Credited { result, credit });
         failed
@@ -127,6 +370,37 @@ pub fn spawn_store(
     store: impl ValueStore + 'static,
     limits: StoreWorkerLimits,
 ) -> Result<(StoreWorker, StoreWorkerTask), StoreError> {
+    spawn_owner(store, None, limits)
+}
+/// Values and datasets share one mailbox, credit pool, thread and shutdown barrier.
+pub fn spawn_storage(
+    store: impl ValueStore + 'static,
+    datasets: impl DatasetStorage + 'static,
+    limits: StoreWorkerLimits,
+) -> Result<(StoreWorker, StoreWorkerTask), StoreError> {
+    spawn_owner(store, Some(Box::new(datasets)), limits)
+}
+fn spawn_owner(
+    store: impl ValueStore + 'static,
+    datasets: Option<Box<dyn DatasetStorage>>,
+    limits: StoreWorkerLimits,
+) -> Result<(StoreWorker, StoreWorkerTask), StoreError> {
+    let dataset_read_charge = datasets
+        .as_ref()
+        .map(|port| {
+            u32::try_from(port.read_charge()).map_err(|_| StoreError::Limit("dataset I/O charge"))
+        })
+        .transpose()?;
+    let access = super::datasets::DatasetAccess {
+        withdrawn: datasets
+            .as_ref()
+            .map(|port| port.read_access())
+            .transpose()?
+            .unwrap_or_default(),
+        closed: false,
+    };
+    let (dataset_access_tx, dataset_access) = tokio::sync::watch::channel(access);
+    let dataset_changes = datasets.as_ref().and_then(|port| port.changes());
     if limits.operations.get() > Semaphore::MAX_PERMITS
         || limits.bytes.get() as usize > Semaphore::MAX_PERMITS
     {
@@ -137,7 +411,7 @@ pub fn spawn_store(
     let closed_budget = budget.clone();
     let (stopped_tx, stopped) = oneshot::channel();
     let thread = thread::Builder::new()
-        .name("wes-values".into())
+        .name("wes-storage".into())
         .spawn(move || {
             struct CloseBudget(Arc<Semaphore>);
             impl Drop for CloseBudget {
@@ -146,7 +420,16 @@ pub fn spawn_store(
                 }
             }
             let _close = CloseBudget(closed_budget);
-            storage_loop(store, receiver);
+            storage_loop(
+                Owner {
+                    values: super::private::PolicyValues::new(store),
+                    datasets,
+                    pending_evictions: Default::default(),
+                    evictions_more: false,
+                    dataset_access: dataset_access_tx,
+                },
+                receiver,
+            );
             let _ = stopped_tx.send(());
         })
         .map_err(|error| StoreError::backend("starting the storage worker", error))?;
@@ -155,6 +438,9 @@ pub fn spawn_store(
             sender,
             budget,
             limits,
+            dataset_read_charge,
+            dataset_access,
+            dataset_changes,
         },
         StoreWorkerTask { thread, stopped },
     ))
@@ -171,6 +457,28 @@ impl StoreWorkerTask {
     }
 }
 impl StoreWorker {
+    pub(crate) fn dataset_changes(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>> {
+        self.dataset_changes.clone()
+    }
+    pub(crate) async fn eventlog_head(
+        &self,
+        reference: wes_core::DatasetRef,
+        work: Option<super::datasets::ReadWork>,
+    ) -> Result<DatasetInfo, StoreError> {
+        self.request_owner(
+            self.dataset_read_charge
+                .ok_or(StoreError::DatasetUnavailable)?,
+            move |owner| owner.datasets()?.eventlog_head(&reference, work.as_ref()),
+        )
+        .await?
+        .wait()
+        .await
+    }
+    pub fn dataset_access(&self) -> tokio::sync::watch::Receiver<super::datasets::DatasetAccess> {
+        self.dataset_access.clone()
+    }
     /// Retain/size an existing handle as one serial operation. Acknowledged keep must establish
     /// the store's declared persistence even for an already retained handle. Never republishes it.
     pub async fn retain(&self, handle: ValueHandle) -> Result<StoredOutput, StoreError> {
@@ -181,7 +489,7 @@ impl StoreWorker {
         handle: ValueHandle,
         reason: Retention,
     ) -> Result<StoredOutput, StoreError> {
-        self.request(1024, move |store| {
+        self.request(self.limits.bytes.get(), move |store| {
             let mut finish = || {
                 if !store.keep_with_reason(&handle, reason)? {
                     return Err(StoreError::RetentionUnavailable);
@@ -244,12 +552,20 @@ impl StoreWorker {
             if value.provenance().policy().is_private() {
                 return Err(StoreError::Restricted);
             }
-            if !value.data().is_materialized() {
+            if !value.data().is_storable_snapshot() {
                 return Err(StoreError::NonMaterialized);
             }
         }
         let cost = value_charge(&value, self.limits.bytes.get().into())
             .ok_or(StoreError::Limit("value payload"))? as u32;
+        let cost = if owner::has_datasets(&value)? {
+            cost.max(
+                self.dataset_read_charge
+                    .ok_or(StoreError::DatasetUnavailable)?,
+            )
+        } else {
+            cost
+        };
         self.request(cost, move |store| {
             let handle = store.store(&value)?;
             let mut finish = || -> Result<StoredOutput, StoreError> {
@@ -262,9 +578,12 @@ impl StoreWorker {
                         true
                     }
                     PublicationPolicy::AutomaticUpToBytes(limit)
-                        if bytes <= limit
-                            && value.data().is_materialized()
-                            && !value.provenance().policy().is_private() =>
+                        if value.data().is_storable_snapshot()
+                            && !value.provenance().policy().is_private()
+                            && store.automatic_retention_allowed(&handle)?
+                            && store
+                                .retention_size(&handle)?
+                                .is_some_and(|bytes| bytes <= limit) =>
                     {
                         if !store.keep_with_reason(&handle, Retention::Automatic)? {
                             return Err(StoreError::RetentionUnavailable);
@@ -299,6 +618,14 @@ impl StoreWorker {
         cost: u32,
         work: impl FnOnce(&mut dyn ValueStore) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<PendingStore<T>, StoreError> {
+        self.request_owner(cost, move |owner| work(owner.values()))
+            .await
+    }
+    async fn request_owner<T: Send + 'static>(
+        &self,
+        cost: u32,
+        work: impl FnOnce(&mut dyn OwnedStorage) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<PendingStore<T>, StoreError> {
         if self.sender.is_closed() {
             return Err(StoreError::Closed);
         }
@@ -322,6 +649,435 @@ impl StoreWorker {
             .map_err(|_| StoreError::Closed)?;
         Ok(PendingStore(receive))
     }
+    /// Joined blocking history jobs use the same credited FIFO owner as async callers.
+    pub fn retained_dataset_publication(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::history::RetainedDatasetPublication>> {
+        self.dataset_read_charge?;
+        Some(std::sync::Arc::new(WorkspacePublication {
+            worker: self.clone(),
+            runtime: tokio::runtime::Handle::current(),
+        }))
+    }
+    async fn workspace_roots(
+        &self,
+        generation: String,
+        handles: Option<Vec<ValueHandle>>,
+    ) -> Result<Vec<ValueHandle>, StoreError> {
+        if self.dataset_read_charge.is_none() {
+            return Ok(vec![]);
+        }
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            match handles {
+                Some(handles) => {
+                    // Declared retained history is not authority to resurrect absent/transient bytes.
+                    let mut retained = Vec::new();
+                    for handle in handles {
+                        if owner.retained_value_exists(&handle)? {
+                            retained.push(handle);
+                        }
+                    }
+                    owner
+                        .datasets_mut()?
+                        .protect_workspace(&generation, &retained)?;
+                    Ok(retained)
+                }
+                None => {
+                    owner.datasets_mut()?.retire_workspace(&generation)?;
+                    Ok(vec![])
+                }
+            }
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_inspect(
+        &self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<DatasetInfo, StoreError> {
+        self.request_owner(
+            self.dataset_read_charge
+                .ok_or(StoreError::DatasetUnavailable)?,
+            move |owner| owner.datasets()?.inspect(&reference),
+        )
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_head(
+        &self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<DatasetInfo, StoreError> {
+        self.request_owner(
+            self.dataset_read_charge
+                .ok_or(StoreError::DatasetUnavailable)?,
+            move |owner| owner.datasets()?.head(&reference),
+        )
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_snapshot(
+        &self,
+        reference: wes_core::DatasetRef,
+        selection: super::datasets::DatasetSnapshot,
+    ) -> Result<DatasetInfo, StoreError> {
+        self.request_owner(
+            self.dataset_read_charge
+                .ok_or(StoreError::DatasetUnavailable)?,
+            move |owner| owner.datasets()?.snapshot(&reference, selection),
+        )
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_retention_preview(
+        &self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<super::datasets::DatasetRetentionCost, StoreError> {
+        self.request_owner(
+            self.dataset_read_charge
+                .ok_or(StoreError::DatasetUnavailable)?,
+            move |owner| {
+                let inventory = owner.datasets()?.retention_preview(&reference)?;
+                if inventory.reference != reference {
+                    return Err(StoreError::Conflict);
+                }
+                let mut total = inventory.object_bytes;
+                let mut shared = inventory.shared_object_bytes;
+                let mut captured = 0u64;
+                for capture in inventory.captures {
+                    let bytes = capture.value.bytes;
+                    total = total
+                        .checked_add(bytes)
+                        .ok_or(StoreError::Limit("retention bytes"))?;
+                    captured = captured
+                        .checked_add(bytes)
+                        .ok_or(StoreError::Limit("retention bytes"))?;
+                    if capture.shared
+                        || owner.retained_value_exists(&ValueHandle::new(&capture.value.handle)?)?
+                    {
+                        shared = shared
+                            .checked_add(bytes)
+                            .ok_or(StoreError::Limit("retention bytes"))?;
+                    }
+                }
+                let exclusive = total
+                    .checked_sub(shared)
+                    .ok_or(StoreError::DatasetCorrupt)?;
+                // Both inventories were read by the same FIFO owner; no mutation/reservation was made.
+                Ok(super::datasets::DatasetRetentionCost {
+                    reference,
+                    total_bytes: total,
+                    shared_bytes: shared,
+                    exclusive_bytes: exclusive,
+                    captured_source_bytes: captured,
+                    catalog_revision: inventory.catalog_revision,
+                })
+            },
+        )
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_plan_delete(
+        &self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<super::datasets::DatasetDeletePlan, StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            owner.datasets_mut()?.plan_delete(&reference)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_delete(
+        &self,
+        token: String,
+        references: bool,
+        protected: bool,
+    ) -> Result<super::datasets::DatasetCleanup, StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            let mut cleanup = owner
+                .datasets_mut()?
+                .delete(&token, references, protected)?;
+            finish_dataset_cleanup(owner, &mut cleanup);
+            Ok(cleanup)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_collect(&self) -> Result<super::datasets::DatasetCleanup, StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            let mut cleanup = owner.datasets_mut()?.collect()?;
+            finish_dataset_cleanup(owner, &mut cleanup);
+            Ok(cleanup)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_withdraw(
+        &self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<Vec<String>, StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            owner.datasets_mut()?.withdraw(&reference)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_resume(
+        &self,
+        request: super::datasets::DatasetResume,
+    ) -> Result<super::datasets::DatasetWriterAdmission, StoreError> {
+        self.enqueue_dataset_resume(request).await?.wait().await
+    }
+    /// Dropping this acknowledgement releases any delivered process ownership;
+    /// it cannot cancel the already admitted local commit.
+    pub async fn enqueue_dataset_resume(
+        &self,
+        request: super::datasets::DatasetResume,
+    ) -> Result<PendingStore<super::datasets::DatasetWriterAdmission>, StoreError> {
+        let cost = self.dataset_payload_charge(Some(&request.checkpoint), &[])?;
+        self.request_owner(cost, move |owner| {
+            owner.validate_checkpoint(&request.checkpoint, &request.policy, true, false)?;
+            owner.datasets_mut()?.resume(request)
+        })
+        .await
+    }
+    pub async fn dataset_reconcile_store(&self) -> Result<crate::history::Persistence, StoreError> {
+        self.request_owner(self.limits.bytes.get(), |owner| {
+            owner.datasets_mut()?.reconcile_store()
+        })
+        .await?
+        .wait()
+        .await
+    }
+    /// The shared FIFO mailbox orders this recovery behind all admitted physical writes.
+    pub async fn dataset_reconcile(
+        &self,
+        identity: super::datasets::DatasetWriteSelection,
+    ) -> Result<super::datasets::DatasetReconciliation, StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            owner.datasets_mut()?.reconcile_owned(&identity)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    /// Joined read of a checkpoint and its exact protected source; it confers no execution grant.
+    pub async fn dataset_continuation(
+        &self,
+        run: String,
+    ) -> Result<super::datasets::DatasetContinuation, StoreError> {
+        let limit = self.limits.bytes.get();
+        self.request_owner(limit, move |owner| {
+            let identity = super::datasets::DatasetWriteSelection {
+                role: super::datasets::DatasetWriteRole::Analysis,
+                run: run.clone(),
+            };
+            let receipt = owner.datasets_mut()?.reconcile_owned(&identity)?;
+            if receipt.outcome == super::datasets::DatasetWriteOutcome::Unknown {
+                return Err(StoreError::DatasetRecoveryUnknown);
+            }
+            owner.captured_analysis(&run, limit)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    /// Read only the owned analysis's protected input. Range strings and ownership
+    /// are selected by the workspace, not by a raw dataset or value-handle literal.
+    pub async fn dataset_source_excerpt(
+        &self,
+        run: String,
+        from: u64,
+        rows_or_bytes: usize,
+    ) -> Result<Value, StoreError> {
+        let limit = self.limits.bytes.get();
+        self.request_owner(limit, move |owner| {
+            let captured = owner.captured_analysis(&run, limit)?;
+            let value = crate::scan::read_source_excerpt(
+                owner.datasets()?,
+                &captured.source,
+                &captured.checkpoint,
+                from,
+                rows_or_bytes,
+            )?;
+            owner.datasets()?.inspect(&captured.reference)?;
+            if !owner.validate_read(
+                &ValueHandle::new(&captured.checkpoint.source.handle)?,
+                &captured.source,
+            )? {
+                return Err(StoreError::MissingValue);
+            }
+            Ok(value)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_create(
+        &self,
+        request: DatasetCreate,
+    ) -> Result<super::datasets::DatasetWriterAdmission, StoreError> {
+        self.enqueue_dataset_create(request).await?.wait().await
+    }
+    /// Prefix publication and writer ownership share one FIFO operation, even
+    /// when the requester abandons the acknowledgement after admission.
+    pub async fn enqueue_dataset_create(
+        &self,
+        request: DatasetCreate,
+    ) -> Result<PendingStore<super::datasets::DatasetWriterAdmission>, StoreError> {
+        let cost = self.dataset_payload_charge(request.checkpoint.as_ref(), &[])?;
+        self.request_owner(cost, move |owner| {
+            if let Some(checkpoint) = &request.checkpoint {
+                owner.validate_checkpoint(checkpoint, &request.policy, true, true)?;
+            }
+            owner.datasets_mut()?.create(request)
+        })
+        .await
+    }
+    /// Admission is irrevocable: dropping the receipt does not cancel a physical commit.
+    pub async fn enqueue_dataset_append(
+        &self,
+        request: DatasetAppend,
+    ) -> Result<PendingStore<wes_core::DatasetRef>, StoreError> {
+        let cost = self.dataset_payload_charge(request.checkpoint.as_ref(), &request.rows)?;
+        self.request_owner(cost, move |owner| {
+            if let Some(checkpoint) = &request.checkpoint {
+                owner.validate_checkpoint(checkpoint, &request.policy, false, false)?;
+            }
+            owner.datasets_mut()?.append(request)
+        })
+        .await
+    }
+    fn dataset_payload_charge(
+        &self,
+        checkpoint: Option<&super::datasets::AnalysisCheckpoint>,
+        rows: &[super::datasets::DatasetRow],
+    ) -> Result<u32, StoreError> {
+        let limit = self.limits.bytes.get() as u64;
+        let mut cost = self
+            .dataset_read_charge
+            .ok_or(StoreError::DatasetUnavailable)? as u64;
+        for row in rows {
+            cost = cost
+                .checked_add(
+                    value_charge(&row.value, limit).ok_or(StoreError::Limit("dataset payload"))?,
+                )
+                .ok_or(StoreError::Limit("dataset payload"))?;
+        }
+        if let Some(checkpoint) = checkpoint {
+            for value in [&checkpoint.state, &checkpoint.context] {
+                cost = cost
+                    .checked_add(
+                        value_charge(value, limit)
+                            .ok_or(StoreError::Limit("checkpoint payload"))?,
+                    )
+                    .ok_or(StoreError::Limit("checkpoint payload"))?;
+            }
+            for bytes in [
+                checkpoint.state_schema.encoded(),
+                checkpoint.context_schema.encoded(),
+                checkpoint.item_schema.encoded(),
+                checkpoint.captured_program.as_bytes(),
+                checkpoint.decoder_carry.as_slice(),
+            ] {
+                cost = cost
+                    .checked_add(
+                        (bytes.len() as u64)
+                            .checked_mul(8)
+                            .ok_or(StoreError::Limit("checkpoint payload"))?,
+                    )
+                    .ok_or(StoreError::Limit("checkpoint payload"))?;
+            }
+            // Raw source validation belongs to this job, including its retained encoding.
+            cost = cost
+                .checked_add(
+                    checkpoint
+                        .source
+                        .bytes
+                        .checked_mul(4)
+                        .ok_or(StoreError::Limit("checkpoint source"))?,
+                )
+                .ok_or(StoreError::Limit("checkpoint source"))?;
+        }
+        u32::try_from(cost)
+            .ok()
+            .filter(|n| *n <= self.limits.bytes.get())
+            .ok_or(StoreError::Limit("dataset payload"))
+    }
+    pub async fn capture_scan_source(
+        &self,
+        value: Value,
+    ) -> Result<super::datasets::CapturedValue, StoreError> {
+        let limit = self.limits.bytes.get();
+        if !value.data().is_storable_snapshot()
+            || value.shape().contains_meta()
+            || value.provenance().policy().is_private()
+            || value.provenance().policy().is_unknown()
+        {
+            return Err(StoreError::Restricted);
+        }
+        value_charge(&value, limit as u64).ok_or(StoreError::Limit("captured source"))?;
+        self.request(limit, move |store| {
+            use sha2::{Digest, Sha256};
+            let handle = store.store(&value)?;
+            let finish = |store: &mut dyn ValueStore| {
+                if !store.keep_with_reason(&handle, Retention::Protected)? {
+                    return Err(StoreError::RetentionUnavailable);
+                }
+                let bytes = store.encoded(&handle)?.ok_or(StoreError::MissingValue)?;
+                Ok(super::datasets::CapturedValue {
+                    handle: handle.to_string(),
+                    digest: format!("sha256:{:x}", Sha256::digest(&bytes)),
+                    bytes: bytes.len() as u64,
+                })
+            };
+            finish(store).map_err(|source| StoreError::Published {
+                handle,
+                source: Box::new(source),
+            })
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_checkpoint(
+        &self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<Option<super::datasets::AnalysisCheckpoint>, StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            let info = owner.datasets()?.inspect(&reference)?;
+            let checkpoint = owner.datasets()?.checkpoint(&reference)?;
+            if let Some(saved) = &checkpoint {
+                owner.validate_checkpoint(saved, &info.policy, true, false)?;
+            }
+            Ok(checkpoint)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    pub async fn dataset_page(
+        &self,
+        reference: wes_core::DatasetRef,
+        request: PageRequest,
+    ) -> Result<DatasetPage, StoreError> {
+        self.request_owner(
+            self.dataset_read_charge
+                .ok_or(StoreError::DatasetUnavailable)?,
+            move |owner| owner.datasets()?.page(&reference, request),
+        )
+        .await?
+        .wait()
+        .await
+    }
     /// Acknowledges admission, not completion or durability. Calculation is bounded to one million
     /// shape/data nodes and depth 256; decimal charges never expand scientific notation.
     pub async fn enqueue_store(
@@ -330,6 +1086,14 @@ impl StoreWorker {
     ) -> Result<PendingStore<ValueHandle>, StoreError> {
         let cost = value_charge(&value, self.limits.bytes.get().into())
             .ok_or(StoreError::Limit("value payload"))? as u32;
+        let cost = if owner::has_datasets(&value)? {
+            cost.max(
+                self.dataset_read_charge
+                    .ok_or(StoreError::DatasetUnavailable)?,
+            )
+        } else {
+            cost
+        };
         self.request(cost, move |store| store.store(&value)).await
     }
     pub async fn store(&self, value: Value) -> Result<ValueHandle, StoreError> {
@@ -346,6 +1110,48 @@ impl StoreWorker {
                     .ok_or(StoreError::Limit("read response"))?;
             }
             Ok(result)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    /// Revalidate current owned access after encoding without decoding an immutable handle again.
+    pub async fn validate_read(
+        &self,
+        handle: ValueHandle,
+        captured: Value,
+    ) -> Result<bool, StoreError> {
+        let charge = self.dataset_read_charge.unwrap_or(0).max(
+            value_charge(&captured, self.limits.bytes.get().into())
+                .ok_or(StoreError::Limit("read authorization"))?
+                .try_into()
+                .map_err(|_| StoreError::Limit("read authorization"))?,
+        );
+        self.request_owner(charge, move |owner| owner.validate_read(&handle, &captured))
+            .await?
+            .wait()
+            .await
+    }
+    /// Compare the complete captured value on the storage owner. Retained codecs can decode
+    /// the same immutable result into new allocations; pointer identity is not a read revision.
+    pub async fn read_matches(
+        &self,
+        handle: ValueHandle,
+        captured: Value,
+    ) -> Result<bool, StoreError> {
+        let limit = self.limits.bytes.get();
+        let captured_charge =
+            value_charge(&captured, limit.into()).ok_or(StoreError::Limit("read revalidation"))?;
+        self.request(limit, move |store| {
+            let Some(loaded) = store.read(&handle)? else {
+                return Ok(false);
+            };
+            value_charge(
+                &loaded.value,
+                u64::from(limit).saturating_sub(captured_charge),
+            )
+            .ok_or(StoreError::Limit("read revalidation"))?;
+            Ok(loaded.value.same_snapshot(&captured) || loaded.value == captured)
         })
         .await?
         .wait()
@@ -374,7 +1180,7 @@ impl StoreWorker {
             .await
     }
     pub async fn release(&self, handle: ValueHandle) -> Result<bool, StoreError> {
-        self.request(256, move |store| store.release(&handle))
+        self.request(self.limits.bytes.get(), move |store| store.release(&handle))
             .await?
             .wait()
             .await
@@ -382,7 +1188,7 @@ impl StoreWorker {
     /// Reclaim a superseded transient output only if it is still unkept. The retained check and
     /// release share one serial store job, so a previously admitted keep cannot race this cleanup.
     pub async fn release_unkept(&self, handle: ValueHandle) -> Result<bool, StoreError> {
-        self.request(256, move |store| {
+        self.request(self.limits.bytes.get(), move |store| {
             if store.is_kept(&handle)? {
                 Ok(false)
             } else {
@@ -394,7 +1200,7 @@ impl StoreWorker {
         .await
     }
     pub async fn keep(&self, handle: ValueHandle) -> Result<bool, StoreError> {
-        self.request(256, move |store| {
+        self.request(self.limits.bytes.get(), move |store| {
             store.keep_with_reason(&handle, Retention::Protected)
         })
         .await?
@@ -402,7 +1208,7 @@ impl StoreWorker {
         .await
     }
     pub async fn is_kept(&self, handle: ValueHandle) -> Result<bool, StoreError> {
-        self.request(256, move |store| store.is_kept(&handle))
+        self.request(self.limits.bytes.get(), move |store| store.is_kept(&handle))
             .await?
             .wait()
             .await
@@ -451,8 +1257,7 @@ impl StoreWorker {
         receive.await.map_err(|_| StoreError::Closed)
     }
 }
-fn storage_loop(store: impl ValueStore, mut receiver: mpsc::Receiver<Request>) {
-    let mut store = super::private::PolicyValues::new(store);
+fn storage_loop(mut store: impl OwnedStorage, mut receiver: mpsc::Receiver<Request>) {
     let mut report = StoreDrain::default();
     let mut shutdown = vec![];
     while let Some(request) = receiver.blocking_recv() {
@@ -475,5 +1280,37 @@ fn storage_loop(store: impl ValueStore, mut receiver: mpsc::Receiver<Request>) {
     drop(store);
     for reply in shutdown {
         let _ = reply.send(report);
+    }
+}
+
+/// Physical value release precedes clearing the durable cleanup inventory.
+/// Failure leaves an acknowledged deletion with explicit pending cleanup; it
+/// never replays the deletion or discards a shared active capture.
+fn finish_dataset_cleanup(
+    owner: &mut dyn OwnedStorage,
+    cleanup: &mut super::datasets::DatasetCleanup,
+) {
+    let mut released = Vec::new();
+    for capture in &cleanup.released_captures {
+        let result = (|| {
+            let handle = ValueHandle::new(&capture.handle)?;
+            if owner.datasets()?.protects_value(&handle)? {
+                return Ok(true);
+            }
+            owner.values().release(&handle)?;
+            Ok::<_, StoreError>(true)
+        })();
+        match result {
+            Ok(true) => released.push(capture.clone()),
+            _ => cleanup.complete = false,
+        }
+    }
+    if !released.is_empty()
+        && owner
+            .datasets_mut()
+            .and_then(|p| p.acknowledge_cleanup(&released))
+            .is_err()
+    {
+        cleanup.complete = false;
     }
 }

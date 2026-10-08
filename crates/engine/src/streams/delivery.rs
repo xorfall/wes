@@ -31,10 +31,15 @@ impl Default for Budget {
         )))
     }
 }
-pub(crate) struct Credit {
+struct Permits {
     _event: OwnedSemaphorePermit,
     _bytes: OwnedSemaphorePermit,
     _total: OwnedSemaphorePermit,
+}
+/// One ingress reservation, retired only after every branch has joined its use.
+#[derive(Clone)]
+pub(crate) struct Credit {
+    _permits: Arc<Permits>,
 }
 pub(crate) struct Event {
     pub sequence: u64,
@@ -68,22 +73,24 @@ impl Sender {
     pub fn reserve(&self, value: &Value) -> Result<Credit, StreamError> {
         let charge = Self::charge(value)?;
         Ok(Credit {
-            _event: self
-                .events
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| StreamError::Capacity)?,
-            _bytes: self
-                .bytes
-                .clone()
-                .try_acquire_many_owned(charge)
-                .map_err(|_| StreamError::Capacity)?,
-            _total: self
-                .total
-                .0
-                .clone()
-                .try_acquire_many_owned(charge)
-                .map_err(|_| StreamError::Capacity)?,
+            _permits: Arc::new(Permits {
+                _event: self
+                    .events
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| StreamError::Capacity)?,
+                _bytes: self
+                    .bytes
+                    .clone()
+                    .try_acquire_many_owned(charge)
+                    .map_err(|_| StreamError::Capacity)?,
+                _total: self
+                    .total
+                    .0
+                    .clone()
+                    .try_acquire_many_owned(charge)
+                    .map_err(|_| StreamError::Capacity)?,
+            }),
         })
     }
     pub async fn reserve_wait(
@@ -94,25 +101,27 @@ impl Sender {
         let charge = Self::charge(value)?;
         let acquire = async {
             Ok(Credit {
-                _event: self
-                    .events
-                    .clone()
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| StreamError::Closed)?,
-                _bytes: self
-                    .bytes
-                    .clone()
-                    .acquire_many_owned(charge)
-                    .await
-                    .map_err(|_| StreamError::Closed)?,
-                _total: self
-                    .total
-                    .0
-                    .clone()
-                    .acquire_many_owned(charge)
-                    .await
-                    .map_err(|_| StreamError::Closed)?,
+                _permits: Arc::new(Permits {
+                    _event: self
+                        .events
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .map_err(|_| StreamError::Closed)?,
+                    _bytes: self
+                        .bytes
+                        .clone()
+                        .acquire_many_owned(charge)
+                        .await
+                        .map_err(|_| StreamError::Closed)?,
+                    _total: self
+                        .total
+                        .0
+                        .clone()
+                        .acquire_many_owned(charge)
+                        .await
+                        .map_err(|_| StreamError::Closed)?,
+                }),
             })
         };
         tokio::select! {

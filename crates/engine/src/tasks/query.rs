@@ -1184,8 +1184,13 @@ impl Budget<'_> {
                 ("name", self.text(&t.to_string())?),
             ]),
             Shape::Unknown => fields([("kind", self.text("unknown")?)]),
-            Shape::List(element) | Shape::Option(element) | Shape::Iter(element) => {
-                let kind = if matches!(shape, Shape::Iter(_)) {
+            Shape::List(element)
+            | Shape::Option(element)
+            | Shape::Iter(element)
+            | Shape::Dataset(element) => {
+                let kind = if matches!(shape, Shape::Dataset(_)) {
+                    "dataset"
+                } else if matches!(shape, Shape::Iter(_)) {
                     "iter"
                 } else if matches!(shape, Shape::Option(_)) {
                     "option"

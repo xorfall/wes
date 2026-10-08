@@ -4,6 +4,7 @@ mod budgets;
 mod conversations;
 mod credential_vault;
 mod data_home;
+mod datasets;
 mod environment_authentication;
 mod workspace_specs;
 pub(crate) use data_home::recovery as listen_data_home_recovery;
@@ -218,6 +219,7 @@ pub async fn listen(mut config: Config) -> io::Result<Server> {
         .route("/submit", post(submit))
         .route("/sandbox", get(read_sandbox))
         .route("/values/{handle}", get(value))
+        .route("/datasets/{handle}", get(datasets::read))
         .route("/live-view/{node}", get(live_view::read))
         .route("/view-mounts/{node}/{instance}", post(view_mounts::change))
         .route("/view-inputs/{node}/{instance}", get(view_inputs::read))
@@ -228,6 +230,10 @@ pub async fn listen(mut config: Config) -> io::Result<Server> {
         .route(
             "/view-instances/{node}/{instance}",
             get(view_instances::read),
+        )
+        .route(
+            "/view-datasets/{node}/{instance}/{member}",
+            get(view_instances::dataset),
         )
         .route("/complete", get(services::complete))
         .route("/language/calc", get(language::calc))
@@ -1184,6 +1190,7 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
             return value_errors::Failure::PrivateUnavailable.response(Some(&handle));
         }
     }
+    let captured = value.value.clone();
     let encoded = shared
         .encoders
         .spawn_blocking(move || {
@@ -1195,7 +1202,31 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
         })
         .await;
     match encoded {
-        Ok(Ok(bytes)) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),
+        Ok(Ok(bytes)) => {
+            if !shared
+                .application
+                .current()
+                .is_ok_and(|now| now.generation == current.generation)
+            {
+                return StatusCode::CONFLICT.into_response();
+            }
+            let authorization = shared.values.validate_read(handle.clone(), captured).await;
+            if !shared
+                .application
+                .current()
+                .is_ok_and(|now| now.generation == current.generation)
+            {
+                return StatusCode::CONFLICT.into_response();
+            }
+            if current.session.check_retirement_access().await.is_err() {
+                return value_errors::Failure::Retiring.response(Some(&handle));
+            }
+            match authorization {
+                Ok(true) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),
+                Ok(false) => value_errors::Failure::Missing.response(Some(&handle)),
+                Err(error) => value_errors::Failure::Storage(error).response(Some(&handle)),
+            }
+        }
         _ => value_errors::Failure::Encoding.response(Some(&handle)),
     }
 }

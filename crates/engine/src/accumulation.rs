@@ -134,7 +134,7 @@ impl BoundAccumulation {
         let (source, epoch, sequence) = capture.delivery.as_ref().ok_or_else(|| fail("ACC002", "No current ordered delivery. Restore is held; create a new ordered pipeline to continue."))?;
         let sequence =
             i64::try_from(*sequence).map_err(|_| fail("ACC003", "Event sequence exhausted."))?;
-        if !input.data().is_materialized()
+        if !input.data().is_inline()
             || crate::value_size::value_charge(input, event_bytes()).is_none()
         {
             return Err(fail(

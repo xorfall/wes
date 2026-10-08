@@ -19,6 +19,7 @@ import { leaving, Screen } from "../Screen";
 import { SourceView } from "../SourceView";
 import { typeStructure } from "../type-structure";
 import { presentationType } from "../../presentation/prepare";
+import { useStoredGate, WITHDRAWN_TITLE, type StoredIdentity } from "../render/dataset-source";
 
 export interface PeekProps {
   readonly engine?: import("../../engine").Engine;
@@ -28,6 +29,12 @@ export interface PeekProps {
   readonly subject: readonly Segment[];
   readonly what: PeekWhat;
   readonly value?: StoredValue;
+  /** The stored result `value` was read from in this session; absent for live samples. */
+  readonly stored?: StoredIdentity;
+  /** The engine withdrew access to the node's result; nothing of its value is shown or copied. */
+  readonly accessWithdrawn?: boolean;
+  /** The result's workspace name, which management commands use to refer to it. */
+  readonly name?: string;
   /** The command as the engine recorded it. */
   readonly source?: string;
   /** The failure as the engine reported it, whole: code, message and source spans. */
@@ -40,7 +47,7 @@ export interface PeekProps {
 }
 
 /** What a peek is made of, from the node and its held value: the one place that decides it. */
-export type PeekMaterial = Pick<PeekProps, "value" | "source" | "failure" | "failureRecord" | "staleReason">;
+export type PeekMaterial = Pick<PeekProps, "value" | "stored" | "accessWithdrawn" | "name" | "source" | "failure" | "failureRecord" | "staleReason">;
 
 /**
  * The material every peek of a node draws from — its value, its command, its failure as the
@@ -48,10 +55,13 @@ export type PeekMaterial = Pick<PeekProps, "value" | "source" | "failure" | "fai
  * session or a window of its own. Both callers take it from here so that neither can leave a
  * piece out.
  */
-export function peekOf(node: WorkspaceNode | undefined, value: StoredValue | undefined): PeekMaterial {
+export function peekOf(node: WorkspaceNode | undefined, value: StoredValue | undefined, stored?: StoredIdentity): PeekMaterial {
   return {
     ...(node?.state === "stale" ? { staleReason: staleMessage(node) } : {}),
     ...(value ? { value } : {}),
+    ...(value && stored ? { stored } : {}),
+    ...(node?.accessWithdrawn ? { accessWithdrawn: true } : {}),
+    ...(value && node?.name ? { name: node.name } : {}),
     ...(node?.command !== undefined ? { source: node.command } : {}),
     ...(node?.failure ? { failure: node.failure } : {}),
     ...(node?.failureRecord ? { failureRecord: node.failureRecord } : {}),
@@ -73,11 +83,15 @@ export function peekText(what: PeekWhat, value?: StoredValue, source?: string, f
 
 const COPIED_FOR_MS = 1500;
 
-export function PeekScreen({ engine, top, subject, what, value, source, failure, failureRecord, staleReason, readStatus, onClose, chrome = "full" }: PeekProps) {
+export function PeekScreen({ engine, top, subject, what, value: read, stored, accessWithdrawn, name, source, failure, failureRecord, staleReason, readStatus, onClose, chrome = "full" }: PeekProps) {
   /* A saved describe report is read the moment the failure is peeked at: the window is for reading it. */
   const reportId = what === "error" ? describeReportId(failureRecord) : undefined;
   const report = useDescribeFailureReport(reportId, reportId !== undefined);
-  const content = peekText(what, value, source, failure, report.report, failureRecord);
+  // A withdrawn stored result leaves neither its type nor its value here, on screen or in the copy
+  // text; the command and failure are the engine's own record and stay.
+  const { value, withdrawn } = useStoredGate(read, stored, accessWithdrawn ? { accessWithdrawn: true } : undefined);
+  const hidden = withdrawn && (what === "type" || what === "value");
+  const content = hidden ? WITHDRAWN_TITLE : peekText(what, value, source, failure, report.report, failureRecord);
   const errorText = failureText(failure, failureRecord) || (staleReason ? "" : "This result did not fail.");
   const text = what !== "source" && staleReason ? [`Stale: ${staleReason}`, content].filter(Boolean).join("\n\n") : content;
   const [copied, setCopied] = useState(false);
@@ -115,11 +129,12 @@ export function PeekScreen({ engine, top, subject, what, value, source, failure,
         }}
       >
         {what !== "source" && staleReason && <p className="mono-warn" role="status">Stale: {staleReason}</p>}
-        {what !== "source" && !staleReason && readStatus}
+        {what !== "source" && !staleReason && !hidden && readStatus}
+        {hidden && <p className="mono-warn" role="status">{WITHDRAWN_TITLE}</p>}
         {what === "type" && value && <pre className="inspection-text peek-text" data-single-line={!/[\r\n]/.test(content)} tabIndex={0}>{content}</pre>}
         {what === "error" && <pre className="inspection-text peek-text" data-single-line={!/[\r\n]/.test(errorText)} tabIndex={0}>{errorText}</pre>}
         {what === "error" && reportId && <div className="peek-describe-failure"><DescribeFailureReading read={report} mode="peek" /></div>}
-        {what === "value" && value && <ValueView engine={engine} value={value} />}
+        {what === "value" && value && <ValueView engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} />}
         {what === "source" && <SourceView source={text} head={false} />}
       </div>
     </Screen>

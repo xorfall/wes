@@ -15,7 +15,8 @@ pub struct Usage {
 use wes_core::{ErrorValue, ValidationIssue};
 use wes_language::Span;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Limits {
     pub work: u64,
     pub bytes: u64,

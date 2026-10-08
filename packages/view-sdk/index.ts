@@ -2,6 +2,8 @@ import type { ComponentType, ReactNode } from "react";
 import type { ViewDefinition } from "./contract";
 export type { ViewDefinition, ContractSchema, ViewSize, ViewPlacement, ViewTier, ViewLayout } from "./contract";
 export * from "./values";
+export * from "./datasets";
+import type { ViewDatasets } from "./datasets";
 
 export type ReadonlyData<T> = T extends object ? Readonly<T> : T;
 /** Actual iframe viewport, in CSS pixels and measured host font units. Its height follows
@@ -18,7 +20,9 @@ export interface ViewProps<Input, State, Event> {
   readonly slots: Readonly<Record<string, readonly ReactNode[]>>;
   readonly context: {readonly mode: "preview" | "expanded" | "window"; readonly instance: string | null;readonly allocation?:ViewAllocation; readonly coordinated?: boolean; readonly inspectionOnly?: boolean; readonly inspectionActive?: boolean;
     /** True while the reader's focus is inside this View; a selection may stay but read as inactive. */
-    readonly active?: boolean; readonly inspect?: () => void};
+    readonly active?: boolean; readonly inspect?: () => void;
+    /** Bounded page reads of this input's Dataset fields; absent where the host cannot read them. */
+    readonly datasets?: ViewDatasets};
 }
 
 export interface ViewRenderer<Input, Outputs, State, Event, EventOutputs> {

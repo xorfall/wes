@@ -12,6 +12,7 @@ use std::{
 use wes_adapters::{
     codec::Limits,
     credentials::{CredentialLimits, MemoryCredentials},
+    datasets::{DatasetStore, StoreLimits as DatasetStoreLimits},
     http::HttpConfig,
     imports::{OpenApiImporter, ProcessImporter, SpecImporter},
     inventory::FileInventory,
@@ -22,7 +23,7 @@ use wes_adapters::{
 };
 use wes_engine::{
     session::SessionStorage,
-    storage::{AutoKeep, StoreWorker, StoreWorkerLimits, StoreWorkerTask, spawn_store},
+    storage::{AutoKeep, StoreWorker, StoreWorkerLimits, StoreWorkerTask, spawn_storage},
     workspace::{Workspace, WorkspaceName},
 };
 
@@ -142,34 +143,41 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
     let directory = home.join("workspaces");
     let live = home.join("values/live");
     let archive = home.join("values/archive");
+    let dataset_directory = home.join("datasets");
     let durability = if cfg!(unix) {
         Durability::FileAndDirectory
     } else {
         Durability::File
     };
     let wiring_base = base.clone();
-    let (values, reader, spec, process, credentials) = tokio::task::spawn_blocking(move || {
-        let credentials = Arc::new(MemoryCredentials::new(CredentialLimits::default()));
-        Ok::<_, Error>((
-            TieredValues::open(&live, &archive, Limits::default(), durability, live_budget)?,
-            Arc::new(FileTypeSources::new(&wiring_base)?.with_archive(spec_sources.clone())),
-            Arc::new(
-                SpecImporter::new(&wiring_base, credentials.clone(), HttpConfig::default())?
-                    .with_documents(spec_documents)
-                    .with_archive(spec_sources),
-            ),
-            Arc::new({
-                let importer = ProcessImporter::new(&wiring_base, ProcessConfig::default())?;
-                match terminal {
-                    Some(terminal) => importer.with_terminal_handover(terminal),
-                    None => importer,
-                }
-            }),
-            credentials,
-        ))
-    })
-    .await??;
-    let (worker, worker_task) = spawn_store(values, StoreWorkerLimits::default())?;
+    let (values, datasets, reader, spec, process, credentials) =
+        tokio::task::spawn_blocking(move || {
+            let credentials = Arc::new(MemoryCredentials::new(CredentialLimits::default()));
+            Ok::<_, Error>((
+                TieredValues::open(&live, &archive, Limits::default(), durability, live_budget)?,
+                DatasetStore::open(
+                    &dataset_directory,
+                    durability,
+                    DatasetStoreLimits::default(),
+                )?,
+                Arc::new(FileTypeSources::new(&wiring_base)?.with_archive(spec_sources.clone())),
+                Arc::new(
+                    SpecImporter::new(&wiring_base, credentials.clone(), HttpConfig::default())?
+                        .with_documents(spec_documents)
+                        .with_archive(spec_sources),
+                ),
+                Arc::new({
+                    let importer = ProcessImporter::new(&wiring_base, ProcessConfig::default())?;
+                    match terminal {
+                        Some(terminal) => importer.with_terminal_handover(terminal),
+                        None => importer,
+                    }
+                }),
+                credentials,
+            ))
+        })
+        .await??;
+    let (worker, worker_task) = spawn_storage(values, datasets, StoreWorkerLimits::default())?;
     let (secure_store, credential_vault) = match (credential_store, credential_vault) {
         (Some(store), _) => (store, None),
         (None, Some(vault)) => (vault.clone() as Arc<_>, Some(vault)),
