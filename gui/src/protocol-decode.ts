@@ -36,6 +36,14 @@ export function counterText(value: unknown): string | undefined {
   const lexeme = typeof value === "number" ? (Number.isSafeInteger(value) ? String(value) : "") : isExactNumber(value) ? value.text : "";
   return /^(0|[1-9]\d{0,19})$/.test(lexeme) && BigInt(lexeme) <= 18446744073709551615n ? lexeme : undefined;
 }
+/**
+ * A non-negative value of the language's `Int`, which is signed 64-bit: the same exact reading as
+ * `counterText`, but nothing above i64. Shape safety for native values only; transport counters stay u64.
+ */
+export function nativeIntText(value: unknown): string | undefined {
+  const lexeme = counterText(value);
+  return lexeme !== undefined && BigInt(lexeme) <= 9223372036854775807n ? lexeme : undefined;
+}
 
 /** Each writer state belongs to exactly one shared phase. */
 const WRITER_PHASES: Readonly<Record<RecordingWriterState, RecordPhase>> = {

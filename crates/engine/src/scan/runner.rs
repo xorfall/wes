@@ -99,7 +99,7 @@ impl Settings {
                 calls: 0,
                 quantum: get("calc.quantum") as usize,
             },
-            outputs_per_record: get("scan.record.outputs").min(limits.output_records),
+            outputs_per_record: get("scan.record.outputs"),
             patterns: get("scan.patterns") as usize,
             block: get("scan.block.bytes") as usize,
             duration: Duration::from_millis(get("scan.duration.ms")),
@@ -136,8 +136,7 @@ impl Settings {
             && (1..=4096).contains(&self.scratch.quantum)
             && (1..=256).contains(&self.scratch.frames)
             && self.scratch.calls == 0
-            && self.outputs_per_record > 0
-            && self.outputs_per_record <= self.limits.output_records
+            && (1..=100_000).contains(&self.outputs_per_record)
             && (1..=64).contains(&self.patterns)
             && (1..=65_536).contains(&self.block)
             && !self.duration.is_zero()
@@ -293,8 +292,12 @@ pub struct Runner {
     durable: Option<durable::Durable>,
 }
 mod batch;
+mod continuation;
 mod durable;
+pub use continuation::{ContinuationReason, ContinuationReview};
+mod frozen;
 pub use durable::PreparedResume;
+use frozen::FrozenSettings;
 impl Runner {
     fn write_owner(&self) -> crate::storage::datasets::DatasetWriteOwner {
         crate::storage::datasets::DatasetWriteOwner {
@@ -468,6 +471,9 @@ impl Runner {
             durable.storage_failed = true;
         }
         self.fail(stop(Failure::new("CAL004", self.span, message)));
+    }
+    pub fn refuse_stop(&mut self, stop: Stop) {
+        self.fail(stop);
     }
     pub fn refuse_scan(&mut self, failure: Failure) {
         self.fail(stop(failure));
@@ -882,6 +888,17 @@ impl Runner {
                     return Ok(Poll::Yield);
                 }
                 calc::Step::Request(request) => {
+                    if self.elapsed() >= self.settings.duration {
+                        return Err(Stop {
+                            failure: Failure::new(
+                                "CAL006",
+                                self.span,
+                                "scan duration reached before entering a native service",
+                            ),
+                            dimension: Some(Dimension::Duration),
+                            source_span: None,
+                        });
+                    }
                     let id = request.id();
                     let result = match request {
                         Request::Call { span, .. } => {
@@ -1306,7 +1323,7 @@ impl Runner {
             ));
         }
         let output_charge = outputs.iter().try_fold(0u64, |total, item| {
-            let amount = crate::value_size::data_charge(item, self.settings.limits.output_bytes)
+            let amount = crate::value_size::data_charge(item, self.settings.scratch.bytes)
                 .ok_or_else(|| {
                     stop(Failure::new(
                         "CAL006",
@@ -1562,6 +1579,41 @@ impl Runner {
                         .map(|s| Data::Text(s.into())),
                 ),
             ),
+            (
+                "budgetDigest",
+                optional(durable.map(|d| Data::Text(d.checkpoint.budget.digest().into()))),
+            ),
+            (
+                "budgetIssuedAttempt",
+                optional(
+                    durable.map(|d| Data::Text(d.checkpoint.budget.issued_attempt.clone().into())),
+                ),
+            ),
+            (
+                "budgetPrevious",
+                optional(
+                    durable
+                        .and_then(|d| d.checkpoint.budget.previous.clone())
+                        .map(|s| Data::Text(s.into())),
+                ),
+            ),
+            (
+                "authorizedWork",
+                Data::Int(durable.map_or(0, |d| d.checkpoint.budget.authorized_work) as i64),
+            ),
+            (
+                "workGrant",
+                Data::Int(durable.map_or(0, |d| d.checkpoint.budget.work_grant) as i64),
+            ),
+            (
+                "durationOverrunMs",
+                optional(Some(Data::Int(
+                    self.elapsed()
+                        .saturating_sub(self.settings.duration)
+                        .as_millis()
+                        .min(i64::MAX as u128) as i64,
+                ))),
+            ),
             ("measuredWork", Data::Int(measured as i64)),
             (
                 "outstandingWork",
@@ -1701,7 +1753,7 @@ fn sum(parts: &[u64], span: Span) -> Result<u64, Failure> {
         .try_fold(0u64, |total, n| total.checked_add(*n))
         .ok_or_else(|| Failure::new("CAL006", span, "scan memory reservation overflow"))
 }
-fn stop(failure: Failure) -> Stop {
+pub(super) fn stop(failure: Failure) -> Stop {
     let dimension = failure.budget.map(|kind| match kind {
         calc::BudgetKind::Work => Dimension::RecordWork,
         calc::BudgetKind::CumulativeWork => Dimension::Work,
@@ -1888,6 +1940,12 @@ pub(super) fn result_contract_for_sink(
             ("durableResume", "Bool"),
             ("attempt", "Option<Text>"),
             ("previousAttempt", "Option<Text>"),
+            ("budgetDigest", "Option<Text>"),
+            ("budgetIssuedAttempt", "Option<Text>"),
+            ("budgetPrevious", "Option<Text>"),
+            ("authorizedWork", "Int"),
+            ("workGrant", "Int"),
+            ("durationOverrunMs", "Option<Int>"),
             ("measuredWork", "Int"),
             ("outstandingWork", "Option<Int>"),
             ("durationChargedMs", "Int"),

@@ -39,8 +39,9 @@ pub enum BoundTask {
     Describe(crate::describe::BoundDescribe),
     Calculation(crate::calc::BoundCalculation),
     Scan(crate::scan::BoundScan),
-    ScanResume(crate::scan::BoundResume),
+    ScanAttempt(crate::scan::BoundAttempt),
     ScanExcerpt(crate::scan::BoundExcerpt),
+    ScanContinuation(crate::scan::BoundContinuation),
     Reconcile(reconcile::BoundReconcile),
     Dataset(dataset::BoundDataset),
     Recording(recording::BoundRecording),
@@ -112,7 +113,7 @@ impl BoundTask {
         match self {
             Self::Recording(recording) => recording.starts_lifetime(),
             Self::Scan(scan) => scan.live(),
-            Self::ScanResume(resume) => resume.live(),
+            Self::ScanAttempt(resume) => resume.live(),
             _ => false,
         }
     }
@@ -120,7 +121,7 @@ impl BoundTask {
     pub fn reconciliation_control(&self, joined: bool) -> Option<ReconciliationControl> {
         let command = match self {
             Self::Scan(scan) if scan.durable() => "scan",
-            Self::ScanResume(_) => "scan",
+            Self::ScanAttempt(_) => "scan",
             Self::Recording(recording) if recording.starts_lifetime() => "dataset",
             _ => return None,
         };
@@ -137,7 +138,7 @@ impl BoundTask {
     }
 
     pub fn observational(&self) -> bool {
-        if matches!(self, Self::ScanExcerpt(_)) {
+        if matches!(self, Self::ScanExcerpt(_) | Self::ScanContinuation(_)) {
             return true;
         }
         if let Self::Recording(task) = self {
@@ -191,8 +192,9 @@ impl BoundTask {
             | Self::Stream(_)
             | Self::Calculation(_)
             | Self::Scan(_)
-            | Self::ScanResume(_)
+            | Self::ScanAttempt(_)
             | Self::ScanExcerpt(_)
+            | Self::ScanContinuation(_)
             | Self::Reconcile(_)
             | Self::Dataset(_)
             | Self::Recording(_)
@@ -225,12 +227,14 @@ impl BoundTask {
                 repeatable: task.repeatable(),
                 bounded: true,
             },
-            Self::ScanExcerpt(_) | Self::Reconcile(_) => ExecutionTraits {
-                pure: false,
-                repeatable: true,
-                bounded: true,
-            },
-            Self::Scan(_) | Self::ScanResume(_) | Self::Recording(_) => ExecutionTraits {
+            Self::ScanExcerpt(_) | Self::ScanContinuation(_) | Self::Reconcile(_) => {
+                ExecutionTraits {
+                    pure: false,
+                    repeatable: true,
+                    bounded: true,
+                }
+            }
+            Self::Scan(_) | Self::ScanAttempt(_) | Self::Recording(_) => ExecutionTraits {
                 pure: false,
                 repeatable: false,
                 bounded: true,
@@ -252,8 +256,9 @@ impl BoundTask {
     pub(crate) fn dependency_lifetime(&self) -> crate::runtime::DependencyLifetime {
         match self {
             Self::Scan(_)
-            | Self::ScanResume(_)
+            | Self::ScanAttempt(_)
             | Self::ScanExcerpt(_)
+            | Self::ScanContinuation(_)
             | Self::Reconcile(_)
             | Self::SourceLaunch(_) => crate::runtime::DependencyLifetime::Captured,
             Self::View(view) if view.pipe_input.is_some() => {
@@ -664,7 +669,8 @@ impl TaskExecutor {
             BoundTask::Scan(scan) => policy = policy.join(&scan.literal_policy()),
             BoundTask::Dataset(read) => policy = policy.join(&read.policy()),
             BoundTask::Recording(recording) => policy = policy.join(&recording.policy()),
-            BoundTask::ScanResume(resume) => policy = policy.join(&resume.policy()),
+            BoundTask::ScanAttempt(resume) => policy = policy.join(&resume.policy()),
+            BoundTask::ScanContinuation(preview) => policy = policy.join(&preview.policy()),
             BoundTask::ScanExcerpt(excerpt) => policy = policy.join(&excerpt.policy()),
             BoundTask::Reconcile(reconcile) => policy = policy.join(&reconcile.policy()),
             BoundTask::Accumulation(accumulation) => {
@@ -747,11 +753,14 @@ impl TaskExecutor {
                 progress,
                 values,
             ),
+            BoundTask::ScanContinuation(preview) => {
+                preview.execute(self.storage.clone(), cancellation)
+            }
             BoundTask::ScanExcerpt(excerpt) => excerpt.execute(self.storage.clone(), cancellation),
             BoundTask::Reconcile(reconcile) => {
                 reconcile.execute(self.storage.clone(), cancellation)
             }
-            BoundTask::ScanResume(resume) => resume.execute(
+            BoundTask::ScanAttempt(resume) => resume.execute(
                 ticket.run.id().to_string(),
                 self.scan_memory.clone(),
                 self.storage.clone(),

@@ -510,6 +510,8 @@ pub fn plan_with_expectations(
                 spec.command,
                 wes_language::vocabulary::MetaCommand::Inspect
                     | wes_language::vocabulary::MetaCommand::ScanResume
+                    | wes_language::vocabulary::MetaCommand::ScanContinue
+                    | wes_language::vocabulary::MetaCommand::ScanContinuation
                     | wes_language::vocabulary::MetaCommand::ScanExcerpt
                     | wes_language::vocabulary::MetaCommand::ScanReconcile
                     | wes_language::vocabulary::MetaCommand::DatasetReconcile

@@ -111,6 +111,14 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
             assert!(help.contains("budget:Capture"));
             assert!(!help.contains("launch recording are not available"));
         }
+        if matches!(path, "scan continuation" | "scan continue") {
+            let help = serde_json::to_string(data).unwrap();
+            assert!(help.contains("without reconciliation, execution or storage reservation"));
+            assert!(help.contains("basis:"));
+            assert!(help.contains("exactly its delta"));
+            assert!(help.contains("requested totals"));
+            assert!(help.contains("cooperative monotonic execution limit"));
+        }
         if path == "dataset retention" {
             let help = serde_json::to_string(data).unwrap();
             assert!(help.contains("totalBytes"));

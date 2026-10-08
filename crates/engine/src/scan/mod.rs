@@ -7,13 +7,17 @@ mod source;
 pub use source::{CapturedSource, SourceFailure, SourcePoll, frame_shape, framing_charge};
 mod runner;
 pub use runner::{
-    Completion, Identity, Input, Phase, Poll, PreparedResume, Progress, Runner, Settings,
-    SourceIdentity, Stop,
+    Completion, ContinuationReason, ContinuationReview, Identity, Input, Phase, Poll,
+    PreparedResume, Progress, Runner, Settings, SourceIdentity, Stop,
 };
 mod bound;
 pub use bound::BoundScan;
+mod bounds;
+pub use bounds::Totals;
 mod resume;
-pub use resume::BoundResume;
+pub use resume::BoundAttempt;
+mod continuation;
+pub use continuation::BoundContinuation;
 
 mod excerpt;
 mod owned;

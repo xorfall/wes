@@ -691,18 +691,32 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
     )
     .unwrap();
     let program = ":calc pure { return {state:state,outputs:[]}; }";
+    let analysis = uuid::Uuid::new_v4().to_string();
+    let attempt = uuid::Uuid::new_v4().to_string();
+    let mut totals = wes_engine::scan::Settings::capture().totals();
+    totals.work = 1000;
     Checkpoint {
+        stop: None,
+        budget: wes_engine::storage::datasets::AnalysisBudget::initial(
+            analysis.clone(),
+            attempt.clone(),
+            totals,
+            wes_engine::scan::Settings::capture().totals(),
+        ),
         duration: wes_engine::storage::datasets::AnalysisDuration {
-            limit_ms: 60000,
             spent_ms: 0,
-            outstanding_ms: 0,
+            outstanding_ms: if manifest.lifecycle == Lifecycle::Open {
+                totals.duration_ms
+            } else {
+                0
+            },
         },
-        version: 2,
+        version: 3,
         followed_source: None,
         store: store.store_id().into(),
         dataset: manifest.dataset.clone(),
-        analysis: uuid::Uuid::new_v4().to_string(),
-        attempt: uuid::Uuid::new_v4().to_string(),
+        analysis,
+        attempt,
         previous_attempt: None,
         run: uuid::Uuid::new_v4().to_string(),
         transaction: manifest.transaction.clone(),
@@ -734,7 +748,6 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
         work: WorkLedger {
             charged: 0,
             outstanding: 0,
-            limit: 1000,
             granted: 0,
             completed: 0,
             grants: 0,
@@ -744,9 +757,45 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
             ..Default::default()
         },
         finish_applied: false,
-        lifecycle: Lifecycle::Open,
+        lifecycle: manifest.lifecycle,
         origins: vec![],
         dataset_reads: vec![],
+    }
+}
+#[test]
+fn checkpoint_codec_requires_one_versioned_budget_and_rejects_old_limit_fields() {
+    let tmp = home();
+    let mut store = DatasetStore::open(
+        tmp.path(),
+        Durability::FileAndDirectory,
+        StoreLimits::default(),
+    )
+    .unwrap();
+    let manifest = create(&mut store);
+    let cp = checkpoint(&store, &manifest);
+    let limits = crate::datasets::CheckpointLimits::default();
+    let encoded = cp.encode(limits).unwrap();
+    assert_eq!(
+        crate::datasets::Checkpoint::decode(&encoded, limits).unwrap(),
+        cp
+    );
+    let raw: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    for mutation in 0..4 {
+        let mut old = raw.clone();
+        match mutation {
+            0 => old["version"] = serde_json::json!(2),
+            1 => {
+                old.as_object_mut().unwrap().remove("budget");
+            }
+            2 => old["work"]["limit"] = serde_json::json!(1000),
+            3 => old["duration"]["limit_ms"] = serde_json::json!(60000),
+            _ => unreachable!(),
+        }
+        assert!(
+            crate::datasets::Checkpoint::decode(&serde_json::to_vec(&old).unwrap(), limits)
+                .is_err(),
+            "no competing or legacy receipt: {mutation}"
+        );
     }
 }
 #[test]
@@ -1320,7 +1369,7 @@ fn revocation_withdraws_reads_but_does_not_discard_an_existing_protection_root()
 }
 
 #[test]
-fn reopening_is_inert_and_resume_charges_an_interrupted_grant_exactly_once() {
+fn reopening_is_inert_and_continue_charges_an_interrupted_grant_exactly_once() {
     use wes_engine::storage::datasets::{DatasetLifecycle, DatasetResume, DatasetStorage};
     let tmp = home();
     let limits = StoreLimits::default();
@@ -1330,6 +1379,7 @@ fn reopening_is_inert_and_resume_charges_an_interrupted_grant_exactly_once() {
     cp.work.granted = 100;
     cp.work.outstanding = 100;
     cp.work.grants = 1;
+    cp.budget.totals.duration_ms = 750;
     cp.duration.spent_ms = 250;
     cp.duration.outstanding_ms = 500;
     manifest.checkpoint = Some(
@@ -1360,9 +1410,13 @@ fn reopening_is_inert_and_resume_charges_an_interrupted_grant_exactly_once() {
     new.work.outstanding = 200;
     new.work.granted = 300;
     new.work.grants = 2;
+    new.budget.previous = Some(old.budget.digest());
+    new.budget.issued_attempt = new.attempt.clone();
+    new.budget.totals.duration_ms = 60000;
     new.duration.spent_ms = 750;
-    new.duration.outstanding_ms = new.duration.limit_ms - new.duration.spent_ms;
+    new.duration.outstanding_ms = new.budget.totals.duration_ms - new.duration.spent_ms;
     let request = DatasetResume {
+        kind: wes_engine::storage::datasets::AnalysisAttemptKind::Continue,
         previous: reference.clone(),
         transaction: uuid::Uuid::new_v4().to_string(),
         checkpoint: new.clone(),
@@ -1377,7 +1431,7 @@ fn reopening_is_inert_and_resume_charges_an_interrupted_grant_exactly_once() {
             2 => forged.checkpoint.next_position = 1,
             3 => forged.checkpoint.usage.work_allowance += 1,
             4 => forged.checkpoint.duration.spent_ms = 250,
-            5 => forged.checkpoint.duration.limit_ms += 1,
+            5 => forged.checkpoint.budget.totals.duration_ms += 1,
             _ => forged.checkpoint.duration.outstanding_ms -= 1,
         };
         assert!(DatasetStorage::resume(&mut store, forged).is_err());
@@ -1931,6 +1985,7 @@ fn analysis_reconciliation_preserves_lineage_after_an_admitted_resume_has_no_che
     )
     .unwrap();
     let mut manifest = create(&mut store);
+    manifest.lifecycle = Lifecycle::Cancelled;
     let mut cp = checkpoint(&store, &manifest);
     cp.run = cp.analysis.clone();
     let first = DatasetWriteOwner {
@@ -1963,9 +2018,10 @@ fn analysis_reconciliation_preserves_lineage_after_an_admitted_resume_has_no_che
     resume.work.outstanding = 200;
     resume.work.granted = 200;
     resume.work.grants = 1;
-    resume.duration.outstanding_ms = resume.duration.limit_ms;
+    resume.duration.outstanding_ms = resume.budget.totals.duration_ms;
     let admission = store
         .resume_owned(DatasetResume {
+            kind: wes_engine::storage::datasets::AnalysisAttemptKind::Resume,
             previous: start.clone(),
             transaction: uuid::Uuid::new_v4().to_string(),
             checkpoint: resume.clone(),
@@ -1979,6 +2035,7 @@ fn analysis_reconciliation_preserves_lineage_after_an_admitted_resume_has_no_che
             DatasetStorage::resume(
                 &mut store,
                 DatasetResume {
+                    kind: wes_engine::storage::datasets::AnalysisAttemptKind::Resume,
                     previous: start,
                     transaction: uuid::Uuid::new_v4().to_string(),
                     checkpoint: resume.clone(),
@@ -2067,9 +2124,10 @@ fn analysis_reconciliation_preserves_lineage_after_an_admitted_resume_has_no_che
     next.work.granted = 400;
     next.work.grants = 2;
     next.duration.spent_ms = 100;
-    next.duration.outstanding_ms = next.duration.limit_ms - 100;
+    next.duration.outstanding_ms = next.budget.totals.duration_ms - 100;
     let admission = store
         .resume_owned(DatasetResume {
+            kind: wes_engine::storage::datasets::AnalysisAttemptKind::Resume,
             previous: middle,
             transaction: uuid::Uuid::new_v4().to_string(),
             checkpoint: next,

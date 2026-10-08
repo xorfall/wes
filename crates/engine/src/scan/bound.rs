@@ -196,7 +196,8 @@ impl BoundScan {
                 spans: wes_budgets::get("scan.frame.spans") as usize,
             })
         };
-        let settings = Settings::capture();
+        let settings =
+            super::bounds::RequestedBounds::parse(&task, span)?.fresh(Settings::capture(), span)?;
         let definition = |name: &str, finishing: bool| -> Result<Transition, Diagnostic> {
             let definition=templates.snapshot().get(name).ok_or_else(||invalid(format!("scan definition '{name}' is absent; declare it with :def and explicit parameter/output contracts")))?;
             Transition::capture(
@@ -509,7 +510,7 @@ pub(crate) async fn run_admitted(
             let request = if grant {
                 runner.durable_grant()
             } else {
-                runner.dataset_candidate()
+                runner.dataset_candidate().map_err(super::runner::stop)
             };
             let committed = match request {
                 Ok(request) => {
@@ -523,7 +524,7 @@ pub(crate) async fn run_admitted(
                     }
                 }
                 Err(failure) => {
-                    runner.refuse_scan(failure);
+                    runner.refuse_stop(failure);
                     continue;
                 }
             };

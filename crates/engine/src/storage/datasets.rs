@@ -1,4 +1,6 @@
 //! Semantic dataset I/O port. Codecs and filesystem paths remain in adapters.
+pub use super::analysis_attempt::{AnalysisAttemptKind, AttemptAccounting, charge_interruption};
+pub use super::analysis_budget::AnalysisBudget;
 use super::{Retention, StoreError, ValueHandle};
 use wes_core::{DatasetRef, Value, contracts::ResolvedContractBundle, flow::FlowPolicy};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -341,13 +343,21 @@ pub struct DatasetAppend {
 /// Explicit continuation of the latest captured prefix. It admits no external producer.
 #[derive(Clone, Debug)]
 pub struct DatasetResume {
+    pub kind: AnalysisAttemptKind,
     pub previous: DatasetRef,
     pub transaction: String,
     pub checkpoint: AnalysisCheckpoint,
     pub policy: FlowPolicy,
 }
 #[derive(Clone, Debug)]
+pub struct AnalysisStatus {
+    pub lifecycle: DatasetLifecycle,
+    pub latest: bool,
+    pub active_writer: bool,
+}
+#[derive(Clone, Debug)]
 pub struct DatasetContinuation {
+    pub status: AnalysisStatus,
     pub reference: DatasetRef,
     pub checkpoint: AnalysisCheckpoint,
     pub source: Value,
@@ -375,9 +385,56 @@ pub struct DatasetCleanup {
     pub complete: bool,
     pub released_captures: Vec<CapturedValue>,
 }
+/// Persisted cause, separate from human-readable failure text and execution outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "dimension", rename_all = "snake_case")]
+pub enum AnalysisStop {
+    Cumulative(crate::scan::ledger::Dimension),
+    Cancelled,
+    Deterministic,
+    IncompleteSource,
+}
+impl AnalysisStop {
+    pub fn cumulative(dimension: crate::scan::ledger::Dimension) -> bool {
+        use crate::scan::ledger::Dimension::*;
+        matches!(
+            dimension,
+            Work | WorkAllowance
+                | Duration
+                | InputBytes
+                | InputRecords
+                | OutputBytes
+                | OutputRecords
+        )
+    }
+    pub fn permits_raise(self, new: crate::scan::Totals, old: crate::scan::Totals) -> bool {
+        use crate::scan::ledger::Dimension::*;
+        match self {
+            Self::Cancelled => true,
+            Self::Deterministic | Self::IncompleteSource => false,
+            Self::Cumulative(d) => match d {
+                Work | WorkAllowance => new.work > old.work,
+                Duration => new.duration_ms > old.duration_ms,
+                InputBytes => new.input_bytes > old.input_bytes,
+                InputRecords => new.input_records > old.input_records,
+                OutputBytes => new.output_bytes > old.output_bytes,
+                OutputRecords => new.output_records > old.output_records,
+                _ => false,
+            },
+        }
+    }
+    pub fn valid(self) -> bool {
+        match self {
+            Self::Cumulative(d) => Self::cumulative(d),
+            _ => true,
+        }
+    }
+}
 /// Storage-independent captured continuation. The adapter owns encoding and schema objects.
 #[derive(Clone, Debug)]
 pub struct AnalysisCheckpoint {
+    pub stop: Option<AnalysisStop>,
+    pub budget: AnalysisBudget,
     pub analysis: String,
     pub attempt: String,
     pub previous_attempt: Option<String>,
@@ -408,7 +465,14 @@ impl AnalysisCheckpoint {
     /// A continuation preserves captured semantics and the acknowledged position/state.
     /// Only its logical run/attempt and the next cumulative prepaid grant can change.
     pub fn resumes(&self, old: &Self) -> bool {
-        !old.finish_applied
+        self.continues(old, AnalysisAttemptKind::Resume)
+    }
+    pub fn continues(&self, old: &Self, kind: AnalysisAttemptKind) -> bool {
+        (kind == AnalysisAttemptKind::Resume
+            || old
+                .stop
+                .is_none_or(|s| s.permits_raise(self.budget.totals, old.budget.totals)))
+            && !old.finish_applied
             && !self.finish_applied
             && self.previous_attempt.as_deref() == Some(old.attempt.as_str())
             && self.attempt != old.attempt
@@ -430,23 +494,24 @@ impl AnalysisCheckpoint {
             && self.next_position == old.next_position
             && self.next_ordinal == old.next_ordinal
             && self.decoder_carry == old.decoder_carry
-            && self.usage == old.usage
-            && self.work.limit == old.work.limit
-            && self.work.completed == old.work.completed
-            && old.work.charged.checked_add(old.work.outstanding) == Some(self.work.charged)
-            && self.work.outstanding > 0
-            && old.work.granted.checked_add(self.work.outstanding) == Some(self.work.granted)
-            && old.work.grants.checked_add(1) == Some(self.work.grants)
-            && self.duration.limit_ms == old.duration.limit_ms
-            && old
-                .duration
-                .spent_ms
-                .checked_add(old.duration.outstanding_ms)
-                == Some(self.duration.spent_ms)
-            && self.duration.limit_ms.checked_sub(self.duration.spent_ms)
-                == Some(self.duration.outstanding_ms)
-            && self.duration.outstanding_ms > 0
-            && self.duration.valid()
+            && self.stop.is_none()
+            && self.budget.analysis == self.analysis
+            && AttemptAccounting {
+                budget: &self.budget,
+                work: &self.work,
+                usage: &self.usage,
+                duration: &self.duration,
+            }
+            .follows(
+                &AttemptAccounting {
+                    budget: &old.budget,
+                    work: &old.work,
+                    usage: &old.usage,
+                    duration: &old.duration,
+                },
+                &self.attempt,
+                kind,
+            )
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -472,9 +537,9 @@ impl FollowedSource {
                 || self.prefix == prior.prefix)
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AnalysisWork {
-    pub limit: u64,
     pub granted: u64,
     pub completed: u64,
     pub charged: u64,
@@ -494,17 +559,32 @@ pub struct AnalysisUsage {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnalysisDuration {
-    pub limit_ms: u64,
     pub spent_ms: u64,
     pub outstanding_ms: u64,
 }
 impl AnalysisDuration {
-    pub fn valid(&self) -> bool {
-        (1..=86_400_000).contains(&self.limit_ms)
+    pub fn reservation_valid(&self, limit_ms: u64, active: bool) -> bool {
+        self.valid(limit_ms)
+            && if active {
+                self.spent_ms.checked_add(self.outstanding_ms) == Some(limit_ms)
+            } else {
+                self.outstanding_ms == 0
+            }
+    }
+    pub fn settles(&self, old: &Self, limit_ms: u64, active: bool) -> bool {
+        self.reservation_valid(limit_ms, active)
+            && self.spent_ms >= old.spent_ms
+            && old
+                .spent_ms
+                .checked_add(old.outstanding_ms)
+                .is_some_and(|end| self.spent_ms <= end)
+    }
+    pub fn valid(&self, limit_ms: u64) -> bool {
+        (1..=86_400_000).contains(&limit_ms)
             && self
                 .spent_ms
                 .checked_add(self.outstanding_ms)
-                .is_some_and(|sum| sum <= self.limit_ms)
+                .is_some_and(|sum| sum <= limit_ms)
     }
 }
 /// Actor and result-read authority is validated by the runtime before/after each
@@ -624,6 +704,9 @@ pub trait DatasetStorage: Send {
         Err(StoreError::DatasetUnavailable)
     }
     fn resume(&mut self, _request: DatasetResume) -> Result<DatasetWriterAdmission, StoreError> {
+        Err(StoreError::DatasetUnavailable)
+    }
+    fn analysis_status(&self, _reference: &DatasetRef) -> Result<AnalysisStatus, StoreError> {
         Err(StoreError::DatasetUnavailable)
     }
     /// The caller obtains this identity from an authorized workspace run, never a raw UI path.

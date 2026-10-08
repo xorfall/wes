@@ -63,7 +63,8 @@ export type EvidenceKind = "stopped_stream" | "incomplete";
 export type RecordPhase = "reading" | "processing" | "finishing" | "committing" | "complete" | "stopped" | "cancelled";
 /**
  * Committed and read positions share `unit`. Charges are conservative logical charges, never RSS or
- * encoded bytes. `workAllowance` is the work earned so far, under the fixed `workLimit`. Integers are
+ * encoded bytes. `workAllowance` is the work allowed so far (input-earned, plus any explicitly authorized
+ * continuation credit, which this projection does not separate), under the fixed `workLimit`. Integers are
  * decimal strings after decoding, because the engine's u64 counters exceed a JavaScript number.
  */
 export interface RecordCounters {

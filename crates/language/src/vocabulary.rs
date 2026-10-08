@@ -38,6 +38,8 @@ pub enum MetaCommand {
     Accumulate,
     Scan,
     ScanResume,
+    ScanContinue,
+    ScanContinuation,
     ScanExcerpt,
     ScanReconcile,
     DatasetReconcile,
@@ -105,6 +107,8 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::Accumulate,
     MetaCommand::Scan,
     MetaCommand::ScanResume,
+    MetaCommand::ScanContinue,
+    MetaCommand::ScanContinuation,
     MetaCommand::ScanExcerpt,
     MetaCommand::ScanReconcile,
     MetaCommand::DatasetReconcile,
@@ -224,6 +228,8 @@ impl MetaCommand {
             Self::Accumulate => "accumulate",
             Self::Scan => "scan",
             Self::ScanResume => "scan-resume",
+            Self::ScanContinue => "scan-continue",
+            Self::ScanContinuation => "scan-continuation",
             Self::ScanExcerpt => "scan-excerpt",
             Self::ScanReconcile => "scan-reconcile",
             Self::DatasetReconcile => "dataset-reconcile",
@@ -538,8 +544,26 @@ impl MetaCommand {
                 ];
                 spec.produces_value = true;
             }
+            Self::ScanContinuation | Self::ScanContinue => {
+                spec.summary = if self == Self::ScanContinuation {
+                    "Read current owned analysis bounds and continuation facts without admitting execution"
+                } else {
+                    "Explicitly raise reviewed cumulative bounds for the same captured analysis; never reacquire its producer"
+                };
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = scan::total_parameters();
+                if self == Self::ScanContinue {
+                    spec.parameters.push(text("basis", true));
+                    spec.parameters.push(Parameter::new(
+                        "follow",
+                        Shape::Primitive(Primitive::Bool),
+                        false,
+                    ));
+                }
+                spec.produces_value = true;
+            }
             Self::ScanResume => {
-                spec.summary = "Explicitly continue the captured checkpoint of an owned analysis without acquiring its producer; original limits and charged work are preserved";
+                spec.summary = "Explicitly continue the captured checkpoint of an owned analysis without acquiring its producer; latest granted limits and charged work are preserved";
                 spec.operands = Arity::bounded(1, 1);
                 spec.parameters = vec![Parameter::new(
                     "follow",

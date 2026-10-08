@@ -40,7 +40,7 @@ pub fn parameters() -> Vec<Parameter> {
                 .expect("finite scan choice contract"),
         )
     };
-    vec![
+    let mut parameters = vec![
         Parameter::new("source", Shape::Unknown, true),
         Parameter::new("transition", text.clone(), true).selecting("template"),
         Parameter::new("finish", text.clone(), false).selecting("template"),
@@ -52,5 +52,16 @@ pub fn parameters() -> Vec<Parameter> {
         choice("mode", "ScanMode", false),
         Parameter::new("follow", Shape::Primitive(Primitive::Bool), false),
         choice("sink", "ScanSink", false),
-    ]
+    ];
+    parameters.extend(total_parameters());
+    parameters
+}
+
+/// Absolute cumulative totals. The engine captures literal positive requests
+/// under its active ceilings; these are not per-record or reactive arguments.
+pub fn total_parameters() -> Vec<Parameter> {
+    ["work", "input", "records", "output", "outputs", "duration"]
+        .into_iter()
+        .map(|name| Parameter::new(name, Shape::Primitive(Primitive::Int), false))
+        .collect()
 }

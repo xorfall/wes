@@ -118,6 +118,35 @@ fn field<'a>(data: &'a Data, name: &str) -> &'a Data {
     &fields[name]
 }
 #[test]
+fn output_totals_do_not_rewrite_the_frozen_invocation_caps() {
+    for (dimension, records, bytes, body) in [
+        (
+            Dimension::OutputRecords,
+            1,
+            65536,
+            "return {state:state+1,outputs:['a','b']};",
+        ),
+        (
+            Dimension::OutputBytes,
+            100,
+            1,
+            "return {state:state+1,outputs:['a']};",
+        ),
+    ] {
+        let mut bounds = settings();
+        bounds.limits.output_records = records;
+        bounds.limits.output_bytes = bytes;
+        assert!(bounds.valid(), "per-record caps remain independent");
+        let done = run(
+            input(value(Data::List(vec![Data::Int(1)])), body, None),
+            bounds,
+        );
+        assert_eq!(done.progress.committed_position, 0);
+        assert_eq!(done.progress.usage.output_records, 0);
+        assert_eq!(done.stop.unwrap().dimension, Some(dimension));
+    }
+}
+#[test]
 fn receipt_separates_measured_work_and_absent_durable_attempts() {
     let done = run(
         input(
@@ -804,6 +833,9 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
     checkpoint.usage.input_bytes = 8;
     checkpoint.usage.output_bytes = 64;
     checkpoint.initial_digest = format!("sha256:{}", "2".repeat(64));
+    let interrupted = checkpoint.clone();
+    checkpoint.stop = Some(wes_engine::storage::datasets::AnalysisStop::Cancelled);
+    checkpoint.duration.outstanding_ms = 0;
     let used = checkpoint.work.charged;
     let allowance = checkpoint.usage.work_allowance;
     let reference = wes_core::DatasetRef::new(
@@ -819,6 +851,21 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
     )
     .unwrap();
     drop(runner);
+    assert!(
+        Runner::prepare_resume(
+            source.clone(),
+            false,
+            reference.clone(),
+            interrupted,
+            uuid::Uuid::new_v4().to_string(),
+            &pool,
+            None,
+            CancellationToken::new(),
+            span()
+        )
+        .is_err(),
+        "an unacknowledged active interval consumes the reserved duration"
+    );
     let mut exhausted = checkpoint.clone();
     exhausted.work.outstanding = allowance - used;
     exhausted.work.granted = allowance;

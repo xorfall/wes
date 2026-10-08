@@ -101,7 +101,7 @@ impl BoundReconcile {
             let runtime = workspace.runtime();
             let node = runtime.graph().node(&subject.node).ok_or("Selected work is no longer in this workspace")?;
             match (self.role, node.payload()) {
-                (DatasetWriteRole::Analysis, super::BoundTask::Scan(_) | super::BoundTask::ScanResume(_)) => {},
+                (DatasetWriteRole::Analysis, super::BoundTask::Scan(_) | super::BoundTask::ScanAttempt(_)) => {},
                 (DatasetWriteRole::Recording, super::BoundTask::Recording(r)) if r.starts_lifetime() => {},
                 _ => return Err("Reconcile requires original owned analysis or recording work"),
             }

@@ -3,6 +3,8 @@ use std::{fmt, sync::Arc};
 use thiserror::Error;
 use uuid::Uuid;
 use wes_core::Value;
+mod analysis_attempt;
+mod analysis_budget;
 pub mod datasets;
 mod private;
 mod worker;

@@ -106,6 +106,7 @@ pub enum WriteOperation {
     Create,
     Append,
     Resume,
+    Continue,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,8 +128,10 @@ impl WriteWitness {
             || (self.owner.role == wes_engine::storage::datasets::DatasetWriteRole::Recording
                 && self.owner.run != self.owner.lineage)
             || (self.operation == WriteOperation::Create) != self.predecessor.is_none()
-            || (self.operation == WriteOperation::Resume
-                && self.owner.role != wes_engine::storage::datasets::DatasetWriteRole::Analysis)
+            || (matches!(
+                self.operation,
+                WriteOperation::Resume | WriteOperation::Continue
+            ) && self.owner.role != wes_engine::storage::datasets::DatasetWriteRole::Analysis)
             || !valid_uuid(&self.transaction)
             || !valid_uuid(&self.admission)
             || (self.state == WriteState::Committed) != self.committed.is_some()

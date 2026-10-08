@@ -720,6 +720,13 @@ impl Analysis<'_> {
                             Arc::new(Typing::new(Shape::Unknown)),
                         )
                     }
+                    Task::Meta(task) if task.spec.command == MetaCommand::ScanContinuation => {
+                        let preview = crate::scan::BoundContinuation::bind(task, statement.span)?;
+                        (
+                            BoundTask::ScanContinuation(preview),
+                            Arc::new(Typing::new(Shape::Unknown)),
+                        )
+                    }
                     Task::Meta(task) if task.spec.command == MetaCommand::ScanExcerpt => {
                         let excerpt = crate::scan::BoundExcerpt::bind(task, statement.span)?;
                         (
@@ -727,14 +734,19 @@ impl Analysis<'_> {
                             Arc::new(Typing::new(Shape::Unknown)),
                         )
                     }
-                    Task::Meta(task) if task.spec.command == MetaCommand::ScanResume => {
-                        let resume = crate::scan::BoundResume::bind(
+                    Task::Meta(task)
+                        if matches!(
+                            task.spec.command,
+                            MetaCommand::ScanResume | MetaCommand::ScanContinue
+                        ) =>
+                    {
+                        let resume = crate::scan::BoundAttempt::bind(
                             task,
                             self.calc_services.clone(),
                             statement.span,
                         )?;
                         (
-                            BoundTask::ScanResume(resume),
+                            BoundTask::ScanAttempt(resume),
                             Arc::new(Typing::new(Shape::Unknown)),
                         )
                     }

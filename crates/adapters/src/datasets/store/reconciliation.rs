@@ -217,7 +217,7 @@ impl DatasetStore {
                     let continuity = match (next.operation, prior) {
                         (WriteOperation::Create, None) => current.is_none(),
                         (WriteOperation::Append, Some(prior)) => prior.owner == next.owner,
-                        (WriteOperation::Resume, Some(prior)) => {
+                        (WriteOperation::Resume | WriteOperation::Continue, Some(prior)) => {
                             prior.state != WriteState::Requested
                                 && prior.owner.role == next.owner.role
                                 && prior.owner.lineage == next.owner.lineage
@@ -225,7 +225,7 @@ impl DatasetStore {
                         }
                         // Primitive storage fixtures may adopt a confirmed unowned analysis
                         // only through the same checkpoint-validated Resume operation.
-                        (WriteOperation::Resume, None) => {
+                        (WriteOperation::Resume | WriteOperation::Continue, None) => {
                             current.is_some() && next.owner.role == DatasetWriteRole::Analysis
                         }
                         _ => false,
