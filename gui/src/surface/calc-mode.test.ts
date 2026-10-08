@@ -188,7 +188,7 @@ describe("what the editor completes from", () => {
     const fromEditor = completions("fil", language, names).map((it) => it.text);
     const line = ":calc { $orders.fil";
     const fromPrompt = promptCompletion({
-      line, caret: line.length, catalogue: { ...emptyCatalogue, calculation: { keywords: language.keywords(), operations: language.operations() } },
+      line, caret: line.length, catalogue: { ...emptyCatalogue, calculation: { keywords: language.keywords(), operations: language.operations(), methods: language.operations().filter((name) => language.method(name)) } },
       names, aliases: emptyAliases,
     });
     expect(fromEditor).toContain("filter");

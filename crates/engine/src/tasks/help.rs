@@ -388,6 +388,48 @@ fn describe(spec: &CommandSpec) -> Data {
                 text("1,000,000 work units; 64 MiB cumulative allocation; 128 frames; 1,000 calls"),
             ),
         ]))
+    } else if spec.command == MetaCommand::Scan {
+        Some(fields([
+            ("command", text(":scan")),
+            (
+                "transition",
+                text(
+                    "Name a captured :def pure calculation with exactly state:S, context:C and item:I parameters, returning a named record contract with exactly state:S and outputs:List<O> fields. Declare that record in a type package using base:Record and fields:. S, C, I and O must be materialized contracts, including under Option, Union and nested records. No provider calls, workspace captures or executable handles.",
+                ),
+            ),
+            (
+                "finish",
+                text(
+                    "Optional captured pure definition with state:S, context:C and end:E. It shares exactly the step's state, context and output contracts. end has kind:selected_range, position, unit and producerComplete:Option<Bool>. It runs once only after clean exhaustion of the selected finite input; never after a failure or cancellation. Exhausting a selected range does not prove the producer completed.",
+                ),
+            ),
+            (
+                "profiles",
+                text(
+                    "LinesUtf8: strict UTF-8 LF/CRLF records from Text or Bytes; lone CR remains content. LinesLossyUtf8: explicit replacement decoding with original byte spans. DelimitedUtf8: requires delimiter: literal text. Framed item fields: ordinal, start, end, delimiterStart, delimiterEnd, raw, text, decodeSpans, lossy, unterminated. TypedRecords: materialized List source, original record values. Record positions use original byte offsets for framed inputs or ordinals for typed input.",
+                ),
+            ),
+            (
+                "admission",
+                text(
+                    "One finite analysis is one task and one run, with fresh calculation scratch per record, cumulative work and separate retained-output limits. budget:Investigation, mode:complete and sink:memory are the implemented choices; omitted values use those defaults. Settings are captured before execution. Held and output charges are conservative logical accounting, not RSS or encoded wire sizes.",
+                ),
+            ),
+            (
+                "result",
+                text(
+                    "ScanResult contains state, outputs and receipt. Only fully validated candidates atomically advance state, accepted input position and outputs. A refused candidate leaves prior committed results inspectable as incomplete evidence while the run stays failed; data dependencies cannot consume it as success. Cancellation revokes publication and joins cleanup. No automatic restart, durable checkpoint or resume is available.",
+                ),
+            ),
+            (
+                "examples",
+                Data::List(vec![text(
+                    r#":package load source:"types: {TextStep: {base: Record, fields: {state: Int, outputs: 'List<Text>'}}}"
+:def collect(state:Int, context:Int, item:Unknown) -> TextStep as :calc pure { return {state:state+1,outputs:[item.text]}; }
+:scan source:"first\nsecond" transition:collect initial:0 context:0 profile:LinesUtf8 > analysis"#,
+                )]),
+            ),
+        ]))
     } else {
         None
     };

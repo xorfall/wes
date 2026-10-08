@@ -97,7 +97,7 @@ def main():
             with server.changed:
                 assert server.changed.wait_for(lambda: server.active == 0, 10)
             for name in observed:
-                client.wait(lambda: client.ready.get(client.names[name], {}).get('event') == 'stopped')
+                client.wait(lambda: client.ready.get(client.names[name], {}).get('event') == 'evidence' and client.ready[client.names[name]].get('kind') == 'stopped_stream')
                 assert client.value(name)['data'] == last_values[name], name
                 frame = client.ready[client.names[name]]
                 assert frame['state'] in ('cancelled', 'skipped') and not frame['kept'], frame
@@ -108,7 +108,7 @@ def main():
                 for raw in reconnect:
                     if raw.startswith(b'data:'):
                         event = json.loads(raw[5:])
-                        if event['event'] == 'stopped':
+                        if event['event'] == 'evidence' and event.get('kind') == 'stopped_stream':
                             recovered[event['node']] = event
                             if all(client.names[name] in recovered for name in observed):
                                 break

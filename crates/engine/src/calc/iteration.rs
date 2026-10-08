@@ -68,7 +68,11 @@ pub(super) struct Cursor {
     pub offset: Option<usize>,
 }
 impl Cursor {
-    pub fn new(pipeline: Arc<Pipeline>, span: Span) -> Result<Self, Failure> {
+    pub fn new(
+        pipeline: Arc<Pipeline>,
+        span: Span,
+        cache: &mut wes_core::IterRegexCache,
+    ) -> Result<Self, Failure> {
         let checks = pipeline
             .stages
             .iter()
@@ -84,7 +88,7 @@ impl Cursor {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            source: SourceCursor::new(pipeline.root.clone())?,
+            source: SourceCursor::new_cached(pipeline.root.clone(), cache)?,
             source_shape: Arc::new(pipeline.root.source_item_shape().clone()),
             counts: vec![0; pipeline.stages.len()],
             pipeline,

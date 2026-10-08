@@ -21,6 +21,8 @@ export interface OperationSpec {
   readonly operation: string;
   readonly min: number;
   readonly max: number;
+  /** Whether the engine also accepts it after a receiver: `rows.filter(fn)`. Only `true` says so. */
+  readonly method: boolean;
 }
 
 export interface LanguagePackage {
@@ -50,6 +52,8 @@ export interface Language {
   operations(): readonly string[];
   /** How many arguments an operation takes, or undefined when the package does not name it. */
   arity(name: string): { readonly min: number; readonly max: number } | undefined;
+  /** Whether the package declares the operation callable as a method; an undeclared one is not. */
+  method(name: string): boolean;
 }
 
 export const bundledPackage = bundled as LanguagePackage;
@@ -71,6 +75,7 @@ export function readLanguage(pack: LanguagePackage, origin: PackageOrigin): Lang
       const spec = pack.operations[name];
       return spec && { min: spec.min, max: spec.max };
     },
+    method: (name) => Object.hasOwn(pack.operations, name) && pack.operations[name]!.method === true,
   };
 }
 

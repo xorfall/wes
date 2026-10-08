@@ -172,7 +172,7 @@ fn observation_validation_preserves_error_identity_and_excludes_payloads() {
             revision: 0,
             stale_reason: None,
             delivery: None,
-            stopped: None,
+            evidence: None,
             node: node(),
             run: Some(run("run")),
             state,

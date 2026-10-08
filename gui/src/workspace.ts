@@ -23,7 +23,13 @@ export interface WorkspaceNode {
   readonly constructionComplete?: boolean;
   /** The engine's statement that newer committed input waits for this calculation; never inferred. */
   readonly updatePending?: boolean;
-  readonly stopped?: { readonly source: string; readonly run: string };
+  /**
+   * The engine's display-only value of a terminal node: a stopped stream's last value, or the
+   * committed partial result of an analysis that did not complete. The graph state is unchanged.
+   */
+  readonly evidence?: Evidence;
+  /** The latest lossy progress of this node's current run only; never carried across runs. */
+  readonly progress?: { readonly run: string; readonly value: import("./protocol").ExecutionProgress };
   readonly retention?: import("./protocol").Retention;
   readonly repeatable?: boolean;
   readonly publication?: import("./protocol").ResultPublication;
@@ -64,6 +70,21 @@ export interface WorkspaceNode {
    */
   readonly doubt?: Doubt;
 }
+
+export interface Evidence {
+  readonly kind: import("./protocol").EvidenceKind;
+  readonly source: string;
+  readonly run: string;
+}
+/** A stopped stream's last value. Only this kind is ever offered a restart. */
+export const stoppedStream = (node: WorkspaceNode | undefined): Evidence | undefined =>
+  node?.evidence?.kind === "stopped_stream" ? node.evidence : undefined;
+/** An analysis that stopped before completing, with its committed partial result. */
+export const incompleteResult = (node: WorkspaceNode | undefined): Evidence | undefined =>
+  node?.evidence?.kind === "incomplete" ? node.evidence : undefined;
+/** The progress of the node's current run, when the engine reported it for that exact run. */
+export const currentProgress = (node: WorkspaceNode | undefined): import("./protocol").ExecutionProgress | undefined =>
+  node?.progress && node.run !== undefined && node.progress.run === node.run ? node.progress.value : undefined;
 
 /** What is known about a call nobody can answer for. */
 export interface Doubt {
@@ -205,6 +226,8 @@ export function apply(workspace: Workspace, event: Event): Workspace {
     case "created":
       if (workspace.nodes.some(node => node.id === event.node)) {
         return change(workspace, event.node, node => ({ ...node, name: event.name || undefined, errorNames:event.errorNames,
+          // Progress belongs to one run; a new run never inherits an older run's counters.
+          ...(node.progress && node.progress.run !== (event.run ?? undefined) ? { progress: undefined } : {}),
           command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, dependencyLifetime: event.dependencyLifetime, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
           repeatable: event.repeatable, startedAt: event.startedAt ?? undefined }));
       }
@@ -243,8 +266,8 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         staleReason: event.state === "stale" ? event.staleReason : undefined,
         updatePending: event.updatePending === true || undefined,
         constructionComplete: event.constructionComplete || undefined,
-        ...(node.stopped ? { handle: undefined, bytes: undefined, kept: false } : {}),
-        stopped: undefined,
+        ...(node.evidence ? { handle: undefined, bytes: undefined, kept: false } : {}),
+        evidence: undefined,
         publication: event.publication,
         failure: undefined, failureRecord: undefined, cancellation: undefined,
         ...(event.state === "ready" && event.publication?.state !== "available"
@@ -252,15 +275,21 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         ...(event.state === "skipped" ? { handle: undefined, bytes: undefined, kept: false } : {}),
       }));
 
-    case "stopped":
+    case "node-progress":
+      // Lossy status for the exact current run only: a late report from an older run is not this run's.
+      return change(workspace, event.node, node => event.run !== null && node.run === event.run
+        ? { ...node, progress: { run: event.run, value: event.progress } } : node);
+
+    case "evidence":
     case "ready":
       workspace = { ...workspace, wentStale: workspace.wentStale.filter((id) => id !== event.node) };
       return change(workspace, event.node, (node) => ({
         ...node,
-        state: event.event === "stopped" ? event.state : "ready",
+        // Evidence keeps the engine's terminal state; it is never promoted to ready.
+        state: event.event === "evidence" ? event.state : "ready",
         staleReason: undefined, waiting:undefined, updatePending: undefined,
         constructionComplete: event.constructionComplete === true || undefined,
-        stopped: event.event === "stopped" ? { source: event.source, run: event.run } : undefined,
+        evidence: event.event === "evidence" ? { kind: event.kind, source: event.source, run: event.run } : undefined,
         publication: event.publication,
         type: event.type,
         handle: event.handle,
@@ -270,7 +299,9 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         kept: event.kept,
         retention: event.retention,
         private: event.private,
-        failure: undefined, failureRecord: undefined,
+        // An incomplete analysis is still a failure; its record is the engine's, beside the partial value.
+        failure: event.event === "evidence" && event.kind === "incomplete" ? event.reason ?? event.error?.message : undefined,
+        failureRecord: event.event === "evidence" && event.kind === "incomplete" ? event.error : undefined,
         cancellation: undefined,
         doubt: undefined,
       }));
@@ -298,7 +329,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         ...node,
         state: "failed",
         staleReason: undefined, waiting:undefined, updatePending: undefined, constructionComplete: undefined,
-        stopped: undefined,
+        evidence: undefined,
         publication: undefined,
         failure: event.reason,
         failureRecord: event.error,
@@ -309,7 +340,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
     case "cancelled":
       workspace = { ...workspace, wentStale: workspace.wentStale.filter(id => id !== event.node) };
       return change(workspace, event.node, (node) => ({
-        ...node, state: "cancelled", staleReason: undefined, updatePending: undefined, constructionComplete: undefined, failure: undefined, failureRecord: undefined, stopped: undefined,
+        ...node, state: "cancelled", staleReason: undefined, updatePending: undefined, constructionComplete: undefined, failure: undefined, failureRecord: undefined, evidence: undefined,
         publication: undefined,
         cancellation: { code: event.code, reason: event.reason },
         handle: undefined, bytes: undefined, kept: false,

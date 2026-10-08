@@ -453,3 +453,42 @@ fn structured_inputs_capture_every_nested_port_and_reject_conflicting_selections
         "PLN001"
     );
 }
+
+#[test]
+fn selected_input_admission_preflights_container_charge_and_keeps_source_policy() {
+    use wes_core::{Provenance, Value};
+    use wes_engine::plan::InputProblem;
+    let source = OutputRef {
+        node: NodeId::new("selected-source").unwrap(),
+        port: OutputPort::Data,
+    };
+    let input = Input::FieldPath {
+        output: source.clone(),
+        fields: vec!["rows".into()],
+    };
+    let root = Value::new(
+        Shape::Unknown,
+        Data::Record([("rows".into(), Data::List((0..100).map(Data::Int).collect()))].into()),
+        Provenance::default(),
+    )
+    .unwrap();
+    let inputs = [(source.node.clone(), root.clone())].into();
+    let refusal = input.resolve_with_limit(&inputs, 512).unwrap_err();
+    assert_eq!(refusal.problem, InputProblem::ChargeLimit);
+    assert_eq!(refusal.source.as_ref(), Some(&source));
+    assert_eq!(refusal.issue("source").unwrap().code, "INP006");
+    let selected = input.resolve_with_limit(&inputs, 64 * 1024).unwrap();
+    assert_eq!(
+        selected.data(),
+        &Data::List((0..100).map(Data::Int).collect())
+    );
+    assert_eq!(inputs[&source.node].data(), root.data());
+    let private = root.with_provenance(
+        Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
+    );
+    let inputs = [(source.node.clone(), private)].into();
+    let refusal = input.resolve_with_limit(&inputs, 512).unwrap_err();
+    assert_eq!(refusal.problem, InputProblem::ChargeLimit);
+    assert!(refusal.issue("source").is_none());
+    assert!(!refusal.message().contains("rows"));
+}

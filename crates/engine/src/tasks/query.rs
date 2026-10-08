@@ -321,7 +321,7 @@ impl BoundQuery {
                     crate::runtime::OutputState::Available(value) => value,
                     _ if output.port == OutputPort::Data => workspace
                         .runtime()
-                        .stopped_value(&output.node)
+                        .evidence_value(&output.node)
                         .map(|v| {
                             v.value.clone().with_provenance(
                                 v.value
@@ -547,7 +547,7 @@ impl BoundQuery {
                             .node(&output.node)
                             .ok_or_else(|| Failure::missing("node", output.node.as_str()))?;
                         let stopped = output.port == OutputPort::Data
-                            && workspace.runtime().stopped_value(&output.node).is_some();
+                            && workspace.runtime().evidence_value(&output.node).is_some();
                         let available = matches!(
                             workspace.runtime().output(output),
                             crate::runtime::OutputState::Available(_)

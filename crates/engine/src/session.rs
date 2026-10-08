@@ -912,12 +912,15 @@ fn spawn_owned(
     if workspace.runtime().is_closed() {
         return Err(SessionError::Stopped);
     }
-    let executor = Arc::new(match &recording {
-        RecordingMode::Ephemeral => TaskExecutor::ephemeral(),
-        RecordingMode::Required(journal) => TaskExecutor::recorded(journal.clone()),
-    });
     let capacity =
         capacity.map_or_else(|| crate::driver::ExecutionCapacity::new(max_concurrent), Ok)?;
+    let executor = Arc::new(
+        (match &recording {
+            RecordingMode::Ephemeral => TaskExecutor::ephemeral(),
+            RecordingMode::Required(journal) => TaskExecutor::recorded(journal.clone()),
+        })
+        .with_scan_memory(capacity.scan_memory.clone()),
+    );
     let io = ExecutionIo::with_capacity(executor, capacity.clone())?;
     let (sources, source_receiver) = mpsc::channel(32);
     let (controls, control_receiver) = mpsc::channel(256);

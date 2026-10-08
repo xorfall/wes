@@ -29,6 +29,7 @@ pub(crate) enum RuntimeInput<T> {
     Expired(Deadline),
     Stream(Update),
     Conversation(conversations::Update),
+    Progress(super::progress::Update),
 }
 impl<T> RuntimeInput<T> {
     pub fn changes_snapshot(&self) -> bool {
@@ -65,6 +66,10 @@ impl RuntimeInput<crate::tasks::BoundTask> {
             Self::Completed(run, report) => workspace.complete_report(&run, report, now),
             Self::Expired(deadline) => workspace.expire(&deadline, now),
             Self::Stream(update) => workspace.stream_update(update, now),
+            Self::Progress(update) => {
+                workspace.update_execution_progress(&update.run, update.progress);
+                vec![]
+            }
             // The embedding I/O owner handles conversation capabilities before this pure path.
             Self::Conversation(update) => {
                 update.reject();
@@ -90,10 +95,17 @@ impl<T: Clone> RuntimeInput<T> {
                 if let Some(start) = report.stream_start {
                     runtime.set_stream_start(&run, start);
                 }
+                if let Some(progress) = report.progress {
+                    runtime.update_progress(&run, progress);
+                }
                 runtime.complete(&run, report.outcome, now)
             }
             Self::Expired(deadline) => runtime.expire(&deadline, now),
             Self::Stream(update) => update.apply(runtime, now),
+            Self::Progress(update) => {
+                runtime.update_progress(&update.run, update.progress);
+                vec![]
+            }
             Self::Conversation(update) => {
                 update.reject();
                 vec![]
@@ -121,6 +133,8 @@ pub(crate) struct ExecutionIo<T> {
     conversation_receiver: mpsc::Receiver<conversations::Update>,
     conversations: HashMap<Run, crate::conversations::ConversationHandle>,
     conversation_events: broadcast::Sender<Arc<ConversationEvent>>,
+    progress_updates: mpsc::Sender<super::progress::Update>,
+    progress_receiver: mpsc::Receiver<super::progress::Update>,
     deadlines: BTreeMap<(Duration, Run), Deadline>,
     due: HashMap<Run, Duration>,
     origin: Instant,
@@ -136,6 +150,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
         let (stream_updates, stream_receiver) = mpsc::channel(32);
         let (conversation_updates, conversation_receiver) = mpsc::channel(32);
         let (conversation_events, _) = broadcast::channel(32);
+        let (progress_updates, progress_receiver) = mpsc::channel(32);
         Ok(Self {
             executor,
             events,
@@ -155,6 +170,8 @@ impl<T: Send + 'static> ExecutionIo<T> {
             conversation_receiver,
             conversations: HashMap::new(),
             conversation_events,
+            progress_updates,
+            progress_receiver,
             deadlines: BTreeMap::new(),
             due: HashMap::new(),
             origin: Instant::now(),
@@ -286,6 +303,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 Some(enter) = self.enter_receiver.recv() => return RuntimeInput::Enter(enter),
                 Some(update) = self.stream_receiver.recv() => return RuntimeInput::Stream(update),
                 Some(update) = self.conversation_receiver.recv() => return RuntimeInput::Conversation(update),
+                Some(update) = self.progress_receiver.recv() => return RuntimeInput::Progress(update),
                 Some(completion) = self.workers.join_next_with_id(), if !self.workers.is_empty() => {
                     let (task, outcome) = match completion {
                         Ok((task, outcome)) => (task, outcome),
@@ -361,6 +379,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
         let updates = self.stream_updates.clone();
         let conversation_permits = self.conversation_permits.clone();
         let conversation_updates = self.conversation_updates.clone();
+        let progress = super::progress::Reporter::new(run.clone(), self.progress_updates.clone());
         let execution = crate::diagnostics::Operation::start("execution");
         let queued = execution.child("queue");
         let task = self.workers.spawn(async move {
@@ -402,9 +421,9 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 let report = conversations::execute(executor, ticket, token, conversation_updates).await;
                 drop(permit);
                 Some(report)
-            } else { Some(executor.execute(ticket, token).await) }
+            } else { Some(executor.execute_reporting(ticket, token, progress).await) }
             }.instrument(execution.span()).await;
-            execution.finish(match report.as_ref().map(|r: &ExecutionReport| &r.outcome) { Some(Outcome::Produced(_)) => "ok", Some(Outcome::Skipped) => "skipped", Some(Outcome::Failed(_)) => "error", Some(Outcome::Cancelled(_)) | None => "cancelled" });
+            execution.finish(match report.as_ref().map(|r: &ExecutionReport| &r.outcome) { Some(Outcome::Produced(_)) => "ok", Some(Outcome::Skipped) => "skipped", Some(Outcome::Failed(_) | Outcome::Incomplete {..}) => "error", Some(Outcome::Cancelled(_)) | None => "cancelled" });
             report
         });
         self.task_runs.insert(task.id(), run);

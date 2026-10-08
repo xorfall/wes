@@ -191,6 +191,8 @@ pub(super) async fn execute<T: Send + 'static>(
                 outcome: Outcome::Produced(final_.window.clone()),
                 notices: vec![],
                 stream_start: Some(final_.omitted),
+                holds: vec![],
+                progress: None,
             }
         }
         Phase::Failed(error) => Outcome::Failed(error.clone()).into(),

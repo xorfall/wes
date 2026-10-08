@@ -45,7 +45,7 @@ it("stream deliveries do not end a live run; cancellation closes the source life
   const history = [record("new", "RUNNING", 100), record("new", "READY", 200), record("new", "READY", 300)];
   const live = { ...node, state: "running" as const, streamOutput: true };
   expect(durationsOf({ ...emptyWorkspace, nodes: [live], history }).has("n")).toBe(false);
-  const stopped = { ...live, state: "cancelled" as const, stopped: { source: "n", run: "new" } };
+  const stopped = { ...live, state: "cancelled" as const, evidence: { kind: "stopped_stream" as const, source: "n", run: "new" } };
   expect(durationsOf({ ...emptyWorkspace, nodes: [stopped], history: [...history, record("new", "CANCELLED", 400)] }).get("n")).toEqual({ start: 100, end: 400 });
 });
 

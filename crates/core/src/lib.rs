@@ -22,7 +22,11 @@ pub use value::{Data, Decimal, DecimalOp, ModelError, NumericError, TimeParts, V
 mod iteration;
 pub use iteration::{
     ContractCapture, IterMode, IterPlanError, IterRecipe, IterRegexCache, IterStage, IterValue,
+    RegexCacheUsage,
 };
+
+pub mod framing;
+pub mod text;
 
 mod failure_location;
 pub use failure_location::SourceLocation;

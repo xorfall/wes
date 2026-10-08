@@ -47,7 +47,13 @@ it("labels snapshots with client evidence and excludes failed or incomplete outc
  expect(snapshotLabel({at:"12:30",revision:4},true,true)).toContain("client sample 4 · stream stopped · the stream's last value is newer");
  expect(resultAccess({...nodes[0]!,state:"failed"}).current).toBe(false);
  expect(resultAccess({...nodes[0]!,state:"cancelled"}).current).toBe(false);
- expect(resultAccess({...nodes[0]!,state:"cancelled",stopped:{source:"n",run:"r"}}).current).toBe(true);
+ expect(resultAccess({...nodes[0]!,state:"cancelled",evidence:{kind:"stopped_stream",source:"n",run:"r"}}).current).toBe(true);
+ // A committed partial analysis result is readable evidence; its node stays failed and is never live.
+ const partial=resultAccess({...nodes[0]!,state:"failed",streamOutput:true,evidence:{kind:"incomplete",source:"n",run:"r"}});
+ expect(partial).toEqual({current:true,live:false,partial:true});
+ // Incomplete evidence on a cancelled node does not borrow the stopped-stream rule.
+ expect(resultAccess({...nodes[0]!,state:"cancelled",evidence:{kind:"incomplete",source:"n",run:"r"}}).live).toBe(false);
+ expect(resultAccess({...nodes[0]!,state:"failed",doubt:{capability:"x",safe:true,when:"t"},evidence:{kind:"incomplete",source:"n",run:"r"}}).current).toBe(false);
 });
 it("should_OfferLiveSamplingAndSayNewerInputWaits_When_ACalculationIsBehindItsInput",async()=>{
  // Arrange

@@ -37,6 +37,7 @@ pub(super) struct NodeDescription {
     typing: Option<Arc<Typing>>,
     failure: Option<String>,
     view: Option<Data>,
+    progress: Option<crate::driver::progress::ExecutionProgress>,
 }
 #[derive(Clone, Debug)]
 pub(super) struct BoundName {
@@ -123,6 +124,7 @@ pub(super) fn capture_nodes(
             BoundTask::Describe(_) => TaskLabel::Meta(MetaCommand::Describe),
             BoundTask::TypeCheck(_) => TaskLabel::Meta(MetaCommand::Type),
             BoundTask::Accumulation(_) => TaskLabel::Meta(MetaCommand::Accumulate),
+            BoundTask::Scan(_) => TaskLabel::Meta(MetaCommand::Scan),
             BoundTask::Help(_) => TaskLabel::Meta(MetaCommand::Help),
             BoundTask::Management(_) => {
                 TaskLabel::Meta(wes_language::vocabulary::MetaCommand::WorkspacePlan)
@@ -137,6 +139,7 @@ pub(super) fn capture_nodes(
             .map(|text| charge.copy(&text))
             .collect::<Result<_, _>>()?;
         rows.push(NodeDescription {
+            progress: workspace.runtime().execution_progress(node.id()).cloned(),
             captured_bindings,
             view: if selected.is_some() {
                 workspace
@@ -167,7 +170,15 @@ pub(super) fn capture_nodes(
             failure: workspace
                 .runtime()
                 .error_of(node.id())
-                .map(|error| charge.copy(error.message()))
+                .map(|error| {
+                    charge.copy(
+                        if error.policy().is_private() || error.policy().is_unknown() {
+                            "Restricted failure; details are unavailable."
+                        } else {
+                            error.message()
+                        },
+                    )
+                })
                 .transpose()?,
         });
         Ok(())
@@ -321,6 +332,16 @@ impl NodeDescription {
             .ok_or(Failure::Limit)?;
             budget.bytes += charge as usize;
             fields.insert("view".into(), view.clone());
+        }
+        if let Some(progress) = &self.progress {
+            let data = progress.description();
+            let charge = crate::value_size::data_charge(
+                &data,
+                max_bytes().saturating_sub(budget.bytes) as u64,
+            )
+            .ok_or(Failure::Limit)?;
+            budget.bytes += charge as usize;
+            fields.insert("progress".into(), data);
         }
         Ok(Data::Record(fields))
     }

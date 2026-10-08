@@ -139,6 +139,12 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         summary: "Accumulate each ordered event with a bounded, atomic checkpoint.",
     },
     CommandPath {
+        path: &["scan"],
+        operation: Scan,
+        short: None,
+        summary: "Analyze captured finite records with declared pure transitions, coverage and cumulative limits.",
+    },
+    CommandPath {
         path: &["help"],
         operation: Help,
         short: None,

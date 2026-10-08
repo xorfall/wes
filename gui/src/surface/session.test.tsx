@@ -104,7 +104,7 @@ describe("what a cell is", () => {
 
   it("should_CountStaleNodesOnceAndSayRetention_When_SeveralMixedResultsAreStale", () => {
     // Arrange
-    const base = { ...nodes[0]!, doubt: undefined, stopped: undefined };
+    const base = { ...nodes[0]!, doubt: undefined, evidence: undefined };
     const mixed = [
       { ...base, id: "kept-ready", state: "ready" as const, kept: true, handle: "h-kept" },
       { ...base, id: "stale-previous", state: "stale" as const, kept: false, handle: "h-previous" },

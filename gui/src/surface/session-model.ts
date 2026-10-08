@@ -1,5 +1,5 @@
 import { locationLines } from "../failure-text";
-import { constructed, observationStale, staleMessage, updatePendingStatus } from "../workspace";
+import { constructed, incompleteResult, observationStale, staleMessage, stoppedStream, updatePendingStatus } from "../workspace";
 /**
  * The session, projected from what the engine said.
  *
@@ -169,11 +169,11 @@ export function stateOf(
   if (
     cell.state === "unanswered" ||
     refusal !== undefined ||
-    nodes.some((node) => node.state === "failed" || (node.state === "cancelled" && !node.stopped))
+    nodes.some((node) => node.state === "failed" || (node.state === "cancelled" && !stoppedStream(node)))
   ) {
     return "failed";
   }
-  if (nodes.some((node) => node.state === "stale" || node.stopped)) return "stale";
+  if (nodes.some((node) => node.state === "stale" || stoppedStream(node))) return "stale";
   if (cell.pinned) return "pinned";
   return focused ? "focus" : "default";
 }
@@ -198,13 +198,15 @@ export function refusalOf(workspace: Workspace, cell: ClientCell): string | unde
 /** The shape field: the last node's type for one node, `N nodes` for several, the refusal when none ran. */
 function shapeOf(state: CellState, nodes: readonly WorkspaceNode[], refusal?: string): string {
   const stopped = nodes.find((it) => it.state === "cancelled");
-  if (stopped && nodes.length === 1) return stopped.stopped ? "stream stopped · last value" : stopped.cancellation?.reason ?? "";
+  if (stopped && nodes.length === 1) return stoppedStream(stopped) ? "stream stopped · last value" : stopped.cancellation?.reason ?? "";
   if (nodes.length > 1) return `${nodes.length} results`;
   const node = nodes[0];
   if (state === "failed") {
     if (refusal) return refusal;
-    if (!node?.failure) return "";
-    return [headlineOf(failureOf(node.failure, node.failureRecord)),errorRoute(node)].filter(Boolean).join(" · ");
+    // The partial result is said beside the failure: the run did not complete, and nothing says it did.
+    const partial = incompleteResult(node) ? "partial result · incomplete" : undefined;
+    if (!node?.failure) return partial ?? "";
+    return [headlineOf(failureOf(node.failure, node.failureRecord)),partial,errorRoute(node)].filter(Boolean).join(" · ");
   }
   if (node && ["pending","skipped"].includes(node.state) && node.waiting?.length)return node.waiting.map(wait=>wait.message).join(" · ");
   if (node?.state === "stale") return staleMessage(node)!;
@@ -223,12 +225,14 @@ function factsOf(nodes: readonly WorkspaceNode[], value: FormValue | undefined):
     const count = (states: readonly string[]) => nodes.filter((node) => states.includes(node.state)).length;
     const facts: [number, string, Segment["role"]][] = [
       [count(["ready"]), "ok", "mono-ok"], [count(["running"]), "running", "mono-meta"],
-      [count(["failed"]), "failed", "mono-bad"], [nodes.filter((node) => node.state === "cancelled" && node.stopped).length, "stopped", "mono-warn"],
-      [nodes.filter((node) => node.state === "cancelled" && !node.stopped).length, "cancelled", "mono-warn"],
+      [count(["failed"]), "failed", "mono-bad"], [nodes.filter((node) => node.state === "cancelled" && stoppedStream(node)).length, "stopped", "mono-warn"],
+      [nodes.filter((node) => node.state === "cancelled" && !stoppedStream(node)).length, "cancelled", "mono-warn"],
       [count(["skipped"]), "skipped", "mono-dim"], [count(["stale"]), "stale", "mono-warn"],
     ];
     const said = facts.filter(([n, word]) => n > 0 && !(word === "ok" && n === nodes.length)).map(([n, word, role]) => [{ text: `${n} ${word}`, role }]);
-    if (nodes.some((node) => node.state === "cancelled" && node.stopped)) said.push([{ text: "stream stopped · last value", role: "mono-warn" }]);
+    if (nodes.some((node) => node.state === "cancelled" && stoppedStream(node))) said.push([{ text: "stream stopped · last value", role: "mono-warn" }]);
+    const partial = nodes.filter((node) => incompleteResult(node)).length;
+    if (partial) said.push([{ text: `${partial} incomplete · partial result${partial === 1 ? "" : "s"}`, role: "mono-warn" }]);
     if (nodes.some((node) => node.updatePending)) said.push([{ text: "newer input waiting", role: "mono-meta" }]);
     return said;
   }
@@ -269,7 +273,7 @@ const TERMINAL = new Set(["READY", "FAILED", "CANCELLED"]);
 export function durationsOf(workspace: Workspace): Map<string, Span> {
   const currentRuns = new Map(workspace.nodes.map(node => [node.id, node.run]));
   const active = new Set(workspace.nodes.filter(node => node.state === "running").map(node => node.id));
-  const streamSources = new Set(workspace.nodes.filter(node => node.stopped?.source === node.id).map(node => node.id));
+  const streamSources = new Set(workspace.nodes.filter(node => stoppedStream(node)?.source === node.id).map(node => node.id));
   const running = new Map<string, { run: string; at: number }>();
   const spans = new Map<string, Span>();
   for (const entry of workspace.history) {
@@ -304,7 +308,7 @@ function retentionOf(state: CellState, cell: ClientCell, nodes: readonly Workspa
   if (state === "pinned" || cell.pinned) return { text: "pinned", role: "mono-ref" };
   // Among several nodes the facts already count the stale ones; retention then says what is kept.
   if (state === "stale" && nodes.length === 1 && nodes[0]!.state === "stale") return { text: "1 stale", role: "mono-warn" };
-  const results = nodes.filter(node => node.kept || node.state === "ready" || node.handle !== undefined || node.stopped !== undefined);
+  const results = nodes.filter(node => node.kept || node.state === "ready" || node.handle !== undefined || node.evidence !== undefined);
   const kept = results.filter((node) => node.kept).length;
   return { text: kept && kept < results.length ? `${kept} of ${results.length} kept` : kept ? "kept" : "not kept", role: "mono-dim" };
 }
@@ -342,7 +346,7 @@ export function verdictOf(
   const cancelled = nodes.length === 1 && nodes[0]!.state === "cancelled";
   const lone=nodes.length===1 ? nodes[0] : undefined;
   const semantic:Segment = nodes.some(node=>node.doubt) || cell.state==="unanswered" ? {text:"outcome unknown",role:"mono-warn"}
-    : cancelled ? {text:lone?.stopped ? "stopped" : "cancelled",role:"mono-warn"}
+    : cancelled ? {text:stoppedStream(lone) ? "stopped" : "cancelled",role:"mono-warn"}
     : lone?.state==="pending" ? {text:"waiting",role:"mono-dim"}
     : lone?.state==="skipped" ? {text:"skipped",role:"mono-faint"}
     : cell.submissionRefusal !== undefined && !nodes.length ? {text:"refused",role:"mono-bad-strong"}
@@ -353,7 +357,7 @@ export function verdictOf(
   // A known type belongs to the result disclosure during execution too. Waiting, stale,
   // failure and newer-input messages still describe the run and must remain in its band.
   const typeInHeader = !refusal && lone !== undefined && shape === lone.type;
-  if (shape !== "") fields.push({ segments: [{ text: shape, role: cancelled && nodes[0]!.stopped ? "mono-warn" : "mono-ink" }], keep: true, ...(typeInHeader ? { zone: "data" as const } : {}) });
+  if (shape !== "") fields.push({ segments: [{ text: shape, role: cancelled && stoppedStream(nodes[0]) ? "mono-warn" : "mono-ink" }], keep: true, ...(typeInHeader ? { zone: "data" as const } : {}) });
   for (const fact of factsOf(nodes, value)) fields.push({ segments: fact, keep: false, ...(dataHeader ? { zone: "data" as const } : {}) });
   const time = timeOf(state, nodes, durations, now);
   if (time !== "") fields.push({ segments: [{ text: time, role: "mono-dim" }], keep: false, slot: "duration" });
@@ -474,7 +478,7 @@ function lastLine(wrote: string | undefined): string | undefined {
 
 /** The identity glyph of one node. */
 export function glyphOf(node: WorkspaceNode, value?: FormValue): Glyph {
-  if (node.state === "cancelled") return node.stopped ? "stopped" : "cancelled";
+  if (node.state === "cancelled") return stoppedStream(node) ? "stopped" : "cancelled";
   if (node.state === "ready" && value?.type?.kind === "iter") return "recipe";
   if (node.state === "pending") return "pending";
   return node.state;

@@ -52,7 +52,15 @@ impl Machine {
             span,
         )?;
         self.budget.allocate(metadata + 512, span)?;
-        let cursor = Cursor::new(pipeline, span)?;
+        if matches!(
+            pipeline.root.mode(),
+            wes_core::IterMode::RegexSplit
+                | wes_core::IterMode::Matches
+                | wes_core::IterMode::Captures
+        ) {
+            self.admit_regex(pipeline.root.argument().expect("regex argument"), span)?;
+        }
+        let cursor = Cursor::new(pipeline, span, &mut self.iter_regex)?;
         self.work.push(Work::Iter(IterWork::Pull(Box::new(Frame {
             cursor,
             consumer,
@@ -206,6 +214,14 @@ impl Machine {
                 };
                 self.budget
                     .work(argument.as_ref().map_or(1, |s| s.len() as u64), span)?;
+                if matches!(
+                    mode,
+                    wes_core::IterMode::RegexSplit
+                        | wes_core::IterMode::Matches
+                        | wes_core::IterMode::Captures
+                ) {
+                    self.admit_regex(argument.as_deref().expect("regex argument"), span)?;
+                }
                 let plan =
                     IterValue::new_cached(source, mode, argument, stages, &mut self.iter_regex)
                         .map_err(|e| Failure::iteration(e, span))?;

@@ -2232,7 +2232,7 @@ it("should_KeepTheStoredLastValue_When_AStoppedStreamIsOpenedInAValuePane", asyn
   // Arrange
   const liveView = vi.spyOn(Engine.prototype, "liveView");
   await emit(created("logs-node", { name: "logs", streamOutput: true, streamSource: true }),
-    { event: "stopped", node: "logs-node", state: "cancelled", source: "logs-node", run: "r1", type: "Text", handle: "last-handle", bytes: 1, provenance: {}, cautions: [], kept: false } as Event);
+    { event: "evidence", kind: "stopped_stream", node: "logs-node", state: "cancelled", source: "logs-node", run: "r1", type: "Text", handle: "last-handle", bytes: 1, provenance: {}, cautions: [], kept: false } as Event);
   // Act
   await from("/tabx $logs");
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)); });

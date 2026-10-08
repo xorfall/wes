@@ -1,0 +1,46 @@
+/*
+ * Analysis progress: always three mono rows in the cell, the inspector and /open. The height is set
+ * from the type tokens, so an arriving count, a phase change or withheld counters never move what is
+ * below, at any width. A row that does not fit ends in the mono line's ellipsis — the visible cue —
+ * and carries its whole text as its description; the details path draws the same rows whole.
+ */
+.wes-terminal .record-progress {
+  display: grid;
+  grid-template-rows: repeat(3, calc(var(--type-mono-size) * var(--type-mono-leading)));
+  /* One column that may shrink below its text, so long rows clip instead of widening the cell. */
+  grid-template-columns: minmax(0, 1fr);
+  height: calc(3 * var(--type-mono-size) * var(--type-mono-leading));
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--type-mono-size);
+  line-height: var(--type-mono-leading);
+}
+.wes-terminal .record-progress-stage { min-width: 0; }
+.wes-terminal .record-progress-row { min-width: 0; }
+
+/* The whole rows, on the details path: they wrap and take the height they need. */
+.wes-terminal .record-progress.record-progress-full { height: auto; grid-template-rows: none; grid-auto-rows: auto; overflow: visible; }
+.wes-terminal .record-progress-full .record-progress-row,
+.wes-terminal .scan-receipt .scan-receipt-row {
+  white-space: pre-wrap;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+/* The receipt is a disclosure beside the value; closed, it is one row. */
+.wes-terminal .scan-receipt {
+  min-width: 0;
+  margin-top: var(--space-sm);
+  border-top: var(--stroke-thin) solid var(--line);
+  padding-top: var(--space-sm);
+}
+.wes-terminal .scan-receipt > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+  cursor: pointer;
+}
+.wes-terminal .scan-receipt > summary .mono-line { flex: 1 1 auto; min-width: 0; }
+.wes-terminal .scan-receipt > summary:focus-visible { outline: var(--stroke-thin) solid var(--mono-ref); outline-offset: 2px; }

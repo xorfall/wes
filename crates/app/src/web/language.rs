@@ -74,7 +74,7 @@ pub fn published(package: &Package) -> Value {
             .map(|(symbol, spec)| (symbol.to_owned(), json!({"operation": spec.operation.id(), "precedence": spec.precedence})))
             .collect::<serde_json::Map<_, _>>(),
         "operations": package.operations()
-            .map(|(name, spec)| (name.to_owned(), json!({"operation": spec.operation.id(), "min": spec.min, "max": spec.max})))
+            .map(|(name, spec)| (name.to_owned(), json!({"operation": spec.operation.id(), "min": spec.min, "max": spec.max, "method": spec.operation.supports_method()})))
             .collect::<serde_json::Map<_, _>>(),
         "source": package.source(),
     })

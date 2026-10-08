@@ -661,14 +661,14 @@ async fn cancelled_stream_and_derived_last_values_remain_readable_without_keep()
     );
     assert!(after.state.execution.values.get(&node).is_none());
     assert_eq!(
-        after.state.execution.stopped_values[&node].value.data(),
+        after.state.execution.evidence_values[&node].value.data(),
         &Data::List(vec![Data::Int(0)])
     );
     assert_eq!(
-        after.state.execution.stopped_values[&count].value.data(),
+        after.state.execution.evidence_values[&count].value.data(),
         &Data::Int(1)
     );
-    assert_eq!(after.state.execution.stopped_values[&count].run, count_run);
+    assert_eq!(after.state.execution.evidence_values[&count].run, count_run);
     let count_handle = after.values.as_ref().unwrap().outputs[&count]
         .handle()
         .unwrap()
@@ -709,7 +709,7 @@ async fn cancellation_accepts_pending_last_publication_and_eviction_withdraws_it
             .unwrap()
             .state
             .execution
-            .stopped_values
+            .evidence_values
             .contains_key(&node)
     );
     release.send(()).unwrap();
@@ -728,7 +728,7 @@ async fn cancellation_accepts_pending_last_publication_and_eviction_withdraws_it
         !observation
             .state
             .execution
-            .stopped_values
+            .evidence_values
             .contains_key(&node)
     );
     assert!(

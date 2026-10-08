@@ -71,7 +71,7 @@ class Client:
                                         if self.environment in event['revisions'] else None)
                     elif kind == 'created' and event.get('name'):
                         self.names[event['name']] = event['node']
-                    elif kind in ('ready', 'stopped'):
+                    elif kind in ('ready', 'evidence'):
                         self.ready[event['node']] = event
                     elif kind == 'reported' and any(d.get('severity') == 'error' for d in event.get('diagnostics', [])):
                         self.problem = str(event)

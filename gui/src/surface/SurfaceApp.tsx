@@ -182,7 +182,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
   const [fileName, setFileName] = useState<string>();
   const [fileDraft, setFileDraft] = useState<{ id: string; source: string; base: string; origin: string }>();
   const [pack, setPack] = useState<Language>();
-  const { held, reads, observations, retry: retryRead } = useResults(engine, generation, workspace.nodes.flatMap(node => (!node.streamOutput || node.stopped) && node.handle ? [node.handle] : []), workspace.nodes.filter(node => !node.streamOutput || node.stopped));
+  const { held, reads, observations, retry: retryRead } = useResults(engine, generation, workspace.nodes.flatMap(node => (!node.streamOutput || node.evidence) && node.handle ? [node.handle] : []), workspace.nodes.filter(node => !node.streamOutput || node.evidence));
   const [repeatAsked, setRepeatAsked] = useState<{ id: string; attempt: string }>();
   /**
    * How the workspace is divided, and what each pane holds.

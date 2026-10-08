@@ -632,7 +632,7 @@ impl Executor<BoundCall> for CallExecutor {
             if let Some(trace) = trace {
                 let (state, code, provenance) = match &report.outcome {
                     Outcome::Produced(value) => ("completed", "", value.provenance().clone()),
-                    Outcome::Failed(error) => (
+                    Outcome::Failed(error) | Outcome::Incomplete { error, .. } => (
                         "failed",
                         error.code(),
                         wes_core::Provenance::default().with_policy(error.policy()),
@@ -652,7 +652,7 @@ impl Executor<BoundCall> for CallExecutor {
                 );
                 trace.finish(match &report.outcome {
                     Outcome::Produced(_) => "completed",
-                    Outcome::Failed(_) => "failed",
+                    Outcome::Failed(_) | Outcome::Incomplete { .. } => "failed",
                     _ => "cancelled",
                 });
                 if let Some(record) = trace.persistent_record() {
@@ -694,6 +694,8 @@ fn recording_denied(cancellation: &CancellationToken) -> ExecutionReport {
             outcome: InvocationError::Cancelled.outcome(),
             notices: vec![error],
             stream_start: None,
+            holds: vec![],
+            progress: None,
         }
     } else {
         Outcome::Failed(error).into()

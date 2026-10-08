@@ -131,6 +131,12 @@ describe("references, operations and fields", () => {
 });
 
 describe("arity, counted while typing", () => {
+  it("should_UseReceiverSyntaxOnlyForDeclaredMethods_When_TheseCasesAreWritten", () => {
+    // The premise of the cases below, from the package rather than from a table here.
+    for (const name of ["filter", "count", "reduce"]) expect(language.method(name), name).toBe(true);
+    expect(language.method("range")).toBe(false);
+  });
+
   it("should_SayNothing_When_AnOperationHasTheArgumentsItTakes", () => {
     // Method style spends the receiver: filter takes two, and this gives it two.
     expect(mistakesIn('$orders.filter(o => o.status == "paid");')).toEqual([]);
@@ -149,10 +155,18 @@ describe("arity, counted while typing", () => {
   });
 
   it("should_AllowARange_When_ThePackageGivesOne", () => {
-    // range is one to three, and a call gives the receiver plus its arguments.
-    expect(mistakesIn("$n.range();")).toEqual([]);
-    expect(mistakesIn("$n.range(1, 2);")).toEqual([]);
-    expect(mistakesIn("$n.range(1, 2, 3);")[0]!.said).toBe("range takes 1 to 3 args, not 4");
+    // range is one to three and function syntax only, so every argument is written.
+    expect(mistakesIn("range(3);")).toEqual([]);
+    expect(mistakesIn("range(1, 2);")).toEqual([]);
+    expect(mistakesIn("range(1, 2, 3);")).toEqual([]);
+    expect(mistakesIn("range();")[0]!.said).toBe("range takes 1 to 3 args, not 0");
+    expect(mistakesIn("range(1, 2, 3, 4);")[0]!.said).toBe("range takes 1 to 3 args, not 4");
+  });
+
+  it("should_NotCountItAsTheOperation_When_AFunctionOnlyNameFollowsAReceiver", () => {
+    // After a dot an undeclared method is a field; its call is not counted against range's arity.
+    expect(roleOf("$n.range(1, 2, 3);", "range")).toBe("mono-param");
+    expect(mistakesIn("$n.range(1, 2, 3);")).toEqual([]);
   });
 });
 

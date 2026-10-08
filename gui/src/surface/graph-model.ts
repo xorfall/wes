@@ -51,7 +51,11 @@ export function detailOf(node: WorkspaceNode): string | undefined {
     case "pending": return "pending";
     case "cancelled": return "cancelled";
     case "skipped": return "skipped";
-    case "failed": return node.failure === undefined ? "failed" : firstClause(node.failure);
+    case "failed": {
+      // A committed partial result is beside the failure, never instead of it.
+      const said = node.failure === undefined ? "failed" : firstClause(node.failure);
+      return node.evidence?.kind === "incomplete" ? `incomplete · ${said}` : said;
+    }
     case "stale": return node.type === undefined ? "stale" : `stale · ${node.type}`;
     case "ready": {
       const said: string[] = [];

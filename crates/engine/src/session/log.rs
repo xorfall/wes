@@ -321,7 +321,7 @@ mod tests {
                 revision: 0,
                 stale_reason: None,
                 delivery: None,
-                stopped: None,
+                evidence: None,
                 node: NodeId::new("node").unwrap(),
                 run: None,
                 state: NodeState::Ready,

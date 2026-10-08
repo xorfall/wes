@@ -197,6 +197,7 @@ async fn captured_conversations_survive_provider_replacement_and_dispatch_withou
             payload: BoundTask::Call(ticket.payload),
             run: ticket.run,
             inputs: ticket.inputs,
+            input_origins: ticket.input_origins,
         };
         assert!(executor.interactive(&work.payload));
         assert!(!executor.streaming(&work.payload));

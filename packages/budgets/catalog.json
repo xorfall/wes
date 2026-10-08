@@ -583,6 +583,17 @@
     "source": "crates/engine/src/session/display.rs"
   },
   {
+    "id": "calc.patterns",
+    "label": "Calculation regex cache",
+    "description": "Run-local compiled regex cache entries; compilation reservations also count against calculation memory, including evicted programs retained by cursors.",
+    "group": "Calculation",
+    "unit": "count",
+    "default": 16,
+    "min": 1,
+    "max": 64,
+    "source": "crates/engine/src/calc/machine.rs"
+  },
+  {
     "id": "calc.work",
     "label": "Calculation work",
     "description": "Local instructions per calculation.",
@@ -1648,5 +1659,258 @@
     "min": 1000,
     "max": 86400000,
     "source": "crates/engine/src/session/import_plans.rs"
+  },
+  {
+    "id": "scan.work",
+    "label": "Scan total work",
+    "description": "Cumulative work per attempt; freeing record scratch never resets it.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 64000000,
+    "min": 1,
+    "max": 1000000000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.startup.work",
+    "label": "Scan startup allowance",
+    "description": "Work available before committed input earns additional allowance, capped by scan total work.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 16000000,
+    "min": 1,
+    "max": 1000000000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.work.rate",
+    "label": "Scan earned allowance",
+    "description": "Additional work allowance per committed source unit; raw bytes for frames and conservative input charge for typed records.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 4096,
+    "min": 1,
+    "max": 1000000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.memory.bytes",
+    "label": "Scan held memory",
+    "description": "Conservative charge for source, code, context, states, native owners, record scratch and pending output; not process RSS.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 134217728,
+    "min": 1048576,
+    "max": 1073741824,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.aggregate.bytes",
+    "label": "Concurrent scan memory",
+    "description": "Aggregate reservation for active scan owners in one execution application.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 268435456,
+    "min": 1048576,
+    "max": 2147483648,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.input.bytes",
+    "label": "Scan input charge",
+    "description": "Committed raw bytes for framed input or conservative input charge for typed records.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 16777216,
+    "min": 1,
+    "max": 536870912,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.input.records",
+    "label": "Scan input records",
+    "description": "Maximum committed input records in one explicitly started finite analysis.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 250000,
+    "min": 1,
+    "max": 1000000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.source.bytes",
+    "label": "Captured scan source",
+    "description": "Maximum conservative charge of the immutable source root.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 67108864,
+    "min": 1024,
+    "max": 536870912,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.state.bytes",
+    "label": "Scan state",
+    "description": "Maximum charge of one committed state; candidate and previous state coexist during handoff.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 1048576,
+    "min": 1024,
+    "max": 67108864,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.context.bytes",
+    "label": "Scan context",
+    "description": "Maximum charge of immutable captured context.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 1048576,
+    "min": 1024,
+    "max": 67108864,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.code.bytes",
+    "label": "Scan captured code",
+    "description": "Maximum charge of captured transition code and resolved contracts.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 4194304,
+    "min": 1024,
+    "max": 67108864,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.record.bytes",
+    "label": "Scan input record",
+    "description": "Maximum charge of one framed or typed record, including conversion containers.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 8388608,
+    "min": 1024,
+    "max": 67108864,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.record.work",
+    "label": "Scan invocation work",
+    "description": "Work cap of each fresh record or finish VM, additionally debited from the attempt ledger.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 1000000,
+    "min": 1,
+    "max": 100000000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.scratch.bytes",
+    "label": "Scan invocation scratch",
+    "description": "Cumulative allocation charge within one invocation; the entire VM lifetime is released after handoff.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 8388608,
+    "min": 1024,
+    "max": 67108864,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.output.bytes",
+    "label": "Scan retained output charge",
+    "description": "Cumulative conservative memory-sink output charge; exhaustion stops before the next candidate commits.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 16777216,
+    "min": 1,
+    "max": 268435456,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.output.records",
+    "label": "Scan retained output records",
+    "description": "Maximum retained records; no implicit rolling archive.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 100000,
+    "min": 1,
+    "max": 1000000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.record.outputs",
+    "label": "Scan outputs per invocation",
+    "description": "Maximum outputs of one record or finish candidate.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 1000,
+    "min": 1,
+    "max": 100000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.patterns",
+    "label": "Scan regex cache",
+    "description": "Captured run-local cache capacity shared across fresh record VMs.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 16,
+    "min": 1,
+    "max": 64,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.block.bytes",
+    "label": "Scan read slice",
+    "description": "Maximum original bytes examined per cooperative native read; records do not depend on block boundaries.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 4096,
+    "min": 1,
+    "max": 65536,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.duration.ms",
+    "label": "Scan duration",
+    "description": "Wall-clock safety cap of one finite attempt; time is not a source ordering key.",
+    "group": "Record analysis",
+    "unit": "milliseconds",
+    "default": 60000,
+    "min": 1,
+    "max": 86400000,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.frame.raw.bytes",
+    "label": "Scan raw frame",
+    "description": "Maximum original content bytes of one framed record.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 65536,
+    "min": 1,
+    "max": 1048576,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.frame.decoded.bytes",
+    "label": "Scan decoded frame",
+    "description": "Maximum UTF-8 bytes of one explicitly decoded record.",
+    "group": "Record analysis",
+    "unit": "bytes",
+    "default": 262144,
+    "min": 1,
+    "max": 4194304,
+    "source": "crates/engine/src/scan/runner.rs"
+  },
+  {
+    "id": "scan.frame.spans",
+    "label": "Scan decoding map",
+    "description": "Maximum original-to-decoded runs of one frame.",
+    "group": "Record analysis",
+    "unit": "count",
+    "default": 2048,
+    "min": 1,
+    "max": 65536,
+    "source": "crates/engine/src/scan/runner.rs"
   }
 ]

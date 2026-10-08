@@ -79,6 +79,8 @@ pub enum Operation {
     Rem,
     RoundDiv,
     ParseJson,
+    RegexTest,
+    StripAnsi,
     HttpStatus,
     HttpError,
     HttpCatalogue,
@@ -155,6 +157,8 @@ const SEMANTICS: &[(&str, Operation, u8, u8)] = &[
     ("rem", Operation::Rem, 2, 2),
     ("round-div", Operation::RoundDiv, 3, 3),
     ("parse-json", Operation::ParseJson, 1, 2),
+    ("regex-test", Operation::RegexTest, 2, 2),
+    ("strip-ansi", Operation::StripAnsi, 1, 1),
     ("http-status", Operation::HttpStatus, 1, 1),
     ("http-error", Operation::HttpError, 1, 1),
     ("http-catalogue", Operation::HttpCatalogue, 1, 1),
@@ -182,6 +186,29 @@ const SEMANTICS: &[(&str, Operation, u8, u8)] = &[
     ("field", Operation::Field, 2, 2),
 ];
 impl Operation {
+    /// Execution and discovery share this closed semantic rule; packages may rename spellings.
+    pub fn supports_method(self) -> bool {
+        matches!(
+            self,
+            Self::Map
+                | Self::Filter
+                | Self::Reduce
+                | Self::Join
+                | Self::WithFields
+                | Self::Slice
+                | Self::Concat
+                | Self::SortBy
+                | Self::Length
+                | Self::Keys
+                | Self::IsSome
+                | Self::UnwrapOr
+                | Self::Take
+                | Self::Skip
+                | Self::Collect
+                | Self::Count
+                | Self::Field
+        )
+    }
     pub fn iter_mode(self) -> Option<wes_core::IterMode> {
         use wes_core::IterMode;
         Some(match self {

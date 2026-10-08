@@ -347,6 +347,11 @@ impl Value {
     pub fn data(&self) -> &Data {
         &self.data
     }
+    /// Consume the value at an admitted materialization boundary, without copying
+    /// its container tree. The caller separately owns its shape and attribution.
+    pub fn into_data(self) -> Data {
+        Arc::unwrap_or_clone(self.data)
+    }
     pub fn provenance(&self) -> &Provenance {
         &self.provenance
     }

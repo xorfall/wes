@@ -2,7 +2,10 @@ import { stringifyExactJson } from "../exact-json";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
-import { updatePendingStatus, type Workspace, type WorkspaceNode } from "../workspace";
+import { stoppedStream, updatePendingStatus, type Workspace, type WorkspaceNode } from "../workspace";
+import { RecordProgress } from "./RecordProgress";
+import { ScanReceiptDetails } from "./ScanReceiptDetails";
+import { evidenceLabel } from "./record-progress";
 import type { SessionCell } from "./session-model";
 import { liveReader, type LiveSample } from "../live-view-reader";
 import { ValueBlock } from "./render/ValueBlock";
@@ -57,7 +60,7 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
     let current=true;const handle=node.handle;setProblem(undefined);
     void engine.fetch(handle).then(value=>{if(current && latest.current?.handle===handle)setRead({handle,value,generation,signature});},error=>{if(current)setProblem(error instanceof Error ? error.message : String(error));});
     return()=>{current=false;};
-  },[engine,node?.handle,node?.stopped,signature,generation,active,permitted,retry]);
+  },[engine,node?.handle,node?.evidence?.kind,node?.evidence?.run,signature,generation,active,permitted,retry]);
   useEffect(()=>{
     if(!active || selection.tab==="history" || !live || !node || !generation)return;
     return owner.watch(node.id,generation,next=>{
@@ -68,7 +71,8 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
   },[owner,node?.id,generation,signature,active,live,retry,selection.tab]);
   const currentValue=live ? (sample.signature===signature ? sample.value : undefined) : read && read.handle===node?.handle && read.generation===generation && read.signature===signature ? read.value : undefined;
   const value=permitted && !sample.withdrawn ? safeSnapshot?.value ?? currentValue : undefined;
-  const stopped=Boolean(node?.stopped);
+  const stopped=Boolean(stoppedStream(node));
+  const partial=resultAccess(node).partial;
   const newer=useMemo(()=>{
     if(!safeSnapshot)return false;
     if(!stopped)return safeSnapshot.serverRevision && sample.metadata ? BigInt(sample.metadata.revision)>BigInt(safeSnapshot.serverRevision) : sample.revision>safeSnapshot.revision;
@@ -86,7 +90,7 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
       <div className="inspector-live" role="status">
         {safeSnapshot ? <><span>{safeSnapshot.fromCell ? `snapshot from the cell’s hold at ${safeSnapshot.at}` : snapshotLabel(safeSnapshot,stopped,Boolean(newer))}{newer===undefined && " · last-value comparison exceeds the display budget"}</span><button className="cell-action" onClick={()=>setSnapshot(undefined)}>{stopped ? "show last value" : "follow live"}</button></>
           : live ? <><span>live · following</span><button className="cell-action" disabled={!currentValue} onClick={()=>currentValue && setSnapshot({value:currentValue,at:new Date().toLocaleTimeString(),revision:sample.revision,epoch:JSON.stringify(sample.metadata?.epochs),serverRevision:sample.metadata?.revision,signature})}>freeze</button></>
-            : stopped ? <span>stopped · last value</span> : node?.state==="stale" ? <span>stale · previous result</span> : node?.state==="pending" || node?.state==="running" ? <span>updating · previous result</span> : null}
+            : stopped ? <span>stopped · last value</span> : partial ? <span className="mono-warn">{evidenceLabel(node)}</span> : node?.state==="stale" ? <span>stale · previous result</span> : node?.state==="pending" || node?.state==="running" ? <span>updating · previous result</span> : null}
         {/* Holding or following the display never pauses computation, so this stands beside every observation label. */}
         {node && updatePendingStatus(node) && <span className="inspector-update-pending">{updatePendingStatus(node)}</span>}
       </div>
@@ -95,12 +99,16 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
     <div className="inspector-content">
       <div role="tabpanel" aria-label="inspect" hidden={tab!=="inspect"}>
         {node?.private && <p className="mono-warn">Private · memory only · readable in this workspace</p>}
+        <RecordProgress node={node} />
+        {partial && node?.failure && <p className="mono-bad">{node.failureRecord?.code ? `${node.failureRecord.code} · ` : ""}{node.failure}</p>}
         {!permitted && node && <p className="mono-warn">{node.doubt ? "Outcome uncertain · result not read" : `${node.state} · no current value`}</p>}
         {(problem || sample.problem) && <p className="mono-warn" role="alert">Read failed · {problem ?? sample.problem} <button className="cell-action" onClick={()=>setRetry(n=>n+1)}>retry reading</button></p>}
         {value ? <ValueBlock engine={engine} value={value} cacheKey={`${generation}:${node?.id}:inspector:${safeSnapshot ? `snapshot:${safeSnapshot.revision}` : live ? `${JSON.stringify(sample.metadata?.epochs)}:${sample.metadata?.revision??sample.revision}` : node?.handle}`} bindingKey={`${generation}:${node?.id}:inspector`} mode="window" inCell={false} facts={{whole:true,stopped}}/>
           : permitted && !problem && <p className="mono-dim">{node?.handle || live ? "Reading value…" : "no value · inspect run history for the recorded outcome"}</p>}
+        {/* Beside the generic value view, not instead of it; only a typed ScanResult has one. */}
+        <ScanReceiptDetails value={value} />
         {node?.dependencyLifetime==="creation" && <p className="mono-dim inspector-creation" role="note">{sentence(creationInputOf(workspace,node))}</p>}
-        <details className="inspector-details"><summary>run details</summary><p>{node?.state ?? "not run"}</p><pre>{node?.command ?? cell.source}</pre>{node?.failure && <p className="mono-bad">{node.failure}</p>}</details>
+        <details className="inspector-details"><summary>run details</summary><p>{node?.state ?? "not run"}</p><pre>{node?.command ?? cell.source}</pre>{node?.failure && <p className="mono-bad">{node.failure}</p>}<RecordProgress node={node} full /></details>
       </div>
       <div role="tabpanel" aria-label="json" hidden={tab!=="json"}>{value ? <ReadableJson value={value} active={tab==="json"}/> : <p className="mono-dim">No stored value available.</p>}</div>
       <div role="tabpanel" aria-label="history" hidden={tab!=="history"}>{generation && historyVisited && <RunHistory engine={engine} workspace={workspace} generation={generation} cell={cell.id} nodes={cell.nodes} initialNode={selection.node} onClose={onClose}/>}</div>

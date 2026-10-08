@@ -2,6 +2,7 @@
 use wes_core::{Primitive, Shape, capability::Parameter};
 pub mod commands;
 mod environment;
+pub mod scan;
 mod workspace;
 pub use workspace::{WorkspaceManagementCommand, workspace_management};
 mod registry;
@@ -35,6 +36,7 @@ pub enum MetaCommand {
     Describe,
     Change,
     Accumulate,
+    Scan,
     Stream,
     Fork,
     Sandbox,
@@ -86,6 +88,7 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::Describe,
     MetaCommand::Change,
     MetaCommand::Accumulate,
+    MetaCommand::Scan,
     MetaCommand::Stream,
     MetaCommand::Fork,
     MetaCommand::Sandbox,
@@ -189,6 +192,7 @@ impl MetaCommand {
             Self::Describe => "describe",
             Self::Change => "change",
             Self::Accumulate => "accumulate",
+            Self::Scan => "scan",
             Self::Stream => "stream",
             Self::Fork => "fork",
             Self::Sandbox => "sandbox",
@@ -440,6 +444,11 @@ impl MetaCommand {
                 ];
                 spec.produces_value = true;
                 spec.derived = true;
+            }
+            Self::Scan => {
+                spec.summary = "Analyze an immutable finite source with captured pure step/finish definitions and one cumulative budget. One analysis is one run; memory output uses normal retention.";
+                spec.parameters = scan::parameters();
+                spec.produces_value = true;
             }
             Self::Info => {
                 spec.summary = "shows retained provider constraints, advisories and source evidence; no API call";

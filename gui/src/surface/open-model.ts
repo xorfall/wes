@@ -16,6 +16,7 @@ import type { Cell as ClientCell } from "../cells";
 import type { Workspace, WorkspaceNode } from "../workspace";
 import type { Catalogue } from "../vocabulary";
 import { padded } from "./forms/form";
+import { evidenceLabel } from "./record-progress";
 import type { MonoRole, Segment } from "./MonoLine";
 import type { SessionContext } from "./session-model";
 import type { OpenTab } from "./screens/Open";
@@ -134,8 +135,8 @@ export function openFacts(input: OpenInput): readonly FactGroup[] {
     // `default` is the environment this session was already using; anything else is a redirection.
     environment && environment.origin !== "default" ? fact("origin", environment.origin, "mono-warn") : undefined,
     fact("grant", context.grantMinutes === undefined ? undefined : `${context.grantMinutes} min left`, "mono-warn"),
-    fact("observation", node?.stopped ? "stream stopped · last value" : undefined, "mono-warn"),
-    fact("observed run", node?.stopped?.run),
+    fact("observation", evidenceLabel(node), "mono-warn"),
+    fact("observed run", node?.evidence?.run),
     ...(node?.cautions ?? []).map((caution, at) => fact(at === 0 ? "caution" : "", caution, "mono-warn")),
     node?.doubt
       ? fact(

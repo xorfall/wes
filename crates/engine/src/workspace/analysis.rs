@@ -388,6 +388,10 @@ impl Analysis<'_> {
                     ..statement.clone()
                 };
                 let expectations = match &resolution {
+                    Resolution::Meta { spec, call, .. } if spec.command == MetaCommand::Scan => {
+                        crate::scan::BoundScan::expected_arguments(call, self.templates)
+                            .map_err(WorkspaceError::from)?
+                    }
                     Resolution::Meta { spec, call, .. } if spec.command == MetaCommand::Change => {
                         call.operands
                             .first()
@@ -649,6 +653,24 @@ impl Analysis<'_> {
                         let typing =
                             Arc::new(accumulation.predicted_typing(|output| self.typing(output)));
                         (BoundTask::Accumulation(accumulation), typing)
+                    }
+                    Task::Meta(task) if task.spec.command == MetaCommand::Scan => {
+                        if !statement.annotations.is_empty() {
+                            return Err(rejected(
+                                "CAL009",
+                                statement.span,
+                                "scan annotations cannot relax pure transition or budget admission",
+                            ));
+                        }
+                        let scan = crate::scan::BoundScan::bind(
+                            task,
+                            self.templates,
+                            self.calc_services.clone(),
+                            statement.span,
+                        )?
+                        .with_pipe_input(self.pipe_input);
+                        let typing = Arc::new(scan.predicted_typing());
+                        (BoundTask::Scan(scan), typing)
                     }
                     Task::Meta(task) if task.spec.command == MetaCommand::Help => {
                         let help = BoundHelp::new(

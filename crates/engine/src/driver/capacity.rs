@@ -21,6 +21,7 @@ pub struct ExecutionCapacity {
     pub(crate) calls: Pool,
     pub(crate) streams: Pool,
     pub(crate) conversations: Arc<Semaphore>,
+    pub(crate) scan_memory: crate::scan::ledger::MemoryPool,
     changes: watch::Sender<CapacitySnapshot>,
 }
 impl ExecutionCapacity {
@@ -56,6 +57,10 @@ impl ExecutionCapacity {
             conversations: Arc::new(Semaphore::new(
                 wes_budgets::get("execution.conversations") as usize
             )),
+            scan_memory: crate::scan::ledger::MemoryPool::new(wes_budgets::get(
+                "scan.aggregate.bytes",
+            ))
+            .expect("positive scan aggregate budget"),
             changes,
         })
     }

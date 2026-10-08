@@ -174,7 +174,7 @@ pub(super) struct ValueEffects {
 }
 #[derive(Clone, Debug)]
 pub struct ValueSnapshot {
-    /// Current successes and explicitly stopped display observations. Graph state remains separate;
+    /// Current successes and explicitly labelled display evidence. Graph state remains separate;
     /// refreshing/dropping a node invalidates this live projection.
     pub outputs: IndexMap<NodeId, ValuePublication>,
     pub pending: usize,
@@ -214,7 +214,7 @@ enum Waiting {
 }
 struct Version {
     live: Option<crate::history::LiveSnapshot>,
-    stopped: bool,
+    evidence: bool,
     private: bool,
     token: Arc<()>,
     streaming: bool,
@@ -421,7 +421,7 @@ impl SessionValues {
             if !self
                 .versions
                 .get(node)
-                .is_some_and(|version| version.streaming && !version.private && !version.stopped)
+                .is_some_and(|version| version.streaming && !version.private && !version.evidence)
             {
                 continue;
             }
@@ -547,11 +547,11 @@ impl SessionValues {
         automatic: bool,
         live: Option<crate::history::LiveSnapshot>,
     ) -> Option<StorageNotice> {
-        let stopped = observation.stopped.is_some();
+        let evidence = observation.evidence.is_some();
         // Select the display value for publication only. The original observation is still what
         // the execution log records; this does not promote Cancelled/Skipped to graph Ready.
         let snapshot;
-        let observation = if let Some(last) = &observation.stopped {
+        let observation = if let Some(last) = &observation.evidence {
             snapshot = Observation {
                 revision: 0,
                 stale_reason: None,
@@ -561,13 +561,13 @@ impl SessionValues {
                 state: NodeState::Ready,
                 value: Some(last.value.clone()),
                 error: None,
-                stopped: None,
+                evidence: None,
             };
             &snapshot
         } else {
             observation
         };
-        let automatic = automatic && !stopped;
+        let automatic = automatic && !evidence;
         if observation.state != NodeState::Ready {
             self.take_pin(&observation.node);
             let private = self
@@ -594,10 +594,10 @@ impl SessionValues {
             .take_pin(&observation.node)
             .filter(|(captured, _)| captured == run)
             .map(|(_, intent)| intent);
-        if stopped && let Some(version) = self.versions.get_mut(&observation.node) {
-            version.stopped = true;
+        if evidence && let Some(version) = self.versions.get_mut(&observation.node) {
+            version.evidence = true;
         }
-        if (stopped || !streaming)
+        if (evidence || !streaming)
             && self
                 .outputs
                 .get(&observation.node)
@@ -643,7 +643,7 @@ impl SessionValues {
             observation.node.clone(),
             Version {
                 live,
-                stopped,
+                evidence,
                 private: value.provenance().policy().is_private(),
                 token: version.clone(),
                 streaming,
@@ -870,11 +870,11 @@ impl SessionValues {
                     && (if self
                         .versions
                         .get(&node)
-                        .is_some_and(|version| version.stopped)
+                        .is_some_and(|version| version.evidence)
                     {
                         workspace
                             .runtime()
-                            .stopped_value(&node)
+                            .evidence_value(&node)
                             .map(|value| &value.run)
                             == Some(&result.run)
                     } else {

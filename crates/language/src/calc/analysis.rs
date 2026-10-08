@@ -904,28 +904,7 @@ impl Analyzer<'_> {
             }
             return Ok(Shape::Unknown);
         };
-        if method.is_some()
-            && !matches!(
-                spec.operation,
-                Operation::Map
-                    | Operation::Filter
-                    | Operation::Reduce
-                    | Operation::Join
-                    | Operation::WithFields
-                    | Operation::Slice
-                    | Operation::Concat
-                    | Operation::SortBy
-                    | Operation::Length
-                    | Operation::Keys
-                    | Operation::IsSome
-                    | Operation::UnwrapOr
-                    | Operation::Take
-                    | Operation::Skip
-                    | Operation::Collect
-                    | Operation::Count
-                    | Operation::Field
-            )
-        {
+        if method.is_some() && !spec.operation.supports_method() {
             return Err(problem(
                 span,
                 "CAL002",
@@ -1358,6 +1337,16 @@ impl Analyzer<'_> {
             Operation::Some => Ok(Shape::Option(Box::new(
                 self.compiled.shapes[args[0]].clone(),
             ))),
+            Operation::RegexTest | Operation::StripAnsi => {
+                for arg in args {
+                    require_known(&self.compiled.shapes[*arg], &[Primitive::Text], span)?;
+                }
+                Ok(if spec.operation == Operation::RegexTest {
+                    Shape::Primitive(Primitive::Bool)
+                } else {
+                    wes_core::text::normalized_shape()
+                })
+            }
             Operation::IsSome | Operation::Has => Ok(Shape::Primitive(Primitive::Bool)),
             Operation::Length => {
                 let receiver = if method.is_some() {

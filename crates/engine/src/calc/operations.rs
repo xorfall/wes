@@ -444,6 +444,9 @@ impl Machine {
         token: &CancellationToken,
     ) -> Result<Item, Failure> {
         let value = match operation {
+            Operation::RegexTest | Operation::StripAnsi => {
+                return self.text_builtin(operation, &args, span);
+            }
             Operation::Instant
             | Operation::Duration
             | Operation::Interval

@@ -136,7 +136,7 @@ async fn both_metrics_streams_use_bounded_windows_stop_values_and_explicit_resta
         f.submit("one", ":cancel $live").await;
         fake.closed(1).await;
         assert_eq!(
-            f.handle.snapshot().await.unwrap().execution.stopped_values[&node]
+            f.handle.snapshot().await.unwrap().execution.evidence_values[&node]
                 .value
                 .data(),
             value.data()

@@ -36,6 +36,9 @@ import type { ResultRead, ResultObservation } from "./results";
 import { ObservationStatus } from "./ObservationStatus";
 import type { NodeView, SessionCell } from "./session-model";
 import { DescribeFailureDetails, describeReportId } from "./DescribeFailureDetails";
+import { stoppedStream } from "../workspace";
+import { evidenceLabel, progressRows } from "./record-progress";
+import { RecordProgress } from "./RecordProgress";
 
 export interface OutputInput {
   readonly onRefresh?: () => void;
@@ -69,7 +72,7 @@ function stateBlock(node: WorkspaceNode, input: OutputInput): ReactNode | undefi
   }
   if(node.doubt)return line([{text:"outcome unknown · no current value",role:"mono-warn"}]);
   if (node.state === "skipped") return line([{ text: "skipped · an earlier stage failed", role: "mono-faint" }]);
-  if (node.state === "cancelled" && !node.stopped) return line([{ text: `cancelled · ${node.cancellation?.reason ?? "stopped before a result"}`, role: "mono-warn" }]);
+  if (node.state === "cancelled" && !stoppedStream(node)) return line([{ text: `cancelled · ${node.cancellation?.reason ?? "stopped before a result"}`, role: "mono-warn" }]);
   const observation = input.observations?.get(node.id);
   if (observation && observation.state !== "current") return undefined;
   if (node.state === "running") return line([{ text: "● running", role: "mono-meta" }, { text: " · the GUI cannot read a running result yet; it appears when the command finishes or stops", role: "mono-faint" }]);
@@ -152,21 +155,28 @@ export function cellBlocks(input: OutputInput): CellBlock[] {
     const status = !failure && value && displayHandle
       ? <ObservationStatus observation={observation} inline={!cell.streamOutput} onRetry={node.handle ? () => input.retryRead(node.handle!) : undefined} /> : undefined;
     const live=Boolean(input.generation && resultAccess(node).live);
+    // The committed partial result of an analysis that stopped: readable beside its failure, never ok.
+    const partial=resultAccess(node).partial;
+    const progress=progressRows(node);
     // Among several stages each failure names its own stage, so failures are never read together.
     const failureContent = failure ? <div className="value-error">{several && <MonoLine segments={[{ text: "✗ ", role: "mono-bad" }, { text: view.label, role: "mono-ref" }]} className="value-line value-error-stage" />}{failure.map((row, at) => <MonoLine key={at} segments={row} className="value-line" />)}{report && <DescribeFailureDetails key={report} id={report} />}</div> : undefined;
     const content = (live && input.generation
         ? <LiveView mode={mode} collapsed={arrangement.view==="collapsed"} key={`${input.generation}:${node.id}:${node.command}:${JSON.stringify(node.environment)}`} engine={input.engine} generation={input.generation} node={node} workspace={workspace.identity?.name} sourceLabel={source => { const named = workspace.nodes.find(candidate => candidate.id === source)?.name; return named ? `$${named}` : source; }} />
         : undefined)
       ?? stateBlock(node, input) ?? (value && displayHandle
-      ? <div className={`result-observation${cell.streamOutput ? "" : " result-observation-inline"}`}>{cell.streamOutput && status}<SnapshotNotice value={value} onRefresh={input.onRefresh} refreshing={node.state === "pending" || node.state === "running"} /><ValueBlock engine={input.engine} value={value} cacheKey={`${input.generation ?? ""}:${displayHandle}`} bindingKey={`${input.generation ?? ""}:${node.id}`} mode={mode} collapsed={arrangement.view === "collapsed"}
-          instanceDisplay={instanceDisplay} facts={node.stopped ? STOPPED : WHOLE} lines={PREVIEW_LINES} /></div>
+      ? <div className={`result-observation${cell.streamOutput ? "" : " result-observation-inline"}`}>{cell.streamOutput && status}{partial && <MonoLine segments={[{ text: evidenceLabel(node)!, role: "mono-warn" }]} className="value-line result-partial" />}<SnapshotNotice value={value} onRefresh={input.onRefresh} refreshing={node.state === "pending" || node.state === "running"} /><ValueBlock engine={input.engine} value={value} cacheKey={`${input.generation ?? ""}:${displayHandle}`} bindingKey={`${input.generation ?? ""}:${node.id}`} mode={mode} collapsed={arrangement.view === "collapsed"}
+          instanceDisplay={instanceDisplay} facts={stoppedStream(node) ? STOPPED : WHOLE} lines={PREVIEW_LINES} /></div>
       : line([{ text: "no result", role: "mono-faint" }]));
+    // The run's own progress stays in the run zone, at a fixed height, above any failure record.
+    if (progress) blocks.push({ key: `${node.id}:progress`, zone: "run", open: true, content: <div className="record-progress-stage">
+      {several && <MonoLine segments={[{ text: view.label, role: "mono-ref" }]} className="value-line" />}<RecordProgress node={node} /></div> });
     if(failure && (failure.length || report))blocks.push({key:`${node.id}:failure`,zone:"run",open:true,content:failureContent});
     // A lone failed job has no result: its record is in the run zone and no empty result card follows.
-    if (failure && !live && lifted) return;
+    // An incomplete analysis does have one — its committed partial result — and keeps its card.
+    if (failure && !live && lifted && !partial) return;
     blocks.push({ key: node.id, stream: live && input.generation ? {engine:input.engine,generation:input.generation,node} : undefined, identity: view, row: view.row, header: headerOf(value), type: value ? presentationType(value) : undefined, meta: value?.meta, typeLabel: view.type,
       // A lone node's duration is the run summary's; only stages carry their own.
-      duration: several && view.durationMs !== undefined ? formatExecutionDuration(view.durationMs) : undefined, view: arrangement.view, height: arrangement.rows, hasValue: live || resultAccess(node).current && node.state !== "failed" && node.state !== "skipped" && !(node.state === "cancelled" && !node.stopped) && Boolean(value || node.streamOutput), status: <>{node.private && <span className="mono-warn">Private · memory only</span>}{cell.streamOutput ? undefined : status}</>, open: opens(node, at), content: failure && !live ? <p className="mono-faint">no value · the run failed</p> : content });
+      duration: several && view.durationMs !== undefined ? formatExecutionDuration(view.durationMs) : undefined, view: arrangement.view, height: arrangement.rows, hasValue: live || partial && Boolean(value) || resultAccess(node).current && node.state !== "failed" && node.state !== "skipped" && !(node.state === "cancelled" && !stoppedStream(node)) && Boolean(value || node.streamOutput), status: <>{node.private && <span className="mono-warn">Private · memory only</span>}{cell.streamOutput ? undefined : status}</>, open: opens(node, at), content: failure && !live && !partial ? <p className="mono-faint">no value · the run failed</p> : content });
   });
   return blocks;
 }

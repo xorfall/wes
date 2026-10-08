@@ -2,8 +2,16 @@
 mod machine;
 mod operations;
 mod temporal;
+mod text;
 mod value;
 pub use machine::{Machine, Request, Step};
+/// Conservative VM charges, not measured resident memory. No payload or source identifiers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub work: u64,
+    pub allocated_bytes: u64,
+    pub regex: wes_core::RegexCacheUsage,
+}
 use wes_core::{ErrorValue, ValidationIssue};
 use wes_language::Span;
 
@@ -26,8 +34,15 @@ impl Default for Limits {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BudgetKind {
+    Work,
+    CumulativeWork,
+    Memory,
+}
 #[derive(Clone, Debug)]
 pub struct Failure {
+    pub budget: Option<BudgetKind>,
     pub code: &'static str,
     pub message: String,
     pub span: Span,
@@ -46,6 +61,7 @@ impl std::error::Error for Failure {}
 impl Failure {
     pub fn new(code: &'static str, span: Span, message: impl Into<String>) -> Self {
         Self {
+            budget: None,
             code,
             message: message.into(),
             span,
@@ -54,6 +70,12 @@ impl Failure {
             cancelled: false,
             trace: vec![],
             policy: wes_core::flow::FlowPolicy::default(),
+        }
+    }
+    pub fn budget(kind: BudgetKind, span: Span, message: impl Into<String>) -> Self {
+        Self {
+            budget: Some(kind),
+            ..Self::new("CAL006", span, message)
         }
     }
     pub fn iteration(error: wes_core::IterPlanError, span: Span) -> Self {
@@ -97,6 +119,7 @@ impl Failure {
     }
 }
 struct Budget {
+    parent_work: Option<crate::work_budget::WorkCounter>,
     token: crate::driver::CancellationToken,
     left: u64,
     work_limit: u64,
@@ -108,10 +131,14 @@ impl Budget {
         if self.token.is_cancelled() {
             return Err(Failure::cancelled(span));
         }
-        self.left = self
+        let left = self
             .left
             .checked_sub(n)
-            .ok_or_else(|| Failure::new("CAL006", span, format!("calculation work limit reached ({} work units). Reduce the input or split the calculation; work units count evaluated operations, not loop iterations.",self.work_limit)))?;
+            .ok_or_else(|| Failure::budget(BudgetKind::Work, span, format!("calculation work limit reached ({} work units). Reduce the input or split the calculation; work units count evaluated operations, not loop iterations.",self.work_limit)))?;
+        if let Some(parent) = &self.parent_work {
+            parent.charge(n).map_err(|_|Failure::budget(BudgetKind::CumulativeWork,span,format!("cumulative work allowance reached ({} of {} work units); freeing scratch does not reset this attempt",parent.allowance(),parent.limit())))?;
+        }
+        self.left = left;
         Ok(())
     }
     fn allocate(&mut self, n: u64, span: Span) -> Result<(), Failure> {
@@ -120,8 +147,8 @@ impl Budget {
             .checked_add(n)
             .filter(|n| *n <= self.limit)
             .ok_or_else(|| {
-                Failure::new(
-                    "CAL006",
+                Failure::budget(
+                    BudgetKind::Memory,
                     span,
                     format!("calculation retained allocation limit reached ({} bytes). Bound the input or split the calculation.", self.limit),
                 )

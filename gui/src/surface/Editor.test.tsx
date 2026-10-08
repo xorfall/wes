@@ -104,23 +104,26 @@ describe("what completion offers", () => {
   });
 
   it("should_ReadAsTheCaptureDoes_When_TheListIsDrawn", () => {
-    expect(signature("filter", "filter", { min: 2, max: 2 })).toBe("filter(fn)");
-    expect(signature("map", "map", { min: 2, max: 2 })).toBe("map(fn)");
-    expect(signature("concat", "concat", { min: 2, max: 2 })).toBe("concat(other)");
-    expect(signature("sortBy", "sort-by", { min: 2, max: 2 })).toBe("sortBy(selector)");
-    expect(signature("reduce", "reduce", { min: 3, max: 3 })).toBe("reduce(fn, init)");
-    expect(signature("take", "take", { min: 2, max: 2 })).toBe("take(n)");
-    expect(signature("count", "count", { min: 1, max: 1 })).toBe("count()");
-    expect(signature("iter.lines", "iter-lines", { min: 1, max: 1 })).toBe("iter.lines()");
+    expect(signature("filter", "filter", { min: 2, max: 2 }, true)).toBe("filter(fn)");
+    expect(signature("map", "map", { min: 2, max: 2 }, true)).toBe("map(fn)");
+    expect(signature("concat", "concat", { min: 2, max: 2 }, true)).toBe("concat(other)");
+    expect(signature("sortBy", "sort-by", { min: 2, max: 2 }, true)).toBe("sortBy(selector)");
+    expect(signature("reduce", "reduce", { min: 3, max: 3 }, true)).toBe("reduce(fn, init)");
+    expect(signature("take", "take", { min: 2, max: 2 }, true)).toBe("take(n)");
+    expect(signature("count", "count", { min: 1, max: 1 }, true)).toBe("count()");
+    // Function-only operations write every argument; `iter.lines()` would promise a call with none.
+    expect(signature("iter.lines", "iter-lines", { min: 1, max: 1 }, false)).toBe("iter.lines(…)");
+    expect(signature("iter.split", "iter-split", { min: 2, max: 2 }, false)).toBe("iter.split(…, separator)");
   });
 
   it("should_FallBackToAPlaceholder_When_NobodyHasNamedThatSemanticsParameters", () => {
-    expect(signature("mystery", "not-a-semantics", { min: 3, max: 3 })).toBe("mystery(…, …)");
+    expect(signature("mystery", "not-a-semantics", { min: 3, max: 3 }, true)).toBe("mystery(…, …)");
+    expect(signature("mystery", "not-a-semantics", { min: 3, max: 3 }, false)).toBe("mystery(…, …, …)");
   });
 
   it("should_KeepASpaceBeforeTheArity_When_TheSignatureIsLongerThanTheColumn", () => {
     const call = completions("call", language, [])[0]!;
-    expect(lineText(candidateLine(call, false))).toBe("  call(provider, capability) · exactly 3 args");
+    expect(lineText(candidateLine(call, false))).toBe("  call(provider, capability, arguments) · exactly 3 args");
   });
 
   it("should_LeadTheChosenRowWithACaret_When_TheListIsDrawn", () => {

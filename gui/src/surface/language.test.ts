@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { bundledPackage, forgetLanguage, language, readLanguage, type LanguagePackage } from "./language";
+import { bundledPackage, forgetLanguage, language, readLanguage, type LanguagePackage, type OperationSpec } from "./language";
 
 const fixture: LanguagePackage = {
   language: "calc",
@@ -16,10 +16,10 @@ const fixture: LanguagePackage = {
     "<": { operation: "lt", precedence: 4 },
   },
   operations: {
-    map: { operation: "map", min: 2, max: 2 },
-    filter: { operation: "filter", min: 2, max: 2 },
-    reduce: { operation: "reduce", min: 3, max: 3 },
-    range: { operation: "range", min: 1, max: 3 },
+    map: { operation: "map", min: 2, max: 2, method: true },
+    filter: { operation: "filter", min: 2, max: 2, method: true },
+    reduce: { operation: "reduce", min: 3, max: 3, method: true },
+    range: { operation: "range", min: 1, max: 3, method: false },
   },
   source: "version: 1\n",
 };
@@ -48,6 +48,19 @@ describe("the language package", () => {
 
   it("should_ReportNothing_When_ThePackageDoesNotNameTheOperation", () => {
     expect(readLanguage(fixture, "engine").arity("group_by")).toBeUndefined();
+  });
+
+  it("should_AllowAMethodOnlyWhereThePackageDeclaresOne_When_AskedAboutReceivers", () => {
+    const read = readLanguage(fixture, "engine");
+    expect(read.method("filter")).toBe(true);
+    expect(read.method("range")).toBe(false);
+    expect(read.method("group_by")).toBe(false);
+    expect(read.method("toString")).toBe(false);
+    // A served spec without the declaration is function-only; nothing infers it from the name.
+    const undeclared = { operation: "filter", min: 2, max: 2 } as unknown as OperationSpec;
+    const older = readLanguage({ ...fixture, operations: { ...fixture.operations, filter: undeclared } }, "engine");
+    expect(older.method("filter")).toBe(false);
+    expect(older.arity("filter")).toEqual({ min: 2, max: 2 });
   });
 
   it("should_OfferLongerOperatorsFirst_When_ListingOperators", () => {

@@ -723,6 +723,23 @@ describe("view workspace identity", () => {
     expect(applicationLog.snapshot().map(row => row.workspace).sort()).toEqual(["Current workspace", "research"]);
     applicationLog.clear();
   });
+  it("should_LogIncompleteAnalysisOnceUnderActualWorkspace_When_EvidenceCarriesItsFailure", async () => {
+    // Arrange
+    const { applicationLog } = await import("./application-log"); applicationLog.clear();
+    vi.stubGlobal("EventSource", Events); vi.stubGlobal("fetch", vi.fn());
+    const engine = new Engine(); engine.listen(() => {}, () => {});
+    const error = { id: "incomplete-scan", code: "SCAN001", message: "work limit reached", causeId: "", issues: [] };
+    const evidence = (kind: string, extra: Record<string, unknown> = {}) => Events.current.emit({ event: "evidence", node: "scan1", state: "failed", kind,
+      source: "scan1", run: "run-a", type: "ScanResult", handle: "partial", bytes: 3, provenance: {}, cautions: [], kept: false, ...extra });
+    // Act
+    Events.current.say("g1", "research");
+    evidence("incomplete", { error, reason: error.message });
+    evidence("incomplete", { error, reason: error.message }); // replay
+    evidence("stopped_stream", { state: "skipped" });
+    // Assert
+    expect(applicationLog.snapshot().map(row => [row.workspace, row.node, row.code])).toEqual([["research", "scan1", "SCAN001"]]);
+    applicationLog.clear();
+  });
   it("should_KeepExplicitBindingAuthoritative_When_SessionAnnouncesAnotherName", () => {
     vi.stubGlobal("EventSource", Events);
     const engine = new Engine("bound"), seen = watch(engine);

@@ -57,6 +57,26 @@ export interface ResultDescriptor {
   readonly retention?: Retention;
 }
 
+export type EvidenceKind = "stopped_stream" | "incomplete";
+export type RecordPhase = "reading" | "processing" | "finishing" | "complete" | "stopped" | "cancelled";
+/**
+ * Committed and read positions share `unit`. Charges are conservative logical charges, never RSS or
+ * encoded bytes. `workAllowance` is the work earned so far, under the fixed `workLimit`. Integers are
+ * decimal strings after decoding, because the engine's u64 counters exceed a JavaScript number.
+ */
+export interface RecordCounters {
+  readonly committedPosition: string; readonly readPosition: string; readonly extent: string; readonly unit: "bytes" | "records";
+  readonly inputRecords: string; readonly outputRecords: string;
+  readonly work: string; readonly workAllowance: string; readonly workLimit: string;
+  readonly heldCharge: string; readonly highWaterCharge: string; readonly heldLimit: string;
+  readonly outputCharge: string; readonly outputLimit: string;
+}
+export interface ExecutionProgress {
+  readonly kind: "records";
+  readonly phase: RecordPhase;
+  readonly counters: RecordCounters | null;
+}
+
 export interface ExecutionRecord {
   readonly id: string;
   readonly node: string;
@@ -248,7 +268,14 @@ export type Event =
       /** A creation-lifetime node finished constructing; its input edges no longer propagate refreshes. */
       readonly constructionComplete: boolean }
   | ({ readonly event: "ready"; readonly constructionComplete?: boolean } & ResultDescriptor)
-  | ({ readonly event: "stopped"; readonly state: NodeState; readonly source: string; readonly run: string; readonly constructionComplete?: boolean } & ResultDescriptor)
+  /**
+   * A display-only value of a node whose graph state stays terminal: a stopped stream's last value or
+   * an analysis's committed partial result. Never a successful output; `state` is the engine's own.
+   */
+  | ({ readonly event: "evidence"; readonly state: NodeState; readonly kind: EvidenceKind; readonly source: string; readonly run: string;
+      readonly error?: ErrorRecord; readonly reason?: string; readonly constructionComplete?: boolean } & ResultDescriptor)
+  /** Lossy status of one run; counters are null when they are not public. Never a value or history entry. */
+  | { readonly event: "node-progress"; readonly node: string; readonly run: string | null; readonly progress: ExecutionProgress }
   | {
       /**
        * The rule in force: what this session keeps without being asked, and up to what size.

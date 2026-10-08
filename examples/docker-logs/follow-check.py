@@ -129,7 +129,7 @@ def main():
                     with server.changed:
                         assert server.changed.wait_for(lambda: server.active == 0, 5)
                 for name in ['live_logs', 'live_summary']:
-                    client.wait(lambda: client.ready.get(client.names[name], {}).get('event') == 'stopped')
+                    client.wait(lambda: client.ready.get(client.names[name], {}).get('event') == 'evidence' and client.ready[client.names[name]].get('kind') == 'stopped_stream')
                 stopped_rows = client.value('live_logs')['data']
                 stopped_summary = client.value('live_summary')['data']
                 assert len(stopped_rows) == 500 and stopped_summary['lines'] == 500

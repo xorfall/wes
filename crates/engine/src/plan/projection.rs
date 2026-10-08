@@ -10,6 +10,7 @@ pub enum InputProblem {
     FieldMissing,
     TypeMismatch,
     ConstructorRejected,
+    ChargeLimit,
 }
 impl InputProblem {
     pub fn code(self) -> &'static str {
@@ -19,6 +20,7 @@ impl InputProblem {
             Self::FieldMissing => "INP003",
             Self::TypeMismatch => "INP004",
             Self::ConstructorRejected => "INP005",
+            Self::ChargeLimit => "INP006",
         }
     }
     fn explanation(self) -> &'static str {
@@ -31,6 +33,9 @@ impl InputProblem {
             }
             Self::FieldMissing => "The field is absent from the captured value.",
             Self::TypeMismatch => "The selected data does not satisfy its declared field type.",
+            Self::ChargeLimit => {
+                "The selected input exceeds its captured charge or structural limit; no selected containers were copied."
+            }
             Self::ConstructorRejected => {
                 "Structured arguments require materialized data within the value budget; management values are not ordinary data."
             }
@@ -135,6 +140,15 @@ impl InputResolutionError {
 
 /// Retain existing admission: Unknown stays dynamic, concrete records never gain fields.
 pub fn project_value(value: &Value, fields: &[String]) -> Result<Value, InputResolutionError> {
+    project_value_with_limit(value, fields, u64::MAX)
+}
+/// Preflight the selected immutable payload and its attribution before cloning
+/// any record/list containers. The consumer supplies its captured admission.
+pub(super) fn project_value_with_limit(
+    value: &Value,
+    fields: &[String],
+    limit: u64,
+) -> Result<Value, InputResolutionError> {
     if fields.is_empty() {
         return Ok(value.clone());
     }
@@ -170,6 +184,19 @@ pub fn project_value(value: &Value, fields: &[String]) -> Result<Value, InputRes
                 ));
             }
         };
+    }
+    let shell = crate::value_size::value_shell_charge(value, limit);
+    let payload = crate::value_size::data_charge(&data, limit);
+    if shell
+        .zip(payload)
+        .and_then(|(shell, payload)| shell.checked_add(payload))
+        .is_none_or(|charge| charge > limit)
+    {
+        return Err(InputResolutionError::projection(
+            InputProblem::ChargeLimit,
+            value,
+            fields,
+        ));
     }
     Value::new(shape, data.into_owned(), value.provenance().clone())
         .map(|v| {

@@ -410,12 +410,12 @@ async fn follow_reuses_stream_window_preserves_cancelled_values_and_refresh_is_e
     closed(&fake).await;
     let after = f.handle.snapshot().await.unwrap();
     assert_eq!(
-        after.execution.stopped_values[&node].value.data(),
+        after.execution.evidence_values[&node].value.data(),
         value.data()
     );
     let count = &after.names["count"].node;
     assert_eq!(
-        after.execution.stopped_values[count].value.data(),
+        after.execution.evidence_values[count].value.data(),
         &Data::Int(500)
     );
     fake.response.lock().unwrap().body = frame(b"new run\n");
