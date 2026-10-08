@@ -823,6 +823,8 @@ async fn perform(
             } else {
                 bridge::exported(value, input.typed)?
             };
+            let after = observe_current(terminal, application, &current).await?;
+            bridge::revalidate_read(&observation, &after, &input.name)?;
             serde_json::from_str(&text)
                 .map(|value| bridge::observed_result(value, stopped))
                 .map_err(|_| fail("Value unavailable."))
@@ -1358,6 +1360,84 @@ mod tests {
             .is_err()
         );
         assert_eq!(current.session.observe().await.unwrap().cells.len(), 270);
+        manager.shutdown().await;
+        runtime.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn typed_value_read_carries_captured_contracts_for_full_selected_paged_and_shape_reads() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let runtime = launch(RuntimeOptions::new(home.clone(), root.path().into()))
+            .await
+            .unwrap();
+        let manager = Manager::default();
+        let history = uuid::Uuid::new_v4().to_string();
+        let terminal = test_terminal(&manager, &runtime, &home, root.path(), &history).await;
+        let _stop_on_failure = terminal.stopped.clone().drop_guard();
+        let current = runtime.handle.current().unwrap();
+        let package = "version: 2\ntypes: {Status: {base: Text, enum: [ready, failed], display: {enumTones: {ready: ok, failed: bad}}}, Row: {base: Record, fields: {status: Status}}}";
+        current
+            .session
+            .submit(
+                SourceInput::new("meta-package".into(), ":package load source:\"\"".into())
+                    .unwrap()
+                    .with_document(Some(package.into()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        current.session.submit(SourceInput::new("meta-values".into(), ":def rows() -> List<Row> as :calc pure { return [{status:'ready'}]; }\nrows > declared".into()).unwrap()).await.unwrap();
+        current.session.wait_idle().await.unwrap();
+        let full = invoke(
+            &terminal,
+            &runtime.handle,
+            "value_read",
+            json!({"name":"declared","typed":true}),
+        )
+        .await;
+        assert_eq!(
+            full["meta"]["fields"]["/e/f:status"]["members"],
+            json!(["ready", "failed"])
+        );
+        let paged = invoke(
+            &terminal,
+            &runtime.handle,
+            "value_read",
+            json!({"name":"declared","typed":true,"offset":1,"limit":1}),
+        )
+        .await;
+        assert_eq!(
+            full["meta"]["fields"]["/e/f:status"]["tones"]["ready"],
+            "ok"
+        );
+        assert_eq!(paged["value"]["meta"], full["meta"]);
+        let selected = invoke(
+            &terminal,
+            &runtime.handle,
+            "value_read",
+            json!({"name":"declared","typed":true,"select":"/0/status"}),
+        )
+        .await;
+        assert_eq!(selected["value"]["meta"]["contract"]["name"], "Status");
+        let shape = invoke(
+            &terminal,
+            &runtime.handle,
+            "value_read",
+            json!({"name":"declared","typed":true,"shape_only":true}),
+        )
+        .await;
+        assert_eq!(shape["meta"], full["meta"]);
+        assert_eq!(
+            invoke(
+                &terminal,
+                &runtime.handle,
+                "value_read",
+                json!({"name":"declared"})
+            )
+            .await,
+            json!([{"status":"ready"}])
+        );
         manager.shutdown().await;
         runtime.shutdown().await.unwrap();
     }

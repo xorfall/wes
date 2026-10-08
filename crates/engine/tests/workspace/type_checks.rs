@@ -36,7 +36,12 @@ async fn checked_literal_is_a_normal_node_with_predicted_and_actual_typing() {
     assert!(matches!(work.payload, BoundTask::TypeCheck(_)));
     assert!(work.payload.traits().repeatable);
     execute(&mut workspace, work).await;
-    assert_eq!(workspace.runtime().value_of(&checked), Some(&int(4)));
+    let value = workspace.runtime().value_of(&checked).unwrap();
+    assert_eq!(value.with_metadata(None), int(4));
+    assert_eq!(
+        serde_json::to_value(value.metadata().unwrap()).unwrap()["contract"]["name"],
+        "Positive"
+    );
     assert_eq!(
         workspace.runtime().graph().node(&checked).unwrap().state(),
         NodeState::Ready
@@ -243,9 +248,12 @@ async fn type_checks_can_be_staged_with_the_contract_and_provider_consumer_in_on
     let effects = execute(&mut workspace, work).await;
     execute(&mut workspace, ticket(effects)).await;
     let consumed = workspace.resolve("consumed").unwrap().node;
+    let value = workspace.runtime().value_of(&consumed).unwrap();
+    assert_eq!(value.with_metadata(None), local_output(int(7)));
+    let checked = workspace.resolve("checked").unwrap().node;
     assert_eq!(
-        workspace.runtime().value_of(&consumed),
-        Some(&local_output(int(7)))
+        value.metadata(),
+        workspace.runtime().value_of(&checked).unwrap().metadata()
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
@@ -259,7 +267,12 @@ async fn first_class_error_can_be_checked_by_another_local_node() {
     let effects = execute(&mut workspace, work).await;
     let expected = workspace.runtime().error_of(&failed).unwrap().to_value();
     execute(&mut workspace, ticket(effects)).await;
-    assert_eq!(workspace.runtime().value_of(&observed), Some(&expected));
+    let value = workspace.runtime().value_of(&observed).unwrap();
+    assert_eq!(value.with_metadata(None), expected);
+    assert_eq!(
+        serde_json::to_value(value.metadata().unwrap()).unwrap()["contract"]["name"],
+        "Error"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 

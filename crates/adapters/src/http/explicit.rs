@@ -46,7 +46,15 @@ impl Response {
             }
             Data::Option(None)
         };
-        Value::new(self.shape(), data, Provenance::default()).map_err(|_| Failure::Response)
+        Value::new(self.shape(), data, Provenance::default())
+            .map(|v| {
+                v.with_metadata(
+                    self.contract
+                        .as_ref()
+                        .map(|c| wes_core::contracts::metadata::ValueMetadata::capture(c)),
+                )
+            })
+            .map_err(|_| Failure::Response)
     }
 }
 pub(crate) struct Operation {

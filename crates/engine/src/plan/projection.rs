@@ -172,5 +172,15 @@ pub fn project_value(value: &Value, fields: &[String]) -> Result<Value, InputRes
         };
     }
     Value::new(shape, data.into_owned(), value.provenance().clone())
+        .map(|v| {
+            v.with_metadata(value.metadata().and_then(|m| {
+                m.project(
+                    &fields
+                        .iter()
+                        .map(|f| wes_core::contracts::metadata::field_segment(f))
+                        .collect::<String>(),
+                )
+            }))
+        })
         .map_err(|_| InputResolutionError::projection(InputProblem::TypeMismatch, value, fields))
 }

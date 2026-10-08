@@ -1,3 +1,4 @@
+import { withValidMeta } from "./value-meta";
 import { validDisplayMetadata, DisplayReadError, type DisplayRead, type DisplayMetadata } from "./live-view-reader";
 import {ValuePackages} from "./value-views/external/discovery";
 import {bindValueViews,builtinValueViews} from "./value-views/registry";
@@ -103,7 +104,7 @@ export class Engine {
     if (generation !== this.generation) throw new Error("Workspace changed; inspection was discarded.");
     if (response.status === 404) return undefined;
     if (!response.ok) throw new Error("HTTP inspection is unavailable.");
-    return await readExactJson(response) as StoredValue;
+    return withValidMeta(await readExactJson(response) as StoredValue);
   }
   async terminal<T = Record<string, unknown>>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     if (!this.generation) throw new Error("Wait for the workspace connection.");
@@ -670,7 +671,7 @@ export class Engine {
       throw new DisplayReadError(body.message || `Live view unavailable (HTTP ${response.status}).`,code,metadata);
     }
     if(!metadata || typeof metadata.revision!=="string" || !Array.isArray(metadata.epochs) || !Array.isArray(metadata.sources))throw new DisplayReadError("Invalid display metadata.","read");
-    const value=response.status===204 ? undefined : await readExactJson(response) as StoredValue;
+    const value=response.status===204 ? undefined : withValidMeta(await readExactJson(response) as StoredValue);
     if (generation !== this.generation) throw new DisplayReadError("Workspace changed; sample discarded.","withdrawn");
     return {value,metadata};
   }

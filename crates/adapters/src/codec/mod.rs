@@ -15,7 +15,7 @@ pub use response::{decode_json_for_contract, decode_json_preserving};
 use thiserror::Error;
 
 const VALUE_FORMAT: &str = "wes.value";
-const VALUE_VERSION: u32 = 1;
+const VALUE_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {

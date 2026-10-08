@@ -362,6 +362,14 @@ async fn perform(
         }
         let (value, stopped) = named_observation(&observation, &request.args[1])?;
         let text = exported(value, typed)?;
+        terminal
+            .check(application)
+            .map_err(|_| BridgeReply::error(1, "Terminal authority has ended."))?;
+        let after = session
+            .observe()
+            .await
+            .map_err(|_| BridgeReply::error(1, "Workspace unavailable."))?;
+        revalidate_read(&observation, &after, &request.args[1])?;
         return match stopped {
             None => Ok(text),
             Some(last) => {
@@ -645,6 +653,30 @@ mod tests {
             assert_eq!(value.data(), &Data::Int(42));
             assert!(stopped.is_none());
         }
+        let captured = observation.clone();
+        assert!(revalidate_read(&captured, &observation, "result").is_ok());
+        observation.state.execution.values.insert(
+            node.clone(),
+            Value::new(
+                Shape::Primitive(Primitive::Int),
+                Data::Int(43),
+                Provenance::default(),
+            )
+            .unwrap(),
+        );
+        assert!(
+            revalidate_read(&captured, &observation, "result")
+                .unwrap_err()
+                .stderr
+                .contains("changed during the read")
+        );
+        observation = captured.clone();
+        observation.state.execution.runs.insert(
+            node.clone(),
+            wes_engine::runtime::RunId::new("new-publication").unwrap(),
+        );
+        assert!(revalidate_read(&captured, &observation, "result").is_err());
+        observation = captured;
         assert!(named_observation(&observation, &format!("{node}::error")).is_err());
         assert!(named_observation(&observation, "$id999999999").is_err());
         for policy in [
@@ -763,4 +795,44 @@ mod tests {
         .unwrap();
         assert!(exported(&unknown, false).is_err());
     }
+}
+
+/// Refuse an encoded response if its captured result or stopped identity changed.
+/// This shared terminal boundary never refreshes or invokes a producer.
+pub(super) fn revalidate_read(
+    before: &SessionObservation,
+    after: &SessionObservation,
+    name: &str,
+) -> Result<(), BridgeReply> {
+    let (a, stopped_a) = named_observation(before, name)?;
+    let (b, stopped_b) = named_observation(after, name)?;
+    let identity = |s: Option<&wes_engine::runtime::StoppedValue>| {
+        s.map(|s| (s.source.clone(), s.run.clone()))
+    };
+    let publication = |observation: &SessionObservation| {
+        let output = wes_engine::bindings::Bindings::resolve_names(
+            &observation.state.names,
+            name.strip_prefix('$').unwrap_or(name),
+            &observation.state.execution.graph,
+        )?;
+        let run = observation.state.execution.runs.get(&output.node).cloned();
+        Some((output, run))
+    };
+    if !a.same_snapshot(b)
+        || identity(stopped_a) != identity(stopped_b)
+        || publication(before) != publication(after)
+    {
+        return Err(BridgeReply::error(
+            1,
+            "Value changed during the read; read a fresh observation.",
+        ));
+    }
+    let policy = b.provenance().policy();
+    if policy.is_private() || policy.is_unknown() {
+        return Err(BridgeReply::error(
+            1,
+            "This value cannot be exported to terminal processes.",
+        ));
+    }
+    Ok(())
 }

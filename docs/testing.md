@@ -43,6 +43,41 @@ wire strings, empty domains, truncation and unchanged selector/legacy `allowed`.
 These commands exclude desktop and GUI suites and use synthetic fixtures and
 isolated data homes.
 
+## Captured contracts and declared tones
+
+Run the backend packages offline with the checkout's target directory. These
+suites include browser web routes, MCP typed reads, codec rejection, source
+replay, metadata accounting and View consumers. They use isolated homes and
+synthetic providers/services.
+
+```sh
+cargo fmt --all --check
+cargo test -p wes-core -p wes-adapters -p wes-engine -p wes-views -p wes --offline --target-dir target -- --test-threads=4
+cargo build -p wes --offline --target-dir target
+python3 examples/declared-tones/check.py --binary target/debug/wes
+```
+
+For focused contract acceptance and a real browser envelope printed by a test:
+
+```sh
+cargo test -p wes-core --test metadata --test enum_tones --offline --target-dir target
+cargo test -p wes-adapters --test codec captured_metadata --offline --target-dir target -- --nocapture
+cargo test -p wes-adapters --test value_selection --offline --target-dir target
+cargo test -p wes-engine --test session captured_metadata --offline --target-dir target
+cargo test -p wes-engine --test source hydrated_metadata --offline --target-dir target
+cargo test -p wes --lib typed_value_read_carries --offline --target-dir target
+cargo test -p wes --test web captured_contract --offline --target-dir target
+```
+
+The core cases cover empty lists, nested/optional records, options, escaped
+schema keys, exact scalar spellings, 64/65/200-member previews, UTF-8 byte bounds,
+aggregate depth/work limits and tone inheritance. Adapter and application cases
+check format version 2 retention, malformed descriptors, selected/paged/shape-only
+reads, root policy before path lookup, response-contract selection and revision
+refusal. Reopening preserves older captured digests and tones without reading the
+current registry or replaying a producer. Full captured-domain lookup for
+incomplete previews is deferred; absence from a preview is unknown membership.
+
 ## Build cache size
 
 Development and test builds use `line-tables-only` debug information: backtraces

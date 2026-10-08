@@ -628,12 +628,22 @@ fn build() -> Registry {
         "contract.package",
         owned(
             object(&[
-                ("version", "version", false),
+                ("version", "contract.version", false),
                 ("types", "contract.types", true),
                 ("iterators", "contract.iterators", false),
             ]),
             "TYP002",
         ),
+    );
+    d.insert("contract.version", choices(Int, &["1", "2"]));
+    d.insert(
+        "contract.display",
+        object(&[("enumTones", "contract.enumTones", true)]),
+    );
+    d.insert("contract.enumTones", named("contract.enumTone"));
+    d.insert(
+        "contract.enumTone",
+        choices(Text, crate::contracts::EnumTone::NAMES),
     );
     d.insert("contract.types", named("contract.type"));
     let mut contract = constrained(
@@ -641,6 +651,7 @@ fn build() -> Registry {
             ("base", "type", true),
             ("description", "text", false),
             ("enum", "contract.enum", false),
+            ("display", "contract.display", false),
             ("min", "numeric", false),
             ("max", "numeric", false),
             ("minLength", "count", false),
@@ -663,6 +674,9 @@ fn build() -> Registry {
         ("Bool", vec!["base", "enum"]),
     ] {
         allowed.push("description");
+        if base != "Record" {
+            allowed.push("display");
+        }
         contract = conditional(contract, "base", &[base], None, &allowed, &[]);
     }
     contract = conditional(

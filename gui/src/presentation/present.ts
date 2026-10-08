@@ -1,4 +1,6 @@
 import { compareNumeric, numericText, isNumeric, isExactNumber, drawingNumber, drawingTextNumber } from "../exact-json";
+import type { Rule } from "./registry";
+import { declarationPath, declaredTone, fieldMeta, scalarSpelling, throughOptions, ELEMENT, field as fieldSegment } from "../value-meta";
 import { ViewInputError } from "../value-views/contract";
 import { valueViewModules } from "../value-views/registry";
 /**
@@ -113,6 +115,9 @@ interface Walk {
   readonly budget: { left: number };
   readonly offers: OfferName[];
   readonly notices: string[];
+  /** The declaration path of a data pointer, when the value carries contract metadata. */
+  readonly declared: (pointer: string) => string | undefined;
+  readonly meta?: import("../value-meta").ValueMeta;
 }
 
 const childPath = (path: string, key: string | number) => `${path}/${String(key).replace(/~/g, "~0").replace(/\//g, "~1")}`;
@@ -174,8 +179,59 @@ function identifierText(text: string, walk: Walk): string {
   return walk.policy.shortIdentifiers && isIdentifier(text) ? shortIdentifier(text) : text;
 }
 
+/**
+ * A scalar's runs in the tone its contract declares for that exact value, when the value carries
+ * metadata for its declaration path. Structural tones (none, null, missing, decoding) never change.
+ */
+function scalarRuns(type: TypeShape, data: unknown, walk: Walk, format?: Format, declaration?: string): Run[] {
+  const runs = plainScalarRuns(type, data, walk, format);
+  if (declaration === undefined || !walk.meta) return runs;
+  const tone = declaredTone(fieldMeta(walk.meta, declaration), unwrap(type, data).data);
+  return tone ? runs.map(it => it.tone === "literal" ? { ...it, tone } : it) : runs;
+}
+
+/** Runs a declaration may recolour: literal values and earlier declared tones, never structural ones. */
+const RETONABLE = new Set<Run["tone"]>(["literal", "ok", "warn", "bad", "dim", "meta", "ink"]);
+const matches = (rule: Rule, row: unknown, element: TypeShape) => {
+  const spelling = isObject(row) ? scalarSpelling(unwrap(fieldType(element, rule.field), row[rule.field]).data) : undefined;
+  return spelling !== undefined && rule.values.includes(spelling);
+};
+/**
+ * A table cell under its entry: the field's tone cases over the type's tone (`inherit` keeps it,
+ * `ink` clears it), then matching cell rules in order, each later rule winning per property.
+ */
+function declaredCell(entry: Entry, row: unknown, name: string, element: TypeShape, runs: Run[]): { runs: Run[]; style?: "badge" } {
+  let tone: Run["tone"] | undefined;
+  let style = entry.styles?.[name];
+  const cases = entry.tones?.[name];
+  if (cases && isObject(row)) {
+    const spelling = scalarSpelling(unwrap(fieldType(element, name), row[name]).data);
+    if (spelling !== undefined && Object.hasOwn(cases.cases, spelling)) tone = cases.cases[spelling];
+    else if (spelling !== undefined && cases.otherwise !== "inherit") tone = cases.otherwise;
+  }
+  for (const rule of entry.rules ?? []) {
+    if (!("cell" in rule.target) || rule.target.cell !== name || !matches(rule, row, element)) continue;
+    if (rule.tone) tone = rule.tone;
+    if (rule.style) style = rule.style;
+  }
+  const toned = tone ? runs.map((it) => RETONABLE.has(it.tone) ? { ...it, tone: tone! } : it) : runs;
+  return style === "badge" ? { runs: toned, style } : { runs: toned };
+}
+/** The background tint the last matching row rule declares. */
+function rowTint(entry: Entry, row: unknown, element: TypeShape): Run["tone"] | undefined {
+  let tint: Run["tone"] | undefined;
+  for (const rule of entry.rules ?? []) if ("row" in rule.target && rule.tone && matches(rule, row, element)) tint = rule.tone;
+  return tint;
+}
+
+/** Where a nested tree starts in the declaration, when the value carries metadata. */
+function declaredAt(walk: Walk, path: string, suffix = ""): { declared?: import("./types").Declared } {
+  const at = walk.meta ? walk.declared(path) : undefined;
+  return walk.meta && at !== undefined ? { declared: { meta: walk.meta, at: at + suffix } } : {};
+}
+
 /** One scalar, or a stand-in for something bigger, as runs on one line. */
-function scalarRuns(type: TypeShape, data: unknown, walk: Walk, format?: Format): Run[] {
+function plainScalarRuns(type: TypeShape, data: unknown, walk: Walk, format?: Format): Run[] {
   const open = unwrap(type, data);
   if (open.none) return [run("none", "faint")];
   const value = open.data;
@@ -304,14 +360,14 @@ function scalarNode(path: string, type: TypeShape, data: unknown, walk: Walk, fo
   const described = typeShapeOf(unwrap(type, data).data);
   const structured = described !== undefined && typeStructure(described).includes("\n");
   const wide = text !== undefined && !identifier && (structured || width(text, walk.context.columns + 1) > walk.context.columns);
-  if (!wide || text === undefined) return spend(walk) ? lineNode(path, scalarRuns(type, data, walk, format), walk) : undefined;
+  if (!wide || text === undefined) return spend(walk) ? lineNode(path, scalarRuns(type, data, walk, format, walk.declared(path)), walk) : undefined;
   const beside = narrowed(walk, OPENER);
   const closed = walk.context.closed?.has(path) === true;
   const whole = wholeText(type, data, text, format);
   if (!closed && walk.policy.blockWideText) return textNode(path, whole, beside, false, true);
   if (!closed && walk.context.open?.has(path)) return spend(walk) ? textNode(path, whole, narrowed(ownBudget(walk), OPENER), false, true) : undefined;
   if (!spend(walk)) return undefined;
-  const node = lineNode(path, scalarRuns(type, data, beside, format), beside);
+  const node = lineNode(path, scalarRuns(type, data, beside, format, walk.declared(path)), beside);
   const more: More = structured
     ? { lines: typeStructure(described).split("\n").length - 1, exact: true }
     : { chars: width(text, Number.POSITIVE_INFINITY) - beside.context.columns, exact: true };
@@ -389,7 +445,7 @@ function fieldsNode(path: string, type: TypeShape, data: Readonly<Record<string,
   const pack = walk.policy.packScalars && scalars.length > 1 && nested.length > 0;
   let shown = 0;
   if (pack) {
-    for (const line of packScalars(scalars, type, data, walk, entry)) {
+    for (const line of packScalars(path, scalars, type, data, walk, entry)) {
       if (!spend(walk)) break;
       rows.push({ name: "", node: { kind: "line", path: `${path}/`, runs: line.runs } });
       shown += line.count;
@@ -415,7 +471,7 @@ function fieldsNode(path: string, type: TypeShape, data: Readonly<Record<string,
     shown += 1;
   }
   const left = order.length - shown;
-  return { kind: "fields", path, rows, nameWidth, tree: { type, data, mode: walk.context.mode }, ...(left > 0 ? { more: { fields: left, exact: walk.facts.whole !== false } } : {}) };
+  return { kind: "fields", path, rows, nameWidth, tree: { type, data, mode: walk.context.mode, ...declaredAt(walk, path) }, ...(left > 0 ? { more: { fields: left, exact: walk.facts.whole !== false } } : {}) };
 }
 
 /** A multi-line text field: drawn beside its name, continued under the value column. */
@@ -424,13 +480,13 @@ function isTextField(type: TypeShape, data: unknown): boolean {
   return typeof value === "string" || (value instanceof DecodedBytes && value.text !== undefined);
 }
 
-function packScalars(names: readonly string[], type: TypeShape, data: Readonly<Record<string, unknown>>, walk: Walk, entry?: Entry) {
+function packScalars(path: string, names: readonly string[], type: TypeShape, data: Readonly<Record<string, unknown>>, walk: Walk, entry?: Entry) {
   const lines: { readonly runs: Run[]; readonly count: number }[] = [];
   let line: Run[] = [];
   let used = 0;
   let onLine = 0;
   for (const name of names) {
-    const value = scalarRuns(fieldType(type, name), data[name], walk, entry?.formats[name]);
+    const value = scalarRuns(fieldType(type, name), data[name], walk, entry?.formats[name], walk.declared(childPath(path, name)));
     const piece = [run(name, "param"), run(" ", "faint"), ...value];
     const w = piece.reduce((sum, it) => sum + width(it.text), 0);
     if (used > 0 && used + 3 + w > walk.context.columns) {
@@ -481,7 +537,10 @@ function tableNode(path: string, element: TypeShape, rows: readonly unknown[], w
     for (const row of some) if (isObject(row)) for (const name of Object.keys(row)) if (!seen.includes(name)) seen.push(name);
     return seen;
   };
-  const cellOf = (row: unknown, name: string) => scalarRuns(fieldType(element, name), isObject(row) ? row[name] : undefined, walk, entry?.formats[name]);
+  const rowsAt = walk.declared(path);
+  const plainCellOf = (row: unknown, name: string) => scalarRuns(fieldType(element, name), isObject(row) ? row[name] : undefined, walk, entry?.formats[name], rowsAt === undefined ? undefined : throughOptions(`${rowsAt}${ELEMENT}${fieldSegment(name)}`, fieldType(element, name)));
+
+  const cellOf = (row: unknown, name: string) => entry ? declaredCell(entry, row, name, element, plainCellOf(row, name)).runs : plainCellOf(row, name);
 
   // Filtered rows keep their own index, so a row's disclosures keep their paths. A filter reads
   // every column any row has, so a match in a hidden or later column still counts.
@@ -524,6 +583,8 @@ function tableNode(path: string, element: TypeShape, rows: readonly unknown[], w
   const wanted = offered.filter((name) => !hidden.includes(name));
 
   const cells = window.map(({ row }) => wanted.map((name) => cellOf(row, name)));
+  const decorated = entry && (entry.styles || entry.rules) ? window.map(({ row }) => wanted.map((name) => declaredCell(entry, row, name, element, []).style)) : undefined;
+  const tints = entry?.rules?.some((rule) => "row" in rule.target) ? window.map(({ row }) => rowTint(entry, row, element)) : undefined;
   const cap = walk.policy.cell;
   const widths = wanted.map((name, at) => {
     const set = view?.widths?.[name];
@@ -562,14 +623,15 @@ function tableNode(path: string, element: TypeShape, rows: readonly unknown[], w
     key, columns: offered, hidden, unpinned: view?.unpinned ?? (widths[0]!==undefined && widths[0]>walk.context.columns*0.45), step: walk.policy.step,
     ...(query ? { filter: { query: walk.context.filters!.get(path)!, matched: total, of: rows.length } } : {}),
   };
-  return { kind: "table", path, columns, rows: drawn, offset, total, arrangement, ...(sort ? {sort} : {}),
-    inspection:{type:element,mode:walk.context.mode,whole:walk.facts.whole!==false,rows:window.map(({row,index})=>({index,value:row}))},
+  return { kind: "table", path, columns, rows: drawn, ...(decorated?.some((row) => row.some(Boolean)) ? { styles: decorated } : {}), ...(tints?.some(Boolean) ? { tints } : {}), offset, total, arrangement, ...(sort ? {sort} : {}),
+    inspection:{type:element,mode:walk.context.mode,whole:walk.facts.whole!==false,...declaredAt(walk,path,ELEMENT),rows:window.map(({row,index})=>({index,value:row}))},
     ...(details.some(row => row.some(Boolean)) ? { details } : {}),
     ...(page !== undefined ? { pagination: { offset, shown: count, total } } : {}), ...(more ? { more } : {}) };
 }
 
 function itemsNode(path: string, element: TypeShape, items: readonly unknown[], walk: Walk): PresentationNode {
   const exact = walk.facts.whole !== false;
+  const listAt = walk.declared(path), itemsAt = listAt === undefined ? undefined : throughOptions(`${listAt}${ELEMENT}`, element);
   if (!walk.policy.packItems) {
     // One element per line, paged like a table: the page size grows with "show N more".
     const page = walk.context.pages?.get(path);
@@ -578,7 +640,7 @@ function itemsNode(path: string, element: TypeShape, items: readonly unknown[], 
     const lines: Run[][] = [];
     for (const item of items.slice(offset, offset + asked)) {
       if (!spend(walk)) break;
-      lines.push(scalarRuns(element, item, walk));
+      lines.push(scalarRuns(element, item, walk, undefined, itemsAt));
     }
     const left = items.length - offset - lines.length;
     return { kind: "items", path, items: lines[0] ?? [], lines, ...(page !== undefined ? { pagination: { offset, shown: lines.length, total: items.length } } : {}), ...(left > 0 ? { more: { items: left, exact } } : {}) };
@@ -588,7 +650,7 @@ function itemsNode(path: string, element: TypeShape, items: readonly unknown[], 
   let used = 0;
   let shown = 0;
   for (const item of items) {
-    const runs = scalarRuns(element, item, walk);
+    const runs = scalarRuns(element, item, walk, undefined, itemsAt);
     const w = runs.reduce((sum, it) => sum + width(it.text), 0) + (shown > 0 ? 3 : 0);
     if (used + w > walk.context.columns - 12 && shown > 0) break;
     if (shown > 0) out.push(run(" · ", "faint"));
@@ -608,7 +670,7 @@ function processNode(path: string, type: TypeShape, data: Readonly<Record<string
     if (value instanceof DecodedBytes) return bytesNode(`${path}/${name}`, value, inner);
     if (typeof value === "string") return textNode(`${path}/${name}`, value, inner, false);
     spend(walk);
-    return lineNode(`${path}/${name}`, scalarRuns(fieldType(type, name), value, walk), inner);
+    return lineNode(`${path}/${name}`, scalarRuns(fieldType(type, name), value, walk, undefined, walk.declared(childPath(path, name))), inner);
   };
   const stdout = stream("stdout");
   const stderr = stream("stderr");
@@ -643,7 +705,7 @@ function presentAt(path: string, type: TypeShape, data: unknown, walk: Walk, dep
   }
   if (typeShapeOf(value)) return scalarNode(path, shape, value, walk);
   if (label === undefined) return presentValue(path, shape, value, walk, depth);
-  if (isExactNumber(value) || typeof value !== "object") return spend(walk) ? lineNode(path, scalarRuns(shape, value, walk), walk) : undefined;
+  if (isExactNumber(value) || typeof value !== "object") return spend(walk) ? lineNode(path, scalarRuns(shape, value, walk, undefined, walk.declared(path)), walk) : undefined;
   const summary = summaryText(shape, value);
   if (!opens(path, depth, walk)) return closedNested(path, summary, walk);
   if (!spend(walk)) return undefined;
@@ -729,7 +791,7 @@ function presentValue(path: string, shape: TypeShape, value: unknown, walk: Walk
     return fieldsNode(path, shape, value, walk, depth);
   }
   // 4. A line for whatever is left.
-  return spend(walk) ? lineNode(path, scalarRuns(shape, value, walk), walk) : undefined;
+  return spend(walk) ? lineNode(path, scalarRuns(shape, value, walk, undefined, walk.declared(path)), walk) : undefined;
 }
 
 /** What a closed nested value says beside its `▸`. */
@@ -782,7 +844,9 @@ export function linesOf(node: PresentationNode): number {
 }
 
 export function present({ prepared, facts = {}, context, registry, skipViews = new Set<string>() }: PresentInput): Presentation {
-  const walk: Walk = { viewModules: prepared.viewModules, skipViews, context, policy: POLICIES[context.mode], registry, facts, budget: { left: Math.max(1, context.lines) }, offers: [], notices: [] };
+  const meta = prepared.meta;
+  const walk: Walk = { viewModules: prepared.viewModules, skipViews, context, policy: POLICIES[context.mode], registry, facts, budget: { left: Math.max(1, context.lines) }, offers: [], notices: [],
+    ...(meta ? { meta } : {}), declared: pointer => meta ? declarationPath(prepared.type, pointer) : undefined };
   const root = presentAt("", prepared.type, prepared.data, walk, 0) ?? { kind: "empty", path: "", text: "empty" };
   return { root, lines: linesOf(root), summary: summaryOf(root, prepared.type, prepared.data), notices: walk.notices, offers: walk.offers };
 }

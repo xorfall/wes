@@ -1,7 +1,10 @@
 //! Optional contracts over the existing domain value model.
 
 pub mod boundary;
+mod display;
 mod expression;
+pub use display::{ContractDisplay, EnumTone};
+pub mod metadata;
 mod model;
 mod package;
 mod registry;

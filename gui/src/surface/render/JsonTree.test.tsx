@@ -2,6 +2,7 @@ import {afterEach,expect,it,vi} from "vitest";
 import {act,create,type ReactTestRenderer} from "react-test-renderer";
 import {JsonTree,jsonSummary,typedJsonSummary} from "./JsonTree";
 import type {TypeShape} from "../../protocol";
+import {decodeMeta} from "../../value-meta";
 const measurement=vi.hoisted(()=>({columns:100}));
 vi.mock("./measure",()=>({useColumns:()=>measurement.columns}));
 const trees:ReactTestRenderer[]=[];
@@ -100,4 +101,17 @@ it("should_KeepGenericSummaries_When_NoTemporalTypeIsDeclared",()=>{
  expect(typedJsonSummary(INSTANT,{kind:"unknown"})).toBe(JSON.stringify(INSTANT));
  // A numeric wire instant is not canonical text: the tree keeps the exact number.
  expect(typedJsonSummary(1700000000000,primitive("INSTANT"))).toBe("1700000000000");
+});
+it("draws a scalar in the tone its contract declares for that value, at its declaration path",()=>{
+ const TEXT:TypeShape={kind:"primitive",name:"TEXT"};
+ const type:TypeShape={kind:"record",name:"ServiceRow",fields:[{name:"id",type:TEXT},{name:"status",type:TEXT}]};
+ const digest=(n:number)=>`sha256:${n.toString(16).padStart(64,"0")}`;
+ const meta=decodeMeta({version:1,contract:{name:"List<ServiceRow>",digest:digest(1)},truncated:false,fields:{"/e/f:status":{contract:{name:"ServiceStatus",digest:digest(2)},kind:"text",members:["ready","failed"],total:2,complete:true,tones:{failed:"bad"}}}})!;
+ let tree!:ReactTestRenderer;
+ act(()=>{tree=create(<JsonTree data={{id:"worker",status:"failed"}} type={type} declared={{meta,at:"/e"}}/>);});trees.push(tree);
+ const classOf=(text:string)=>tree.root.findAll(node=>typeof node.props.className==="string"&&node.props.className.startsWith("json-value")&&node.children.includes(text))[0]?.props.className;
+ expect(classOf("\"failed\"")??classOf("failed")).toContain("mono-bad");
+ expect(classOf("\"worker\"")??classOf("worker")).toContain("mono-literal");
+ act(()=>tree.update(<JsonTree data={{id:"worker",status:"failed"}} type={type}/>));
+ expect(classOf("\"failed\"")??classOf("failed")).toContain("mono-literal");
 });

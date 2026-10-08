@@ -279,10 +279,8 @@ impl BoundCalculation {
                             let contract = definition.output.clone();
                             let cancel = token.clone();
                             match tokio::task::spawn_blocking(move || {
-                                wes_core::contracts::boundary::require(
-                                    "return",
-                                    &[contract],
-                                    &wes_core::Shape::Unknown,
+                                wes_core::contracts::boundary::checked_result(
+                                    &contract,
                                     &value,
                                     &|| cancel.is_cancelled(),
                                 )

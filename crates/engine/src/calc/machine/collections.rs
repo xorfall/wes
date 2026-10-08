@@ -44,7 +44,7 @@ impl Machine {
         let items = args[0].list(span)?;
         if operation == Operation::Concat {
             let declared_element = |item: &Item| match item {
-                Item::Typed(_, shape) => match shape.as_ref() {
+                Item::Typed(_, shape, _) => match shape.as_ref() {
                     Shape::List(element) => element.as_ref().clone(),
                     _ => Shape::Unknown,
                 },
@@ -87,7 +87,7 @@ impl Machine {
                     items,
                     callback,
                     output_type: match &args[0] {
-                        Item::Typed(_, shape) if matches!(shape.as_ref(), Shape::List(_)) => {
+                        Item::Typed(_, shape, _) if matches!(shape.as_ref(), Shape::List(_)) => {
                             Some(shape.as_ref().clone())
                         }
                         _ => None,

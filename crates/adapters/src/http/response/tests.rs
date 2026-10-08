@@ -195,6 +195,12 @@ async fn all_received_statuses_keep_structural_bodies_headers_bytes_and_validati
             2
         );
         if state == "validated" && status == 200 {
+            let meta =
+                serde_json::to_value(result.metadata().expect("validated response metadata"))
+                    .unwrap();
+            assert_eq!(meta["contract"]["name"], "HttpResponse");
+            assert_eq!(meta["fields"]["/f:body"]["contract"]["name"], "Item");
+            assert_eq!(meta["fields"]["/f:body/f:amount"]["kind"], "decimal");
             let Data::Decimal(amount) = &fields(&fields(result.data())["body"])["amount"] else {
                 panic!("exact Decimal")
             };

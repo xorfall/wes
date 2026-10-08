@@ -196,6 +196,22 @@ fn description(
         );
     }
     result.insert("constraints".into(), Data::Record(constraints));
+    result.insert("digest".into(), budget.text(contract.digest())?);
+    if !contract.display().enum_tones().is_empty() {
+        let tones = contract
+            .display()
+            .enum_tones()
+            .iter()
+            .map(|(member, tone)| {
+                budget.step()?;
+                Ok((member.clone(), budget.text(tone.name())?))
+            })
+            .collect::<Result<indexmap::IndexMap<_, _>, Failure>>()?;
+        result.insert(
+            "display".into(),
+            fields([("enumTones", Data::Record(tones))]),
+        );
+    }
     Ok(Data::Record(result))
 }
 /// Charge numeric formatting while writing, before allocating an unbounded temporary string.

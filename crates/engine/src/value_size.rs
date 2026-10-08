@@ -22,6 +22,9 @@ pub(crate) fn value_charge(value: &Value, limit: u64) -> Option<u64> {
     for origin in value.provenance().policy().origins() {
         budget.text(origin)?;
     }
+    if let Some(meta) = value.metadata() {
+        budget.add(meta.charge())?;
+    }
     budget.shape(value.shape())?;
     charge_data(value.data(), &mut budget)?;
     Some(budget.charged)
@@ -48,6 +51,9 @@ fn charge_data(root: &Data, budget: &mut Budget) -> Option<()> {
             Data::Iter(iter) => {
                 budget.shape(iter.item_shape())?;
                 budget.shape(iter.source().shape())?;
+                if let Some(meta) = iter.source().metadata() {
+                    budget.add(meta.charge())?;
+                }
                 for (key, value) in iter.source().provenance().facts() {
                     budget.text(key)?;
                     budget.text(value)?;
@@ -179,6 +185,38 @@ mod tests {
         )
         .unwrap();
         assert!(value_charge(&record, u64::MAX).unwrap() > amount);
+    }
+    #[test]
+    fn captured_metadata_is_charged_at_root_and_in_retained_iterator_sources() {
+        let mut r = wes_core::contracts::ContractRegistry::new();
+        r.load("types: {S: {base: Text, enum: [ready, failed]}} ")
+            .unwrap();
+        let base = Value::new(
+            Shape::Unknown,
+            Data::Text("ready".into()),
+            Provenance::default(),
+        )
+        .unwrap();
+        let captured =
+            wes_core::contracts::boundary::checked_result(&r.resolve("S").unwrap(), &base, &|| {
+                false
+            })
+            .unwrap();
+        let plain = captured.with_metadata(None);
+        let delta =
+            value_charge(&captured, u64::MAX).unwrap() - value_charge(&plain, u64::MAX).unwrap();
+        assert_eq!(delta, captured.metadata().unwrap().charge());
+        assert!(value_charge(&captured, value_charge(&plain, u64::MAX).unwrap()).is_none());
+        let iter = |source| {
+            Data::Iter(std::sync::Arc::new(
+                wes_core::IterValue::new(source, wes_core::IterMode::Lines, None, vec![]).unwrap(),
+            ))
+        };
+        assert_eq!(
+            data_charge(&iter(captured), u64::MAX).unwrap()
+                - data_charge(&iter(plain), u64::MAX).unwrap(),
+            delta
+        );
     }
     #[test]
     fn extreme_decimal_scale_has_a_compact_charge_without_expansion() {

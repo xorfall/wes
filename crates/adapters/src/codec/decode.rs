@@ -55,8 +55,25 @@ fn read_value_node(
     provenance = provenance.with_policy(&policy);
     context.options = options;
     context.iterators = iterators;
+    let wire = object
+        .get("meta")
+        .map(|raw| read_metadata(raw, context))
+        .transpose()?;
+    if let Some(meta) = &wire {
+        meta.validate_wire().map_err(invalid)?;
+    }
+    let meta = match object.get("metaProjection") {
+        Some(raw) => {
+            let captured = read_metadata(raw, context)?;
+            if !captured.needs_projection_snapshot() || captured.wire() != wire {
+                return Err(invalid("inconsistent retained metadata projection"));
+            }
+            Some(captured)
+        }
+        None => wire,
+    };
     Ok(DecodedValue {
-        value: Value::new(shape, data, provenance)?,
+        value: Value::new(shape, data, provenance)?.with_metadata(meta),
     })
 }
 fn invalid(message: &str) -> CodecError {
@@ -234,4 +251,41 @@ fn read_iter(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Data
         return Err(invalid("Iter item type does not match captured recipe"));
     }
     Ok(Data::Iter(std::sync::Arc::new(iter)))
+}
+
+fn read_metadata(
+    raw: &RawValue,
+    context: &mut Context,
+) -> Result<wes_core::contracts::metadata::ValueMetadata, CodecError> {
+    use wes_core::contracts::metadata::{MAX_BYTES, ValueMetadata};
+    if raw.get().len() > MAX_BYTES {
+        return Err(invalid("oversized value metadata"));
+    }
+    // Refuse duplicate keys before serde's map decoding; charge all metadata nodes.
+    fn walk(raw: &RawValue, context: &mut Context, depth: usize) -> Result<(), CodecError> {
+        context.visit(depth)?;
+        match raw.get().as_bytes().first() {
+            Some(b'{') => {
+                for (_, v) in context.object(raw)? {
+                    walk(v, context, depth + 1)?;
+                }
+            }
+            Some(b'[') => {
+                for v in context.sequence(raw)? {
+                    walk(v, context, depth + 1)?;
+                }
+            }
+            Some(b'n') => {
+                return Err(invalid(
+                    "null is not valid captured metadata; omit unknown properties",
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    walk(raw, context, 0)?;
+    let meta: ValueMetadata = serde_json::from_str(raw.get())?;
+    meta.validate().map_err(invalid)?;
+    Ok(meta)
 }

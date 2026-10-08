@@ -44,6 +44,9 @@ pub struct Contract {
     pub(super) name: String,
     pub(super) kind: Kind,
     pub(super) limits: Limits,
+    pub(super) display: super::ContractDisplay,
+    pub(super) base_digest: Option<String>,
+    pub(super) digest: std::sync::OnceLock<String>,
 }
 
 impl Contract {
@@ -97,6 +100,9 @@ impl Contract {
     /// Describing a contract never validates or changes a value.
     pub fn kind(&self) -> &Kind {
         &self.kind
+    }
+    pub fn display(&self) -> &super::ContractDisplay {
+        &self.display
     }
     pub fn constraints(&self) -> &Limits {
         &self.limits

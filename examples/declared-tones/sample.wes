@@ -1,0 +1,13 @@
+:package load path:types.yaml
+:def services() -> List<ServiceRow> as :calc pure {
+  return [
+    {id: 'api', status: 'ready', title: 'Synthetic API', titleAmbiguous: false},
+    {id: 'worker', status: 'failed', title: 'Synthetic worker', titleAmbiguous: true},
+    {id: 'cache', status: 'unknown', title: 'Synthetic cache', titleAmbiguous: false}
+  ];
+}
+:def emptyServices() -> List<ServiceRow> as :calc pure { return []; }
+services > rows
+emptyServices > emptyRows
+:type check "ready" as:ServiceStatus > checkedStatus
+:inspect type:ServiceStatus > statusContract

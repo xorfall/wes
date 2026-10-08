@@ -189,6 +189,7 @@ pub(super) fn envelope(
     } else {
         (original.clone(), "bytes")
     };
+    let mut captured_meta = None;
     let state = if !problems.is_empty() {
         "unreadable"
     } else if let Some(expected) = contract {
@@ -214,6 +215,9 @@ pub(super) fn envelope(
                 body = body
                     .with_shape(expected.shape())
                     .expect("validated contract");
+                if let Expectation::Contract(c) = &expected {
+                    captured_meta = Some((*c).clone());
+                }
                 "validated"
             } else {
                 "mismatch"
@@ -222,7 +226,7 @@ pub(super) fn envelope(
     } else {
         "undocumented"
     };
-    record(
+    let envelope = record(
         "HttpResponse",
         [
             ("status".into(), integer(response.status.into())),
@@ -237,7 +241,10 @@ pub(super) fn envelope(
             ("validation".into(), validation(state, problems)),
         ],
         Provenance::default(),
-    )
+    );
+    envelope.with_metadata(captured_meta.map(|c| {
+        wes_core::contracts::metadata::ValueMetadata::record_wrapper("HttpResponse", "body", &c)
+    }))
 }
 
 #[cfg(test)]

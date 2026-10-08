@@ -101,11 +101,11 @@ fn historical_retained_value_formats_are_rejected() {
     let current = encode_value(&value(Shape::Unknown, Data::Int(1)), Limits::default()).unwrap();
     let mut wire: Json = serde_json::from_slice(&current).unwrap();
     assert_eq!(wire["format"], "wes.value");
-    assert_eq!(wire["version"], 1);
+    assert_eq!(wire["version"], 2);
     let mut old = wire.clone();
     old["format"] = json!("unrelated.value");
     assert!(decode_value(old.to_string().as_bytes(), Limits::default()).is_err());
-    for version in [0, 2, 3, 4, 5] {
+    for version in [0, 1, 3, 4, 5] {
         wire["version"] = json!(version);
         assert!(decode_value(wire.to_string().as_bytes(), Limits::default()).is_err());
     }
@@ -258,7 +258,7 @@ fn nested_values_beyond_serde_default_recursion_limit_are_supported_but_bounded(
         original
     );
     let deep = format!(
-        "{{\"format\":\"wes.value\",\"version\":1,\"type\":{{\"kind\":\"unknown\"}},\"data\":{}1{}}}",
+        "{{\"format\":\"wes.value\",\"version\":2,\"type\":{{\"kind\":\"unknown\"}},\"data\":{}1{}}}",
         "{\"kind\":\"list\",\"value\":[".repeat(10_000),
         "]}".repeat(10_000)
     );
@@ -422,7 +422,7 @@ fn retained_iter_is_self_contained_versioned_and_display_never_exposes_source() 
     let bytes = encode_value(&v, Limits::default()).unwrap();
     assert_eq!(
         serde_json::from_slice::<Json>(&bytes).unwrap()["version"],
-        1
+        2
     );
     assert_eq!(decode_value(&bytes, Limits::default()).unwrap().value, v);
     let display = String::from_utf8(encode_display_value(&v, Limits::default()).unwrap()).unwrap();
@@ -438,7 +438,7 @@ fn retained_iter_is_self_contained_versioned_and_display_never_exposes_source() 
     );
     assert!(encode_request_data(v.data(), Limits::default()).is_err());
     let mut bad: Json = serde_json::from_slice(&bytes).unwrap();
-    bad["version"] = json!(2);
+    bad["version"] = json!(1);
     assert!(decode_value(&serde_json::to_vec(&bad).unwrap(), Limits::default()).is_err());
     let nested = value(
         Shape::Unknown,
@@ -447,7 +447,7 @@ fn retained_iter_is_self_contained_versioned_and_display_never_exposes_source() 
     assert_eq!(
         serde_json::from_slice::<Json>(&encode_value(&nested, Limits::default()).unwrap()).unwrap()
             ["version"],
-        1
+        2
     );
     assert!(
         encode_request_data(
@@ -684,4 +684,120 @@ fn human_numbers_remove_padding_without_changing_transport_or_stored_scale() {
         ),
         Err(CodecError::Bytes)
     ));
+}
+
+#[test]
+fn captured_metadata_round_trips_without_registry_and_rejects_malformed_inputs() {
+    use wes_core::contracts::{ContractRegistry, boundary};
+    let mut r = ContractRegistry::new();
+    r.load("version: 2\ntypes: {Status: {base: Text, enum: [ready, failed], display: {enumTones: {ready: ok, failed: bad}}}, Row: {base: Record, fields: {status: Status}}}").unwrap();
+    let contract = r.resolve("List<Row>").unwrap();
+    let v = value(
+        Shape::Unknown,
+        Data::List(vec![Data::Record(
+            [("status".into(), Data::Text("ready".into()))].into(),
+        )]),
+    );
+    let v = boundary::checked_result(&contract, &v, &|| false).unwrap();
+    let stored = encode_value(&v, Limits::default()).unwrap();
+    drop(r);
+    let mut today = wes_core::contracts::ContractRegistry::new();
+    today.load("version: 2\ntypes: {Status: {base: Text, enum: [ready, failed], display: {enumTones: {ready: warn, failed: bad}}}, Row: {base: Record, fields: {status: Status}}}").unwrap();
+    let restored = decode_value(&stored, Limits::default()).unwrap().value;
+    let yesterday = serde_json::to_value(restored.metadata().unwrap()).unwrap();
+    let current = serde_json::to_value(wes_core::contracts::metadata::ValueMetadata::capture(
+        &today.resolve("List<Row>").unwrap(),
+    ))
+    .unwrap();
+    assert_ne!(
+        yesterday["contract"]["digest"],
+        current["contract"]["digest"]
+    );
+    assert_eq!(yesterday["fields"]["/e/f:status"]["tones"]["ready"], "ok");
+    assert_eq!(decode_value(&stored, Limits::default()).unwrap().value, v);
+    let display: Json =
+        serde_json::from_slice(&encode_display_value(&v, Limits::default()).unwrap()).unwrap();
+    assert_eq!(
+        display["meta"]["fields"]["/e/f:status"]["members"],
+        json!(["ready", "failed"])
+    );
+    // These are exactly the kinds accepted by the GUI's decodeMeta.
+    assert!(
+        display["meta"]["fields"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|d| {
+                matches!(
+                    d["kind"].as_str(),
+                    Some("text" | "int" | "decimal" | "bool")
+                )
+            })
+    );
+    assert_eq!(display["meta"].as_object().unwrap().len(), 4);
+    assert!(display.get("metaProjection").is_none());
+    assert_eq!(
+        restored
+            .metadata()
+            .unwrap()
+            .project("/e")
+            .unwrap()
+            .wire()
+            .unwrap(),
+        v.metadata().unwrap().project("/e").unwrap().wire().unwrap()
+    );
+    println!("CAPTURED_WIRE={}", display);
+    let original: Json = serde_json::from_slice(&stored).unwrap();
+    for (pointer, bad) in [
+        ("/meta/version", json!(2)),
+        ("/meta/fields/~1e~1f:status/tones/ready", json!("inherit")),
+        ("/meta/fields/~1e~1f:status/tones", json!({"outside":"bad"})),
+        ("/meta/contract/digest", json!("sha256:bad")),
+        ("/meta/fields/~1e~1f:status/kind", json!("colour")),
+        ("/meta/fields/~1e~1f:status/kind", json!("list")),
+        (
+            "/meta/fields/~1e~1f:status/total",
+            json!(9_007_199_254_740_992_u64),
+        ),
+        ("/meta/fields/~1e~1f:status/source", json!("observed")),
+        ("/meta/fields/~1e~1f:status/total", json!(1)),
+        (
+            "/meta/fields/~1e~1f:status/members",
+            json!(["ready", "ready"]),
+        ),
+        ("/meta/fields/~1e~1f:status/complete", json!(false)),
+        ("/meta/fields/~1e~1f:status/extra", json!(true)),
+    ] {
+        let mut bad_wire = original.clone();
+        if pointer.ends_with("/extra") {
+            bad_wire["meta"]["fields"]["/e/f:status"]["extra"] = bad;
+        } else {
+            *bad_wire.pointer_mut(pointer).unwrap() = bad;
+        }
+        assert!(
+            decode_value(&serde_json::to_vec(&bad_wire).unwrap(), Limits::default()).is_err(),
+            "{pointer}"
+        );
+    }
+    for path in ["/status", "/f:x~2", "/e/0", "relative", "/f:wrong"] {
+        let mut bad = original.clone();
+        let descriptor = bad["meta"]["fields"]["/e/f:status"].clone();
+        bad["meta"]["fields"][path] = descriptor;
+        assert!(decode_value(&serde_json::to_vec(&bad).unwrap(), Limits::default()).is_err());
+    }
+    for bad_projection in [Json::Null, original["meta"].clone()] {
+        let mut bad = original.clone();
+        bad["metaProjection"] = bad_projection;
+        assert!(decode_value(&serde_json::to_vec(&bad).unwrap(), Limits::default()).is_err());
+    }
+    let mut nulls = original.clone();
+    for key in ["source", "members", "total", "complete", "tones"] {
+        nulls["meta"]["fields"]["/e/f:status"][key] = Json::Null;
+    }
+    assert!(decode_value(&serde_json::to_vec(&nulls).unwrap(), Limits::default()).is_err());
+    let duplicated = String::from_utf8(stored).unwrap().replace(
+        "\"truncated\":false",
+        "\"truncated\":false,\"truncated\":false",
+    );
+    assert!(decode_value(duplicated.as_bytes(), Limits::default()).is_err());
 }

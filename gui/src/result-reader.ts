@@ -1,6 +1,7 @@
 import { budget } from "./limits/policy";
 import { readExactJson, stringifyExactJson } from "./exact-json";
 import type { StoredValue } from "./protocol";
+import { withValidMeta } from "./value-meta";
 import { workspaceHeaders } from "./workspace-binding";
 
 export interface ValueReadProblem {
@@ -54,7 +55,7 @@ export class ResultReader {
           const response = await window.fetch(`/values/${encodeURIComponent(handle)}`, { signal: controller.signal, headers: { ...workspaceHeaders(this.workspace()), ...(generation === undefined ? {} : { "X-Wes-Session": generation }) } });
           current();
           if (response.ok) {
-            const value = await readExactJson(response) as StoredValue;
+            const value = withValidMeta(await readExactJson(response) as StoredValue);
             current();
             return value;
           }
