@@ -30,6 +30,9 @@ uuid.workspace = true
 reqwest.workspace = true
 url.workspace = true
 sha2.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
 
 [target.'cfg(unix)'.dependencies]
