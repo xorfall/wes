@@ -15,6 +15,7 @@ pub enum Dimension {
     AggregateMemory,
     RecordWork,
     RecordMemory,
+    SourcePageBytes,
     RecordOutputs,
 }
 impl Dimension {
@@ -28,6 +29,7 @@ impl Dimension {
             Self::HeldMemory => "held_charge",
             Self::RecordWork => "record_work",
             Self::RecordMemory => "record_charge",
+            Self::SourcePageBytes => "source_page_bytes",
             Self::RecordOutputs => "record_outputs",
             Self::OutputBytes => "output_charge",
             Self::OutputRecords => "output_records",
@@ -234,11 +236,33 @@ impl Ledger {
         Ok(())
     }
     pub fn work(&mut self, amount: u64) -> Result<(), Refusal> {
-        self.work.charge(amount).map_err(|_| Refusal {
-            dimension: Dimension::Work,
-            limit: self.limits.work,
+        self.work.charge(amount).map_err(|reason| match reason {
+            crate::work_budget::WorkRefusal::Allowance => Refusal {
+                dimension: Dimension::WorkAllowance,
+                limit: self.work.allowance(),
+            },
+            _ => Refusal {
+                dimension: Dimension::Work,
+                limit: self.limits.work,
+            },
         })?;
         Ok(())
+    }
+    /// A prepaid lease boundary pauses the scheduler, while real exhaustion is fatal.
+    /// Neither refusal debits work or grants input-earned credit.
+    pub(super) fn scheduled_work(&mut self, amount: u64) -> Result<bool, Refusal> {
+        match self.work.charge(amount) {
+            Ok(()) => Ok(true),
+            Err(crate::work_budget::WorkRefusal::Prepaid) => Ok(false),
+            Err(crate::work_budget::WorkRefusal::Absolute) => Err(Refusal {
+                dimension: Dimension::Work,
+                limit: self.limits.work,
+            }),
+            Err(crate::work_budget::WorkRefusal::Allowance) => Err(Refusal {
+                dimension: Dimension::WorkAllowance,
+                limit: self.work.allowance(),
+            }),
+        }
     }
     /// Framing/read work is charged before reading. Consumed position and this
     /// byte counter advance together only after the candidate record is accepted.

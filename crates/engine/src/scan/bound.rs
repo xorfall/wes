@@ -181,10 +181,44 @@ impl BoundScan {
             }
             None
         };
+        let malformed = literal("malformed", Some("strict"))?;
+        if !matches!(malformed.as_str(), "strict" | "forensic") {
+            return Err(invalid("scan malformed: must be strict or forensic".into()));
+        }
+        let malformed = if malformed == "forensic" {
+            if sink != "dataset" || follow || profile == scan::Profile::TypedRecords {
+                return Err(invalid("forensic framing requires finite Text/Bytes with sink:dataset and a framed profile; TypedRecords and follow:true are not supported".into()));
+            }
+            let excerpt_bytes = match task.inputs.get("excerpt") {
+                None => 256,
+                Some(Input::Literal(value)) => match value.data() {
+                    Data::Int(n) if (1..=4096).contains(n) => *n as usize,
+                    _ => {
+                        return Err(invalid(
+                            "scan excerpt: must be a literal integer from 1 to 4096".into(),
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(invalid(
+                        "scan excerpt: must be a literal integer from 1 to 4096".into(),
+                    ));
+                }
+            };
+            wes_core::framing::Malformed::Forensic { excerpt_bytes }
+        } else {
+            if task.inputs.contains_key("excerpt") {
+                return Err(invalid(
+                    "scan excerpt: is only valid with malformed:forensic".into(),
+                ));
+            }
+            wes_core::framing::Malformed::Strict {}
+        };
         let framing = if profile == scan::Profile::TypedRecords {
             None
         } else {
             Some(Profile {
+                malformed,
                 delimiter: delimiter.map_or(Delimiter::Lines, Delimiter::Literal),
                 decoding: if profile == scan::Profile::LinesLossyUtf8 {
                     Decoding::LossyUtf8
@@ -441,17 +475,21 @@ pub(crate) async fn run_admitted(
                 .expect("ReadHead has an admitted recorded source")
                 .to_owned();
             let watched_revision = changed.borrow_and_update().revision(&dataset);
-            let head = match runner.source_head_request() {
-                Ok((reference, work)) => worker
-                    .eventlog_head(reference, Some(work))
-                    .await
-                    .map_err(|e| Failure::new("CAL004", span, e.to_string())),
-                Err(e) => Err(e),
+            let (reference, work) = match runner.source_head_request() {
+                Ok(request) => request,
+                Err(error) => {
+                    runner.refuse_scan(error);
+                    continue;
+                }
             };
-            let advance = match head {
-                Ok(info) => runner.acknowledge_source_head(info),
-                Err(e) => Err(e),
+            let head = match worker.eventlog_head(reference, Some(work)).await {
+                Ok(head) => head,
+                Err(error) => {
+                    runner.refuse_source_read(error);
+                    continue;
+                }
             };
+            let advance = runner.acknowledge_source_head(head);
             match advance {
                 Err(e) => runner.refuse_scan(e),
                 Ok(true) => {}
@@ -485,32 +523,32 @@ pub(crate) async fn run_admitted(
                 ));
                 continue;
             };
-            let read = match runner.source_page_request() {
-                Ok((reference, request)) => worker
-                    .dataset_page(reference, request)
-                    .await
-                    .map_err(|e| Failure::new("CAL004", span, e.to_string())),
-                Err(e) => Err(e),
+            let (reference, request) = match runner.source_page_request() {
+                Ok(request) => request,
+                Err(error) => {
+                    runner.refuse_scan(error);
+                    continue;
+                }
             };
-            match read {
+            match worker.dataset_page(reference, request).await {
                 Ok(page) => {
-                    if let Err(e) = runner.acknowledge_source_page(page) {
-                        runner.refuse_scan(e);
+                    if let Err(error) = runner.acknowledge_source_page(page) {
+                        runner.refuse_scan(error);
                     }
                 }
-                Err(e) => runner.refuse_scan(e),
+                Err(error) => runner.refuse_source_read(error),
             }
             continue;
         }
-        if matches!(result, Poll::Grant | Poll::Commit) {
+        if matches!(result, Poll::Grant | Poll::Settle | Poll::Commit) {
             let worker = storage
                 .as_ref()
                 .expect("dataset processing has its admitted owner");
-            let grant = matches!(result, Poll::Grant);
-            let request = if grant {
-                runner.durable_grant()
-            } else {
-                runner.dataset_candidate().map_err(super::runner::stop)
+            let request = match result {
+                Poll::Grant => runner.durable_grant(),
+                Poll::Settle => runner.durable_settlement().map_err(super::runner::stop),
+                Poll::Commit => runner.dataset_candidate().map_err(super::runner::stop),
+                _ => unreachable!("owned publication poll"),
             };
             let committed = match request {
                 Ok(request) => {
@@ -530,10 +568,13 @@ pub(crate) async fn run_admitted(
             };
             match committed {
                 Ok((reference, checkpoint)) => {
-                    let accepted = if grant {
-                        runner.acknowledge_grant(reference, checkpoint.expect("durable grant"))
-                    } else {
-                        runner.acknowledge_dataset(reference)
+                    let accepted = match result {
+                        Poll::Grant => {
+                            runner.acknowledge_grant(reference, checkpoint.expect("durable grant"))
+                        }
+                        Poll::Settle => runner.acknowledge_settlement(reference),
+                        Poll::Commit => runner.acknowledge_dataset(reference),
+                        _ => unreachable!("owned publication acknowledgement"),
                     };
                     if let Err(failure) = accepted {
                         runner.refuse_dataset(failure.to_string());
@@ -630,9 +671,18 @@ fn panic_failure(span: Span) -> Outcome {
 fn profile_digest(profile: scan::Profile, framing: Option<&Profile>) -> String {
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
-    hash.update(b"wes.framing.v1");
+    hash.update(b"wes.framing.v2");
     hash.update(profile.name().as_bytes());
     if let Some(profile) = framing {
+        hash.update([match profile.decoding {
+            Decoding::StrictUtf8 => 0,
+            Decoding::LossyUtf8 => 1,
+        }]);
+        hash.update([match profile.malformed {
+            wes_core::framing::Malformed::Strict {} => 0,
+            wes_core::framing::Malformed::Forensic { .. } => 1,
+        }]);
+        hash.update((profile.malformed.excerpt_bytes() as u64).to_le_bytes());
         hash.update((profile.raw_bytes as u64).to_le_bytes());
         hash.update((profile.decoded_bytes as u64).to_le_bytes());
         hash.update((profile.spans as u64).to_le_bytes());
@@ -640,8 +690,47 @@ fn profile_digest(profile: scan::Profile, framing: Option<&Profile>) -> String {
             Delimiter::Lines => &b"\n"[..],
             Delimiter::Literal(bytes) => bytes,
         };
+        hash.update([u8::from(matches!(
+            &profile.delimiter,
+            Delimiter::Literal(_)
+        ))]);
         hash.update((delimiter.len() as u64).to_le_bytes());
         hash.update(delimiter);
     }
     format!("sha256:{:x}", hash.finalize())
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+    #[test]
+    fn recovery_decoding_delimiter_semantics_and_excerpt_bounds_have_distinct_revisions() {
+        let p = Profile {
+            delimiter: Delimiter::Lines,
+            decoding: Decoding::StrictUtf8,
+            malformed: wes_core::framing::Malformed::Strict {},
+            raw_bytes: 1024,
+            decoded_bytes: 4096,
+            spans: 128,
+        };
+        let digest = |p: &Profile| profile_digest(scan::Profile::LinesUtf8, Some(p));
+        let strict = digest(&p);
+        let mut forensic = p.clone();
+        forensic.malformed = wes_core::framing::Malformed::Forensic { excerpt_bytes: 16 };
+        let first = digest(&forensic);
+        assert_ne!(strict, first);
+        forensic.malformed = wes_core::framing::Malformed::Forensic { excerpt_bytes: 32 };
+        assert_ne!(digest(&forensic), first);
+        let mut lossy = p.clone();
+        lossy.decoding = Decoding::LossyUtf8;
+        assert_ne!(strict, digest(&lossy));
+        let mut literal = p.clone();
+        literal.delimiter = Delimiter::Literal(b"\n".to_vec());
+        assert_ne!(strict, digest(&literal), "literal LF does not strip CRLF");
+        let strict_charge = super::super::source::framing_charge(&p).unwrap();
+        assert_eq!(
+            super::super::source::framing_charge(&forensic).unwrap(),
+            strict_charge + 32 * 4
+        );
+    }
 }

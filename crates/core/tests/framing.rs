@@ -4,6 +4,7 @@ fn profile(delimiter: Delimiter, decoding: Decoding) -> Profile {
     Profile {
         delimiter,
         decoding,
+        malformed: wes_core::framing::Malformed::Strict {},
         raw_bytes: 1024,
         decoded_bytes: 4096,
         spans: 128,

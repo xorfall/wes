@@ -2,12 +2,14 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
-use wes_core::{Data, DatasetRef, Value};
+use wes_core::{Data, DatasetRef, DatasetStream, Value};
 use wes_engine::storage::{StoreError, StoreWorker, datasets::PageRequest};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Request {
+    #[serde(default)]
+    pub stream: DatasetStream,
     #[serde(default)]
     pub select: String,
     pub from: Option<String>,
@@ -27,6 +29,7 @@ pub(crate) struct Request {
 struct Cursor {
     version: u16,
     reference: DatasetRef,
+    stream: DatasetStream,
     select: String,
     next: String,
 }
@@ -34,6 +37,10 @@ struct Cursor {
 pub(crate) enum Error {
     #[error("Dataset read requires a public typed Dataset selection.")]
     Unavailable,
+    #[error(
+        "Selected Dataset has no rejected-frame coverage; read stream:outputs or inspect its available streams."
+    )]
+    MissingStream,
     #[error(
         "Invalid dataset range or cursor; read the same committed snapshot with a canonical ordinal."
     )]
@@ -113,7 +120,11 @@ pub(crate) async fn read(
             return Err(Error::Invalid);
         }
         let cursor: Cursor = serde_json::from_slice(&bytes).map_err(|_| Error::Invalid)?;
-        if cursor.version != 1 || cursor.reference != reference || cursor.select != request.select {
+        if cursor.version != 2
+            || cursor.reference != reference
+            || cursor.select != request.select
+            || cursor.stream != request.stream
+        {
             return Err(Error::Invalid);
         }
         ordinal(&cursor.next)?
@@ -121,16 +132,31 @@ pub(crate) async fn read(
         ordinal(request.from.as_deref().unwrap_or("0"))?
     };
     let info = worker.dataset_inspect(reference.clone()).await?;
-    let mut response = json!({"reference": reference, "lifecycle": format!("{:?}", info.lifecycle).to_lowercase(),
+    if request.stream == DatasetStream::Coverage && info.coverage.is_none() {
+        return Err(Error::MissingStream);
+    }
+    let mut response = json!({"reference": reference, "stream": request.stream, "lifecycle": format!("{:?}", info.lifecycle).to_lowercase(),
         "protected": info.protected, "persistence": format!("{:?}", info.persistence), "segmentBytes": info.segment_bytes.to_string()});
     if let Some(coverage) = &info.recording {
         response["recording"] = recording(coverage);
     }
+    if let Some(coverage) = &info.coverage {
+        response["coverage"] = json!({
+            "records": coverage.progress.records.to_string(),
+            "inputBytes": coverage.progress.input_bytes.to_string(),
+            "lastOrdinal": coverage.progress.last_ordinal.map(|n| n.to_string()),
+            "through": coverage.progress.through.map(|n| n.to_string()),
+            "excerptBytes": coverage.progress.policy.excerpt_bytes.to_string(),
+            "segmentBytes": coverage.segment_bytes.to_string(),
+        });
+    }
     if !request.inspect {
         let page = worker
-            .dataset_page(
+            .dataset_stream_page(
                 reference.clone(),
+                request.stream,
                 PageRequest {
+                    charge: None,
                     work: None,
                     from,
                     rows: limit,
@@ -162,8 +188,9 @@ pub(crate) async fn read(
             Some(
                 URL_SAFE_NO_PAD.encode(
                     serde_json::to_vec(&Cursor {
-                        version: 1,
+                        version: 2,
                         reference: reference.clone(),
+                        stream: request.stream,
                         select: request.select,
                         next: page.next.to_string(),
                     })

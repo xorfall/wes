@@ -11,13 +11,19 @@
  * what Keep, Pin and the management commands refer to. A newer prefix shown this way can only be
  * captured as a new result by an ordinary `:dataset snapshot` command the person submits.
  *
+ * An analysis read with forensic framing also has skipped records: the ones native framing refused
+ * and nothing interpreted. Their count is said beneath the rows and the reader can switch to them;
+ * they are paged from the result's saved snapshot with their own ordinals, never followed, and
+ * never counted as the Dataset's records.
+ *
  * Withdrawal or refused access clears the page and marks the stored result withdrawn, which makes
  * the enclosing block drop the descriptor, count and type details as well.
  */
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import {
   DATASET_PAGE_MIN, DatasetReadError, lastOrdinal, previousStart, recordsAfter, sameReference, withinSnapshot,
-  type DatasetLifecycle, type DatasetPage, type DatasetPosition, type DatasetRead, type DatasetRecording, type RecordingTermination,
+  type DatasetCoverage, type DatasetLifecycle, type DatasetPage, type DatasetPosition, type DatasetRead, type DatasetRecording, type DatasetStream,
+  type RecordingTermination, type RejectionReason, type ScanRejection,
 } from "../../dataset-read";
 import { groupedDigits } from "../../presentation/format";
 import { prepareSync } from "../../presentation/prepare";
@@ -44,6 +50,7 @@ export const DATASET_VISIBLE_ROWS: Readonly<Record<Mode, number>> = { preview: 5
 const PAGE_COLUMNS = 160;
 const DASH = "–";
 
+/** A read's rows belong to its own stream; `retained` is only ever a read of the stream shown. */
 type ReadState =
   | { readonly kind: "reading"; readonly retained?: DatasetRead }
   | { readonly kind: "shown"; readonly read: DatasetRead }
@@ -133,6 +140,11 @@ type FollowEnd = { readonly kind: "ended"; readonly read: DatasetRead } | { read
  *
  * When the last successful read shows a newer generation than the saved snapshot, `capture shown
  * prefix…` returns to Reading and writes the snapshot command for exactly that read into the prompt.
+ *
+ * Skipped records, when a read of the saved snapshot reports forensic coverage, are a second stream
+ * of the same snapshot under the same authority. Switching streams returns to Reading, drops the
+ * other stream's rows and any read in flight, and keeps each stream's own position; Follow, the
+ * newer extent it drew and the capture belong to outputs only.
  */
 export function DatasetBrowser({ anchor, select, source, mode, name }: {
   readonly anchor: DatasetAnchor; readonly select: string; readonly source: DatasetSource; readonly mode: Mode; readonly name?: string;
@@ -142,12 +154,18 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
   const identity = referenceKey(anchor);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const reference = useMemo(() => anchor.reference, [identity]);
-  /** The committed snapshot the rows are read from: the result's own, or a newer head Follow drew. */
+  /** The committed snapshot the outputs are read from: the result's own, or a newer head Follow drew. */
   const [extent, setExtent] = useState<DatasetReference>(reference);
   const extentRef = useRef(reference);
-  const records = extent.records;
+  const [stream, setStream] = useState<DatasetStream>("outputs");
+  /** The saved snapshot's forensic coverage, as its last read said; never a followed extent's. */
+  const [coverage, setCoverage] = useState<DatasetCoverage>();
+  /** How many rows the shown stream has: the descriptor's outputs, or the coverage's skipped records. */
+  const records = stream === "coverage" ? coverage?.records ?? "0" : extent.records;
   const [limit, setLimit] = useState(DATASET_PAGE_ROWS[mode]);
-  const [position, setPosition] = useState<DatasetPosition>({ from: "0" });
+  const [positions, setPositions] = useState<Readonly<Record<DatasetStream, DatasetPosition>>>(START);
+  const position = positions[stream];
+  const setPosition = (next: DatasetPosition, of: DatasetStream = stream) => setPositions(was => ({ ...was, [of]: next }));
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<ReadState>({ kind: "reading" });
   const [focused, setFocused] = useState<string>();
@@ -167,25 +185,31 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
     setState({ kind: "failed", error: failure });
     setFocused(undefined);
     setFollowing(false);
+    setCoverage(undefined);
     datasetWithdrawals.withdraw(source);
   };
 
   useEffect(() => { setLimit(DATASET_PAGE_ROWS[mode]); }, [mode]);
-  // Reading: one page of the shown snapshot whenever the reader moves. Never while following.
+  // Reading: one page of the shown stream whenever the reader moves. Never while following. Skipped
+  // records are always read from the result's saved snapshot, whatever extent the outputs show.
   useEffect(() => {
     if (following) return;
-    const key = pageKey(extent, position, limit, attempt);
+    const key = pageKey(stream, stream === "coverage" ? reference : extent, position, limit, attempt);
     if (key === drawn.current) return;
     drawn.current = undefined;
     const request = ++latest.current;
     const controller = new AbortController();
-    setState(was => ({ kind: "reading", ...(retainedOf(was) ? { retained: retainedOf(was)! } : {}) }));
-    const reply = sameReference(extent, reference)
+    setState(was => ({ kind: "reading", ...(retainedOf(was, stream) ? { retained: retainedOf(was, stream)! } : {}) }));
+    const reply = stream === "coverage"
+      ? source.engine.readDataset(source.handle, source.generation, reference, select, position, limit, controller.signal, "coverage")
+      : sameReference(extent, reference)
       ? source.engine.readDataset(source.handle, source.generation, reference, select, position, limit, controller.signal)
       : source.engine.readDatasetExtent(source.handle, source.generation, reference, extent, select, position, limit, controller.signal);
     reply.then(read => {
       if (request !== latest.current || controller.signal.aborted) return;
       drawn.current = key;
+      // Only a read of the saved snapshot says what its skipped records are.
+      if (sameReference(read.reference, reference)) setCoverage(read.coverage);
       setState({ kind: "shown", read });
       setFocused(was => was !== undefined && read.page?.rows.some(row => row.ordinal === was) ? was : undefined);
     }, (error: unknown) => {
@@ -194,12 +218,13 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
       // A reply from an older session is dropped; the block remounts for the new one.
       if (failure.kind === "session") return;
       if (failure.kind === "withdrawn") { withdraw(failure); return; }
-      // Busy and failed reads may keep the last page, labelled; a missing result keeps nothing.
-      setState(was => ({ kind: "failed", error: failure, ...(failure.kind !== "missing" && retainedOf(was) ? { retained: retainedOf(was)! } : {}) }));
+      // Busy and failed reads may keep the last page of this stream, labelled; a missing result keeps nothing.
+      if (failure.kind === "missing") setCoverage(undefined);
+      setState(was => ({ kind: "failed", error: failure, ...(failure.kind !== "missing" && retainedOf(was, stream) ? { retained: retainedOf(was, stream)! } : {}) }));
     });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, select, reference, snapshotKey(extent), position, limit, attempt, following]);
+  }, [source, select, reference, stream, snapshotKey(extent), position, limit, attempt, following]);
 
   // Following: one coalesced cycle at a time — inspect the head, then read its last page — and
   // nothing else in flight. Stopping, unmounting or a new session aborts it; nothing late lands.
@@ -226,9 +251,9 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
             const page = await source.engine.readDatasetExtent(source.handle, source.generation, reference, head.reference, select, { from }, limit, signal);
             if (!live()) return;
             extentRef.current = head.reference;
-            drawn.current = pageKey(head.reference, { from }, limit, attemptRef.current);
+            drawn.current = pageKey("outputs", head.reference, { from }, limit, attemptRef.current);
             setExtent(head.reference);
-            setPosition({ from });
+            setPosition({ from }, "outputs");
             setState({ kind: "shown", read: page });
             setFocused(undefined);
             tailDue = false;
@@ -240,7 +265,8 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
           if (failure.kind === "session") return;
           if (failure.kind === "withdrawn") { withdraw(failure); return; }
           // The last page stays, labelled. Only a busy reader that may be asked again keeps Follow.
-          setState(was => ({ kind: "failed", error: failure, ...(failure.kind !== "missing" && retainedOf(was) ? { retained: retainedOf(was)! } : {}) }));
+          if (failure.kind === "missing") setCoverage(undefined);
+          setState(was => ({ kind: "failed", error: failure, ...(failure.kind !== "missing" && retainedOf(was, "outputs") ? { retained: retainedOf(was, "outputs")! } : {}) }));
           if (!(failure.kind === "busy" && failure.retryable)) {
             // A changed identity or attempt is never followed into; only the page already shown is kept.
             setFollowEnd({ kind: "stopped", reason: failure.kind === "continuity" ? CONTINUITY_TEXT : failure.message });
@@ -254,28 +280,46 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
     return () => controller.abort();
   }, [following, source, select, reference, limit]);
 
-  const shown = state.kind === "shown" ? state.read : state.retained;
+  // A read of the other stream is never drawn here, not even for the render before its reader runs.
+  const shown = retainedOf(state, stream);
   const page = shown?.page;
   const stale = state.kind !== "shown" && shown !== undefined;
   const last = lastOrdinal(records);
   const visible = DATASET_VISIBLE_ROWS[mode];
-  const capture = captureOf(reference, extent, state, composer && selectionExpression(name, select), composer && freshName("shownPrefix", composer.taken));
+  const withdrawn = state.kind === "failed" && state.error.kind === "withdrawn";
+  const capture = stream === "outputs" ? captureOf(reference, extent, state, composer && selectionExpression(name, select), composer && freshName("shownPrefix", composer.taken)) : undefined;
+  const outputCells = useCells(anchor, stream === "outputs" ? page : undefined);
+  const skippedCells = useMemo(() => stream === "coverage" ? coverageCells(page, coverage) : undefined, [stream, page, coverage]);
+  const cells = stream === "coverage" ? skippedCells : outputCells;
 
   /** Every reading gesture leaves Follow where it is: the shown head and rows stay as they are. */
   const read = () => { setFollowing(false); };
-  const follow = () => { setFollowEnd(undefined); setTargetProblem(undefined); setFollowing(true); };
+  const follow = () => { if (stream !== "outputs") return; setFollowEnd(undefined); setTargetProblem(undefined); setFollowing(true); };
   const go = (next: DatasetPosition) => { read(); setPosition(next); setTargetProblem(undefined); };
+  /** Reading the other stream: nothing of this one stays drawn, and its own position is kept for later. */
+  const choose = (next: DatasetStream) => {
+    if (next === stream || (next === "coverage" && !coverage)) return;
+    read();
+    drawn.current = undefined;
+    setStream(next);
+    setState({ kind: "reading" });
+    setFocused(undefined);
+    setTarget("");
+    setTargetProblem(undefined);
+  };
   const submitTarget = () => {
     const text = target.trim();
     if (!withinSnapshot(text, records)) {
-      setTargetProblem(last === undefined ? "no records in this snapshot" : `enter an ordinal from 0 to ${groupedDigits(last)}`);
+      setTargetProblem(stream === "coverage"
+        ? last === undefined ? "no skipped records in this snapshot" : `enter a skipped-record ordinal from 0 to ${groupedDigits(last)}`
+        : last === undefined ? "no records in this snapshot" : `enter an ordinal from 0 to ${groupedDigits(last)}`);
       return;
     }
     go({ from: text });
   };
 
-  return <div className="dataset-browser" data-mode={mode} data-following={following || undefined}>
-    <div className="dataset-toolbar" role="toolbar" aria-label="Dataset pages">
+  return <div className="dataset-browser" data-mode={mode} data-stream={stream} data-following={following || undefined}>
+    <div className="dataset-toolbar" role="toolbar" aria-label={stream === "coverage" ? "Skipped record pages" : "Dataset pages"}>
       <button type="button" className="cell-action" disabled={!page || page.first === "0" || state.kind === "reading"}
         onClick={() => page && go({ from: previousStart(page.first, limit) })}>‹ previous</button>
       <button type="button" className="cell-action" disabled={!page || page.cursor === null || state.kind === "reading"}
@@ -287,15 +331,15 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
         </label>
         <button type="submit" className="cell-action" disabled={last === undefined}>go</button>
       </form>
-      {/* One fixed toggle: `follow` while Reading, `reading` while following. */}
+      {/* One fixed toggle: `follow` while Reading, `reading` while following. Skipped records are never followed. */}
       {following
         ? <button type="button" className="cell-action" aria-pressed={true} onClick={read}>reading</button>
-        : <button type="button" className="cell-action" aria-pressed={false} onClick={follow}>follow</button>}
+        : <button type="button" className="cell-action" aria-pressed={false} disabled={stream !== "outputs"} onClick={follow}>follow</button>}
     </div>
     {/* Always one line, so a mode change never moves the rows; a withdrawal leaves it empty. */}
-    <MonoLine segments={state.kind === "failed" && state.error.kind === "withdrawn" ? [] : followLine(reference, extent, following, followEnd)} className="value-line dataset-follow" />
-    <MonoLine segments={rangeLine(extent, shown, page)} className="value-line dataset-range" />
-    <MonoLine segments={statusLine(state, stale, targetProblem)} className="value-line dataset-status" />
+    <MonoLine segments={withdrawn ? [] : stream === "coverage" ? SKIPPED_READING : followLine(reference, extent, following, followEnd)} className="value-line dataset-follow" />
+    <MonoLine segments={stream === "coverage" ? skippedRangeLine(reference, records, shown, page) : rangeLine(extent, shown, page)} className="value-line dataset-range" />
+    <MonoLine segments={statusLine(state, stale, targetProblem, stream)} className="value-line dataset-status" />
     {/* Only an explicit press reads again, and only after busy, limit or read failures; withdrawn and missing stay as they are.
         The same line offers a capture only when no read failed this way, so the two never compete for it. */}
     <div className="dataset-recovery">{state.kind === "failed" && (state.error.kind === "busy" || state.error.kind === "limit" || state.error.kind === "failed") ? (state.error.kind === "limit" && limit > DATASET_PAGE_MIN
@@ -306,15 +350,76 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
         <button type="button" className="cell-action" onClick={() => { read(); composer.compose(capture.command); }}>capture shown prefix…</button>
         <MonoLine segments={capture.note} description={lineText(capture.note)} className="value-line" />
       </>}</div>
-    <Rows anchor={anchor} page={state.kind === "failed" && state.error.kind === "withdrawn" ? undefined : page} stale={stale}
+    <Rows cells={withdrawn ? undefined : cells} page={withdrawn ? undefined : page} stale={stale} stream={stream}
       visible={visible} focused={focused} onFocus={ordinal => { read(); setFocused(ordinal); }} records={records}
       atEnd={following} onGesture={read} />
-    {/* Below the rows, so coverage arriving with a read never moves the controls or the grid. */}
-    {shown?.recording && !(state.kind === "failed" && state.error.kind === "withdrawn") && <section className="dataset-recording" aria-label="Recording coverage of this generation">
+    {/* Below the rows, so coverage arriving with a read never moves the controls or the grid. A
+        missing or withdrawn result keeps no count of its skipped records. */}
+    {coverage && !withdrawn && !(state.kind === "failed" && state.error.kind === "missing") && <section className="dataset-coverage" aria-label="Skipped records of the saved snapshot">
+      <MonoLine segments={coverageLine(coverage)} description={lineText(coverageLine(coverage))} className="value-line" />
+      <div className="dataset-streams" role="group" aria-label="Records shown">
+        <button type="button" className="cell-action" aria-pressed={stream === "outputs"} onClick={() => choose("outputs")}>outputs</button>
+        <button type="button" className="cell-action" aria-pressed={stream === "coverage"} onClick={() => choose("coverage")}>skipped records</button>
+        <MonoLine segments={STREAM_NOTE[stream]} description={lineText(STREAM_NOTE[stream])} className="value-line" />
+      </div>
+    </section>}
+    {shown?.recording && !withdrawn && <section className="dataset-recording" aria-label="Recording coverage of this generation">
       {recordingLines(shown.recording).map((line, at) => <MonoLine key={at} segments={line} className="value-line" />)}
     </section>}
-    {focused !== undefined && page && <Focused page={page} ordinal={focused} onClose={() => setFocused(undefined)} />}
+    {focused !== undefined && page && <Focused page={page} ordinal={focused} stream={stream} onClose={() => setFocused(undefined)} />}
   </div>;
+}
+
+/** The follow line while skipped records are shown: they are read from the saved snapshot only. */
+const SKIPPED_READING: Segment[] = [{ text: "reading", role: "mono-dim" }, { text: " · skipped records of the result's saved snapshot · follow reads outputs only", role: "mono-faint" }];
+
+/** What the rows are, beside the stream choice. The two ordinals are never the same number. */
+const STREAM_NOTE: Readonly<Record<DatasetStream, Segment[]>> = {
+  outputs: [{ text: "rows are the Dataset's own records", role: "mono-faint" }],
+  coverage: [{ text: "# is the skipped-record ordinal · record is the source record's ordinal · nothing in them was interpreted", role: "mono-faint" }],
+};
+
+const plural = (count: string, one: string, many: string) => `${groupedDigits(count)} ${count === "1" ? one : many}`;
+
+/**
+ * The saved snapshot's skipped records in one line: how many native framing refused and the original
+ * bytes they held, then the excerpt bound. It counts only the acknowledged manifest; it is not how
+ * many records were interpreted, and nothing is derived from it.
+ */
+export function coverageLine(coverage: DatasetCoverage): Segment[] {
+  if (coverage.records === "0") return [{ text: "forensic framing · no records skipped in the saved snapshot", role: "mono-faint" }];
+  return [{ text: `${plural(coverage.records, "record", "records")} skipped`, role: "mono-warn" },
+    { text: ` · ${plural(coverage.inputBytes, "original byte", "original bytes")}`, role: "mono-dim" },
+    { text: ` · forensic framing of the saved snapshot · excerpts keep at most ${plural(coverage.excerptBytes, "byte", "bytes")}`, role: "mono-faint" }];
+}
+
+/** A native framing reason as a reader reads it; the stored name stays in the record itself. */
+export const REASON_TEXT: Readonly<Record<RejectionReason, string>> = {
+  raw_limit: "raw limit", invalid_utf8: "invalid UTF-8", decoded_limit: "decoded limit", span_limit: "span limit",
+};
+const REASON_WIDTH = Math.max(...Object.values(REASON_TEXT).map(text => text.length));
+
+/** `excerpt 256 of 4 096 B · truncated · unterminated`: what of the original content the record keeps. */
+function excerptText(rejection: ScanRejection): string {
+  const content = (BigInt(rejection.sourceEnd) - BigInt(rejection.sourceStart)).toString();
+  return `excerpt ${groupedDigits(rejection.excerptSize)} of ${groupedDigits(content)} B${rejection.excerptTruncated ? " · truncated" : ""}${rejection.unterminated ? " · unterminated" : ""}`;
+}
+
+/**
+ * Skipped-record rows as table cells: the source record's own ordinal, the framing reason and what
+ * the excerpt keeps. The whole record, excerpt bytes included, is the focused record's typed view.
+ */
+function coverageCells(page: DatasetPage | undefined, coverage: DatasetCoverage | undefined): RowCells | undefined {
+  if (!page || page.rows.length === 0 || !coverage) return undefined;
+  // The record column fits the coverage's last source record, so paging never changes its width.
+  const record = Math.max("record".length, groupedDigits(coverage.lastOrdinal ?? "0").length);
+  const excerpts = page.rows.map(row => excerptText(row.rejection!));
+  return {
+    header: ["record", "reason", "evidence"],
+    widths: [record, REASON_WIDTH, Math.min(PAGE_COLUMNS, Math.max(...excerpts.map(text => text.length)))],
+    cells: page.rows.map((row, at) => [[{ text: groupedDigits(row.rejection!.recordOrdinal), tone: "ref" as const }],
+      [{ text: REASON_TEXT[row.rejection!.reason], tone: "warn" as const }], [{ text: excerpts[at]!, tone: "faint" as const }]]),
+  };
 }
 
 const termination = (end: RecordingTermination): Segment =>
@@ -350,9 +455,12 @@ function snapshotKey(reference: DatasetReference): string {
   return DATASET_REFERENCE_FIELDS.map(name => reference[name]).join("\u0000");
 }
 
-/** One page read: which snapshot, where, how many rows, and which explicit read-again. */
-function pageKey(extent: DatasetReference, position: DatasetPosition, limit: number, attempt: number): string {
-  return [snapshotKey(extent), "cursor" in position ? `c${position.cursor}` : `f${position.from}`, limit, attempt].join("\u0001");
+/** Each stream starts at its first row. */
+const START: Readonly<Record<DatasetStream, DatasetPosition>> = { outputs: { from: "0" }, coverage: { from: "0" } };
+
+/** One page read: which stream of which snapshot, where, how many rows, and which explicit read-again. */
+function pageKey(stream: DatasetStream, extent: DatasetReference, position: DatasetPosition, limit: number, attempt: number): string {
+  return [stream, snapshotKey(extent), "cursor" in position ? `c${position.cursor}` : `f${position.from}`, limit, attempt].join("\u0001");
 }
 
 /** Where the last page of a snapshot of `records` starts, exactly. */
@@ -392,8 +500,10 @@ function endText(read: DatasetRead): string {
   return end ? `${read.lifecycle} · ${TERMINATION_TEXT[end].text}` : read.lifecycle;
 }
 
-function retainedOf(state: ReadState): DatasetRead | undefined {
-  return state.kind === "shown" ? state.read : state.retained;
+/** The read the state shows or keeps, when it is of `stream`; another stream's rows are never kept. */
+function retainedOf(state: ReadState, stream: DatasetStream): DatasetRead | undefined {
+  const read = state.kind === "shown" ? state.read : state.retained;
+  return read?.stream === stream ? read : undefined;
 }
 
 /** What `capture shown prefix…` prepares, and the note beside it. */
@@ -447,8 +557,27 @@ function rangeLine(reference: DatasetReference, shown: DatasetRead | undefined, 
   return parts;
 }
 
-/** The read's state in one fixed line: reading, the end of the snapshot, or why a read failed. */
-function statusLine(state: ReadState, stale: boolean, targetProblem: string | undefined): Segment[] {
+/**
+ * `skipped records 0–9 of 12 · 2 after · saved snapshot, generation 3 · sealed`: the shown range of
+ * the coverage's own count. The descriptor's record count is not repeated here.
+ */
+function skippedRangeLine(reference: DatasetReference, skipped: string, shown: DatasetRead | undefined, page: DatasetPage | undefined): Segment[] {
+  const of = `of ${groupedDigits(skipped)}`;
+  const parts: Segment[] = [];
+  if (skipped === "0") parts.push({ text: "no skipped records in the saved snapshot", role: "mono-dim" });
+  else if (page && page.rows.length > 0) {
+    const after = recordsAfter(page.next, skipped);
+    parts.push({ text: `skipped records ${groupedDigits(page.first)}${DASH}${groupedDigits(page.rows.at(-1)!.ordinal)} ${of}`, role: "mono-dim" });
+    if (page.first !== "0") parts.push({ text: ` · ${groupedDigits(page.first)} before`, role: "mono-faint" });
+    if (after !== "0") parts.push({ text: ` · ${groupedDigits(after)} after`, role: "mono-faint" });
+  } else parts.push({ text: `skipped records ${of}`, role: "mono-dim" });
+  parts.push({ text: ` · saved snapshot, generation ${groupedDigits(reference.generation)}`, role: "mono-faint" });
+  if (shown) parts.push(lifecycleSegment(shown.lifecycle));
+  return parts;
+}
+
+/** The read's state in one fixed line: reading, the end of the stream, or why a read failed. */
+function statusLine(state: ReadState, stale: boolean, targetProblem: string | undefined, stream: DatasetStream): Segment[] {
   if (targetProblem) return [{ text: targetProblem, role: "mono-warn" }];
   if (state.kind === "reading") return [{ text: stale ? "reading · previous page shown" : "reading…", role: "mono-dim" }];
   if (state.kind === "failed") {
@@ -466,6 +595,8 @@ function statusLine(state: ReadState, stale: boolean, targetProblem: string | un
   if (!page.extentExhausted) return [{ text: page.limitedBy ? `page limited by ${page.limitedBy}` : "", role: "mono-faint" }];
   // The end of what is committed is not the end of the producer: an open dataset can still grow.
   const lifecycle = state.read.lifecycle;
+  if (stream === "coverage") return [{ text: lifecycle === "sealed" ? "end of skipped records"
+    : `end of skipped records in the saved snapshot · ${lifecycle === "open" ? "dataset still open" : lifecycle === "prefix" ? LATER_GENERATIONS : lifecycle}`, role: "mono-faint" }];
   return [{ text: lifecycle === "sealed" ? "end of dataset"
     : `end of committed snapshot · ${lifecycle === "open" ? "dataset still open" : lifecycle === "prefix" ? LATER_GENERATIONS : lifecycle}`, role: "mono-faint" }];
 }
@@ -509,15 +640,15 @@ function useCells(anchor: DatasetAnchor, page: DatasetPage | undefined): RowCell
 /** Keys that scroll the row area: a reader pressing them is reading, not following. */
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
-function Rows({ anchor, page, stale, visible, focused, onFocus, records, atEnd, onGesture }: {
-  readonly anchor: DatasetAnchor; readonly page: DatasetPage | undefined; readonly stale: boolean; readonly visible: number;
+function Rows({ cells, page, stale, stream, visible, focused, onFocus, records, atEnd, onGesture }: {
+  readonly cells: RowCells | undefined; readonly page: DatasetPage | undefined; readonly stale: boolean; readonly stream: DatasetStream; readonly visible: number;
+  /** `records` is the shown stream's own count, which the ordinal column fits. */
   readonly focused: string | undefined; readonly onFocus: (ordinal: string | undefined) => void; readonly records: string;
   /** Following: keep the newest shown row in view as pages arrive. */
   readonly atEnd: boolean;
   /** A reader's own scroll gesture. Scrolls the view itself causes are never one. */
   readonly onGesture: () => void;
 }) {
-  const cells = useCells(anchor, page);
   const area = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const element = area.current;
@@ -535,7 +666,7 @@ function Rows({ anchor, page, stale, visible, focused, onFocus, records, atEnd, 
     const target = event.currentTarget.parentElement?.children[next + 1] as HTMLElement | undefined;
     target?.focus();
   };
-  return <div ref={area} className="dataset-rows" role="grid" aria-label="Dataset records" aria-busy={stale} style={{ ["--dataset-rows" as string]: visible }} data-stale={stale || undefined}
+  return <div ref={area} className="dataset-rows" role="grid" aria-label={stream === "coverage" ? "Skipped records" : "Dataset records"} aria-busy={stale} style={{ ["--dataset-rows" as string]: visible }} data-stale={stale || undefined}
     onWheel={onGesture} onTouchStart={onGesture} onPointerDown={event => { if (event.target === event.currentTarget) onGesture(); }}
     onKeyDown={event => { if (SCROLL_KEYS.has(event.key)) onGesture(); }}>
     <div className="dataset-row dataset-row-header" role="row">
@@ -559,13 +690,22 @@ function spanText(start: string, end: string): string {
   return `${groupedDigits(start)}${DASH}${groupedDigits(end)}`;
 }
 
-/** The focused record whole, beneath the rows, with its own type and captured metadata. */
-function Focused({ page, ordinal, onClose }: { readonly page: DatasetPage; readonly ordinal: string; readonly onClose: () => void }) {
+/**
+ * The focused record whole, beneath the rows, with its own type and captured metadata. A skipped
+ * record says both its ordinals and that it is a framing refusal; its excerpt is the typed Bytes.
+ */
+function Focused({ page, ordinal, stream, onClose }: { readonly page: DatasetPage; readonly ordinal: string; readonly stream: DatasetStream; readonly onClose: () => void }) {
   const row = page.rows.find(it => it.ordinal === ordinal);
   if (!row) return null;
-  return <section className="dataset-focused" aria-label={`Record ${ordinal}`}>
+  const rejection = stream === "coverage" ? row.rejection : undefined;
+  const head: Segment[] = rejection
+    ? [{ text: `skipped record ${groupedDigits(row.ordinal)}`, role: "mono-ref" }, { text: ` · source record ${groupedDigits(rejection.recordOrdinal)}`, role: "mono-dim" },
+      { text: ` · source ${spanText(row.sourceStart, row.sourceEnd)}`, role: "mono-faint" },
+      { text: ` · refused by native framing: ${REASON_TEXT[rejection.reason]} · not interpreted · ${excerptText(rejection)}`, role: "mono-faint" }]
+    : [{ text: `record ${groupedDigits(row.ordinal)}`, role: "mono-ref" }, { text: ` · source ${spanText(row.sourceStart, row.sourceEnd)}`, role: "mono-faint" }];
+  return <section className="dataset-focused" aria-label={rejection ? `Skipped record ${ordinal}` : `Record ${ordinal}`}>
     <div className="dataset-focused-head">
-      <MonoLine segments={[{ text: `record ${groupedDigits(row.ordinal)}`, role: "mono-ref" }, { text: ` · source ${spanText(row.sourceStart, row.sourceEnd)}`, role: "mono-faint" }]} className="value-line" />
+      <MonoLine segments={head} description={lineText(head)} className="value-line" />
       <button type="button" className="cell-action" onClick={onClose}>close</button>
     </div>
     <div className="dataset-focused-body"><DataView type={row.value.type} data={row.value.data} {...(row.value.meta ? { meta: row.value.meta } : {})} lines={60} /></div>

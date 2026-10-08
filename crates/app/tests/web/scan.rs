@@ -2,6 +2,393 @@ use super::*;
 use tokio::sync::mpsc;
 
 #[tokio::test]
+async fn a_written_large_row_is_readable_by_a_new_analysis_under_the_captured_page_cap() {
+    use wes_core::Data;
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let source = format!(
+        r#"
+:package load source:"types: {{EmitStep: {{base: Record, fields: {{state: Int, outputs: 'List<Text>'}}}}, CountStep: {{base: Record, fields: {{state: Int, outputs: 'List<Int>'}}}}}}"
+:def emit(state:Int, context:Int, item:Text) -> EmitStep as :calc pure {{ return {{state:state+1,outputs:[item]}}; }}
+:def count(state:Int, context:Int, item:Text) -> CountStep as :calc pure {{ return {{state:state+1,outputs:[state+1]}}; }}
+:calc pure {{ return [join(range(100).map(i=>{}),"")]; }} > raw
+:scan source:$raw transition:emit initial:0 context:0 profile:TypedRecords sink:dataset > original
+:scan source:$original.outputs transition:count initial:0 context:0 profile:TypedRecords sink:dataset > counted
+"#,
+        serde_json::to_string(&"x".repeat(700)).unwrap()
+    );
+    assert_eq!(fixture.source(&generation, "large-row", &source).await, 202);
+    let session = fixture.app.current().unwrap().session;
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    for name in ["original", "counted"] {
+        let node = &snapshot.names[name].node;
+        assert!(
+            !snapshot.execution.errors.contains_key(node),
+            "{name}: {:?}",
+            snapshot.execution.errors.get(node)
+        );
+        let Data::Record(result) = snapshot.execution.values[node].data() else {
+            panic!("scan result")
+        };
+        assert_eq!(result["state"], Data::Int(1));
+        let Data::Record(receipt) = &result["receipt"] else {
+            panic!("receipt")
+        };
+        assert_eq!(receipt["status"], Data::Text("complete".into()));
+        assert_eq!(receipt["inputRecords"], Data::Int(1));
+        let Data::Record(limits) = &receipt["limits"] else {
+            panic!("limits")
+        };
+        assert_eq!(
+            limits["pageBytes"],
+            Data::Int(wes_engine::scan::Settings::capture().page_bytes as i64)
+        );
+    }
+    let node = &snapshot.names["original"].node;
+    let frame = loop {
+        let frame = events.until("ready").await;
+        if frame["node"] == node.as_str() {
+            break frame;
+        }
+    };
+    let response = fixture
+        .client
+        .get(fixture.url(&format!(
+            "/datasets/{}?select=/outputs&limit=1",
+            frame["handle"].as_str().unwrap()
+        )))
+        .header("X-Wes-Session", &generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(
+        page["page"]["rows"][0]["value"]["data"]
+            .as_str()
+            .unwrap()
+            .len(),
+        70000
+    );
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn forensic_reads_keep_output_counts_and_bind_coverage_cursors_to_the_parent() {
+    use wes_core::Data;
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let raw = format!("{}\nok\n{}\n", "x".repeat(65537), "y".repeat(65537));
+    let source = format!(
+        r#"
+:package load source:"types: {{CountStep: {{base: Record, fields: {{state: Int, outputs: 'List<Int>'}}}}}}"
+:def count(state:Int, context:Int, item:Unknown) -> CountStep as :calc pure {{ return {{state:state+1,outputs:[state+1]}}; }}
+:def finish(state:Int, context:Int, end:Unknown) -> CountStep as :calc pure {{ return {{state:state+100,outputs:[]}}; }}
+:calc pure {{ return {}; }} > raw
+:scan source:$raw transition:count finish:finish initial:0 context:0 profile:LinesUtf8 sink:dataset malformed:forensic excerpt:3 > analysis
+"#,
+        serde_json::to_string(&raw).unwrap()
+    );
+    assert_eq!(fixture.source(&generation, "forensic", &source).await, 202);
+    let session = fixture.app.current().unwrap().session;
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    let node = &snapshot.names["analysis"].node;
+    assert!(
+        !snapshot.execution.errors.contains_key(node),
+        "{:?}",
+        snapshot.execution.errors.get(node)
+    );
+    let Data::Record(result) = snapshot.execution.values[node].data() else {
+        panic!("scan result")
+    };
+    assert_eq!(result["state"], Data::Int(101));
+    let Data::Dataset(reference) = &result["outputs"] else {
+        panic!("Dataset")
+    };
+    assert_eq!(reference.records(), 1);
+    let Data::Record(receipt) = &result["receipt"] else {
+        panic!("receipt")
+    };
+    assert_eq!(receipt["malformed"], Data::Text("forensic".into()));
+    assert_eq!(receipt["rejectedRecords"], Data::Int(2));
+    assert_eq!(receipt["inputRecords"], Data::Int(3));
+    let frame = loop {
+        let frame = events.until("ready").await;
+        if frame["node"] == node.as_str() {
+            break frame;
+        }
+    };
+    let handle = frame["handle"].as_str().unwrap();
+    let url = fixture.url(&format!(
+        "/datasets/{handle}?select=/outputs&stream=coverage&limit=1"
+    ));
+    assert_eq!(fixture.client.get(&url).send().await.unwrap().status(), 409);
+    let response = fixture
+        .client
+        .get(&url)
+        .header("X-Wes-Session", &generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(page["stream"], "coverage");
+    assert_eq!(page["reference"]["records"], "1");
+    assert_eq!(page["coverage"]["records"], "2");
+    assert_eq!(page["coverage"]["inputBytes"], "131076");
+    assert_eq!(page["coverage"]["lastOrdinal"], "2");
+    assert_eq!(page["coverage"]["through"], raw.len().to_string());
+    assert_eq!(page["coverage"]["excerptBytes"], "3");
+    assert!(page.get("recording").is_none());
+    assert_eq!(page["page"]["first"], "0");
+    assert_eq!(page["page"]["next"], "1");
+    let row = &page["page"]["rows"][0];
+    assert_eq!(row["ordinal"], "0");
+    assert_eq!(row["sourceStart"], "0");
+    assert_eq!(row["sourceEnd"], "65538");
+    assert_eq!(row["value"]["data"]["reason"], "raw_limit");
+    assert_eq!(row["value"]["data"]["recordOrdinal"], "0");
+    assert_eq!(row["value"]["data"]["excerpt"], "eHh4");
+    assert_eq!(row["value"]["data"]["excerptTruncated"], true);
+    let cursor = page["page"]["cursor"].as_str().unwrap();
+    for stream in ["outputs", "coverage"] {
+        let mut url = url::Url::parse(&fixture.url(&format!("/datasets/{handle}"))).unwrap();
+        url.query_pairs_mut().extend_pairs([
+            ("select", "/outputs"),
+            ("stream", stream),
+            ("cursor", cursor),
+        ]);
+        let response = fixture
+            .client
+            .get(url)
+            .header("X-Wes-Session", &generation)
+            .send()
+            .await
+            .unwrap();
+        if stream == "outputs" {
+            assert_eq!(
+                response.status(),
+                400,
+                "a coverage cursor cannot address ordinary outputs"
+            );
+        } else {
+            assert_eq!(response.status(), 200);
+            let page: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+            assert_eq!(page["page"]["first"], "1");
+            assert_eq!(page["page"]["next"], "2");
+            assert_eq!(page["page"]["extentExhausted"], true);
+            assert_eq!(
+                page["page"]["rows"][0]["value"]["data"]["recordOrdinal"],
+                "2"
+            );
+            assert_eq!(page["page"]["rows"][0]["value"]["data"]["excerpt"], "eXl5");
+        }
+    }
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "reads",
+                r#"
+:dataset inspect $analysis.outputs stream:coverage > coverageInfo
+:dataset page $analysis.outputs stream:coverage from:1 limit:1 > skipped
+:dataset page $analysis.outputs > ordinary
+:scan excerpt $analysis from:65541 limit:3 > originalExcerpt
+"#
+            )
+            .await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    for name in ["coverageInfo", "skipped", "ordinary", "originalExcerpt"] {
+        assert!(
+            !snapshot
+                .execution
+                .errors
+                .contains_key(&snapshot.names[name].node),
+            "{name}: {:?}",
+            snapshot.execution.errors.get(&snapshot.names[name].node)
+        );
+    }
+    let Data::Record(skipped) = snapshot.execution.values[&snapshot.names["skipped"].node].data()
+    else {
+        panic!("native page")
+    };
+    assert_eq!(skipped["stream"], Data::Text("coverage".into()));
+    assert_eq!(skipped["records"], Data::Text("2".into()));
+    let Data::List(rows) = &skipped["rows"] else {
+        panic!("rows")
+    };
+    let Data::Record(row) = &rows[0] else {
+        panic!("rejection")
+    };
+    assert_eq!(row["recordOrdinal"], Data::Text("2".into()));
+    assert_eq!(row["excerpt"], Data::Bytes(b"yyy".to_vec().into()));
+    let Data::Record(ordinary) = snapshot.execution.values[&snapshot.names["ordinary"].node].data()
+    else {
+        panic!("native outputs")
+    };
+    assert_eq!(ordinary["rows"], Data::List(vec![Data::Int(1)]));
+    assert_eq!(ordinary["records"], Data::Text("1".into()));
+    let Data::Record(excerpt) =
+        snapshot.execution.values[&snapshot.names["originalExcerpt"].node].data()
+    else {
+        panic!("original bytes")
+    };
+    assert_eq!(excerpt["data"], Data::Text("yyy".into()));
+    fixture
+        .worker
+        .dataset_withdraw(reference.as_ref().clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .client
+            .get(&url)
+            .header("X-Wes-Session", &generation)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        403 | 404 | 410
+    ));
+    assert_eq!(
+        fixture.calls.load(Ordering::SeqCst),
+        0,
+        "paging and excerpts never invoke providers"
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn forensic_coverage_remains_readable_when_the_transition_produces_no_outputs() {
+    use wes_core::Data;
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let source = format!(
+        r#"
+:package load source:"types: {{CountStep: {{base: Record, fields: {{state: Int, outputs: 'List<Int>'}}}}}}"
+:def count(state:Int, context:Int, item:Unknown) -> CountStep as :calc pure {{ return {{state:state+1,outputs:[]}}; }}
+:scan source:{} transition:count initial:0 context:0 profile:LinesUtf8 sink:dataset malformed:forensic excerpt:1 > analysis
+"#,
+        serde_json::to_string(&"z".repeat(65537)).unwrap()
+    );
+    assert_eq!(
+        fixture.source(&generation, "zero-outputs", &source).await,
+        202
+    );
+    let session = fixture.app.current().unwrap().session;
+    session.wait_idle().await.unwrap();
+    // Observational commands capture an existing result; they never execute a
+    // pending producer to obtain one. Submit the read after the scan settles.
+    assert_eq!(fixture.source(&generation, "read-zero-outputs", ":dataset page $analysis.outputs stream:coverage > skipped\n:dataset page $analysis.outputs > ordinary").await, 202);
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    for name in ["analysis", "skipped", "ordinary"] {
+        assert!(
+            !snapshot
+                .execution
+                .errors
+                .contains_key(&snapshot.names[name].node),
+            "{name}: {:?}",
+            snapshot.execution.errors.get(&snapshot.names[name].node)
+        );
+    }
+    let Data::Record(result) = snapshot.execution.values[&snapshot.names["analysis"].node].data()
+    else {
+        panic!("scan")
+    };
+    assert_eq!(
+        result["state"],
+        Data::Int(0),
+        "no callback on rejected input"
+    );
+    let Data::Dataset(reference) = &result["outputs"] else {
+        panic!("Dataset")
+    };
+    assert_eq!(reference.records(), 0);
+    let Data::Record(skipped) = snapshot.execution.values[&snapshot.names["skipped"].node].data()
+    else {
+        panic!("page")
+    };
+    assert_eq!(skipped["records"], Data::Text("1".into()));
+    let Data::List(rows) = &skipped["rows"] else {
+        panic!("rows")
+    };
+    assert_eq!(rows.len(), 1);
+    let Data::Record(row) = &rows[0] else {
+        panic!("rejection")
+    };
+    assert_eq!(row["unterminated"], Data::Bool(true));
+    let Data::Record(ordinary) = snapshot.execution.values[&snapshot.names["ordinary"].node].data()
+    else {
+        panic!("page")
+    };
+    assert_eq!(ordinary["rows"], Data::List(Vec::new()));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn forensic_policy_is_explicit_and_invalid_combinations_refuse_before_storage_work() {
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    assert_eq!(fixture.source(&generation, "definition", r#"
+:package load source:"types: {CountStep: {base: Record, fields: {state: Int, outputs: 'List<Int>'}}}"
+:def count(state:Int, context:Int, item:Unknown) -> CountStep as :calc pure { return {state:state+1,outputs:[]}; }
+"#).await, 202);
+    let session = fixture.app.current().unwrap().session;
+    session.wait_idle().await.unwrap();
+    let path = fixture.root.path().join("datasets/catalog/active");
+    let catalog = std::fs::read(&path).ok();
+    for (i, options) in [
+        "profile:LinesUtf8 malformed:forensic",
+        "profile:TypedRecords sink:dataset malformed:forensic",
+        "profile:TypedRecords sink:dataset follow:true malformed:forensic",
+        "profile:LinesUtf8 sink:dataset excerpt:3",
+        "profile:LinesUtf8 sink:dataset malformed:forensic excerpt:0",
+        "profile:LinesUtf8 sink:dataset malformed:forensic excerpt:4097",
+        "profile:LinesUtf8 sink:dataset malformed:other",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let text = format!(
+            ":scan source:\"abc\" transition:count initial:0 context:0 {options} > invalid{i}"
+        );
+        let reply = session
+            .submit(wes_engine::source::SourceInput::new(format!("policy-{i}"), text).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            reply
+                .diagnostics
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == wes_language::Severity::Error),
+            "{options}: {reply:?}"
+        );
+        session.wait_idle().await.unwrap();
+        assert_eq!(
+            std::fs::read(&path).ok(),
+            catalog,
+            "invalid policy must not publish a Dataset"
+        );
+    }
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn reviewed_continuation_raises_only_the_owned_cumulative_bounds_without_replaying_inputs() {
     use wes_core::Data;
     let fixture = Fixture::datasets().await;
@@ -188,6 +575,7 @@ async fn reviewed_continuation_raises_only_the_owned_cumulative_bounds_without_r
             .dataset_page(
                 next.clone(),
                 wes_engine::storage::datasets::PageRequest {
+                    charge: None,
                     from,
                     rows: 100,
                     bytes: 65536,
@@ -209,6 +597,7 @@ async fn reviewed_continuation_raises_only_the_owned_cumulative_bounds_without_r
             .dataset_page(
                 reference.clone(),
                 wes_engine::storage::datasets::PageRequest {
+                    charge: None,
                     from: 0,
                     rows: 100,
                     bytes: 65536,
@@ -616,6 +1005,7 @@ async fn native_recording_setup_and_launch_capture_the_first_event_without_start
             .dataset_page(
                 reference.as_ref().clone(),
                 wes_engine::storage::datasets::PageRequest {
+                    charge: None,
                     work: None,
                     from: 0,
                     rows: 100,
@@ -1147,6 +1537,7 @@ async fn dataset_read_reports_only_its_committed_recording_coverage() {
     let admission = fixture
         .worker
         .dataset_create(DatasetCreate {
+            coverage: None,
             owner: None,
             dataset,
             transaction: uuid::Uuid::new_v4().to_string(),
@@ -1169,6 +1560,7 @@ async fn dataset_read_reports_only_its_committed_recording_coverage() {
     let committed = fixture
         .worker
         .enqueue_dataset_append(DatasetAppend {
+            coverage: Vec::new(),
             owner: None,
             previous: empty.clone(),
             transaction: uuid::Uuid::new_v4().to_string(),
@@ -1370,6 +1762,29 @@ async fn dataset_analysis_commits_its_captured_state_and_pages_through_the_owned
     assert_eq!(page["page"]["rows"][0]["value"]["data"], 1);
     assert_eq!(page["lifecycle"], "sealed");
     let cursor = page["page"]["cursor"].as_str().unwrap();
+    assert_eq!(page["stream"], "outputs");
+    assert!(
+        page.get("coverage").is_none(),
+        "ordinary analysis has no invented coverage stream"
+    );
+    let missing = fixture
+        .client
+        .get(fixture.url(&format!(
+            "/datasets/{handle}?select=/outputs&stream=coverage"
+        )))
+        .header("X-Wes-Session", &generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 400);
+    let missing: Value = serde_json::from_slice(&missing.bytes().await.unwrap()).unwrap();
+    assert_eq!(missing["error"]["code"], "DATASET_STREAM_MISSING");
+    assert!(
+        missing["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no rejected-frame coverage")
+    );
     let mut url = url::Url::parse(&fixture.url(&format!("/datasets/{handle}"))).unwrap();
     url.query_pairs_mut().extend_pairs([
         ("select", "/outputs"),
@@ -1798,6 +2213,7 @@ async fn explicit_resume_uses_saved_pure_code_and_preserves_failed_coverage() {
             .dataset_page(
                 resumed,
                 wes_engine::storage::datasets::PageRequest {
+                    charge: None,
                     work: None,
                     from: 127,
                     rows: 1,
@@ -2108,6 +2524,10 @@ async fn dynamic_view_dataset_reads_bind_member_session_and_both_revisions() {
         assert_eq!(response.status(), status);
         if status == 200 {
             let value: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+            assert_eq!(
+                value["stream"], "outputs",
+                "View SDK reads must name the exact stream they deliver"
+            );
             assert_eq!(value["page"]["first"], "1");
             assert_eq!(value["page"]["rows"][0]["value"]["data"], 2);
         }
@@ -2488,6 +2908,7 @@ async fn native_recording_has_one_joined_run_and_stop_leaves_the_source_open_at_
         .dataset_page(
             reference.clone(),
             wes_engine::storage::datasets::PageRequest {
+                charge: None,
                 work: None,
                 from: 0,
                 rows: 100,

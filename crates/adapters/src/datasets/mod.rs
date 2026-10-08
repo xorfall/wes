@@ -10,13 +10,13 @@ pub use checkpoint::{
     Checkpoint, CheckpointBindings, CheckpointLimits, InlineSnapshot, WorkLedger,
 };
 pub use format::{
-    FormatError, FormatLimits, PositionUnit, Record, SegmentHeader, SegmentReader, SourceRange,
-    encode_segment,
+    FormatError, FormatLimits, PositionUnit, Record, SegmentCoverage, SegmentHeader, SegmentReader,
+    SourceRange, Stream, encode_segment,
 };
 pub use manifest::{
     DatasetKind, Lifecycle, Manifest, ManifestLimits, Persistence as DatasetPersistence,
 };
-pub use objects::{ObjectError, ObjectFiles, ObjectLimits};
+pub use objects::{IndexRange, ObjectError, ObjectFiles, ObjectLimits};
 pub use store::{
     CommitReceipt, DatasetError, DatasetStore, Reconciliation, ReferenceReceipt, StoreLimits,
 };

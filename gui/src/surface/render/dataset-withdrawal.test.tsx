@@ -58,7 +58,7 @@ it("clears a withdrawn result's type, metadata and facts in the cell header whil
 });
 
 function pageWith(metas: readonly ValueMeta[]): DatasetRead {
-  return { reference, lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "64",
+  return { reference, stream: "outputs", lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "64",
     page: { first: "0", next: "2", extentExhausted: true, limitedBy: null, cursor: null,
       rows: metas.map((meta, at) => ({ ordinal: String(at), sourceStart: String(at), sourceEnd: String(at), value: { type: ROW, provenance: {}, data: { label: `synthetic ${at}` }, meta } as StoredValue })) } };
 }

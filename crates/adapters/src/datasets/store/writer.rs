@@ -76,6 +76,29 @@ impl DatasetStore {
         }) {
             return Err(DatasetError::Conflict);
         }
+        if request.coverage.is_some_and(|policy| !policy.valid())
+            || request.coverage.is_some()
+                && (request.kind != Kind::Analysis
+                    || source.unit != PositionUnit::Bytes
+                    || request.checkpoint.is_none()
+                    || request
+                        .checkpoint
+                        .as_ref()
+                        .is_some_and(|cp| cp.followed_source.is_some()))
+            || request
+                .checkpoint
+                .as_ref()
+                .and_then(|cp| cp.coverage.as_ref())
+                .map(|c| c.policy)
+                != request.coverage
+            || request
+                .checkpoint
+                .as_ref()
+                .and_then(|cp| cp.coverage.as_ref())
+                .is_some_and(|c| c.records != 0 || !c.valid(0, 0, 0))
+        {
+            return Err(DatasetError::Conflict);
+        }
         let identities = if request.recording.is_some() {
             vec![request.dataset.as_str()]
         } else {
@@ -101,12 +124,31 @@ impl DatasetStore {
         let schema = self
             .files
             .publish_schema(&request.schema, &request.policy)?;
+        let coverage = request
+            .coverage
+            .map(|policy| {
+                let schema = wes_engine::storage::datasets::rejection_schema();
+                Ok::<_, DatasetError>(super::super::manifest::CoverageRoot {
+                    schema: self.files.publish_schema(&schema, &request.policy)?,
+                    schema_digest: schema.digest().into(),
+                    index: None,
+                    summary: IndexSummary {
+                        coverage: None,
+                        first: 0,
+                        end: 0,
+                        segment_bytes: 0,
+                    },
+                    progress: wes_engine::storage::datasets::CoverageProgress::empty(policy),
+                })
+            })
+            .transpose()?;
         let persistence = match self.files.durability() {
             Durability::File => Persistence::FileSynced,
             Durability::FileAndDirectory => Persistence::FileAndDirectorySynced,
         };
         let mut manifest = Manifest {
-            version: 2,
+            coverage,
+            version: 3,
             store: self.store_id().into(),
             dataset: request.dataset.clone(),
             kind: match request.kind {
@@ -121,6 +163,7 @@ impl DatasetStore {
             schema_digest: request.schema.digest().into(),
             index: None,
             summary: IndexSummary {
+                coverage: None,
                 first: 0,
                 end: 0,
                 segment_bytes: 0,
@@ -199,7 +242,7 @@ impl DatasetStore {
         if request.rows.len() > self.limits.objects.segment.records {
             return Err(DatasetError::Limit("batch records"));
         }
-        let schema = self.files.read_schema(&manifest.schema)?;
+        let schema = self.files.read_schema(&manifest.schema, None)?;
         let count = request.rows.len() as u64;
         let first = manifest.summary.end;
         let mut records = Vec::with_capacity(request.rows.len());
@@ -239,6 +282,43 @@ impl DatasetStore {
         }) {
             return Err(DatasetError::Conflict);
         }
+        if request.coverage.len() > self.limits.objects.segment.records {
+            return Err(DatasetError::Limit("coverage batch records"));
+        }
+        let mut coverage = manifest.coverage.clone();
+        let mut coverage_records = Vec::with_capacity(request.coverage.len());
+        if let Some(root) = &mut coverage {
+            let next = request.checkpoint.as_ref().ok_or(DatasetError::Conflict)?;
+            let prior = manifest.checkpoint.as_ref().ok_or(DatasetError::Conflict)?;
+            let prior = self.files.read_checkpoint(prior, &manifest.dataset, None)?;
+            for row in &request.coverage {
+                if row.source.start < prior.next_position
+                    || row.ordinal < prior.next_ordinal
+                    || (row.unterminated && row.delimiter.end != manifest.source.end)
+                {
+                    return Err(DatasetError::Conflict);
+                }
+                root.progress
+                    .observe(row, next.next_ordinal, next.next_position)
+                    .map_err(|_| DatasetError::Conflict)?;
+                coverage_records.push(Record {
+                    source_start: row.source.start,
+                    source_end: row.delimiter.end,
+                    value: wes_engine::storage::datasets::rejection_value(row, &request.policy)
+                        .map_err(|_| DatasetError::Conflict)?,
+                });
+            }
+            if next.coverage.as_ref() != Some(&root.progress) {
+                return Err(DatasetError::Conflict);
+            }
+        } else if !request.coverage.is_empty()
+            || request
+                .checkpoint
+                .as_ref()
+                .is_some_and(|c| c.coverage.is_some())
+        {
+            return Err(DatasetError::Conflict);
+        }
         if manifest.kind == DatasetKind::EventLog
             && self
                 .writes
@@ -256,43 +336,39 @@ impl DatasetStore {
             catalog::WriteOperation::Append,
         )?;
         if count != 0 {
-            let segment_source = SourceRange {
-                identity: source.identity.clone(),
-                unit: source.unit,
-                start: records.first().unwrap().source_start,
-                end: records.last().unwrap().source_end,
-            };
-            let header = SegmentHeader {
-                store: self.store_id().into(),
-                dataset: manifest.dataset.clone(),
-                schema: schema.digest().into(),
-                first,
-                count,
-                source: segment_source.clone(),
-            };
-            let segment =
-                self.files
-                    .publish_segment(&header, &records, &schema, &request.policy)?;
-            let end = first
-                .checked_add(count)
-                .ok_or(DatasetError::Limit("ordinal"))?;
-            let (index, summary) = self.files.append_index(
-                manifest.index.as_ref(),
+            let (index, summary) = self.publish_stream_rows(
                 &manifest.dataset,
-                IndexEntry {
-                    segment: segment.clone(),
-                    summary: IndexSummary {
-                        first,
-                        end,
-                        segment_bytes: segment.bytes,
-                    },
-                    source: segment_source,
-                },
+                super::super::Stream::Outputs,
+                manifest.index.as_ref(),
+                first,
+                &schema,
+                &source,
+                &records,
+                None,
                 &request.policy,
             )?;
             manifest.index = Some(index);
             manifest.summary = summary;
         }
+        if let Some(root) = &mut coverage {
+            if !coverage_records.is_empty() {
+                let schema = self.files.read_schema(&root.schema, None)?;
+                let (index, summary) = self.publish_stream_rows(
+                    &manifest.dataset,
+                    super::super::Stream::Coverage,
+                    root.index.as_ref(),
+                    root.summary.end,
+                    &schema,
+                    &source,
+                    &coverage_records,
+                    Some(root.progress.policy),
+                    &request.policy,
+                )?;
+                root.index = Some(index);
+                root.summary = summary;
+            }
+        }
+        manifest.coverage = coverage;
         manifest.previous = Some(previous);
         manifest.generation = manifest
             .generation
@@ -321,6 +397,79 @@ impl DatasetStore {
                 .remove(&manifest.dataset);
         }
         self.descriptor(&manifest.dataset)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn publish_stream_rows(
+        &mut self,
+        dataset: &str,
+        stream: super::super::Stream,
+        prior: Option<&ObjectRef>,
+        first: u64,
+        schema: &ResolvedContractBundle,
+        source: &SourceRange,
+        records: &[Record],
+        coverage_policy: Option<wes_engine::storage::datasets::CoveragePolicy>,
+        policy: &FlowPolicy,
+    ) -> Result<(ObjectRef, IndexSummary), DatasetError> {
+        let count = records.len() as u64;
+        let source = SourceRange {
+            identity: source.identity.clone(),
+            unit: source.unit,
+            start: records.first().ok_or(DatasetError::Conflict)?.source_start,
+            end: records.last().ok_or(DatasetError::Conflict)?.source_end,
+        };
+        let coverage = coverage_policy
+            .map(|policy| {
+                let mut span: Option<wes_engine::storage::datasets::CoverageSpan> = None;
+                for row in records {
+                    let row = wes_engine::storage::datasets::read_rejection(&row.value, policy)
+                        .map_err(|_| DatasetError::StorageCorrupt)?;
+                    let next = wes_engine::storage::datasets::CoverageSpan::single(&row)
+                        .map_err(|_| DatasetError::Conflict)?;
+                    match &mut span {
+                        Some(span) => span.merge(&next).map_err(|_| DatasetError::Conflict)?,
+                        None => span = Some(next),
+                    }
+                }
+                Ok::<_, DatasetError>(super::super::SegmentCoverage {
+                    policy,
+                    span: span.ok_or(DatasetError::Conflict)?,
+                })
+            })
+            .transpose()?;
+        let header = SegmentHeader {
+            coverage: coverage.clone(),
+            store: self.store_id().into(),
+            dataset: dataset.into(),
+            stream,
+            schema: schema.digest().into(),
+            first,
+            count,
+            source: source.clone(),
+        };
+        let segment = self
+            .files
+            .publish_segment(&header, records, schema, policy)?;
+        self.files
+            .append_index(
+                prior,
+                dataset,
+                stream,
+                IndexEntry {
+                    summary: IndexSummary {
+                        coverage: coverage.map(|c| c.span),
+                        first,
+                        end: first
+                            .checked_add(count)
+                            .ok_or(DatasetError::Limit("stream ordinal"))?,
+                        segment_bytes: segment.bytes,
+                    },
+                    segment,
+                    source,
+                },
+                policy,
+            )
+            .map_err(DatasetError::from)
     }
     pub(super) fn resume_owned(
         &mut self,

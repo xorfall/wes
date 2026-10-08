@@ -132,6 +132,7 @@ pub struct Checkpoint {
     pub next_position: u64,
     pub next_ordinal: u64,
     pub output_end: u64,
+    pub coverage: Option<wes_engine::storage::datasets::CoverageProgress>,
     pub decoder_carry: String,
     pub work: WorkLedger,
     pub usage: wes_engine::storage::datasets::AnalysisUsage,
@@ -169,7 +170,7 @@ impl Checkpoint {
         Ok(checkpoint)
     }
     fn check(&self, limits: CheckpointLimits) -> Result<(), FormatError> {
-        if self.version != 3 {
+        if self.version != 4 {
             return Err(FormatError::Version);
         }
         if [
@@ -203,6 +204,18 @@ impl Checkpoint {
             return Err(FormatError::Corrupt);
         }
         validate_source(&self.bindings.source)?;
+        if self.coverage.as_ref().is_some_and(|c| {
+            self.followed_source.is_some()
+                || self.bindings.source.unit != super::PositionUnit::Bytes
+                || !c.valid(
+                    self.next_ordinal,
+                    self.next_position,
+                    self.usage.input_bytes,
+                )
+                || c.through.is_some_and(|n| n < self.bindings.source.start)
+        }) {
+            return Err(FormatError::Corrupt);
+        }
         if let Some(source) = &self.followed_source {
             if !valid_uuid(&source.run)
                 || !valid_uuid(&source.epoch)

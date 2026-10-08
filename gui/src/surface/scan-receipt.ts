@@ -16,8 +16,13 @@ import { grouped } from "./record-progress";
 export interface ScanLimits {
   readonly work: string; readonly inputCharge: string; readonly inputRecords: string;
   readonly heldCharge: string; readonly outputCharge: string; readonly outputRecords: string;
-  readonly recordWork: string; readonly recordCharge: string; readonly stateCharge: string;
-  readonly contextCharge: string; readonly durationMs: string;
+  readonly recordWork: string; readonly recordCharge: string;
+  /**
+   * The captured ceiling on the stored row payload bytes of one Dataset source page read. Excludes
+   * schema metadata, which is charged logically; neither a logical charge nor a disk or Dataset size.
+   */
+  readonly pageBytes: string;
+  readonly stateCharge: string; readonly contextCharge: string; readonly durationMs: string;
 }
 export interface ScanReceipt {
   readonly status: "complete" | "stopped" | "cancelled";
@@ -25,6 +30,17 @@ export interface ScanReceipt {
   readonly positionUnit: "bytes" | "records";
   readonly inputChargeUnit: "raw_bytes" | "logical_charge";
   readonly inputCharge: string; readonly inputRecords: string;
+  /**
+   * How malformed frames were handled. `strict` refuses one and stops; `forensic` skips it without
+   * invoking the transition. Independent of the UTF-8 strict/lossy decoding of accepted frames.
+   */
+  readonly malformed: "strict" | "forensic";
+  /**
+   * Acknowledged skipped frames and their original raw bytes, already counted in `inputRecords` and
+   * `inputCharge`. Their retained evidence is in `outputCharge`, never in `outputRecords`. Always 0
+   * under `strict`, whose single refused frame is `rejectedStart`–`rejectedEnd` instead.
+   */
+  readonly rejectedRecords: string; readonly rejectedInputBytes: string;
   readonly outputCharge: string; readonly outputRecords: string;
   /** `work` is the conservatively charged total; `measuredWork` is what was actually measured. */
   readonly work: string; readonly measuredWork: string; readonly workAllowance: string;
@@ -61,19 +77,21 @@ export interface ScanReceipt {
 }
 
 const FIELDS = ["status", "position", "readPosition", "extent", "positionUnit", "inputChargeUnit", "inputCharge", "inputRecords",
-  "outputCharge", "outputRecords", "work", "measuredWork", "workAllowance", "outstandingWork", "durationChargedMs", "durationOutstandingMs",
+  "malformed", "rejectedRecords", "rejectedInputBytes", "outputCharge", "outputRecords", "work", "measuredWork", "workAllowance", "outstandingWork", "durationChargedMs", "durationOutstandingMs",
   "heldCharge", "highWaterCharge", "finishApplied", "sourceComplete",
   "failureCode", "failureMessage", "exhausted", "rejectedStart", "rejectedEnd", "analysisId", "attempt", "previousAttempt",
   "budgetDigest", "budgetIssuedAttempt", "budgetPrevious", "authorizedWork", "workGrant", "durationOverrunMs",
   "transitionRevision", "finishRevision",
   "profile", "profileRevision", "sourceNode", "sourceRun", "sourceRevision", "sourcePort", "sourcePath", "durableResume", "limits"] as const;
 const LIMITS = ["work", "inputCharge", "inputRecords", "heldCharge", "outputCharge", "outputRecords", "recordWork", "recordCharge",
-  "stateCharge", "contextCharge", "durationMs"] as const;
+  "pageBytes", "stateCharge", "contextCharge", "durationMs"] as const;
+/** The engine's admissible range for the captured Dataset source-page ceiling (scan/runner.rs). */
+const PAGE_BYTES_MAX = 16n * 1024n * 1024n;
 /** The engine's stable dimension names (scan/ledger.rs), said in words. An unlisted name is shown as written. */
 const DIMENSIONS: Readonly<Record<string, string>> = {
   work: "work absolute cap", work_allowance: "work allowance", duration: "duration",
   input_charge: "input charge", input_records: "input records", held_charge: "held charge", output_charge: "output charge", output_records: "output records", aggregate_charge: "aggregate held charge",
-  record_work: "per-record work", record_charge: "per-record charge", record_outputs: "per-record outputs",
+  record_work: "per-record work", record_charge: "per-record charge", source_page_bytes: "Dataset source page stored row payload bytes", record_outputs: "per-record outputs",
 };
 export const dimensionWords = (name: string): string => DIMENSIONS[name] ?? name;
 /** The failure message is the engine's bounded text; the summary bounds it again for its rows. */
@@ -115,6 +133,7 @@ export function scanReceiptOf(value: StoredValue | undefined): ScanReceipt | und
     const rawLimits = object(raw.limits);
     exactKeys(rawLimits, LIMITS);
     const limits = Object.fromEntries(LIMITS.map(key => [key, int(rawLimits[key])])) as unknown as ScanLimits;
+    if (BigInt(limits.pageBytes) < 1n || BigInt(limits.pageBytes) > PAGE_BYTES_MAX) no();
     const sourcePath = Array.isArray(raw.sourcePath) ? raw.sourcePath.map(text) : no();
     const attempt = option(raw.attempt, text);
     const budgetDigest = option(raw.budgetDigest, digest), budgetIssuedAttempt = option(raw.budgetIssuedAttempt, text);
@@ -127,12 +146,21 @@ export function scanReceiptOf(value: StoredValue | undefined): ScanReceipt | und
     if (budgetPrevious !== undefined && !durable) no();
     if (budgetPrevious === undefined && (authorizedWork !== "0" || workGrant !== "0")) no();
     if (BigInt(workGrant) > BigInt(authorizedWork)) no();
+    const positionUnit = oneOf(raw.positionUnit, ["bytes", "records"] as const);
+    const inputChargeUnit = oneOf(raw.inputChargeUnit, ["raw_bytes", "logical_charge"] as const);
+    const inputCharge = int(raw.inputCharge), inputRecords = int(raw.inputRecords);
+    const malformed = oneOf(raw.malformed, ["strict", "forensic"] as const);
+    const rejectedRecords = int(raw.rejectedRecords), rejectedInputBytes = int(raw.rejectedInputBytes);
+    // Skipping laws: strict never skips; forensic frames original bytes and keeps a durable attempt;
+    // skipped frames are part of the input counts, and each one spans at least one original byte.
+    if (malformed === "strict" && (rejectedRecords !== "0" || rejectedInputBytes !== "0")) no();
+    if (malformed === "forensic" && (positionUnit !== "bytes" || inputChargeUnit !== "raw_bytes" || !durable)) no();
+    if (BigInt(rejectedRecords) > BigInt(inputRecords) || BigInt(rejectedInputBytes) > BigInt(inputCharge)) no();
+    if ((rejectedRecords === "0") !== (rejectedInputBytes === "0") || BigInt(rejectedInputBytes) < BigInt(rejectedRecords)) no();
     return {
       status: oneOf(raw.status, ["complete", "stopped", "cancelled"] as const),
       position: int(raw.position), readPosition: int(raw.readPosition), extent: int(raw.extent),
-      positionUnit: oneOf(raw.positionUnit, ["bytes", "records"] as const),
-      inputChargeUnit: oneOf(raw.inputChargeUnit, ["raw_bytes", "logical_charge"] as const),
-      inputCharge: int(raw.inputCharge), inputRecords: int(raw.inputRecords),
+      positionUnit, inputChargeUnit, inputCharge, inputRecords, malformed, rejectedRecords, rejectedInputBytes,
       outputCharge: int(raw.outputCharge), outputRecords: int(raw.outputRecords),
       work: int(raw.work), measuredWork: int(raw.measuredWork), workAllowance: int(raw.workAllowance),
       outstandingWork: option(raw.outstandingWork, int),
@@ -166,11 +194,35 @@ const n = (digits: string) => ink(grouped(digits));
 /** An exact count the engine may not have: its none is said as none, never as zero. */
 const optional = (digits: string | undefined) => digits === undefined ? ink("none") : n(digits);
 
-/** One line: what the run ended as, and how far it got. For a disclosure's own summary. */
+const counted = (digits: string, one: string, many: string) => `${grouped(digits)} ${digits === "1" ? one : many}`;
+
+/**
+ * One line: what the run ended as, any skipped records, and how far it got. For a disclosure's own
+ * summary, which clips at narrow widths: the skipped count comes before the position so it survives.
+ * The status stays the engine's own; skipping never turns `complete` into a failure, nor is it hidden.
+ */
 export function receiptHeadline(receipt: ScanReceipt): Segment[] {
+  const skipped = receipt.rejectedRecords !== "0";
   return [
     dim("analysis receipt"), SEP, ink(receipt.status, receipt.status === "complete" ? "mono-ok" : "mono-warn"), SEP,
+    ...(skipped ? [ink(`${counted(receipt.rejectedRecords, "record", "records")} skipped`, "mono-warn"),
+      dim(`, ${counted(receipt.rejectedInputBytes, "original raw byte", "original raw bytes")}`), SEP] : []),
     dim("committed through "), n(receipt.position), dim(` of ${grouped(receipt.extent)} ${receipt.positionUnit}`),
+  ];
+}
+
+/**
+ * How malformed frames were handled. Skipped counts are shown as parts of the input counts, never
+ * subtracted into an interpreted count: lossy-decoded accepted frames are not complete data either.
+ */
+function malformedRows(receipt: ScanReceipt): Segment[][] {
+  if (receipt.malformed === "strict") return [[dim("malformed input "), ink("strict"), dim(" · a malformed frame stops the analysis")]];
+  if (receipt.rejectedRecords === "0") return [[dim("malformed input "), ink("forensic"), SEP, ink("none skipped")]];
+  return [
+    [dim("malformed input "), ink("forensic"), SEP, ink(grouped(receipt.rejectedRecords), "mono-warn"), dim(" of "),
+      n(receipt.inputRecords), dim(" input records skipped"), SEP, ink(grouped(receipt.rejectedInputBytes), "mono-warn"), dim(" of "),
+      n(receipt.inputCharge), dim(" input raw bytes")],
+    [dim("skipped records were not interpreted · their evidence counts in output charge, not in outputs")],
   ];
 }
 
@@ -190,6 +242,7 @@ export function receiptRows(receipt: ScanReceipt): Segment[][] {
     ...(pending ? [dim(" · read, not committed")] : [])]);
   rows.push([n(receipt.inputRecords), dim(" records in"), SEP, dim(receipt.inputChargeUnit === "raw_bytes" ? "input raw bytes " : "input logical charge "),
     n(receipt.inputCharge), SEP, n(receipt.outputRecords), dim(" outputs"), SEP, dim("output logical charge "), n(receipt.outputCharge)]);
+  rows.push(...malformedRows(receipt));
   rows.push([dim("work charged "), n(receipt.work), SEP, dim("measured "), n(receipt.measuredWork), SEP,
     dim("prepaid reservation "), optional(receipt.outstandingWork)]);
   // Once a continuation has authorized work explicitly, the allowance is no longer all input-earned.
@@ -213,8 +266,9 @@ export function receiptRows(receipt: ScanReceipt): Segment[][] {
       ...(message.length > MESSAGE_CHARS ? [dim(" (shortened here; the whole text is in the value)")] : [])]);
   }
   if (receipt.exhausted !== undefined) rows.push([dim("limit reached "), ink(dimensionWords(receipt.exhausted), "mono-warn")]);
+  // The frame that stopped the analysis: not one of the skipped records counted above.
   if (receipt.rejectedStart !== undefined || receipt.rejectedEnd !== undefined) {
-    rows.push([dim("rejected original bytes "), ink(receipt.rejectedStart === undefined ? "?" : grouped(receipt.rejectedStart)),
+    rows.push([dim("refused frame · original bytes "), ink(receipt.rejectedStart === undefined ? "?" : grouped(receipt.rejectedStart)),
       dim("–"), ink(receipt.rejectedEnd === undefined ? "?" : grouped(receipt.rejectedEnd)), dim(" (half-open)")]);
   }
   rows.push([dim("analysis "), ink(receipt.analysisId, "mono-ref")]);
@@ -239,6 +293,10 @@ export function receiptRows(receipt: ScanReceipt): Segment[][] {
     dim("output "), n(l.outputRecords), dim(" records, "), n(l.outputCharge), dim(" charge")]);
   rows.push([dim("per record · work "), n(l.recordWork), SEP, dim("charge "), n(l.recordCharge), SEP,
     dim("state "), n(l.stateCharge), SEP, dim("context "), n(l.contextCharge)]);
+  // A per-read ceiling on stored row payloads, kept apart from the logical charges above. It is not a
+  // disk footprint or a whole Dataset size.
+  rows.push([dim("Dataset source page · stored row payload cap "), n(l.pageBytes),
+    dim(" bytes per page read · excludes schema metadata · not a logical charge")]);
   // Whether a durable attempt exists, not whether resuming is offered: a deterministic stop keeps one.
   rows.push([dim("durable checkpoint "), ink(receipt.attempt !== undefined ? "yes" : "none")]);
   return rows;

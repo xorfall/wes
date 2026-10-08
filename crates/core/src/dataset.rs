@@ -3,6 +3,32 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+/// Independent typed trees inside one immutable Dataset manifest. This selects data,
+/// never a new descriptor, filesystem path, producer or execution authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum DatasetStream {
+    #[default]
+    Outputs = 0,
+    Coverage = 1,
+}
+impl DatasetStream {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Outputs => "outputs",
+            Self::Coverage => "coverage",
+        }
+    }
+    pub fn lookup(name: &str) -> Option<Self> {
+        match name {
+            "outputs" => Some(Self::Outputs),
+            "coverage" => Some(Self::Coverage),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, try_from = "Wire", into = "Wire")]
 pub struct DatasetRef {

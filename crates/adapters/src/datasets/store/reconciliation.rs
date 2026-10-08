@@ -207,7 +207,7 @@ impl DatasetStore {
             let current = roots
                 .get(&next.dataset)
                 .map(|r| {
-                    let manifest = self.files.read_manifest(&r.manifest)?;
+                    let manifest = self.files.read_manifest(&r.manifest, None)?;
                     descriptor(&r.manifest, &manifest)
                 })
                 .transpose()?;
@@ -259,7 +259,7 @@ impl DatasetStore {
                         .iter()
                         .find(|r| r.dataset == next.dataset)
                         .ok_or(DatasetError::StorageCorrupt)?;
-                    let manifest = self.files.read_manifest(&root.manifest)?;
+                    let manifest = self.files.read_manifest(&root.manifest, None)?;
                     if next.committed.as_ref() != Some(&descriptor(&root.manifest, &manifest)?)
                         || root.generation != manifest.generation
                         || manifest.transaction != next.transaction
@@ -273,7 +273,7 @@ impl DatasetStore {
                     }
                     if next.owner.role == DatasetWriteRole::Analysis {
                         if let Some(cp) = &manifest.checkpoint {
-                            let cp = self.files.read_checkpoint(cp, &manifest.dataset)?;
+                            let cp = self.files.read_checkpoint(cp, &manifest.dataset, None)?;
                             if cp.run != next.owner.run || cp.analysis != next.owner.lineage {
                                 return Err(DatasetError::StorageCorrupt);
                             }
@@ -466,7 +466,7 @@ impl DatasetStore {
             digest: prefix.manifest_digest().into(),
             bytes: prefix.manifest_bytes(),
         };
-        let manifest = self.files.read_manifest(&object)?;
+        let manifest = self.files.read_manifest(&object, None)?;
         if descriptor(&object, &manifest)? != *prefix {
             return Err(DatasetError::StorageCorrupt);
         }
@@ -474,7 +474,7 @@ impl DatasetStore {
             .checkpoint
             .as_ref()
             .ok_or(DatasetError::StorageCorrupt)?;
-        let cp = self.files.read_checkpoint(checkpoint, dataset)?;
+        let cp = self.files.read_checkpoint(checkpoint, dataset, None)?;
         if cp.run != selection.run && cp.analysis != selection.run {
             return Err(DatasetError::Conflict);
         }

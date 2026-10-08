@@ -7,6 +7,10 @@ use wes_core::{
     Data, Primitive, Provenance, Shape, Value,
     contracts::{ContractRegistry, ResolvedContractBundle, SnapshotLimits},
 };
+#[path = "tests/coverage.rs"]
+mod coverage;
+#[path = "tests/owned_reads.rs"]
+mod owned_reads;
 #[test]
 fn deletion_revalidates_roots_blocks_live_readers_and_preserves_other_shared_schema() {
     let tmp = home();
@@ -333,14 +337,17 @@ fn schema() -> ResolvedContractBundle {
     .unwrap()
 }
 fn create(store: &mut DatasetStore) -> Manifest {
-    let schema = schema();
+    create_with_schema(store, &schema())
+}
+fn create_with_schema(store: &mut DatasetStore, schema: &ResolvedContractBundle) -> Manifest {
     let reference = store
         .prepare()
         .unwrap()
-        .publish_schema(&schema, &FlowPolicy::default())
+        .publish_schema(schema, &FlowPolicy::default())
         .unwrap();
     Manifest {
-        version: 2,
+        coverage: None,
+        version: 3,
         store: store.store_id().into(),
         dataset: uuid::Uuid::new_v4().to_string(),
         kind: DatasetKind::Analysis,
@@ -352,6 +359,7 @@ fn create(store: &mut DatasetStore) -> Manifest {
         schema_digest: schema.digest().into(),
         index: None,
         summary: IndexSummary {
+            coverage: None,
             first: 0,
             end: 0,
             segment_bytes: 0,
@@ -378,6 +386,134 @@ fn create(store: &mut DatasetStore) -> Manifest {
         dataset_reads: vec![],
     }
 }
+#[test]
+fn stored_payload_caps_read_writable_metadata_rows_at_byte_and_node_boundaries() {
+    for (name, declaration) in [
+        (
+            "BytesEdge",
+            "types: {BytesEdge: {base: Text, minLength: 0}}",
+        ),
+        (
+            "NodesEdge",
+            "types: {NodesEdge: {base: Int, min: 0, max: 10}}",
+        ),
+    ] {
+        let tmp = home();
+        let mut limits = StoreLimits::default();
+        if name == "NodesEdge" {
+            limits.objects.segment.value.nodes = 2;
+        }
+        let format = limits.objects.segment;
+        let mut types = ContractRegistry::new();
+        types.load(declaration).unwrap();
+        let schema = ResolvedContractBundle::capture(
+            types.resolve(name).unwrap(),
+            SnapshotLimits::default(),
+        )
+        .unwrap();
+        let make = |data| Value::new(schema.root().shape(), data, Provenance::default()).unwrap();
+        let value = if name == "BytesEdge" {
+            let overhead = crate::codec::encode_value(&make(Data::Text("".into())), format.value)
+                .unwrap()
+                .len();
+            make(Data::Text(
+                "x".repeat(format.record_bytes - overhead).into(),
+            ))
+        } else {
+            make(Data::Int(1))
+        };
+        let payload_bytes = crate::codec::encode_value(&value, format.value)
+            .unwrap()
+            .len();
+        if name == "BytesEdge" {
+            assert_eq!(payload_bytes, format.record_bytes);
+        }
+        let mut store = DatasetStore::open(tmp.path(), Durability::File, limits).unwrap();
+        let mut manifest = create_with_schema(&mut store, &schema);
+        let source = SourceRange {
+            start: 0,
+            end: 2,
+            ..manifest.source.clone()
+        };
+        let records = (0..2)
+            .map(|ordinal| Record {
+                source_start: ordinal,
+                source_end: ordinal + 1,
+                value: value.clone(),
+            })
+            .collect::<Vec<_>>();
+        let header = SegmentHeader {
+            coverage: None,
+            store: store.store_id().into(),
+            dataset: manifest.dataset.clone(),
+            stream: crate::datasets::Stream::Outputs,
+            schema: schema.digest().into(),
+            first: 0,
+            count: 2,
+            source: source.clone(),
+        };
+        let segment = store
+            .prepare()
+            .unwrap()
+            .publish_segment(&header, &records, &schema, &FlowPolicy::default())
+            .unwrap();
+        let (index, summary) = store
+            .prepare()
+            .unwrap()
+            .append_index(
+                None,
+                &manifest.dataset,
+                crate::datasets::Stream::Outputs,
+                IndexEntry {
+                    summary: IndexSummary {
+                        coverage: None,
+                        first: 0,
+                        end: 2,
+                        segment_bytes: segment.bytes,
+                    },
+                    segment,
+                    source,
+                },
+                &FlowPolicy::default(),
+            )
+            .unwrap();
+        manifest.index = Some(index);
+        manifest.summary = summary;
+        store.commit(&manifest, &FlowPolicy::default()).unwrap();
+        let reference = store.descriptor(&manifest.dataset).unwrap();
+        let page_limits = PageLimits {
+            bytes: payload_bytes,
+            ..PageLimits::default()
+        };
+        let prefix = store.page(&reference, 0, 2, page_limits).unwrap();
+        assert_eq!(
+            (prefix.first, prefix.next, prefix.limited_by),
+            (0, 1, Some("bytes"))
+        );
+        assert_eq!(prefix.encoded_row_bytes, payload_bytes);
+        let hydrated = &prefix.rows[0].value;
+        assert_eq!(hydrated.data(), value.data());
+        assert!(hydrated.metadata().is_some());
+        // Re-encoding with restored schema metadata rejected this writable row.
+        let reencode = crate::codec::encode_value(
+            hydrated,
+            crate::codec::Limits {
+                bytes: payload_bytes,
+                ..format.value
+            },
+        );
+        assert!(matches!(
+            reencode,
+            Err(crate::codec::CodecError::Bytes | crate::codec::CodecError::Work)
+        ));
+        let end = store.page(&reference, prefix.next, 2, page_limits).unwrap();
+        assert_eq!((end.first, end.next, end.extent_exhausted), (1, 2, true));
+        assert_eq!(end.encoded_row_bytes, payload_bytes);
+        assert!(matches!(store.page(&reference, 0, 2, PageLimits {
+            bytes: payload_bytes - 1, ..page_limits
+        }), Err(DatasetError::RowBytes { limit }) if limit == (payload_bytes - 1) as u64));
+    }
+}
 fn next(store: &DatasetStore, previous: &Manifest) -> Manifest {
     let mut next = previous.clone();
     next.generation += 1;
@@ -396,8 +532,10 @@ fn append(store: &mut DatasetStore, manifest: &mut Manifest, count: u64) -> Obje
         ..manifest.source.clone()
     };
     let header = SegmentHeader {
+        coverage: None,
         store: store.store_id().into(),
         dataset: manifest.dataset.clone(),
+        stream: crate::datasets::Stream::Outputs,
         schema: manifest.schema_digest.clone(),
         first,
         count,
@@ -426,8 +564,10 @@ fn append(store: &mut DatasetStore, manifest: &mut Manifest, count: u64) -> Obje
         .append_index(
             manifest.index.as_ref(),
             &manifest.dataset,
+            crate::datasets::Stream::Outputs,
             IndexEntry {
                 summary: IndexSummary {
+                    coverage: None,
                     first,
                     end: first + count,
                     segment_bytes: segment.bytes,
@@ -479,6 +619,7 @@ fn copy_on_write_tree_preserves_old_generations_and_bounded_catalog_rotates() {
     append(&mut store, &mut manifest, 1);
     store.commit(&manifest, &FlowPolicy::default()).unwrap();
     let first_index = manifest.index.clone().unwrap();
+    let first_summary = manifest.summary.clone();
     for _ in 0..63 {
         manifest = next(&store, &manifest);
         append(&mut store, &mut manifest, 1);
@@ -488,7 +629,16 @@ fn copy_on_write_tree_preserves_old_generations_and_bounded_catalog_rotates() {
     for ordinal in 0..64 {
         let entry = store
             .objects()
-            .locate(manifest.index.as_ref().unwrap(), &manifest.dataset, ordinal)
+            .range(
+                manifest.index.as_ref().unwrap(),
+                &manifest.dataset,
+                crate::datasets::Stream::Outputs,
+                &manifest.summary,
+                ordinal,
+                None,
+            )
+            .unwrap()
+            .next_entry()
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -499,7 +649,16 @@ fn copy_on_write_tree_preserves_old_generations_and_bounded_catalog_rotates() {
     assert!(
         store
             .objects()
-            .locate(&first_index, &manifest.dataset, 1)
+            .range(
+                &first_index,
+                &manifest.dataset,
+                crate::datasets::Stream::Outputs,
+                &first_summary,
+                1,
+                None
+            )
+            .unwrap()
+            .next_entry()
             .unwrap()
             .is_none()
     );
@@ -696,6 +855,7 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
     let mut totals = wes_engine::scan::Settings::capture().totals();
     totals.work = 1000;
     Checkpoint {
+        coverage: None,
         stop: None,
         budget: wes_engine::storage::datasets::AnalysisBudget::initial(
             analysis.clone(),
@@ -711,7 +871,7 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
                 0
             },
         },
-        version: 3,
+        version: 4,
         followed_source: None,
         store: store.store_id().into(),
         dataset: manifest.dataset.clone(),
@@ -866,7 +1026,11 @@ fn zero_output_progress_and_work_grants_share_the_catalog_root_and_survive_reope
     let (_, restored) = store.root(&manifest.dataset).unwrap().unwrap();
     let recovered = store
         .objects()
-        .read_checkpoint(restored.checkpoint.as_ref().unwrap(), &manifest.dataset)
+        .read_checkpoint(
+            restored.checkpoint.as_ref().unwrap(),
+            &manifest.dataset,
+            None,
+        )
         .unwrap();
     assert_eq!(
         (
@@ -1086,9 +1250,10 @@ fn pages_seek_original_ordinals_hold_exact_generations_and_report_each_budget_bo
         (one_segment.next, one_segment.limited_by),
         (4, Some("segments"))
     );
-    let encoded = crate::codec::encode_value(&page.rows[0].value, crate::codec::Limits::default())
+    let encoded = store
+        .page(&current, 2, 1, PageLimits::default())
         .unwrap()
-        .len();
+        .encoded_row_bytes;
     let small = store
         .page(
             &current,
@@ -1111,7 +1276,7 @@ fn pages_seek_original_ordinals_hold_exact_generations_and_report_each_budget_bo
                 ..PageLimits::default()
             }
         ),
-        Err(DatasetError::Limit("single page row"))
+        Err(DatasetError::RowBytes { .. })
     ));
     let empty = store.page(&current, 8, 1, PageLimits::default()).unwrap();
     assert!(empty.extent_exhausted);
@@ -2055,6 +2220,7 @@ fn analysis_reconciliation_preserves_lineage_after_an_admitted_resume_has_no_che
     resume.duration.outstanding_ms = 0;
     let middle = store
         .append_owned(wes_engine::storage::datasets::DatasetAppend {
+            coverage: Vec::new(),
             owner: Some(DatasetWriteOwner {
                 role: DatasetWriteRole::Analysis,
                 run: resume.run.clone(),
@@ -2437,6 +2603,7 @@ fn admitted_recording_segment_failure_still_persists_its_incomplete_terminal_rea
     };
     let admission = store
         .create_owned(DatasetCreate {
+            coverage: None,
             owner: Some(owner.clone()),
             dataset: dataset.clone(),
             transaction: uuid::Uuid::new_v4().to_string(),
@@ -2455,6 +2622,7 @@ fn admitted_recording_segment_failure_still_persists_its_incomplete_terminal_rea
     let transaction = uuid::Uuid::new_v4().to_string();
     let error = store
         .append_owned(DatasetAppend {
+            coverage: Vec::new(),
             owner: Some(owner.clone()),
             previous: prefix.clone(),
             transaction: transaction.clone(),
@@ -2488,6 +2656,7 @@ fn admitted_recording_segment_failure_still_persists_its_incomplete_terminal_rea
     coverage.termination = Some(RecordingEnd::WriteFailed);
     let closed = store
         .append_owned(DatasetAppend {
+            coverage: Vec::new(),
             owner: Some(owner.clone()),
             previous: prefix,
             transaction: uuid::Uuid::new_v4().to_string(),
@@ -2608,6 +2777,7 @@ fn reference_root_capacity_refuses_recording_before_creating_admission_or_payloa
         let dataset = uuid::Uuid::new_v4().to_string();
         let run = uuid::Uuid::new_v4().to_string();
         let request = DatasetCreate {
+            coverage: None,
             owner: Some(DatasetWriteOwner {
                 role: DatasetWriteRole::Recording,
                 run: run.clone(),
@@ -3224,4 +3394,332 @@ fn retention_preview_counts_a_shared_schema_once_and_keeps_withdrawal_separate_f
         ),
         "never return a partial footprint after a bounded walk refuses"
     );
+}
+
+#[test]
+fn shared_index_walk_validates_edges_and_bounds_before_inventory_or_cached_proofs() {
+    let tmp = home();
+    let mut limits = StoreLimits::default();
+    limits.objects.index.fanout = 2;
+    let mut store = DatasetStore::open(tmp.path(), Durability::File, limits).unwrap();
+    let mut manifest = create(&mut store);
+    for _ in 0..6 {
+        append(&mut store, &mut manifest, 1);
+    }
+    let mut objects = BTreeSet::new();
+    let mut segments = 0;
+    let mut work = 128;
+    walk_index(
+        &store.files,
+        &manifest.dataset,
+        crate::datasets::Stream::Outputs,
+        manifest.index.as_ref(),
+        &manifest.summary,
+        &manifest.source,
+        128,
+        &mut work,
+        |event| {
+            let reference = match event {
+                IndexVisit::Node(reference) => reference,
+                IndexVisit::Segment(entry) => {
+                    segments += 1;
+                    &entry.segment
+                }
+            };
+            assert!(objects.insert(reference.id.clone()));
+            Ok(Visit::Descend)
+        },
+    )
+    .unwrap();
+    assert_eq!(segments, 6);
+    assert_eq!(128 - work, objects.len());
+    assert!(objects.len() > segments + 1, "exercise several levels");
+    for budget in [0, objects.len() - 1] {
+        let mut work = budget;
+        assert!(matches!(
+            walk_index(
+                &store.files,
+                &manifest.dataset,
+                crate::datasets::Stream::Outputs,
+                manifest.index.as_ref(),
+                &manifest.summary,
+                &manifest.source,
+                128,
+                &mut work,
+                |_| Ok(Visit::Descend)
+            ),
+            Err(DatasetError::Limit(_))
+        ));
+    }
+    let mut work = 128;
+    assert!(matches!(
+        walk_index(
+            &store.files,
+            &manifest.dataset,
+            crate::datasets::Stream::Outputs,
+            manifest.index.as_ref(),
+            &manifest.summary,
+            &manifest.source,
+            objects.len() - 1,
+            &mut work,
+            |_| Ok(Visit::Descend)
+        ),
+        Err(DatasetError::Limit(_))
+    ));
+    let mut wrong = manifest.summary.clone();
+    wrong.end += 1;
+    let mut events = 0;
+    assert!(matches!(
+        walk_index(
+            &store.files,
+            &manifest.dataset,
+            crate::datasets::Stream::Outputs,
+            manifest.index.as_ref(),
+            &wrong,
+            &manifest.source,
+            128,
+            &mut work,
+            |_| {
+                events += 1;
+                Ok(Visit::Skip)
+            }
+        ),
+        Err(DatasetError::StorageCorrupt)
+    ));
+    assert_eq!(events, 0, "cached proofs do not suppress edge validation");
+    let mut work = 1;
+    walk_index(
+        &store.files,
+        &manifest.dataset,
+        crate::datasets::Stream::Outputs,
+        manifest.index.as_ref(),
+        &manifest.summary,
+        &manifest.source,
+        128,
+        &mut work,
+        |event| {
+            assert!(matches!(event, IndexVisit::Node(_)));
+            Ok(Visit::Skip)
+        },
+    )
+    .unwrap();
+    assert_eq!(work, 0);
+    let mut foreign = manifest.source.clone();
+    foreign.identity = "different-captured-input".into();
+    let mut work = 128;
+    assert!(matches!(
+        walk_index(
+            &store.files,
+            &manifest.dataset,
+            crate::datasets::Stream::Outputs,
+            manifest.index.as_ref(),
+            &manifest.summary,
+            &foreign,
+            128,
+            &mut work,
+            |_| Ok(Visit::Descend)
+        ),
+        Err(DatasetError::StorageCorrupt)
+    ));
+    // A codec-valid parent can still lie about a child's height.
+    let mut single = create(&mut store);
+    append(&mut store, &mut single, 1);
+    let parent = crate::datasets::IndexNode {
+        version: 3,
+        store: store.store_id().into(),
+        dataset: single.dataset.clone(),
+        stream: crate::datasets::Stream::Outputs,
+        height: 2,
+        summary: single.summary.clone(),
+        entries: Entries::Branch {
+            children: vec![crate::datasets::IndexBranch {
+                summary: single.summary.clone(),
+                node: single.index.clone().unwrap(),
+            }],
+        },
+    };
+    let reference = store
+        .files
+        .publish_index(&parent, &FlowPolicy::default())
+        .unwrap();
+    let mut work = 128;
+    assert!(matches!(
+        walk_index(
+            &store.files,
+            &single.dataset,
+            crate::datasets::Stream::Outputs,
+            Some(&reference),
+            &single.summary,
+            &single.source,
+            128,
+            &mut work,
+            |_| Ok(Visit::Descend)
+        ),
+        Err(DatasetError::StorageCorrupt)
+    ));
+}
+
+#[test]
+fn shared_index_walk_propagates_inventory_failure_and_refuses_missing_nonempty_roots() {
+    let tmp = home();
+    let mut store =
+        DatasetStore::open(tmp.path(), Durability::File, StoreLimits::default()).unwrap();
+    let mut manifest = create(&mut store);
+    append(&mut store, &mut manifest, 1);
+    let mut work = 128;
+    assert!(matches!(
+        walk_index(
+            &store.files,
+            &manifest.dataset,
+            crate::datasets::Stream::Outputs,
+            manifest.index.as_ref(),
+            &manifest.summary,
+            &manifest.source,
+            128,
+            &mut work,
+            |event| match event {
+                IndexVisit::Node(_) => Ok(Visit::Descend),
+                IndexVisit::Segment(_) => Err(DatasetError::Withdrawn),
+            }
+        ),
+        Err(DatasetError::Withdrawn)
+    ));
+    assert!(matches!(
+        walk_index(
+            &store.files,
+            &manifest.dataset,
+            crate::datasets::Stream::Outputs,
+            None,
+            &manifest.summary,
+            &manifest.source,
+            128,
+            &mut work,
+            |_| Ok(Visit::Descend)
+        ),
+        Err(DatasetError::StorageCorrupt)
+    ));
+}
+
+#[test]
+fn tagged_index_rejects_a_foreign_stream_before_cached_proof_or_inventory_admission() {
+    use crate::datasets::Stream;
+    let tmp = home();
+    let mut store =
+        DatasetStore::open(tmp.path(), Durability::File, StoreLimits::default()).unwrap();
+    let mut manifest = create(&mut store);
+    let segment = append(&mut store, &mut manifest, 1);
+    let root = manifest.index.clone().unwrap();
+    assert!(
+        store
+            .files
+            .read_index(&root, &manifest.dataset, Stream::Coverage, None)
+            .is_err()
+    );
+    assert!(
+        store
+            .files
+            .read_segment(
+                &segment,
+                &manifest.dataset,
+                Stream::Coverage,
+                &schema(),
+                None
+            )
+            .is_err()
+    );
+    let mut calls = 0;
+    let mut work = 128;
+    assert!(
+        walk_index(
+            &store.files,
+            &manifest.dataset,
+            Stream::Coverage,
+            Some(&root),
+            &manifest.summary,
+            &manifest.source,
+            128,
+            &mut work,
+            |_| {
+                calls += 1;
+                Ok(Visit::Skip)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(calls, 0);
+    let mut node = store
+        .files
+        .read_index(&root, &manifest.dataset, Stream::Outputs, None)
+        .unwrap();
+    node.stream = Stream::Coverage;
+    let Entries::Leaf { entries } = &mut node.entries else {
+        panic!("leaf");
+    };
+    entries[0].summary.coverage = Some(wes_engine::storage::datasets::CoverageSpan {
+        first_ordinal: 0,
+        last_ordinal: 0,
+        from: 0,
+        through: 1,
+        input_bytes: 1,
+    });
+    node.refresh_summary().unwrap();
+    let coverage = store
+        .files
+        .publish_index(&node, &FlowPolicy::default())
+        .unwrap();
+    assert!(
+        store
+            .files
+            .range(
+                &coverage,
+                &manifest.dataset,
+                Stream::Outputs,
+                &node.summary,
+                0,
+                None
+            )
+            .unwrap()
+            .next_entry()
+            .is_err()
+    );
+    assert!(
+        store
+            .files
+            .range(
+                &coverage,
+                &manifest.dataset,
+                Stream::Coverage,
+                &node.summary,
+                0,
+                None
+            )
+            .unwrap()
+            .next_entry()
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .files
+            .append_index(
+                Some(&coverage),
+                &manifest.dataset,
+                Stream::Outputs,
+                IndexEntry {
+                    summary: IndexSummary {
+                        coverage: None,
+                        first: 1,
+                        end: 2,
+                        segment_bytes: segment.bytes
+                    },
+                    segment,
+                    source: manifest.source.clone()
+                },
+                &FlowPolicy::default()
+            )
+            .is_err()
+    );
+    let mut missing = serde_json::to_value(&node).unwrap();
+    missing.as_object_mut().unwrap().remove("stream");
+    assert!(serde_json::from_value::<crate::datasets::IndexNode>(missing).is_err());
 }

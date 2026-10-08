@@ -504,11 +504,23 @@ impl MetaCommand {
             Self::DatasetPage | Self::DatasetInspect => {
                 spec.summary = "Read an exact committed Dataset prefix without running its producer or analysis";
                 spec.operands = Arity::bounded(1, 1);
+                let mut registry = wes_core::contracts::ContractRegistry::new();
+                registry
+                    .load("types: {DatasetStream: {base: Text, enum: [outputs, coverage]}}")
+                    .expect("native dataset streams");
+                spec.parameters.push(
+                    Parameter::new("stream", Shape::Primitive(Primitive::Text), false)
+                        .constrained_by(
+                            &registry
+                                .resolve("DatasetStream")
+                                .expect("native dataset stream choice"),
+                        ),
+                );
                 if self == Self::DatasetPage {
-                    spec.parameters = vec![
+                    spec.parameters.extend([
                         text("from", false),
                         Parameter::new("limit", Shape::Primitive(Primitive::Int), false),
-                    ];
+                    ]);
                 }
                 spec.produces_value = true;
             }

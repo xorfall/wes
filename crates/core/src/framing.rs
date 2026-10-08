@@ -12,11 +12,27 @@ pub enum Decoding {
     StrictUtf8,
     LossyUtf8,
 }
+/// Recovery is separate from decoding. A rejected frame is never a decoded record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Malformed {
+    Strict {},
+    Forensic { excerpt_bytes: usize },
+}
+impl Malformed {
+    pub fn excerpt_bytes(self) -> usize {
+        match self {
+            Self::Strict {} => 0,
+            Self::Forensic { excerpt_bytes } => excerpt_bytes,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
     pub delimiter: Delimiter,
     pub decoding: Decoding,
+    pub malformed: Malformed,
     pub raw_bytes: usize,
     pub decoded_bytes: usize,
     pub spans: usize,
@@ -26,6 +42,10 @@ impl Profile {
         (1..=1024 * 1024).contains(&self.raw_bytes)
             && (1..=4 * 1024 * 1024).contains(&self.decoded_bytes)
             && (1..=65_536).contains(&self.spans)
+            && match self.malformed {
+                Malformed::Strict {} => true,
+                Malformed::Forensic { excerpt_bytes } => (1..=4096).contains(&excerpt_bytes),
+            }
             && match &self.delimiter {
                 Delimiter::Lines => true,
                 Delimiter::Literal(bytes) => (1..=4096).contains(&bytes.len()),
@@ -49,6 +69,47 @@ pub struct Record {
     pub lossy: bool,
     pub unterminated: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RejectionReason {
+    RawLimit,
+    InvalidUtf8,
+    DecodedLimit,
+    SpanLimit,
+}
+impl RejectionReason {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::RawLimit => "raw_limit",
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::DecodedLimit => "decoded_limit",
+            Self::SpanLimit => "span_limit",
+        }
+    }
+}
+/// Original content and delimiter ranges, with a bounded original-byte head.
+/// The excerpt does not stand in for the complete raw artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rejection {
+    pub ordinal: u64,
+    pub source: ByteSpan,
+    pub delimiter: ByteSpan,
+    pub unterminated: bool,
+    pub reason: RejectionReason,
+    pub reason_span: ByteSpan,
+    pub excerpt: Vec<u8>,
+    pub excerpt_truncated: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Frame {
+    Record(Record),
+    Rejected(Rejection),
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct FramePull {
+    pub consumed: usize,
+    pub frame: Option<Frame>,
+    pub paused: bool,
+}
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<E> {
     InvalidProfile,
@@ -71,6 +132,9 @@ pub struct Framer {
     position: u64,
     ordinal: u64,
     closed: bool,
+    /// Overflow retains only the excerpt; delimiter matching still examines every byte.
+    skipping: Option<Vec<u8>>,
+    previous_byte: Option<u8>,
 }
 impl Framer {
     pub fn profile(&self) -> &Profile {
@@ -106,6 +170,8 @@ impl Framer {
             position: 0,
             ordinal: 0,
             closed: false,
+            skipping: None,
+            previous_byte: None,
         })
     }
     pub fn position(&self) -> u64 {
@@ -120,7 +186,7 @@ impl Framer {
         Ok(framer)
     }
     pub fn buffered_bytes(&self) -> usize {
-        self.pending.len()
+        self.pending.len() + self.skipping.as_ref().map_or(0, Vec::len)
     }
     /// Caller admits the bounded block's work/memory before calling. A failed emitter
     /// closes this cursor; it cannot retry a partly consumed block or duplicate output.
@@ -129,11 +195,25 @@ impl Framer {
         bytes: &[u8],
         mut emit: impl FnMut(Record) -> Result<(), E>,
     ) -> Result<(), Error<E>> {
+        if !matches!(self.profile.malformed, Malformed::Strict {}) {
+            return Err(Error::InvalidProfile);
+        }
+        self.push_frames(bytes, |frame| match frame {
+            Frame::Record(row) => emit(row),
+            Frame::Rejected(_) => unreachable!("strict framing cannot reject a frame"),
+        })
+    }
+    /// Frame-aware consumers must retain explicit rejection observations.
+    pub fn push_frames<E>(
+        &mut self,
+        bytes: &[u8],
+        mut emit: impl FnMut(Frame) -> Result<(), E>,
+    ) -> Result<(), Error<E>> {
         if self.closed {
             return Err(Error::Closed);
         }
         let result = self
-            .push_inner(bytes, &mut emit, false, &mut |_| Ok(()))
+            .push_inner(bytes, &mut emit, false, &mut |_| Ok(true))
             .map(|_| ());
         if result.is_err() {
             self.closed = true;
@@ -151,8 +231,38 @@ impl Framer {
     pub fn pull_admitted<E>(
         &mut self,
         bytes: &[u8],
-        mut admit: impl FnMut(usize) -> Result<(), E>,
+        admit: impl FnMut(usize) -> Result<(), E>,
     ) -> Result<(usize, Option<Record>), Error<E>> {
+        if !matches!(self.profile.malformed, Malformed::Strict {}) {
+            return Err(Error::InvalidProfile);
+        }
+        self.pull_frame_admitted(bytes, admit).map(|(n, frame)| {
+            (
+                n,
+                frame.map(|frame| match frame {
+                    Frame::Record(row) => row,
+                    Frame::Rejected(_) => unreachable!("strict framing cannot reject a frame"),
+                }),
+            )
+        })
+    }
+    /// The debit precedes each byte, including skipped bytes. A budget or emitter
+    /// refusal closes the cursor and is never converted into a malformed record.
+    pub fn pull_frame_admitted<E>(
+        &mut self,
+        bytes: &[u8],
+        mut admit: impl FnMut(usize) -> Result<(), E>,
+    ) -> Result<(usize, Option<Frame>), Error<E>> {
+        self.pull_frame_scheduled(bytes, |n| admit(n).map(|_| true))
+            .map(|pull| (pull.consumed, pull.frame))
+    }
+    /// `Ok(false)` yields before examining the next byte and keeps bounded carry alive.
+    /// It grants no progress or EOF; genuine admission errors still close the cursor.
+    pub fn pull_frame_scheduled<E>(
+        &mut self,
+        bytes: &[u8],
+        mut admit: impl FnMut(usize) -> Result<bool, E>,
+    ) -> Result<FramePull, Error<E>> {
         if self.closed {
             return Err(Error::Closed);
         }
@@ -167,7 +277,11 @@ impl Framer {
             &mut admit,
         );
         match result {
-            Ok(consumed) => Ok((consumed, record)),
+            Ok((consumed, paused)) => Ok(FramePull {
+                consumed,
+                frame: record,
+                paused,
+            }),
             Err(error) => {
                 self.closed = true;
                 Err(error)
@@ -177,17 +291,25 @@ impl Framer {
     fn push_inner<E>(
         &mut self,
         bytes: &[u8],
-        emit: &mut impl FnMut(Record) -> Result<(), E>,
+        emit: &mut impl FnMut(Frame) -> Result<(), E>,
         stop_after_record: bool,
-        admit: &mut impl FnMut(usize) -> Result<(), E>,
-    ) -> Result<usize, Error<E>> {
+        admit: &mut impl FnMut(usize) -> Result<bool, E>,
+    ) -> Result<(usize, bool), Error<E>> {
         for (i, &byte) in bytes.iter().enumerate() {
-            admit(1).map_err(Error::Admission)?;
+            if !admit(1).map_err(Error::Admission)? {
+                return Ok((i, true));
+            }
             self.position = self
                 .position
                 .checked_add(1)
                 .ok_or(Error::PositionExhausted)?;
-            self.pending.push(byte);
+            if let Some(head) = &mut self.skipping {
+                if head.len() < self.profile.malformed.excerpt_bytes() {
+                    head.push(byte);
+                }
+            } else {
+                self.pending.push(byte);
+            }
             while self.matched > 0 && byte != self.delimiter[self.matched] {
                 self.matched = self.prefixes[self.matched - 1];
             }
@@ -196,27 +318,36 @@ impl Framer {
             }
             if self.matched == self.delimiter.len() {
                 let mut delimiter_bytes = self.delimiter.len();
-                if self.profile.delimiter == Delimiter::Lines
-                    && self.pending.len() > 1
-                    && self.pending[self.pending.len() - 2] == b'\r'
-                {
+                if self.profile.delimiter == Delimiter::Lines && self.previous_byte == Some(b'\r') {
                     delimiter_bytes += 1;
                 }
                 self.emit(delimiter_bytes, false, emit)?;
                 self.matched = 0;
+                self.previous_byte = None;
                 if stop_after_record {
-                    return Ok(i + 1);
+                    return Ok((i + 1, false));
                 }
             } else {
                 // A possible delimiter prefix is bounded carry, not yet confirmed content.
                 let possible_cr =
                     usize::from(self.profile.delimiter == Delimiter::Lines && byte == b'\r');
-                if self.pending.len() - self.matched - possible_cr > self.profile.raw_bytes {
-                    return Err(Error::RawLimit(self.pending_span()));
+                if self.skipping.is_none()
+                    && self.pending.len() - self.matched - possible_cr > self.profile.raw_bytes
+                {
+                    match self.profile.malformed {
+                        Malformed::Strict {} => return Err(Error::RawLimit(self.pending_span())),
+                        Malformed::Forensic { excerpt_bytes } => {
+                            let head =
+                                self.pending[..self.pending.len().min(excerpt_bytes)].to_vec();
+                            self.pending = Vec::new();
+                            self.skipping = Some(head);
+                        }
+                    }
                 }
+                self.previous_byte = Some(byte);
             }
         }
-        Ok(bytes.len())
+        Ok((bytes.len(), false))
     }
     /// Only call for an explicit clean extent end. Empty input and a trailing
     /// delimiter add no synthetic record. The final unterminated record is explicit.
@@ -224,11 +355,25 @@ impl Framer {
         &mut self,
         mut emit: impl FnMut(Record) -> Result<(), E>,
     ) -> Result<(), Error<E>> {
+        if !matches!(self.profile.malformed, Malformed::Strict {}) {
+            return Err(Error::InvalidProfile);
+        }
+        self.finish_frames(|frame| match frame {
+            Frame::Record(row) => emit(row),
+            Frame::Rejected(_) => unreachable!("strict framing cannot reject a frame"),
+        })
+    }
+    /// Only an explicit clean extent end can complete a pending frame or rejection.
+    /// Dropping this framer or closing after failed admission invents no final frame.
+    pub fn finish_frames<E>(
+        &mut self,
+        mut emit: impl FnMut(Frame) -> Result<(), E>,
+    ) -> Result<(), Error<E>> {
         if self.closed {
             return Err(Error::Closed);
         }
         self.closed = true;
-        if self.pending.is_empty() {
+        if self.start == self.position {
             Ok(())
         } else {
             self.emit(0, true, &mut emit)
@@ -244,40 +389,99 @@ impl Framer {
         &mut self,
         delimiter_bytes: usize,
         unterminated: bool,
-        emit: &mut impl FnMut(Record) -> Result<(), E>,
+        emit: &mut impl FnMut(Frame) -> Result<(), E>,
     ) -> Result<(), Error<E>> {
-        let content = self.pending.len() - delimiter_bytes;
         let end = self.position - delimiter_bytes as u64;
         let span = ByteSpan {
             start: self.start,
             end,
         };
-        if content > self.profile.raw_bytes {
-            return Err(Error::RawLimit(span));
-        }
-        let mut raw = std::mem::take(&mut self.pending);
-        raw.truncate(content);
-        let (text, spans, lossy) = decode(&raw, &self.profile, span)?;
-        emit(Record {
-            ordinal: self.ordinal,
-            source: span,
-            delimiter: ByteSpan {
-                start: end,
-                end: self.position,
-            },
-            raw,
-            text,
-            spans,
-            lossy,
-            unterminated,
-        })
-        .map_err(Error::Admission)?;
-        self.ordinal = self
+        let delimiter = ByteSpan {
+            start: end,
+            end: self.position,
+        };
+        let next_ordinal = self
             .ordinal
             .checked_add(1)
             .ok_or(Error::PositionExhausted)?;
+        let frame = if let Some(head) = self.skipping.take() {
+            self.rejection(
+                head,
+                span,
+                delimiter,
+                unterminated,
+                RejectionReason::RawLimit,
+                span,
+            )
+        } else {
+            let content = self.pending.len() - delimiter_bytes;
+            let mut raw = std::mem::take(&mut self.pending);
+            raw.truncate(content);
+            let decoded = if content > self.profile.raw_bytes {
+                Err(Error::RawLimit(span))
+            } else {
+                decode(&raw, &self.profile, span)
+            };
+            match decoded {
+                Ok((text, spans, lossy)) => Frame::Record(Record {
+                    ordinal: self.ordinal,
+                    source: span,
+                    delimiter,
+                    raw,
+                    text,
+                    spans,
+                    lossy,
+                    unterminated,
+                }),
+                Err(error) => {
+                    if matches!(self.profile.malformed, Malformed::Strict {}) {
+                        return Err(error);
+                    }
+                    let (reason, reason_span) = match error {
+                        Error::RawLimit(at) => (RejectionReason::RawLimit, at),
+                        Error::InvalidUtf8(at) => (RejectionReason::InvalidUtf8, at),
+                        Error::DecodedLimit(at) => (RejectionReason::DecodedLimit, at),
+                        Error::SpanLimit(at) => (RejectionReason::SpanLimit, at),
+                        other => return Err(other),
+                    };
+                    self.rejection(raw, span, delimiter, unterminated, reason, reason_span)
+                }
+            }
+        };
+        emit(frame).map_err(Error::Admission)?;
+        self.ordinal = next_ordinal;
         self.start = self.position;
         Ok(())
+    }
+    fn rejection(
+        &self,
+        raw: Vec<u8>,
+        source: ByteSpan,
+        delimiter: ByteSpan,
+        unterminated: bool,
+        reason: RejectionReason,
+        reason_span: ByteSpan,
+    ) -> Frame {
+        // A short skipped record can include possible delimiter bytes in its head.
+        // Remove those once its true content extent is known. Copy the bounded head
+        // so a truncated excerpt cannot retain a whole record's allocation.
+        let length = source.end - source.start;
+        let mut head = raw.len().min(self.profile.malformed.excerpt_bytes());
+        if length < head as u64 {
+            head = length as usize;
+        }
+        let excerpt = raw[..head].to_vec();
+        let excerpt_truncated = (excerpt.len() as u64) < length;
+        Frame::Rejected(Rejection {
+            ordinal: self.ordinal,
+            source,
+            delimiter,
+            unterminated,
+            reason,
+            reason_span,
+            excerpt,
+            excerpt_truncated,
+        })
     }
 }
 

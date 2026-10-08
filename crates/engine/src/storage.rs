@@ -5,6 +5,7 @@ use uuid::Uuid;
 use wes_core::Value;
 mod analysis_attempt;
 mod analysis_budget;
+mod analysis_coverage;
 pub mod datasets;
 mod private;
 mod worker;
@@ -50,6 +51,12 @@ pub enum StoreError {
     RetentionUnavailable,
     #[error("the storage worker is unavailable")]
     Closed,
+    #[error(transparent)]
+    ReadWork(#[from] datasets::ReadWorkRefusal),
+    #[error("a dataset row exceeds its logical charge limit ({limit})")]
+    DatasetRowCharge { limit: u64 },
+    #[error("a dataset row exceeds its stored payload page-byte limit ({limit})")]
+    DatasetRowBytes { limit: u64 },
     #[error("the storage operation exceeds its {0} budget")]
     Limit(&'static str),
     #[error("a value handle must be a canonical UUID")]

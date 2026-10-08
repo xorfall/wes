@@ -83,6 +83,7 @@ fn lines() -> Profile {
     Profile {
         delimiter: Delimiter::Lines,
         decoding: Decoding::StrictUtf8,
+        malformed: wes_core::framing::Malformed::Strict {},
         raw_bytes: 65536,
         decoded_bytes: 262144,
         spans: 2048,
@@ -932,6 +933,15 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
                     .acknowledge_dataset(successor(&request.previous, count))
                     .unwrap();
             }
+            Poll::Settle => {
+                let request = runner.durable_settlement().unwrap();
+                runner
+                    .acknowledge_settlement(successor(
+                        &request.previous,
+                        request.previous.records(),
+                    ))
+                    .unwrap();
+            }
             Poll::Grant => {
                 let request = runner.durable_grant().unwrap();
                 let reference = successor(&request.previous, request.previous.records());
@@ -951,4 +961,30 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
         panic!("dataset");
     };
     assert_eq!(outputs.records(), 2);
+}
+
+#[test]
+fn forensic_frame_input_requires_a_durable_sink_before_source_work() {
+    let mut profile = lines();
+    profile.malformed = wes_core::framing::Malformed::Forensic { excerpt_bytes: 3 };
+    let completion = run(
+        input(
+            value(Data::Bytes(b"abcdef\nok\n".to_vec().into())),
+            "return {state:state+1,outputs:[item.text]};",
+            Some(profile),
+        ),
+        settings(),
+    );
+    assert_eq!(completion.progress.phase, Phase::Stopped);
+    assert_eq!(completion.progress.read_position, 0);
+    assert_eq!(completion.progress.usage.input_records, 0);
+    assert_eq!(completion.progress.coverage.unwrap().records, 0);
+    assert!(
+        completion
+            .stop
+            .unwrap()
+            .failure
+            .message
+            .contains("durable Dataset")
+    );
 }

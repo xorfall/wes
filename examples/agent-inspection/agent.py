@@ -98,6 +98,38 @@ try:
     assert captures['invocation']['returns']=='Iter<Record {match:Text, groups:List<Option<Text>>}>', captures
     assert 'full match is excluded' in captures['invocation']['behavior'], captures
     assert tool('workspace_snapshot')['total']==before
+
+    # Read a real forensic stream through the advertised MCP boundary, including
+    # a parent with zero ordinary outputs. No read creates or replays a producer.
+    source = (
+        ':package load source:"types: {SkippedStep: {base: Record, fields: {state: Int, outputs: \'List<Int>\'}}}"\n'
+        ':def skippedCount(state:Int, context:Int, item:Unknown) -> SkippedStep as :calc pure { return {state:state+1,outputs:[]}; }\n'
+        ':calc pure { const half=' + json.dumps('z' * 32768) + '; return half + half + \"z\"; } > skippedRaw\n'
+        ':scan source:$skippedRaw transition:skippedCount initial:0 context:0 '
+        'profile:LinesUtf8 sink:dataset malformed:forensic excerpt:3 > skippedAnalysis'
+    )
+    forensic = execute('forensic-analysis', source)
+    assert not any(item['severity']=='error' for item in forensic['diagnostics']) and all(node['state']=='ready' for node in forensic['nodes']), forensic
+    before_reads = tool('workspace_snapshot')['total']
+    summary = tool('dataset_inspect', {'name':'skippedAnalysis','select':'/outputs'})
+    assert summary['stream']=='outputs' and summary['reference']['records']=='0', summary
+    assert summary['coverage']['records']=='1' and summary['coverage']['inputBytes']=='65537', summary
+    coverage = tool('dataset_page', {'name':'skippedAnalysis','select':'/outputs','stream':'coverage','from':'0','limit':1})
+    assert coverage['stream']=='coverage' and coverage['reference']==summary['reference'], coverage
+    assert coverage['page']['next']=='1' and coverage['page']['extentExhausted'], coverage
+    row = coverage['page']['rows'][0]
+    assert row['ordinal']=='0' and row['value']['data']['recordOrdinal']=='0', row
+    assert row['value']['data']['reason']=='raw_limit' and row['value']['data']['excerpt']=='enp6', row
+    assert row['value']['data']['unterminated'] is True
+    outputs = tool('dataset_page', {'name':'skippedAnalysis','select':'/outputs'})
+    assert outputs['stream']=='outputs' and outputs['page']['rows']==[], outputs
+    assert 'outputs' in tool('dataset_page', {'name':'skippedAnalysis','stream':'unknown'}, error=True)
+    assert tool('workspace_snapshot')['total']==before_reads
+    clean = execute('clean-analysis', ':scan source:\"clean\" transition:skippedCount initial:0 context:0 profile:LinesUtf8 sink:dataset > cleanAnalysis')
+    assert all(node['state']=='ready' for node in clean['nodes']), clean
+    missing_stream = tool('dataset_page', {'name':'cleanAnalysis','select':'/outputs','stream':'coverage'}, error=True)
+    assert 'no rejected-frame coverage' in missing_stream and 'public typed' not in missing_stream, missing_stream
+
     assert tool('validate', {'source':':calc { const count=8; return count; }'})['valid']
     shadowing = execute('lexical-shadowing', (HERE.parent/'lexical-shadowing/program.wes').read_text())
     assert not shadowing['diagnostics'], shadowing

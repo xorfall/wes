@@ -21,7 +21,7 @@ import { StorageError, storageError } from "./storage-error";
 import { AssistantUi } from "./assistant-ui";
 import { ResultReader, ResultWithdrawnError } from "./result-reader";
 import { datasetWithdrawals } from "./surface/render/dataset-source";
-import { DatasetReadError, datasetFailure, datasetQuery, decodeDatasetHead, decodeDatasetRead, extendsReference, type DatasetPosition, type DatasetRead } from "./dataset-read";
+import { DatasetReadError, datasetFailure, datasetQuery, decodeDatasetHead, decodeDatasetRead, extendsReference, type DatasetPosition, type DatasetRead, type DatasetStream } from "./dataset-read";
 import type { DatasetReference } from "./presentation/dataset";
 import type { ViewDatasetBinding } from "./value-views/view-datasets";
 import { workspaceHeaders, workspaceName } from "./workspace-binding";
@@ -530,11 +530,12 @@ export class Engine {
    * Reads one bounded page (or, without a position, only the lifecycle) of the Dataset at `select`
    * inside the stored result `handle`, for the exact session `generation`. A busy refusal the
    * server marks retryable is retried as the same read; nothing else is. A reply that arrives after
-   * the session changed is dropped, never returned.
+   * the session changed is dropped, never returned. `stream` selects the result's own snapshot's
+   * outputs or its skipped records; the reply must be of that stream, under the same authority.
    */
-  async readDataset(handle: string, generation: string, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal): Promise<DatasetRead> {
-    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, {}, generation, datasetQuery(select, position, position ? limit : undefined),
-      raw => decodeDatasetRead(raw, expected, position ? limit : undefined), signal);
+  async readDataset(handle: string, generation: string, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal, stream: DatasetStream = "outputs"): Promise<DatasetRead> {
+    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, {}, generation, datasetQuery(select, position, position ? limit : undefined, undefined, stream),
+      raw => decodeDatasetRead(raw, expected, position ? limit : undefined, stream), signal);
   }
   /**
    * Inspects the current committed head of the Dataset at `select` inside the stored result
@@ -564,7 +565,7 @@ export class Engine {
    */
   async readViewDataset(binding: ViewDatasetBinding, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal): Promise<DatasetRead> {
     const path = `/view-datasets/${[binding.root, binding.rootInstance, binding.member].map(encodeURIComponent).join("/")}`;
-    // View reads are always the frozen input: the View route refuses head and extent reads.
+    // View reads are always the frozen input's outputs: the View route refuses head and extent reads.
     return this.datasetGet(path, { "X-Wes-View-Revision": binding.revision, "X-Wes-Input-Revision": binding.inputRevision },
       binding.generation, datasetQuery(select, position, position ? limit : undefined), raw => decodeDatasetRead(raw, expected, position ? limit : undefined), signal);
   }

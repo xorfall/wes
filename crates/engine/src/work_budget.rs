@@ -15,6 +15,19 @@ struct Counters {
     used: AtomicU64,
     prepaid: AtomicU64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkRefusal {
+    Absolute,
+    Allowance,
+    /// The attempt still has earned credit, but must acknowledge a new durable lease.
+    Prepaid,
+}
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WorkAdmissionRefusal {
+    pub reason: WorkRefusal,
+    pub used: u64,
+    pub requested: u64,
+}
 impl WorkCounter {
     pub(crate) fn earned(limit: u64, startup: u64) -> Self {
         Self {
@@ -39,20 +52,39 @@ impl WorkCounter {
             }),
         })
     }
-    pub(crate) fn charge(&self, amount: u64) -> Result<(), ()> {
-        let allowance = self
-            .counters
-            .allowance
-            .load(Ordering::Acquire)
-            .min(self.counters.prepaid.load(Ordering::Acquire));
+    pub(crate) fn charge(&self, amount: u64) -> Result<(), WorkRefusal> {
+        self.admit(amount).map_err(|refusal| refusal.reason)
+    }
+    /// Used work and its refusal snapshot share one atomic comparison. The joined
+    /// runner is the single writer of allowance/prepaid ceilings between read scopes.
+    pub(crate) fn admit(&self, amount: u64) -> Result<(), WorkAdmissionRefusal> {
+        let mut refusal = WorkAdmissionRefusal {
+            reason: WorkRefusal::Absolute,
+            used: 0,
+            requested: amount,
+        };
         self.counters
             .used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(amount).filter(|n| *n <= allowance)
+                refusal.used = used;
+                let Some(next) = used.checked_add(amount).filter(|n| *n <= self.limit) else {
+                    refusal.reason = WorkRefusal::Absolute;
+                    return None;
+                };
+                if next > self.counters.allowance.load(Ordering::Acquire) {
+                    refusal.reason = WorkRefusal::Allowance;
+                    return None;
+                }
+                if next > self.counters.prepaid.load(Ordering::Acquire) {
+                    refusal.reason = WorkRefusal::Prepaid;
+                    return None;
+                }
+                Some(next)
             })
             .map(|_| ())
-            .map_err(|_| ())
+            .map_err(|_| refusal)
     }
+
     /// Only committed input earns allowance. Releasing memory and re-reading
     /// speculative input never call this operation.
     pub(crate) fn grant(&self, amount: u64) {
@@ -102,6 +134,9 @@ mod tests {
         work.prepaid(30).unwrap();
         work.charge(30).unwrap();
         assert!(work.charge(1).is_err());
+        assert_eq!(work.charge(1), Err(WorkRefusal::Prepaid));
+        assert_eq!(work.charge(1000), Err(WorkRefusal::Absolute));
+        assert_eq!(work.used(), 30);
         work.grant(100);
         assert!(work.charge(1).is_err());
         assert_eq!(work.used(), 30);

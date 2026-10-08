@@ -197,6 +197,7 @@ pub(crate) fn read_source_excerpt(
             let page = storage.page(
                 reference,
                 PageRequest {
+                    charge: None,
                     from,
                     rows: limit.min(wes_budgets::get("dataset.page.rows") as usize),
                     bytes: BYTES.min(wes_budgets::get("dataset.page.bytes") as usize),

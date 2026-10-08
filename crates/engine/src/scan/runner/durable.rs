@@ -23,8 +23,12 @@ pub(super) struct Durable {
     pub checkpoint: AnalysisCheckpoint,
     pub grant_start_work: u64,
     pub storage_failed: bool,
+    pub settlement: Option<AnalysisCheckpoint>,
 }
-fn grant_cap(settings: Settings) -> u64 {
+fn grant_cap(
+    settings: Settings,
+    coverage: Option<&crate::storage::datasets::CoverageProgress>,
+) -> u64 {
     // One complete bounded input/invocation/validation handoff, including native framing and
     // catalog charges. An expanding earned allowance cannot turn this into an unbounded grant.
     settings
@@ -35,6 +39,11 @@ fn grant_cap(settings: Settings) -> u64 {
         .saturating_add(settings.scratch.work)
         .saturating_add((settings.block as u64).saturating_mul(64))
         .saturating_add(65536)
+        .max(coverage.map_or(0, |c| {
+            crate::storage::datasets::rejection_reservation(c.policy.excerpt_bytes as u64)
+                .unwrap_or(u64::MAX)
+                .saturating_add(4096)
+        }))
         .min(settings.limits.work)
 }
 /// A restored runner cannot be polled until its new attempt and prepaid grant are acknowledged.
@@ -65,6 +74,7 @@ impl PreparedResume {
             checkpoint: self.request.checkpoint,
             grant_start_work: baseline,
             storage_failed: false,
+            settlement: None,
         });
         Ok(self.runner)
     }
@@ -254,7 +264,14 @@ impl Runner {
                     "original analysis work allowance is exhausted; resume cannot mint work",
                 )
             })?
-            .min(grant_cap(settings));
+            .min(grant_cap(settings, checkpoint.coverage.as_ref()));
+        if remaining <= 4096 {
+            return Err(Failure::new(
+                "CAL006",
+                span,
+                "remaining original analysis work cannot cover a durable grant and further progress",
+            ));
+        }
         checkpoint.work.outstanding = remaining;
         checkpoint.work.granted = checkpoint
             .work
@@ -331,6 +348,7 @@ impl Runner {
             .source
             .restore_boundary(checkpoint.next_position, checkpoint.next_ordinal, span)?;
         runner.committed_position = checkpoint.next_position;
+        runner.coverage = checkpoint.coverage.clone();
         runner.result_contract = result_contract_for_sink(&runner.step, true, span)?;
         runner.result_metadata = ValueMetadata::capture(&runner.result_contract);
         let request = crate::storage::datasets::DatasetResume {
@@ -389,6 +407,7 @@ impl Runner {
         let attempt = uuid::Uuid::new_v4().to_string();
         let spent_ms = self.elapsed_ms();
         Ok(AnalysisCheckpoint {
+            coverage: self.coverage.clone(),
             stop: None,
             budget: crate::storage::datasets::AnalysisBudget::initial(
                 self.identity.analysis.clone(),
@@ -451,6 +470,7 @@ impl Runner {
             || checkpoint.next_position != 0
             || checkpoint.next_ordinal != 0
             || checkpoint.state.data() != self.state.data()
+            || checkpoint.coverage != self.coverage
         {
             return Err(
                 self.durable_failure("durable admission does not match its captured runner")
@@ -464,6 +484,7 @@ impl Runner {
             checkpoint,
             grant_start_work: self.ledger.usage().work,
             storage_failed: false,
+            settlement: None,
         });
         Ok(())
     }
@@ -476,6 +497,65 @@ impl Runner {
                 self.phase,
                 Phase::Complete | Phase::Stopped | Phase::Cancelled
             )
+    }
+    /// Settle only measured native work. State, ordinary outputs, rejection coverage and
+    /// input-earned credit stay at the acknowledged record boundary; RAM carry is not persisted.
+    pub fn durable_settlement(&mut self) -> Result<DatasetAppend, Failure> {
+        if !self.renewal || self.candidate.is_some() || self.invocation.is_some() {
+            return Err(self.durable_failure("scan has no native work settlement pending"));
+        }
+        if self.durable.as_ref().is_none_or(|d| d.settlement.is_none()) {
+            let checkpoint = self.settled_checkpoint(false)?;
+            self.durable
+                .as_mut()
+                .expect("durable settlement")
+                .settlement = Some(checkpoint);
+        }
+        Ok(DatasetAppend {
+            coverage: Vec::new(),
+            owner: Some(self.write_owner()),
+            previous: self
+                .dataset
+                .clone()
+                .ok_or_else(|| self.durable_failure("scan has no durable sink"))?,
+            transaction: uuid::Uuid::new_v4().to_string(),
+            rows: vec![],
+            source: self.source_extent(),
+            lifecycle: DatasetLifecycle::Open,
+            policy: self.provenance.policy().clone(),
+            checkpoint: self.durable.as_ref().and_then(|d| d.settlement.clone()),
+            recording: None,
+        })
+    }
+    pub fn acknowledge_settlement(
+        &mut self,
+        reference: wes_core::DatasetRef,
+    ) -> Result<(), Failure> {
+        if !self.renewal
+            || self.candidate.is_some()
+            || self.invocation.is_some()
+            || self.durable.as_ref().is_none_or(|d| d.settlement.is_none())
+        {
+            return Err(self.durable_failure("scan has no admitted settlement to acknowledge"));
+        }
+        let prior = self.dataset.as_ref().expect("durable sink");
+        if reference.store() != prior.store()
+            || reference.dataset() != prior.dataset()
+            || reference.schema_digest() != prior.schema_digest()
+            || reference.authorization_generation() != prior.authorization_generation()
+            || reference.generation() != prior.generation().checked_add(1).unwrap_or(0)
+            || reference.records() != prior.records()
+        {
+            return Err(self
+                .durable_failure("work settlement acknowledgement changed its committed prefix"));
+        }
+        self.dataset = Some(reference);
+        let durable = self.durable.as_mut().expect("durable owner");
+        durable.checkpoint = durable.settlement.take().expect("admitted settlement");
+        durable.grant_start_work = self.ledger.usage().work;
+        self.renewal = false;
+        self.phase = Phase::Reading;
+        Ok(())
     }
     /// Returned grant is inert until the owner confirms its catalog publication.
     pub fn durable_grant(&self) -> Result<DatasetAppend, Stop> {
@@ -503,10 +583,11 @@ impl Runner {
                 source_span: None,
             });
         }
-        let remaining = self
-            .ledger
-            .remaining_work()
-            .min(grant_cap(self.settings))
+        let absolute = self
+            .settings
+            .limits
+            .work
+            .saturating_sub(self.ledger.usage().work)
             .min(
                 checkpoint
                     .budget
@@ -514,12 +595,24 @@ impl Runner {
                     .work
                     .saturating_sub(checkpoint.work.charged),
             );
-        if remaining == 0 {
+        let remaining = grant_amount(
+            grant_cap(self.settings, checkpoint.coverage.as_ref()),
+            self.read_work_demand,
+            self.ledger.remaining_work(),
+            checkpoint
+                .budget
+                .totals
+                .work
+                .saturating_sub(checkpoint.work.charged),
+        );
+        if remaining <= 4096 || remaining < self.read_work_demand {
             return Err(refusal(
-                Refusal {
-                    dimension: Dimension::Work,
-                    limit: self.settings.limits.work,
-                },
+                grant_refusal(
+                    absolute,
+                    self.ledger.work_allowance(),
+                    self.read_work_demand,
+                    self.settings.limits.work,
+                ),
                 self.span,
             ));
         }
@@ -535,6 +628,7 @@ impl Runner {
             .checked_add(1)
             .ok_or_else(|| stop(self.durable_failure("scan grant counter overflow")))?;
         Ok(DatasetAppend {
+            coverage: Vec::new(),
             owner: Some(self.write_owner()),
             previous: self.dataset.clone().unwrap(),
             transaction: uuid::Uuid::new_v4().to_string(),
@@ -610,6 +704,7 @@ impl Runner {
             .range
             .map_or(self.committed_position, |(_, end, _)| end);
         checkpoint.next_ordinal = usage.input_records;
+        checkpoint.coverage = self.coverage_for_candidate(candidate)?;
         checkpoint.finish_applied = candidate.finishing;
         checkpoint.usage = AnalysisUsage {
             input_bytes: usage.input_bytes,
@@ -685,6 +780,7 @@ impl Runner {
             AnalysisStop::Deterministic
         });
         Ok(Some(DatasetAppend {
+            coverage: Vec::new(),
             owner: Some(self.write_owner()),
             previous: self.dataset.clone().unwrap(),
             transaction: uuid::Uuid::new_v4().to_string(),
@@ -725,7 +821,64 @@ impl Runner {
         durable.grant_start_work = self.ledger.usage().work;
         Ok(())
     }
-    fn durable_failure(&self, message: &str) -> Failure {
+    pub(super) fn durable_failure(&self, message: &str) -> Failure {
         Failure::new("CAL004", self.span, message)
+    }
+}
+
+fn grant_amount(
+    ordinary: u64,
+    read_minimum: u64,
+    earned_remaining: u64,
+    absolute_remaining: u64,
+) -> u64 {
+    // The minimum is measured at one joined read. Doubling its preferred lease avoids
+    // paying the same immutable prefix for every next physical granule. Preference
+    // confers no credit: either actual remainder may clip it down to the minimum.
+    ordinary
+        .max(read_minimum.saturating_mul(2))
+        .min(earned_remaining)
+        .min(absolute_remaining)
+}
+
+fn grant_refusal(absolute: u64, allowance: u64, demand: u64, limit: u64) -> Refusal {
+    if absolute <= 4096 || absolute < demand {
+        Refusal {
+            dimension: Dimension::Work,
+            limit,
+        }
+    } else {
+        Refusal {
+            dimension: Dimension::WorkAllowance,
+            limit: allowance,
+        }
+    }
+}
+#[cfg(test)]
+mod grant_refusal_tests {
+    use super::*;
+    #[test]
+    fn preferred_read_growth_never_refuses_an_available_minimum_or_creates_credit() {
+        assert_eq!(grant_amount(300, 0, 1000, 1000), 300);
+        assert_eq!(grant_amount(1000, 400, 2000, 2000), 1000);
+        assert_eq!(grant_amount(300, 400, 1000, 1000), 800);
+        assert_eq!(grant_amount(300, 400, 500, 1000), 500);
+        assert_eq!(grant_amount(300, 400, 1000, 400), 400);
+        assert_eq!(grant_amount(300, 400, 399, 1000), 399);
+        assert_eq!(grant_amount(300, u64::MAX, 1000, 900), 900);
+        assert_eq!(grant_amount(u64::MAX, 0, 0, 1000), 0);
+    }
+    #[test]
+    fn an_unfundable_absolute_tail_is_not_relabelled_as_earned_credit() {
+        let refusal = grant_refusal(3000, 99000, 0, 100000);
+        assert_eq!(refusal.dimension, Dimension::Work);
+        assert_eq!(refusal.limit, 100000);
+        let refusal = grant_refusal(10000, 99000, 5000, 100000);
+        assert_eq!(refusal.dimension, Dimension::WorkAllowance);
+        assert_eq!(refusal.limit, 99000);
+        assert_eq!(
+            grant_refusal(10000, 99000, 10001, 100000).dimension,
+            Dimension::Work
+        );
     }
 }

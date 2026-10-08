@@ -24,7 +24,7 @@ impl DatasetStore {
                 if objects.len() >= self.limits.objects.index.traversal_nodes {
                     return Err(DatasetError::Limit("cleanup reachability"));
                 }
-                let manifest = self.files.read_manifest(&reference)?;
+                let manifest = self.files.read_manifest(&reference, None)?;
                 if !lineage.insert(reference.id.clone())
                     || manifest.dataset != root.dataset
                     || manifest.generation != generation
@@ -81,18 +81,15 @@ impl DatasetStore {
         }
         drop(readers);
         for manifest in selected {
-            insert_object(
-                &mut objects,
-                &manifest.schema,
-                self.limits.objects.index.traversal_nodes,
-            )?;
             if let Some(checkpoint) = &manifest.checkpoint {
                 insert_object(
                     &mut objects,
                     checkpoint,
                     self.limits.objects.index.traversal_nodes,
                 )?;
-                let cp = self.files.read_checkpoint(checkpoint, &manifest.dataset)?;
+                let cp = self
+                    .files
+                    .read_checkpoint(checkpoint, &manifest.dataset, None)?;
                 for schema in [
                     &cp.state.schema,
                     &cp.context.schema,
@@ -106,38 +103,33 @@ impl DatasetStore {
                     )?;
                 }
             }
-            let mut pending = manifest.index.into_iter().collect::<Vec<_>>();
-            while let Some(reference) = pending.pop() {
-                if !insert_object(
-                    &mut objects,
-                    &reference,
-                    self.limits.objects.index.traversal_nodes,
-                )? {
-                    continue;
-                }
-                let node = self.files.read_index(&reference, &manifest.dataset)?;
-                match node.entries {
-                    Entries::Leaf { entries } => {
-                        for entry in entries {
-                            insert_object(
-                                &mut objects,
-                                &entry.segment,
-                                self.limits.objects.index.traversal_nodes,
-                            )?;
+            let limit = self.limits.objects.index.traversal_nodes;
+            let mut work = limit;
+            for stream in manifest.streams() {
+                insert_object(&mut objects, stream.schema, limit)?;
+                walk_index(
+                    &self.files,
+                    &manifest.dataset,
+                    stream.stream,
+                    stream.index,
+                    stream.summary,
+                    &manifest.source,
+                    limit,
+                    &mut work,
+                    |event| match event {
+                        IndexVisit::Node(reference) => {
+                            Ok(if insert_object(&mut objects, reference, limit)? {
+                                Visit::Descend
+                            } else {
+                                Visit::Skip
+                            })
                         }
-                    }
-                    Entries::Branch { children } => {
-                        if children
-                            .len()
-                            .saturating_add(pending.len())
-                            .saturating_add(objects.len())
-                            > self.limits.objects.index.traversal_nodes
-                        {
-                            return Err(DatasetError::Limit("cleanup index"));
+                        IndexVisit::Segment(entry) => {
+                            insert_object(&mut objects, &entry.segment, limit)?;
+                            Ok(Visit::Descend)
                         }
-                        pending.extend(children.into_iter().map(|c| c.node));
-                    }
-                }
+                    },
+                )?;
             }
         }
         self.rotate()?;
@@ -210,7 +202,7 @@ impl DatasetStore {
                 }
                 let previous = manifest.previous.ok_or(DatasetError::StorageCorrupt)?;
                 debit(&mut work, 1)?;
-                let prior = self.files.read_manifest(&previous)?;
+                let prior = self.files.read_manifest(&previous, None)?;
                 if prior.dataset != reference.dataset()
                     || prior.generation.checked_add(1) != Some(manifest.generation)
                 {
@@ -219,37 +211,38 @@ impl DatasetStore {
                 object = previous;
                 manifest = prior;
             }
-            insert_object(&mut objects, &selected.schema, limit)?;
-            let mut pending = selected.index.into_iter().collect::<Vec<_>>();
-            while let Some(node) = pending.pop() {
-                if !insert_object(&mut objects, &node, limit)? {
-                    continue;
-                }
-                debit(&mut work, 1)?;
-                let node = self.files.read_index(&node, reference.dataset())?;
-                match node.entries {
-                    Entries::Leaf { entries } => {
-                        for entry in entries {
+            for stream in selected.streams() {
+                insert_object(&mut objects, stream.schema, limit)?;
+                walk_index(
+                    &self.files,
+                    &selected.dataset,
+                    stream.stream,
+                    stream.index,
+                    stream.summary,
+                    &selected.source,
+                    limit,
+                    &mut work,
+                    |event| match event {
+                        IndexVisit::Node(reference) => {
+                            Ok(if insert_object(&mut objects, reference, limit)? {
+                                Visit::Descend
+                            } else {
+                                Visit::Skip
+                            })
+                        }
+                        IndexVisit::Segment(entry) => {
                             insert_object(&mut objects, &entry.segment, limit)?;
+                            Ok(Visit::Descend)
                         }
-                    }
-                    Entries::Branch { children } => {
-                        if children
-                            .len()
-                            .saturating_add(pending.len())
-                            .saturating_add(objects.len())
-                            > limit
-                        {
-                            return Err(DatasetError::Limit("retention index"));
-                        }
-                        pending.extend(children.into_iter().map(|c| c.node));
-                    }
-                }
+                    },
+                )?;
             }
             if let Some(checkpoint) = &selected.checkpoint {
                 insert_object(&mut objects, checkpoint, limit)?;
                 debit(&mut work, 1)?;
-                let cp = self.files.read_checkpoint(checkpoint, &selected.dataset)?;
+                let cp = self
+                    .files
+                    .read_checkpoint(checkpoint, &selected.dataset, None)?;
                 let source = CapturedValue {
                     handle: cp.bindings.source_handle.clone(),
                     digest: cp.bindings.source_digest.clone(),

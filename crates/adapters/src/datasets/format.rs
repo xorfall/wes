@@ -9,8 +9,8 @@ use wes_core::{
     contracts::{Contract, ContractKind, ResolvedContractBundle, metadata::ValueMetadata},
 };
 
-const MAGIC: &[u8; 8] = b"WESSEG02";
-const END: &[u8; 8] = b"WESEND02";
+const MAGIC: &[u8; 8] = b"WESSEG04";
+const END: &[u8; 8] = b"WESEND04";
 const FOOTER: usize = 8 + 8 + 8 + 32;
 const PREFIX: usize = 8 + 2 + 2 + 4;
 const FRAME_PREFIX: usize = 8 + 8 + 8 + 4;
@@ -62,6 +62,7 @@ pub enum PositionUnit {
     Bytes,
     Records,
 }
+pub use wes_core::DatasetStream as Stream;
 /// Positions refer to the original captured source, never display-text offsets.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,10 +77,18 @@ pub struct SourceRange {
 pub struct SegmentHeader {
     pub store: String,
     pub dataset: String,
+    pub stream: Stream,
+    pub coverage: Option<SegmentCoverage>,
     pub schema: String,
     pub first: u64,
     pub count: u64,
     pub source: SourceRange,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SegmentCoverage {
+    pub policy: wes_engine::storage::datasets::CoveragePolicy,
+    pub span: wes_engine::storage::datasets::CoverageSpan,
 }
 #[derive(Clone, Debug)]
 pub struct Record {
@@ -102,6 +111,7 @@ pub fn encode_segment(
     let mut remaining = limits.validation_work;
     inline_contract(schema.root(), &mut remaining, 0)?;
     let expected_shape = schema.root().shape();
+    let mut coverage = None;
     let mut previous = header.source.start;
     for record in records {
         validate_range(
@@ -117,11 +127,22 @@ pub fn encode_segment(
             &expected_shape,
             &mut remaining,
         )?;
+        fold_coverage(
+            &mut coverage,
+            header,
+            &record.value,
+            record.source_start,
+            record.source_end,
+            &mut remaining,
+        )?;
+    }
+    if coverage.as_ref() != header.coverage.as_ref().map(|c| &c.span) {
+        return Err(FormatError::Corrupt);
     }
     let header_bytes = bounded_json(header, limits.header_bytes)?;
     let mut bytes = Vec::new();
     append(&mut bytes, MAGIC, limits.segment_bytes)?;
-    append(&mut bytes, &2u16.to_le_bytes(), limits.segment_bytes)?;
+    append(&mut bytes, &4u16.to_le_bytes(), limits.segment_bytes)?;
     append(&mut bytes, &2u16.to_le_bytes(), limits.segment_bytes)?;
     append(
         &mut bytes,
@@ -199,6 +220,7 @@ impl<'a> SegmentReader<'a> {
         bytes: &'a [u8],
         store: &str,
         dataset: &str,
+        stream: Stream,
         schema: &ResolvedContractBundle,
         limits: FormatLimits,
     ) -> Result<Self, FormatError> {
@@ -211,7 +233,7 @@ impl<'a> SegmentReader<'a> {
         }
         let mut input = Input::new(bytes);
         input.take(8)?;
-        if input.u16()? != 2 || input.u16()? != 2 {
+        if input.u16()? != 4 || input.u16()? != 2 {
             return Err(FormatError::Version);
         }
         let header_len = input.u32()? as usize;
@@ -225,7 +247,7 @@ impl<'a> SegmentReader<'a> {
             return Err(FormatError::Corrupt);
         }
         validate_header(&header, schema, limits)?;
-        if header.store != store || header.dataset != dataset {
+        if header.store != store || header.dataset != dataset || header.stream != stream {
             return Err(FormatError::Corrupt);
         }
         let body_end = bytes.len() - FOOTER;
@@ -248,6 +270,7 @@ impl<'a> SegmentReader<'a> {
         let mut remaining = limits.validation_work;
         inline_contract(schema.root(), &mut remaining, 0)?;
         let expected_shape = schema.root().shape();
+        let mut coverage = None;
         let metadata = ValueMetadata::capture(schema.root());
         let mut previous = header.source.start;
         for ordinal in 0..header.count {
@@ -279,6 +302,14 @@ impl<'a> SegmentReader<'a> {
             }
             let value = codec::decode_value(&bytes[start..end], limits.value)?.value;
             validate_value(&value, schema.root(), &expected_shape, &mut remaining)?;
+            fold_coverage(
+                &mut coverage,
+                &header,
+                &value,
+                source_start,
+                source_end,
+                &mut remaining,
+            )?;
             // A row may not supply a competing declaration. The digest-bound
             // schema is the only source of its captured metadata.
             if value.metadata().is_some() {
@@ -294,6 +325,9 @@ impl<'a> SegmentReader<'a> {
         if input.position != body_end {
             return Err(FormatError::Corrupt);
         }
+        if coverage.as_ref() != header.coverage.as_ref().map(|c| &c.span) {
+            return Err(FormatError::Corrupt);
+        }
         Ok(Self {
             bytes,
             header,
@@ -305,14 +339,20 @@ impl<'a> SegmentReader<'a> {
     pub fn header(&self) -> &SegmentHeader {
         &self.header
     }
-    pub fn row(&self, ordinal: u64) -> Result<Option<Record>, FormatError> {
-        let Some(index) = ordinal
+    fn location(&self, ordinal: u64) -> Option<&Location> {
+        let index = ordinal
             .checked_sub(self.header.first)
-            .and_then(|n| usize::try_from(n).ok())
-        else {
-            return Ok(None);
-        };
-        let Some(location) = self.locations.get(index) else {
+            .and_then(|n| usize::try_from(n).ok())?;
+        self.locations.get(index)
+    }
+    /// Length of the validated stored row payload, excluding its frame and schema.
+    /// Opening checked its checksum, codec and contract; this does not decode it again.
+    pub fn encoded_row_bytes(&self, ordinal: u64) -> Option<usize> {
+        self.location(ordinal)
+            .map(|location| location.end - location.start)
+    }
+    pub fn row(&self, ordinal: u64) -> Result<Option<Record>, FormatError> {
+        let Some(location) = self.location(ordinal) else {
             return Ok(None);
         };
         let value =
@@ -345,6 +385,18 @@ fn validate_header(
     schema: &ResolvedContractBundle,
     limits: FormatLimits,
 ) -> Result<(), FormatError> {
+    match (&header.stream, &header.coverage) {
+        (Stream::Outputs, None) => {}
+        (Stream::Coverage, Some(c))
+            if c.policy.valid()
+                && header.source.unit == PositionUnit::Bytes
+                && c.span.valid(header.count)
+                && c.span.from == header.source.start
+                && c.span.through == header.source.end
+                && schema.digest()
+                    == wes_engine::storage::datasets::rejection_schema().digest() => {}
+        _ => return Err(FormatError::Corrupt),
+    }
     for id in [&header.store, &header.dataset] {
         if Uuid::parse_str(id).is_err()
             || Uuid::parse_str(id).unwrap().hyphenated().to_string() != *id
@@ -363,6 +415,39 @@ fn validate_header(
     }
     if header.count > limits.records as u64 {
         return Err(FormatError::Limit("records"));
+    }
+    Ok(())
+}
+fn fold_coverage(
+    span: &mut Option<wes_engine::storage::datasets::CoverageSpan>,
+    header: &SegmentHeader,
+    value: &Value,
+    source_start: u64,
+    source_end: u64,
+    remaining: &mut usize,
+) -> Result<(), FormatError> {
+    if let Some(coverage) = &header.coverage {
+        let excerpt_bytes = match value.data() {
+            Data::Record(fields) => match fields.get("excerpt") {
+                Some(Data::Bytes(bytes)) => bytes.len(),
+                _ => return Err(FormatError::Corrupt),
+            },
+            _ => return Err(FormatError::Corrupt),
+        };
+        *remaining = remaining
+            .checked_sub(excerpt_bytes.saturating_add(128))
+            .ok_or(FormatError::Limit("validation"))?;
+        let row = wes_engine::storage::datasets::read_rejection(value, coverage.policy)
+            .map_err(|_| FormatError::Corrupt)?;
+        if row.source.start != source_start || row.delimiter.end != source_end {
+            return Err(FormatError::Corrupt);
+        }
+        let next = wes_engine::storage::datasets::CoverageSpan::single(&row)
+            .map_err(|_| FormatError::Corrupt)?;
+        match span {
+            Some(span) => span.merge(&next).map_err(|_| FormatError::Corrupt)?,
+            None => *span = Some(next),
+        }
     }
     Ok(())
 }

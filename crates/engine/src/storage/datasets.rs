@@ -1,6 +1,10 @@
 //! Semantic dataset I/O port. Codecs and filesystem paths remain in adapters.
 pub use super::analysis_attempt::{AnalysisAttemptKind, AttemptAccounting, charge_interruption};
 pub use super::analysis_budget::AnalysisBudget;
+pub use super::analysis_coverage::{
+    CoverageInfo, CoveragePolicy, CoverageProgress, CoverageSpan, read_rejection, rejection_charge,
+    rejection_reservation, rejection_schema, rejection_value,
+};
 use super::{Retention, StoreError, ValueHandle};
 use wes_core::{DatasetRef, Value, contracts::ResolvedContractBundle, flow::FlowPolicy};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -77,15 +81,56 @@ impl DatasetChanges {
 /// A read shares the analysis owner's monotonic, prepaid work counter. Storage
 /// can debit it before I/O and decoding, but cannot grant or refund work.
 #[derive(Clone, Debug)]
-pub struct ReadWork(crate::work_budget::WorkCounter);
+pub struct ReadWork {
+    counter: crate::work_budget::WorkCounter,
+    start: u64,
+}
+/// A physically joined read stopped before entering its next immutable granule.
+/// This process-only receipt grants neither storage nor execution authority.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("analysis read work reached its {dimension:?} bound")]
+pub struct ReadWorkRefusal {
+    dimension: ReadWorkDimension,
+    needed: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadWorkDimension {
+    Absolute,
+    Allowance,
+    Prepaid,
+}
+impl ReadWorkRefusal {
+    pub fn dimension(&self) -> ReadWorkDimension {
+        self.dimension
+    }
+    /// Work already examined during this read plus its exact next refused charge.
+    pub fn needed(&self) -> u64 {
+        self.needed
+    }
+}
 impl ReadWork {
     pub(crate) fn new(work: crate::work_budget::WorkCounter) -> Self {
-        Self(work)
+        Self {
+            start: work.used(),
+            counter: work,
+        }
     }
-    pub fn charge(&self, amount: u64) -> Result<(), StoreError> {
-        self.0
-            .charge(amount)
-            .map_err(|_| StoreError::Limit("analysis read work"))
+    pub fn charge(&self, amount: u64) -> Result<(), ReadWorkRefusal> {
+        use crate::work_budget::WorkRefusal;
+        self.counter
+            .admit(amount)
+            .map_err(|refusal| ReadWorkRefusal {
+                dimension: match refusal.reason {
+                    WorkRefusal::Absolute => ReadWorkDimension::Absolute,
+                    WorkRefusal::Allowance => ReadWorkDimension::Allowance,
+                    WorkRefusal::Prepaid => ReadWorkDimension::Prepaid,
+                },
+                needed: refusal
+                    .used
+                    .checked_sub(self.start)
+                    .and_then(|used| used.checked_add(refusal.requested))
+                    .unwrap_or(u64::MAX),
+            })
     }
 }
 #[derive(Clone, Debug)]
@@ -94,7 +139,35 @@ pub struct PageRequest {
     pub rows: usize,
     pub bytes: usize,
     pub segments: usize,
+    pub charge: Option<PageCharge>,
     pub work: Option<ReadWork>,
+}
+/// Logical value ownership is independent of encoded page bytes. A consumer
+/// supplies the row and retained-window charges it already reserved before I/O.
+#[derive(Clone, Copy, Debug)]
+pub struct PageCharge {
+    row: u64,
+    retained: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageChargeRefusal {
+    Row { limit: u64 },
+    Retained,
+}
+impl PageCharge {
+    pub fn new(row: u64, retained: u64) -> Option<Self> {
+        (row > 0 && row <= retained).then_some(Self { row, retained })
+    }
+    /// Returns this row's charge without changing either the consumer's
+    /// retained count or its monotonic work owner. Refusal retains no new row.
+    pub fn admit(&self, value: &Value, used: u64) -> Result<u64, PageChargeRefusal> {
+        let amount = crate::value_size::value_charge(value, self.row)
+            .ok_or(PageChargeRefusal::Row { limit: self.row })?;
+        used.checked_add(amount)
+            .filter(|n| *n <= self.retained)
+            .ok_or(PageChargeRefusal::Retained)?;
+        Ok(amount)
+    }
 }
 #[derive(Clone, Debug)]
 pub struct DatasetRow {
@@ -112,6 +185,7 @@ pub struct DatasetPage {
     pub rows: Vec<DatasetRow>,
     pub extent_exhausted: bool,
     pub limited_by: Option<&'static str>,
+    /// Stored row payload bytes; schema, frames and transport encoding have separate bounds.
     pub encoded_row_bytes: usize,
     /// Owned read lifetime, released without I/O only when every consumer drops it.
     pub lease: Option<DatasetReadLease>,
@@ -194,6 +268,7 @@ pub struct DatasetInfo {
     pub protected: bool,
     pub persistence: crate::history::Persistence,
     pub recording: Option<EventLogCoverage>,
+    pub coverage: Option<CoverageInfo>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DatasetRootKind {
@@ -326,6 +401,7 @@ pub struct DatasetCreate {
     pub policy: FlowPolicy,
     pub checkpoint: Option<AnalysisCheckpoint>,
     pub recording: Option<EventLogCoverage>,
+    pub coverage: Option<CoveragePolicy>,
 }
 /// A batch has one acknowledgement. No item becomes a graph node or partial success.
 #[derive(Clone, Debug)]
@@ -339,6 +415,7 @@ pub struct DatasetAppend {
     pub policy: FlowPolicy,
     pub checkpoint: Option<AnalysisCheckpoint>,
     pub recording: Option<EventLogCoverage>,
+    pub coverage: Vec<wes_core::framing::Rejection>,
 }
 /// Explicit continuation of the latest captured prefix. It admits no external producer.
 #[derive(Clone, Debug)]
@@ -460,6 +537,7 @@ pub struct AnalysisCheckpoint {
     pub usage: AnalysisUsage,
     pub duration: AnalysisDuration,
     pub finish_applied: bool,
+    pub coverage: Option<CoverageProgress>,
 }
 impl AnalysisCheckpoint {
     /// A continuation preserves captured semantics and the acknowledged position/state.
@@ -493,6 +571,7 @@ impl AnalysisCheckpoint {
             && self.captured_program == old.captured_program
             && self.next_position == old.next_position
             && self.next_ordinal == old.next_ordinal
+            && self.coverage == old.coverage
             && self.decoder_carry == old.decoder_carry
             && self.stop.is_none()
             && self.budget.analysis == self.analysis
@@ -672,6 +751,15 @@ pub trait DatasetStorage: Send {
     }
     fn page(&self, reference: &DatasetRef, request: PageRequest)
     -> Result<DatasetPage, StoreError>;
+    /// Page the exceptional observations of this exact authorized parent prefix.
+    /// This creates no descriptor, writer or producer and does not follow its head.
+    fn coverage_page(
+        &self,
+        _reference: &DatasetRef,
+        _request: PageRequest,
+    ) -> Result<DatasetPage, StoreError> {
+        Err(StoreError::DatasetUnavailable)
+    }
     /// An exact-prefix root is committed before a retained descriptor can be acknowledged.
     /// An unconfirmed catalog outcome blocks this owner until explicit reconciliation.
     fn set_root(&mut self, request: DatasetRootRequest) -> Result<DatasetRootReceipt, StoreError>;
@@ -732,5 +820,31 @@ pub trait DatasetStorage: Send {
     }
     fn acknowledge_cleanup(&mut self, _captures: &[CapturedValue]) -> Result<(), StoreError> {
         Err(StoreError::DatasetUnavailable)
+    }
+}
+
+#[cfg(test)]
+mod read_work_tests {
+    use super::*;
+    use crate::work_budget::WorkCounter;
+    #[test]
+    fn immutable_read_refusal_preserves_atomic_cause_and_exact_prefix_demand() {
+        let counter = WorkCounter::earned(1000, 800);
+        counter.charge(20).unwrap();
+        counter.prepaid(70).unwrap();
+        let read = ReadWork::new(counter.clone());
+        read.charge(30).unwrap();
+        let refusal = read.charge(40).unwrap_err();
+        assert_eq!(refusal.dimension(), ReadWorkDimension::Prepaid);
+        assert_eq!(refusal.needed(), 70);
+        assert_eq!(counter.used(), 50);
+        let refusal = read.charge(900).unwrap_err();
+        assert_eq!(refusal.dimension(), ReadWorkDimension::Allowance);
+        let refusal = read.charge(1000).unwrap_err();
+        assert_eq!(refusal.dimension(), ReadWorkDimension::Absolute);
+        assert_eq!(counter.used(), 50);
+        counter.prepaid(100).unwrap();
+        read.charge(40).unwrap();
+        assert_eq!(counter.used(), 90);
     }
 }

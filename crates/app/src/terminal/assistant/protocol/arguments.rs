@@ -177,4 +177,20 @@ mod tests {
         validate(&json!({"name":"help","arguments":{"command":"calc","tail":["iter.matches"],"depth":3}})).unwrap();
         assert!(validate(&json!({"name":"layout_read","arguments":{"workspace":"demo"}})).is_err());
     }
+    #[test]
+    fn dataset_streams_are_discoverable_closed_choices_before_dispatch() {
+        for name in ["dataset_inspect", "dataset_page"] {
+            for stream in [None, Some("outputs"), Some("coverage")] {
+                let mut request =
+                    json!({"name":name,"arguments":{"name":"analysis","select":"/outputs"}});
+                if let Some(stream) = stream {
+                    request["arguments"]["stream"] = json!(stream);
+                }
+                validate(&request).unwrap();
+            }
+            let refused = json!({"name":name,"arguments":{"name":"analysis","stream":"unknown"}});
+            let error = validate(&refused).unwrap_err();
+            assert!(error.contains("\"outputs\", \"coverage\""), "{error}");
+        }
+    }
 }

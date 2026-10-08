@@ -221,6 +221,7 @@ impl Prepared {
         };
         let admission = worker
             .dataset_create(DatasetCreate {
+                coverage: None,
                 owner: Some(owner.clone()),
                 dataset: epoch,
                 transaction: uuid::Uuid::new_v4().to_string(),
@@ -351,6 +352,7 @@ impl Prepared {
             let mut source = self.source.clone();
             source.end = through;
             let request = DatasetAppend {
+                coverage: Vec::new(),
                 owner: Some(self.owner.clone()),
                 previous: self.current.reference.clone(),
                 transaction: uuid::Uuid::new_v4().to_string(),
@@ -428,6 +430,7 @@ impl Prepared {
         };
         if end != RecordingEnd::Unconfirmed {
             let request = DatasetAppend {
+                coverage: Vec::new(),
                 owner: Some(self.owner.clone()),
                 previous: self.current.reference.clone(),
                 transaction: uuid::Uuid::new_v4().to_string(),

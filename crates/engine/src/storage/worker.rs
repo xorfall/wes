@@ -464,7 +464,9 @@ impl StoreWorker {
     ) -> Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>> {
         self.dataset_changes.clone()
     }
-    pub(crate) async fn eventlog_head(
+    /// Read a committed EventLog extension through the same owned admission as Dataset pages.
+    /// A descriptor never creates a recording or producer; current read gates still apply.
+    pub async fn eventlog_head(
         &self,
         reference: wes_core::DatasetRef,
         work: Option<super::datasets::ReadWork>,
@@ -844,7 +846,7 @@ impl StoreWorker {
         &self,
         request: super::datasets::DatasetResume,
     ) -> Result<PendingStore<super::datasets::DatasetWriterAdmission>, StoreError> {
-        let cost = self.dataset_payload_charge(Some(&request.checkpoint), &[])?;
+        let cost = self.dataset_payload_charge(Some(&request.checkpoint), &[], &[])?;
         self.request_owner(cost, move |owner| {
             owner.validate_checkpoint(&request.checkpoint, &request.policy, true, false)?;
             owner.datasets_mut()?.resume(request)
@@ -946,7 +948,7 @@ impl StoreWorker {
         &self,
         request: DatasetCreate,
     ) -> Result<PendingStore<super::datasets::DatasetWriterAdmission>, StoreError> {
-        let cost = self.dataset_payload_charge(request.checkpoint.as_ref(), &[])?;
+        let cost = self.dataset_payload_charge(request.checkpoint.as_ref(), &[], &[])?;
         self.request_owner(cost, move |owner| {
             if let Some(checkpoint) = &request.checkpoint {
                 owner.validate_checkpoint(checkpoint, &request.policy, true, true)?;
@@ -960,7 +962,11 @@ impl StoreWorker {
         &self,
         request: DatasetAppend,
     ) -> Result<PendingStore<wes_core::DatasetRef>, StoreError> {
-        let cost = self.dataset_payload_charge(request.checkpoint.as_ref(), &request.rows)?;
+        let cost = self.dataset_payload_charge(
+            request.checkpoint.as_ref(),
+            &request.rows,
+            &request.coverage,
+        )?;
         self.request_owner(cost, move |owner| {
             if let Some(checkpoint) = &request.checkpoint {
                 owner.validate_checkpoint(checkpoint, &request.policy, false, false)?;
@@ -973,6 +979,7 @@ impl StoreWorker {
         &self,
         checkpoint: Option<&super::datasets::AnalysisCheckpoint>,
         rows: &[super::datasets::DatasetRow],
+        coverage: &[wes_core::framing::Rejection],
     ) -> Result<u32, StoreError> {
         let limit = self.limits.bytes.get() as u64;
         let mut cost = self
@@ -984,6 +991,13 @@ impl StoreWorker {
                     value_charge(&row.value, limit).ok_or(StoreError::Limit("dataset payload"))?,
                 )
                 .ok_or(StoreError::Limit("dataset payload"))?;
+        }
+        for row in coverage {
+            let bytes = super::datasets::rejection_charge(row)
+                .ok_or(StoreError::Limit("coverage payload"))?;
+            cost = cost
+                .checked_add(bytes)
+                .ok_or(StoreError::Limit("coverage payload"))?;
         }
         if let Some(checkpoint) = checkpoint {
             for value in [&checkpoint.state, &checkpoint.context] {
@@ -1082,14 +1096,36 @@ impl StoreWorker {
         reference: wes_core::DatasetRef,
         request: PageRequest,
     ) -> Result<DatasetPage, StoreError> {
+        self.dataset_stream_page(reference, wes_core::DatasetStream::Outputs, request)
+            .await
+    }
+    pub async fn dataset_stream_page(
+        &self,
+        reference: wes_core::DatasetRef,
+        stream: wes_core::DatasetStream,
+        request: PageRequest,
+    ) -> Result<DatasetPage, StoreError> {
         self.request_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
-            move |owner| owner.datasets()?.page(&reference, request),
+            move |owner| match stream {
+                wes_core::DatasetStream::Outputs => owner.datasets()?.page(&reference, request),
+                wes_core::DatasetStream::Coverage => {
+                    owner.datasets()?.coverage_page(&reference, request)
+                }
+            },
         )
         .await?
         .wait()
         .await
+    }
+    pub async fn dataset_coverage_page(
+        &self,
+        reference: wes_core::DatasetRef,
+        request: PageRequest,
+    ) -> Result<DatasetPage, StoreError> {
+        self.dataset_stream_page(reference, wes_core::DatasetStream::Coverage, request)
+            .await
     }
     /// Acknowledges admission, not completion or durability. Calculation is bounded to one million
     /// shape/data nodes and depth 256; decimal charges never expand scientific notation.

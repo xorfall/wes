@@ -185,6 +185,7 @@ async fn single_event_flushes_and_600_events_survive_window_eviction_without_sec
         .dataset_page(
             final_.reference.clone(),
             PageRequest {
+                charge: None,
                 from: 0,
                 rows: 1,
                 bytes: 65536,
@@ -278,6 +279,7 @@ async fn stop_recording_drains_accepted_boundary_and_source_continues() {
         .dataset_page(
             stopped.reference.clone(),
             PageRequest {
+                charge: None,
                 from: 0,
                 rows: 1,
                 bytes: 65536,

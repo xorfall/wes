@@ -156,7 +156,7 @@ describe("the recording's dataset reader", () => {
     store: "00000000-0000-4000-8000-0000000000a7", dataset: "00000000-0000-4000-8000-0000000000b7", generation, manifest: "00000000-0000-4000-8000-0000000000c7",
     manifestDigest: `sha256:${"7".repeat(64)}`, manifestBytes: "512", schemaDigest: `sha256:${"8".repeat(64)}`, records, authorizationGeneration: "1",
   })!;
-  const reply = (at: DatasetReference) => ({ reference: { ...at }, lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "4096" });
+  const reply = (at: DatasetReference) => ({ reference: { ...at }, stream: "outputs", lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "4096" });
 
   it("refuses any reply for a later prefix than the frozen descriptor names", () => {
     const frozen = reference("20");

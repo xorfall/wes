@@ -10,12 +10,6 @@ impl Runner {
             .as_ref()
             .map_or(self.state_charge, |c| c.state_charge)
     }
-    pub(super) fn working_position(&self) -> u64 {
-        self.candidate
-            .as_ref()
-            .and_then(|candidate| candidate.range)
-            .map_or(self.committed_position, |(_, end, _)| end)
-    }
     pub(super) fn working_provenance(&self) -> &Provenance {
         self.candidate
             .as_ref()
@@ -76,6 +70,7 @@ impl Runner {
         batch.state = next.state;
         batch.state_charge = next.state_charge;
         batch.outputs.extend(next.outputs);
+        batch.coverage.extend(next.coverage);
         batch.output_ranges.extend(next.output_ranges);
         batch.provenance = Provenance::agreed_by([&batch.provenance, &next.provenance]);
         batch.usage = next.usage;
@@ -103,7 +98,15 @@ impl Runner {
             Phase::Reading
         };
         self.ledger
-            .held(self.base_charge.saturating_add(self.state_charge))
+            .held(
+                self.base_charge
+                    .saturating_add(self.state_charge)
+                    .saturating_add(if self.pending_source.is_some() {
+                        self.settings.record_charge
+                    } else {
+                        0
+                    }),
+            )
             .map_err(|e| refusal(e, self.span))?;
         Ok(())
     }

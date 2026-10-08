@@ -58,6 +58,37 @@ impl Recipe {
         }
         let recipe: Self =
             serde_json::from_str(&checkpoint.captured_program).map_err(|_| invalid())?;
+        let coverage_policy = recipe
+            .framing
+            .as_ref()
+            .and_then(|profile| match profile.malformed {
+                wes_core::framing::Malformed::Strict {} => None,
+                wes_core::framing::Malformed::Forensic { excerpt_bytes } => {
+                    Some(crate::storage::datasets::CoveragePolicy {
+                        excerpt_bytes: excerpt_bytes as u32,
+                    })
+                }
+            });
+        if recipe
+            .framing
+            .as_ref()
+            .is_some_and(|profile| !profile.valid())
+            || coverage_policy != checkpoint.coverage.as_ref().map(|c| c.policy)
+            || checkpoint.coverage.as_ref().is_some_and(|c| {
+                recipe.live
+                    || !c.valid(
+                        checkpoint.next_ordinal,
+                        checkpoint.next_position,
+                        checkpoint.usage.input_bytes,
+                    )
+            })
+            || (recipe.framing.is_some()
+                && (checkpoint.next_position != checkpoint.usage.input_bytes
+                    || checkpoint.next_ordinal > checkpoint.next_position))
+            || (recipe.framing.is_none() && checkpoint.next_position != checkpoint.next_ordinal)
+        {
+            return Err(invalid());
+        }
         let mut revision = sha2::Sha256::new();
         use sha2::Digest;
         for binding in [
