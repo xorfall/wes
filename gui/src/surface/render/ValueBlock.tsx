@@ -1,4 +1,5 @@
-import { LogView, isLogValue } from "./LogView";
+import { LogView } from "./LogView";
+import { logShape } from "./log-identity";
 import { typedJsonSummary } from "./JsonTree";
 import { ProcessOutput, isProcessOutput } from "./ProcessOutput";
 import "./builtins.css";
@@ -72,7 +73,10 @@ const NO_FACTS: Facts = {};
 export function ValueBlock(props:ValueBlockProps) {
   const data=props.value.data;
   const id=typeof data==="object"&&data!==null&&"id" in data?String(data.id):"view";
-  return isLogValue(props.value) ? <LogView value={props.value} mode={props.mode} identity={props.bindingKey} collapsed={props.collapsed}/> : isViewInstance(props.value) ? <div className="value-instance-block">{props.collapsed && <p className="mono-dim">View · ${id}</p>}<div hidden={props.collapsed}><InstanceView value={props.value} engine={props.engine} mode={props.mode}
+  const registry=useRegistry();
+  /** A list whose presentation entry declares a log mapping reads as a log, like Docker's events. */
+  const log=logShape(props.value,registry);
+  return log ? <LogView value={props.value} mode={props.mode} identity={props.bindingKey} collapsed={props.collapsed} {...(log.mapping?{mapping:log.mapping}:{})}/> : isViewInstance(props.value) ? <div className="value-instance-block">{props.collapsed && <p className="mono-dim">View · ${id}</p>}<div hidden={props.collapsed}><InstanceView value={props.value} engine={props.engine} mode={props.mode}
     display={props.inCell===false?undefined:props.instanceDisplay??{label:`$${id}`}}/></div></div> : <DataValueBlock {...props}/>;
 }
 function DataValueBlock({ value, cacheKey, bindingKey, collapsed = false, facts = NO_FACTS, mode, lines = 6, inCell = true }: ValueBlockProps) {
