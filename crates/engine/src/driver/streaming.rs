@@ -63,6 +63,7 @@ impl Update {
                             None => None,
                         }
                     }
+                    Phase::Opening => runtime.stream_reopening(&snapshot.run),
                     Phase::Closing => runtime.stream_closing(&snapshot.run),
                     _ => None,
                 }
@@ -109,7 +110,8 @@ pub(super) async fn execute<T: Send + 'static>(
             stopped = true;
         }
         let snapshot = snapshots.borrow_and_update().clone();
-        if matches!(snapshot.phase, Phase::Open | Phase::Closing)
+        if (matches!(snapshot.phase, Phase::Open | Phase::Closing)
+            || (snapshot.phase == Phase::Opening && published.is_some()))
             && !stopped
             && published
                 .as_ref()

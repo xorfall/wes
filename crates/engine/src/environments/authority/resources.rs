@@ -12,6 +12,9 @@ enum Principal {
     Actor(String),
 }
 impl InvocationAuthority {
+    pub fn is_admitted(&self) -> bool {
+        !matches!(self.0, Principal::Unknown)
+    }
     pub fn is_local_user(&self) -> bool {
         matches!(self.0, Principal::User)
     }

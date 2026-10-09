@@ -21,8 +21,12 @@ use tokio::{
 use wes_core::{ErrorValue, Provenance, Value};
 pub(crate) mod archive;
 pub(crate) const MAX_ARCHIVES: usize = 4;
+mod controls;
 pub(crate) mod delivery;
 mod readiness;
+pub use controls::{
+    ControlError, ControlFuture, ControlLimits, ControlOutcome, LiveController, LiveControls,
+};
 mod window;
 pub use readiness::{MAX_READY_WAIT, ReadyError, ReadyReceipt};
 pub use window::Limits;
@@ -78,6 +82,9 @@ pub enum StreamError {
 }
 struct State {
     connection_epoch: uuid::Uuid,
+    reconnecting: bool,
+    reconnects: u64,
+    controls: Option<controls::Owner>,
     window: Window,
     phase: Phase,
     opened: bool,
@@ -89,6 +96,8 @@ struct State {
     archives: Vec<Arc<archive::Branch>>,
 }
 struct Shared {
+    run: Run,
+    principal: crate::environments::InvocationAuthority,
     state: Mutex<State>,
     cancellation: CancellationToken,
     changed: Notify,
@@ -107,12 +116,86 @@ impl Shared {
 /// A weak capability for precisely one subscription. It never looks up a mutable node-name map.
 /// Keeping a late callback alive cannot retain its old window or write into a replacement stream.
 #[derive(Clone)]
-pub struct StreamSink(Weak<Shared>);
+pub struct StreamSink(Weak<Shared>, uuid::Uuid, CancellationToken);
 impl StreamSink {
+    /// Explicit observation reconnect. Retire old callbacks and readiness, end recording coverage
+    /// at the gap, and join old controls before returning a fresh sink. Never replay control actions.
+    /// Ordered computational streams require a new source run instead of silently crossing a gap.
+    pub async fn reopening(&self) -> Result<Self, StreamError> {
+        let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
+        let (epoch, completion) = {
+            let mut state = shared.state();
+            if state.connection_epoch != self.1
+                || state.phase != Phase::Open
+                || state.finished
+                || shared.cancellation.is_cancelled()
+            {
+                return Err(StreamError::Closed);
+            }
+            if shared.delivery.is_some() {
+                return Err(StreamError::Invalid);
+            }
+            let reconnects = state
+                .reconnects
+                .checked_add(1)
+                .ok_or(StreamError::Capacity)?;
+            state.window.connection_gap()?;
+            state.connection_epoch = uuid::Uuid::new_v4();
+            state.reconnects = reconnects;
+            state.reconnecting = true;
+            state.phase = Phase::Opening;
+            state.opened = false;
+            state.dirty = true;
+            self.2.cancel();
+            for branch in state.archives.drain(..) {
+                branch.close(archive::End::SourceFailed);
+            }
+            let completion = state.controls.as_ref().map(|controls| {
+                controls.revoke();
+                controls.completion()
+            });
+            (state.connection_epoch, completion)
+        };
+        shared.changed.notify_one();
+        if let Some(mut completion) = completion {
+            while !*completion.borrow_and_update() {
+                if completion.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+        let old_controls = shared.state().controls.take();
+        if let Some(controls) = old_controls {
+            if controls.join().await.is_err() {
+                shared.cancellation.cancel();
+                return Err(StreamError::Closed);
+            }
+        }
+        {
+            let mut state = shared.state();
+            if state.finished
+                || shared.cancellation.is_cancelled()
+                || state.connection_epoch != epoch
+            {
+                return Err(StreamError::Closed);
+            }
+            state.reconnecting = false;
+        }
+        Ok(Self(
+            Arc::downgrade(&shared),
+            epoch,
+            shared.cancellation.child_token(),
+        ))
+    }
     pub fn opened(&self) -> Result<(), StreamError> {
         let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
         let mut state = shared.state();
-        if state.finished || shared.cancellation.is_cancelled() {
+        if state.connection_epoch != self.1
+            || state.reconnecting
+            || state.phase == Phase::Closing
+            || state.finished
+            || shared.cancellation.is_cancelled()
+        {
             return Err(StreamError::Closed);
         }
         if state.opened {
@@ -129,7 +212,12 @@ impl StreamSink {
     pub fn reject_item(&self) -> Result<(), StreamError> {
         let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
         let mut state = shared.state();
-        if state.finished || shared.cancellation.is_cancelled() {
+        if state.connection_epoch != self.1
+            || state.reconnecting
+            || state.phase == Phase::Closing
+            || state.finished
+            || shared.cancellation.is_cancelled()
+        {
             return Err(StreamError::Closed);
         }
         let Some(count) = state.rejected.checked_add(1) else {
@@ -158,7 +246,18 @@ impl StreamSink {
         let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
         let value =
             value.with_provenance(value.provenance().clone().inheriting(&shared.attribution));
-        let has_archive = !shared.state().archives.is_empty();
+        let has_archive = {
+            let state = shared.state();
+            if state.connection_epoch != self.1
+                || state.reconnecting
+                || state.phase == Phase::Closing
+                || state.finished
+                || shared.cancellation.is_cancelled()
+            {
+                return Err(StreamError::Closed);
+            }
+            !state.archives.is_empty()
+        };
         let credit = shared
             .delivery
             .as_ref()
@@ -172,16 +271,24 @@ impl StreamSink {
         let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
         let value =
             value.with_provenance(value.provenance().clone().inheriting(&shared.attribution));
-        let has_archive = !shared.state().archives.is_empty();
+        let has_archive = {
+            let state = shared.state();
+            if state.connection_epoch != self.1
+                || state.reconnecting
+                || state.phase == Phase::Closing
+                || state.finished
+                || shared.cancellation.is_cancelled()
+            {
+                return Err(StreamError::Closed);
+            }
+            !state.archives.is_empty()
+        };
         let credit = match shared
             .delivery
             .as_ref()
             .or(has_archive.then_some(&shared.archive_ingress))
         {
-            Some(delivery) => delivery
-                .reserve_wait(&value, &shared.cancellation)
-                .await
-                .map(Some),
+            Some(delivery) => delivery.reserve_wait(&value, &self.2).await.map(Some),
             None => Ok(None),
         };
         self.admit(&shared, value, credit)
@@ -197,7 +304,12 @@ impl StreamSink {
         credit: Result<Option<delivery::Credit>, StreamError>,
     ) -> Result<(), StreamError> {
         let mut state = shared.state();
-        if state.finished || shared.cancellation.is_cancelled() {
+        if state.connection_epoch != self.1
+            || state.reconnecting
+            || state.phase == Phase::Closing
+            || state.finished
+            || shared.cancellation.is_cancelled()
+        {
             return Err(StreamError::Closed);
         }
         let accepted = (|| {
@@ -252,6 +364,8 @@ impl StreamHandle {
         let mut state = owner.state();
         state.archives.retain(|branch| branch.is_accepting());
         if state.finished
+            || state.reconnecting
+            || state.phase == Phase::Closing
             || owner.cancellation.is_cancelled()
             || state.archives.len() >= MAX_ARCHIVES
         {
@@ -396,9 +510,16 @@ pub(crate) fn spawn_with_archives(
         rejected: 0,
     });
     let cancellation = parent.child_token();
+    let epoch = uuid::Uuid::new_v4();
+    let connection_cancel = cancellation.child_token();
     let shared = Arc::new(Shared {
+        run: run.clone(),
+        principal: call.authority.clone(),
         state: Mutex::new(State {
-            connection_epoch: uuid::Uuid::new_v4(),
+            connection_epoch: epoch,
+            reconnecting: false,
+            reconnects: 0,
+            controls: None,
             window,
             phase: Phase::Opening,
             opened: false,
@@ -415,7 +536,7 @@ pub(crate) fn spawn_with_archives(
         archive_ingress,
         attribution,
     });
-    let sink = StreamSink(Arc::downgrade(&shared));
+    let sink = StreamSink(Arc::downgrade(&shared), epoch, connection_cancel);
     let owner = Arc::downgrade(&shared);
     let (publish, snapshots) = watch::channel(initial);
     let token = cancellation.clone();
@@ -437,9 +558,19 @@ pub(crate) fn spawn_with_archives(
             tokio::select! {
                 biased;
                 result = &mut provider => {
+                    let controls = {
+                        let mut state = shared.state();
+                        state.phase = Phase::Closing;
+                        state.dirty = true;
+                        if let Some(controls) = &state.controls { controls.revoke(); }
+                        state.controls.take()
+                    };
+                    if controls.is_some() { publish_window(&shared, &run, &publish).await; }
+                    let control_failed = if let Some(controls) = controls { controls.join().await.is_err() } else { false };
                     {
                         let mut state = shared.state();
                         state.finished = true;
+                        if control_failed { state.problem = Some(RuntimeCode::ExecutionFailed.error("Live control owner failed; control outcomes may be unknown.", None)); }
                         state.phase = if let Some(problem) = state.problem.take() {
                             Phase::Failed(problem)
                         } else if token.is_cancelled() {
