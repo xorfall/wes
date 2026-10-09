@@ -497,7 +497,10 @@ impl Analyzer<'_> {
                     } else if let Some(spec) = self.compiled.program.package.operation(&name) {
                         if matches!(
                             spec.operation,
-                            Operation::Call | Operation::Check | Operation::ParseJson
+                            Operation::Call
+                                | Operation::Check
+                                | Operation::ParseJson
+                                | Operation::DecodeJson
                         ) && !self.direct_callees.contains(&id)
                         {
                             return Err(problem(
@@ -1107,13 +1110,20 @@ impl Analyzer<'_> {
                 );
                 Ok(result)
             }
-            Operation::Check | Operation::ParseJson => {
+            Operation::Check | Operation::ParseJson | Operation::DecodeJson => {
+                if spec.operation == Operation::DecodeJson {
+                    require_known(
+                        &self.compiled.shapes[args[0]],
+                        &[Primitive::Text, Primitive::Bytes],
+                        span,
+                    )?;
+                }
                 let type_arg = if spec.operation == Operation::Check {
                     Some(args[0])
                 } else {
                     args.get(1).copied()
                 };
-                if let Some(type_arg) = type_arg {
+                let shape = if let Some(type_arg) = type_arg {
                     let name = self.literal_text(type_arg)?;
                     let contract = self
                         .environment
@@ -1122,10 +1132,15 @@ impl Analyzer<'_> {
                         .map_err(|e| problem(span, e.code, e.message))?;
                     let shape = contract.shape();
                     self.compiled.contracts.insert(id, contract);
-                    Ok(shape)
+                    shape
                 } else {
-                    Ok(Shape::Unknown)
-                }
+                    Shape::Unknown
+                };
+                Ok(if spec.operation == Operation::DecodeJson {
+                    super::json_decode_shape(shape)
+                } else {
+                    shape
+                })
             }
             Operation::Instant
             | Operation::Duration

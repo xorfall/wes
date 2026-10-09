@@ -311,9 +311,10 @@ impl Machine {
                         self.work.push(Work::Iter(IterWork::Json(frame)));
                         let id = self.suspend()?;
                         self.pending_origin = false;
-                        return Ok(Some(Request::ParseJson {
+                        return Ok(Some(Request::Json {
                             id,
-                            text,
+                            bytes: text.into_bytes(),
+                            mode: super::super::JsonMode::Parse,
                             contract,
                             span,
                         }));

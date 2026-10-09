@@ -7,6 +7,8 @@ pub use analysis::{
     analyze, analyze_with_parameters,
 };
 mod documentation;
+mod json_decode;
+pub use json_decode::json_decode_shape;
 mod lexer;
 mod package;
 pub use documentation::OperationHelp;
