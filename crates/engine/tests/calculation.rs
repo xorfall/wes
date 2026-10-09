@@ -922,14 +922,14 @@ fn sort_selector_is_evaluated_once_per_item_across_host_suspensions() {
     loop {
         match machine.poll(&CancellationToken::new()).unwrap() {
             Step::Yield => {}
-            Step::Request(wes_engine::calc::Request::ParseJson { id, text, .. }) => {
+            Step::Request(wes_engine::calc::Request::Json { id, bytes, .. }) => {
                 calls += 1;
                 machine
                     .resume(
                         id,
                         Ok(Value::new(
                             Shape::Primitive(wes_core::Primitive::Int),
-                            Data::Int(text.parse().unwrap()),
+                            Data::Int(std::str::from_utf8(&bytes).unwrap().parse().unwrap()),
                             Provenance::default(),
                         )
                         .unwrap()),

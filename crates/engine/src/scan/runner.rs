@@ -948,8 +948,9 @@ impl Runner {
                                 "pure scan requested external execution; no provider was entered",
                             )));
                         }
-                        Request::ParseJson {
-                            text,
+                        Request::Json {
+                            bytes,
+                            mode,
                             contract,
                             span,
                             ..
@@ -957,20 +958,18 @@ impl Runner {
                             active
                                 .machine
                                 .charge_native_work(
-                                    (text.len() as u64).saturating_mul(16).saturating_add(1024),
+                                    (bytes.len() as u64).saturating_mul(16).saturating_add(1024),
                                     span,
                                 )
                                 .map_err(stop)?;
-                            self.services
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    stop(Failure::new(
-                                        "CAL004",
-                                        span,
-                                        "scan JSON local service is unavailable",
-                                    ))
-                                })?
-                                .read(&text, contract.as_deref(), &self.token, span)
+                            let services = self.services.as_ref().ok_or_else(|| {
+                                stop(Failure::new(
+                                    "CAL004",
+                                    span,
+                                    "scan JSON local service is unavailable",
+                                ))
+                            })?;
+                            services.json(&bytes, contract.as_deref(), &self.token, span, mode)
                         }
                         Request::Http {
                             operation,

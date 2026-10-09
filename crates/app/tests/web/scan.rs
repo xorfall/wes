@@ -2,6 +2,69 @@ use super::*;
 use tokio::sync::mpsc;
 
 #[tokio::test]
+async fn diagnostic_json_decode_keeps_scanning_after_invalid_records_without_acquisition() {
+    use wes_core::Data;
+    let fixture = Fixture::datasets().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let source = r#"
+:package load source:"types: {DecodeStep: {base: Record, fields: {state: Int, outputs: 'List<Text>'}}}"
+:def decodeItem(state:Int, context:Int, item:Text) -> DecodeStep as :calc pure { const result=decodeJson(item,'Int'); if(result.ok) { return {state:state+unwrapOr(result.value,0),outputs:['valid']}; } return {state:state,outputs:['invalid']}; }
+:calc pure { return ['{','null','{"amount":1}','1','2']; } > raw
+:scan source:$raw transition:decodeItem initial:0 context:0 profile:TypedRecords sink:dataset > decoded
+"#;
+    assert_eq!(
+        fixture.source(&generation, "decode-records", source).await,
+        202
+    );
+    let session = fixture.app.current().unwrap().session;
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    let node = &snapshot.names["decoded"].node;
+    assert!(
+        !snapshot.execution.errors.contains_key(node),
+        "{:?}",
+        snapshot.execution.errors
+    );
+    let Data::Record(result) = snapshot.execution.values[node].data() else {
+        panic!("scan result")
+    };
+    assert_eq!(result["state"], Data::Int(3));
+    let Data::Record(receipt) = &result["receipt"] else {
+        panic!("receipt")
+    };
+    assert_eq!(receipt["status"], Data::Text("complete".into()));
+    assert_eq!(receipt["inputRecords"], Data::Int(5));
+    let frame = loop {
+        let frame = events.until("ready").await;
+        if frame["node"] == node.as_str() {
+            break frame;
+        }
+    };
+    let response = fixture
+        .client
+        .get(fixture.url(&format!(
+            "/datasets/{}?select=/outputs&limit=10",
+            frame["handle"].as_str().unwrap()
+        )))
+        .header("X-Wes-Session", &generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    let outputs = page["page"]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["value"]["data"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(outputs, ["invalid", "invalid", "invalid", "valid", "valid"]);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn a_written_large_row_is_readable_by_a_new_analysis_under_the_captured_page_cap() {
     use wes_core::Data;
     let fixture = Fixture::datasets().await;

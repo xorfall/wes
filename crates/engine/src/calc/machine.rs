@@ -30,9 +30,10 @@ pub enum Request {
         input: Value,
         span: Span,
     },
-    ParseJson {
+    Json {
         id: u64,
-        text: String,
+        bytes: Vec<u8>,
+        mode: super::JsonMode,
         contract: Option<Arc<Contract>>,
         span: Span,
     },
@@ -40,7 +41,7 @@ pub enum Request {
 impl Request {
     pub fn id(&self) -> u64 {
         match self {
-            Self::Call { id, .. } | Self::ParseJson { id, .. } | Self::Http { id, .. } => *id,
+            Self::Call { id, .. } | Self::Json { id, .. } | Self::Http { id, .. } => *id,
         }
     }
 }
@@ -1119,18 +1120,41 @@ impl Machine {
                             span,
                         }));
                     }
-                    Operation::ParseJson => {
-                        let text = args[0].text(span)?;
-                        self.budget.allocate(text.len() as u64, span)?;
-                        let text = text.to_owned();
+                    Operation::ParseJson | Operation::DecodeJson => {
+                        let diagnostic = spec.operation == Operation::DecodeJson;
+                        let input: &[u8] = match args[0].untyped() {
+                            Item::Scalar(data) => match data.as_ref() {
+                                Data::Text(text) => text.as_bytes(),
+                                Data::Bytes(bytes) if diagnostic => bytes,
+                                _ => {
+                                    return Err(args[0].expected(
+                                        if diagnostic { "Text or Bytes" } else { "Text" },
+                                        span,
+                                    ));
+                                }
+                            },
+                            _ => {
+                                return Err(args[0].expected(
+                                    if diagnostic { "Text or Bytes" } else { "Text" },
+                                    span,
+                                ));
+                            }
+                        };
+                        self.budget.allocate(input.len() as u64, span)?;
+                        let bytes = input.to_vec();
                         let contract = self.compiled.contracts.get(&expression).cloned();
                         let id = self.suspend()?;
                         self.pending_origin = false;
-                        return Ok(Some(Request::ParseJson {
+                        return Ok(Some(Request::Json {
                             id,
-                            text,
+                            bytes,
                             contract,
                             span,
+                            mode: if diagnostic {
+                                super::JsonMode::Decode
+                            } else {
+                                super::JsonMode::Parse
+                            },
                         }));
                     }
                     Operation::Check => {
