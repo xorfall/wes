@@ -53,6 +53,7 @@ async fn view_authoring_is_bounded_shared_product_context_without_execution_or_s
             }
             "sdk" => {
                 assert!(reply["content"]["commands"].as_str().unwrap().contains("ViewCommands"));
+                assert!(reply["content"]["evidence"].as_str().unwrap().contains("ViewEvidence"));
                 assert_eq!(
                 reply["content"]["declarations"],
                 include_str!("../../../../../packages/view-sdk/index.ts")

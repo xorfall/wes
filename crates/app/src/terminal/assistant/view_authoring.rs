@@ -38,6 +38,7 @@ pub(super) fn read(input: Read) -> Value {
             "numbers": include_str!("../../../../../packages/view-sdk/values.ts"),
             "contracts": include_str!("../../../../../packages/view-sdk/contract.ts"),
             "commands": include_str!("../../../../../packages/view-sdk/commands.ts"),
+            "evidence": include_str!("../../../../../packages/view-sdk/evidence.ts"),
             "datasets": include_str!("../../../../../packages/view-sdk/datasets.ts"),
             "generatedTypes": "Import definition and Input/Outputs/State/Event/EventOutputs from ./contract. The compiler generates them from validated view.json and types.yaml.",
             "runtimeLimits": manifest["runtimeLimits"],

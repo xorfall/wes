@@ -209,7 +209,7 @@ export class Engine {
   }
   async prepareViewCommand(binding: import("./value-views/view-bindings").ViewBinding, template: string, arguments_: Readonly<Record<string, unknown>>, captured: ReturnType<Engine["captureComposition"]>, signal: AbortSignal): Promise<string> {
     if (binding.generation !== this.generation || captured.generation !== this.generation) throw new Error("View changed");
-    const response = await fetch("/view-commands", { method: "POST", headers: this.headers({"X-Wes-Session": binding.generation, "Content-Type": "application/json"}),
+    const response = await fetch("/view-commands", { method: "POST", headers: this.headers({...this.scopeHeader(binding.root), "X-Wes-Session": binding.generation, "Content-Type": "application/json"}),
       body: stringifyExactJson({root: binding.root, instance: binding.rootInstance, member: binding.member, revision: binding.revision, inputRevision: binding.inputRevision, template, arguments: arguments_, environments: captured.context}),
       signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]), cache: "no-store" });
     if (!response.ok || binding.generation !== this.generation || signal.aborted) throw new Error("View command changed or is unavailable");
@@ -642,10 +642,21 @@ export class Engine {
    * The server resolves the member's own input; nothing here names a dataset, path or URL of the
    * View's choosing, and nothing observes, refreshes or runs a source.
    */
+  async readViewEvidence(binding: import("./value-views/view-bindings").ViewBinding, slot: string, ordinal: number, signal: AbortSignal): Promise<import("@wes/view-sdk").EvidenceInput> {
+    if (binding.generation !== this.generation || !binding.authorityEpoch) throw new Error("Evidence changed");
+    const path = `/view-evidence/${[binding.root,binding.rootInstance,binding.member,slot,String(ordinal)].map(encodeURIComponent).join("/")}`;
+    const response = await fetch(path, {headers:this.headers({...this.scopeHeader(binding.root),"X-Wes-Session":binding.generation,"X-Wes-View-Epoch":binding.authorityEpoch,"X-Wes-View-Revision":binding.revision,"X-Wes-Input-Revision":binding.inputRevision}),signal:AbortSignal.any([signal,AbortSignal.timeout(2000)]),cache:"no-store"});
+    if (!response.ok || binding.generation !== this.generation || signal.aborted) throw new Error("Evidence unavailable");
+    const text = await response.text();
+    if (new TextEncoder().encode(text).length > 1024*1024) throw new Error("Evidence exceeds its budget");
+    const result = parseExactJson(text) as import("@wes/view-sdk").EvidenceInput;
+    if (typeof result.available !== "boolean" || typeof result.complete !== "boolean" || !Array.isArray(result.cautions)) throw new Error("Invalid evidence");
+    return result;
+  }
   async readViewDataset(binding: ViewDatasetBinding, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal): Promise<DatasetRead> {
     const path = `/view-datasets/${[binding.root, binding.rootInstance, binding.member].map(encodeURIComponent).join("/")}`;
     // View reads are always the frozen input's outputs: the View route refuses head and extent reads.
-    return this.datasetGet(path, { ...this.scopeHeader(binding.root), "X-Wes-View-Revision": binding.revision, "X-Wes-Input-Revision": binding.inputRevision },
+    return this.datasetGet(path, { ...this.scopeHeader(binding.root), "X-Wes-View-Revision": binding.revision, "X-Wes-Input-Revision": binding.inputRevision, ...(binding.authorityEpoch ? {"X-Wes-View-Epoch":binding.authorityEpoch} : {}) },
       binding.generation, datasetQuery(select, position, position ? limit : undefined), raw => decodeDatasetRead(raw, expected, position ? limit : undefined), signal);
   }
   private scopeHeader(node:string):Record<string,string>{const scope=this.readScopes.get(node);return scope?{"X-Wes-Scope":scope}:{};}
@@ -729,7 +740,7 @@ export class Engine {
     if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
     const [id,instance,mount]=node.split("/");
     const response=await fetch(`/view-instances/${encodeURIComponent(id!)}/${encodeURIComponent(instance!)}`, {
-      headers:this.headers({"X-Wes-Session":generation,"X-Wes-View-Mount":mount!,...(previous?{"X-Wes-View-Revisions":stringifyExactJson(previous.instances.map(i=>[i.id,i.instance,i.revision,i.inputRevision]))}:{}),...(etag?{"If-None-Match":etag}:{})},id),signal,cache:"no-store",
+      headers:this.headers({"X-Wes-Session":generation,"X-Wes-View-Mount":mount!,...(previous?.authorityEpoch?{"X-Wes-View-Epoch":previous.authorityEpoch}:{}),...(previous?{"X-Wes-View-Revisions":stringifyExactJson(previous.instances.map(i=>[i.id,i.instance,i.revision,i.inputRevision]))}:{}),...(etag?{"If-None-Match":etag}:{})},id),signal,cache:"no-store",
     });
     if(generation!==this.generation)throw new Error("Workspace changed; view discarded.");
     if(response.status===304)return undefined;

@@ -76,17 +76,27 @@ impl Context {
                 .expect("structural metadata"),
             );
             if let Ok(frame) = workspace.view_frame(id) {
+                hash.update(
+                    serde_json::to_vec(&(id.as_str(), &frame.authority_epoch))
+                        .expect("View read authority"),
+                );
                 if frame.instances.iter().all(|entry| {
-                    entry.input.as_ref().and_then(Input::value).is_none_or(|v| {
-                        !v.provenance().policy().is_private()
-                            && !v.provenance().policy().is_unknown()
-                    })
+                    entry
+                        .input
+                        .as_ref()
+                        .and_then(Input::value)
+                        .is_none_or(|v| public_input(v))
                 }) {
                     context.roots.insert(
                         id.clone(),
                         (
                             s.identity.to_string(),
-                            frame.instances.iter().map(|i| i.id.clone()).collect(),
+                            frame
+                                .instances
+                                .iter()
+                                .filter(|i| i.input_problem.is_none())
+                                .map(|i| i.id.clone())
+                                .collect(),
                         ),
                     );
                 }
@@ -179,7 +189,8 @@ impl Workspace {
             .iter()
             .find(|m| m.id == member_id)
             .ok_or_else(invalid)?;
-        if root.identity.as_ref() != request.instance
+        if member.input_problem.is_some()
+            || root.identity.as_ref() != request.instance
             || member.revision != request.revision
             || member.input_revision != request.input_revision
         {
