@@ -130,6 +130,49 @@ impl Window {
         self.omitted = omitted;
         Ok(())
     }
+    /// Charge one fixed connection-gap caution without growing per-reconnect metadata.
+    pub(super) fn connection_gap(&mut self) -> Result<(), StreamError> {
+        let caution = "Connection gap observed; events during disconnection were not observed.";
+        if self.empty.provenance().cautions().contains(caution) {
+            return Ok(());
+        }
+        let empty = self.empty.with_provenance(
+            self.empty
+                .provenance()
+                .clone()
+                .cautioned([caution.to_string()]),
+        );
+        let old =
+            value_charge(&self.empty, self.limits.bytes.get()).ok_or(StreamError::Capacity)?;
+        let new = value_charge(&empty, self.limits.bytes.get()).ok_or(StreamError::Capacity)?;
+        let growth = new.saturating_sub(old);
+        let base = self
+            .base
+            .checked_add(growth)
+            .filter(|n| *n <= self.limits.bytes.get())
+            .ok_or(StreamError::Capacity)?;
+        let mut charged = self.charged + growth;
+        let mut remove = 0;
+        for (_, charge) in &self.items {
+            if charged <= self.limits.bytes.get() {
+                break;
+            }
+            charged -= charge;
+            remove += 1;
+        }
+        let omitted = self
+            .omitted
+            .checked_add(remove)
+            .ok_or(StreamError::Capacity)?;
+        for _ in 0..remove {
+            self.items.pop_front();
+        }
+        self.empty = empty;
+        self.base = base;
+        self.charged = charged;
+        self.omitted = omitted;
+        Ok(())
+    }
     pub fn omitted(&self) -> u64 {
         self.omitted
     }
