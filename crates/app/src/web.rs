@@ -24,6 +24,7 @@ mod telemetry;
 mod terminals;
 mod traces;
 mod value_errors;
+mod view_commands;
 mod view_inputs;
 mod view_instances;
 mod view_interaction;
@@ -222,6 +223,7 @@ pub async fn listen(mut config: Config) -> io::Result<Server> {
         .route("/datasets/{handle}", get(datasets::read))
         .route("/live-view/{node}", get(live_view::read))
         .route("/view-mounts/{node}/{instance}", post(view_mounts::change))
+        .route("/view-commands", post(view_commands::prepare))
         .route("/view-inputs/{node}/{instance}", get(view_inputs::read))
         .route(
             "/view-interaction/{node}/{instance}",

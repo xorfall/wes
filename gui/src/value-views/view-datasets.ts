@@ -15,43 +15,15 @@
  * reads are in flight per drawing, and a new input, a closed frame, a withdrawal or a session change
  * settles every read in flight; a late reply is never delivered.
  */
-import { createContext } from "react";
-import type { Engine } from "../engine";
 import { DatasetReadError, type DatasetPosition, type DatasetRead } from "../dataset-read";
 import { stringifyExactJson } from "../exact-json";
 import type { DatasetReference } from "../presentation/dataset";
 import type { DatasetSource } from "../surface/render/dataset-source";
 import { decodeContract, type ViewDefinition } from "./definition";
-import type { ViewFrame } from "./instances";
 
-/** Exactly what the host drew for one View member: the frame it came from and its revisions. */
-export interface ViewDatasetBinding {
-  readonly engine: Engine;
-  readonly generation: string;
-  /** The frame root's node and instance identity, as the frame was read. */
-  readonly root: string;
-  readonly rootInstance: string;
-  /** The drawn member and the revisions it was drawn at. */
-  readonly member: string;
-  readonly revision: string;
-  readonly inputRevision: string;
-  /** Input fields bound from other results; the server reads only the member's own input. */
-  readonly linkedInputs: readonly string[];
-}
-
-/** The binding of the member drawn at `view/{id}` in the frame currently presented, if any. */
-export type ViewDatasetBindings = (path: string) => ViewDatasetBinding | undefined;
-export const ViewDatasetContext = createContext<ViewDatasetBindings | undefined>(undefined);
-
-/** Bindings for every member of `frame`, read from that frame only. */
-export function frameBindings(frame: ViewFrame, rootInstance: string, engine: Engine, generation: string): ViewDatasetBindings {
-  const members = new Map(frame.instances.map(entry => [`view/${entry.id}`, entry]));
-  return path => {
-    const entry = members.get(path);
-    if (!entry || !entry.input) return undefined;
-    return { engine, generation, root: frame.root, rootInstance, member: entry.id, revision: entry.revision, inputRevision: entry.inputRevision, linkedInputs: entry.linkedInputs };
-  };
-}
+import type { ViewBinding as ViewDatasetBinding } from "./view-bindings";
+export { ViewBindingContext as ViewDatasetContext, frameBindings } from "./view-bindings";
+export type { ViewBinding as ViewDatasetBinding, ViewBindings as ViewDatasetBindings } from "./view-bindings";
 
 export type DatasetErrorCode = "unavailable" | "busy" | "changed" | "withdrawn" | "limit" | "invalid" | "failed";
 

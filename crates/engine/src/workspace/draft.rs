@@ -55,6 +55,7 @@ pub struct DeclarationDraft {
     templates: Templates,
     contracts: ContractRegistry,
     views: wes_views::Catalogue,
+    command_context: crate::views::commands::Context,
     calc_services: Option<Arc<dyn crate::calc::LocalServices>>,
     describe_service: Option<Arc<dyn crate::describe::DescribeService>>,
     calculation_package: Arc<wes_language::calc::Package>,
@@ -326,6 +327,7 @@ impl Workspace {
             templates: self.templates.clone(),
             contracts: self.contracts.clone(),
             views: self.views.catalogue().clone(),
+            command_context: crate::views::commands::Context::capture(self),
             calc_services: self.calc_services.clone(),
             describe_service: self.describe_service.clone(),
             calculation_package: wes_language::calc::Package::standard(),
@@ -353,6 +355,14 @@ impl Workspace {
         installation: super::Installation,
     ) -> Result<BatchApplied, WorkspaceError> {
         self.check_stamp(&batch.stamp)?;
+        let context = crate::views::commands::Context::capture(self);
+        for change in &batch.changes {
+            if let BatchChange::Declaration(change) = change {
+                if let Some(guard) = &change.stamp.view_guard {
+                    context.check(guard, &self.templates)?;
+                }
+            }
+        }
         let count =
             u64::try_from(batch.changes.len()).map_err(|_| WorkspaceError::RevisionExhausted)?;
         self.revision
@@ -573,6 +583,7 @@ impl DeclarationDraft {
         Stamp {
             owner: self.owner.clone(),
             revision: self.changes.len() as u64,
+            view_guard: None,
         }
     }
     /// Only the source coordinator calls this after live capsule admission or recorded Applied evidence.
@@ -650,6 +661,20 @@ impl DeclarationDraft {
         statement: &Statement,
         pipe_input: Option<&OutputRef>,
     ) -> Result<Preparation, WorkspaceError> {
+        let mut statement = statement.clone();
+        let mut stamp = self.stamp();
+        stamp.view_guard = self.command_context.take_guard(
+            &mut statement,
+            &self.templates,
+            self.environment_replay,
+        )?;
+        if pipe_input.is_some() && stamp.view_guard.is_some() {
+            return Err(super::rejected(
+                "VIEWCMD001",
+                statement.span,
+                "View commands cannot be pipeline stages",
+            ));
+        }
         let annotations: Vec<_> = statement
             .annotations
             .iter()
@@ -755,13 +780,12 @@ impl DeclarationDraft {
             }
             &self.providers
         };
-        let mut statement = statement.clone();
         statement.annotations.retain(|a| a.name.text != "env");
         Analysis {
             reserved_names: &self.reserved_names,
             pipe_input,
             environment_context: effective_context.as_ref(),
-            stamp: self.stamp(),
+            stamp,
             graph: &self.graph,
             providers,
             importers: &self.importers,

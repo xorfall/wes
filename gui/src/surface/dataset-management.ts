@@ -32,6 +32,7 @@ const MAX_CANDIDATES = 999;
 /** Where a reviewed command goes: the session prompt, plus the names already bound there. */
 export interface Composer {
   readonly compose: (command: string) => void;
+  readonly reviewed?: (command: string, captured: ReturnType<import("../engine").Engine["captureComposition"]>) => void;
   readonly taken: ReadonlySet<string>;
 }
 export const ComposeContext = createContext<Composer | undefined>(undefined);

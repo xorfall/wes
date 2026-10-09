@@ -629,3 +629,24 @@ async fn hydrated_metadata_keeps_yesterdays_digest_and_tones_without_replaying_a
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn historical_view_command_guards_reconstruct_only_held_declarations() {
+    let (base, calls) = workspace();
+    let mut builder = ReplayWorkspace::new(base).unwrap();
+    apply(
+        &mut builder,
+        &command(":def send(value:Text) as catalog echo value:?value", &[]),
+    )
+    .await;
+    let stale = format!(
+        "@view{{id1, 00000000-0000-0000-0000-000000000000, id1, {}, {}}} send value:\"historical\" > shown",
+        "0".repeat(64),
+        "0".repeat(64)
+    );
+    apply(&mut builder, &command(&stale, &["id2"])).await;
+    let mut restored = builder.finish();
+    assert!(restored.start(Duration::ZERO).is_empty());
+    assert!(restored.prepare(&statement(&stale)).is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

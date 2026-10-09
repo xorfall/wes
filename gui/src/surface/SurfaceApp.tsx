@@ -1372,6 +1372,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
    * submitted here: the person submits it through the ordinary admission, like any typed command.
    */
   const composer: Composer = {
+    reviewed: (text, captured) => { engine.adoptComposition(captured, "prompt"); if (screen) leaveScreen(); changeDraft(text, "prompt"); setSplit(was => focus(was, sessionPane)); },
     compose: text => { if (screen) leaveScreen(); changeDraft(text, "prompt"); setSplit(was => focus(was, sessionPane)); },
     taken: new Set(workspace.nodes.flatMap(node => node.name ? [node.name, node.id] : [node.id])),
   };
