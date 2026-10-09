@@ -1289,3 +1289,7 @@ fn rejected(code: &'static str, span: Span, message: impl Into<String>) -> Works
 fn binding_error(error: BindingError) -> WorkspaceError {
     rejected("ENG004", Span::at(0), error.to_string())
 }
+
+#[cfg(test)]
+#[path = "workspace/command_guard_tests.rs"]
+mod command_guard_tests;

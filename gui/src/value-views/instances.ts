@@ -26,7 +26,7 @@ export interface ViewInstance {
 }
 export interface InputPatches {
   readonly cautions:Readonly<Record<string,readonly string[]>>;readonly values:Readonly<Record<string,Readonly<Record<string,StoredValue>>>>;readonly problems:Readonly<Record<string,string>>}
-export interface ViewFrame { readonly root: string; readonly instances: readonly ViewInstance[] }
+export interface ViewFrame { readonly authorityEpoch?: string; readonly root: string; readonly instances: readonly ViewInstance[] }
 export interface FrameSample<T=ViewFrame> { readonly frame?: T; readonly problem?: string; readonly paused?: boolean }
 interface Watch<T> {
   node: string; generation: string; listeners: Set<(sample: FrameSample<T>) => void>;
@@ -85,7 +85,7 @@ export class ViewFrameReader<T=ViewFrame> {
 /** Deltas may only reuse an exact instance/config/input revision from this reader's prior frame. */
 export function mergeViewFrame(raw:ViewFrame,previous?:ViewFrame):ViewFrame {
   if(!Array.isArray(raw.instances)||raw.instances.length>max_view_frame_instances()||new Set(raw.instances.map(i=>i.id)).size!==raw.instances.length)throw new Error("Invalid view frame");
-  const prior=new Map(previous?.instances.map(i=>[i.id,i]));
+  const prior=new Map((raw.authorityEpoch===previous?.authorityEpoch?previous:undefined)?.instances.map(i=>[i.id,i]));
   return {...raw,instances:raw.instances.map(entry=>{
     if(!(entry as unknown as {unchanged?:boolean}).unchanged)return entry;
     const old=prior.get(entry.id);

@@ -193,7 +193,17 @@ impl crate::workspace::Workspace {
             .handle;
         let (owner, state) = self.views.interaction(handle).map_err(|e| e.to_string())?;
         // Check the coordinator's own sources/privacy too, even for a separately opened member.
-        self.view_frame(&owner.id)?;
+        let owned = self.view_frame(&owner.id)?;
+        if owned.instances.iter().any(|entry| {
+            entry.input.is_none()
+                && self
+                    .views
+                    .instances
+                    .get(&entry.id)
+                    .is_some_and(|i| i.snapshot.input.is_some())
+        }) {
+            return Err("Shared interaction input is unavailable".into());
+        }
         Ok((owner, state))
     }
     pub fn commit_view_interaction(

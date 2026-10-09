@@ -146,6 +146,10 @@ async fn instance_frames_are_session_bound_revisioned_and_never_call_providers()
             "X-Wes-View-Revisions",
             json!([[node, instance, "0", "0"]]).to_string(),
         )
+        .header(
+            "X-Wes-View-Epoch",
+            frame["authorityEpoch"].as_str().unwrap(),
+        )
         .send()
         .await
         .unwrap();
@@ -1644,4 +1648,182 @@ async fn install_range_summary(fixture: &Fixture, generation: &str) {
         .wait_idle()
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn evidence_slots_are_independent_bounded_and_restricted_members_are_unavailable() {
+    struct Evidence;
+    impl Invoker for Evidence {
+        fn invoke(&self, call: Call, _: CancellationToken) -> InvocationFuture {
+            let restricted = matches!(
+                call.arguments.get("restricted").map(|v| v.data()),
+                Some(wes_core::Data::Bool(true))
+            );
+            Box::pin(async move {
+                let value = wes_core::Value::new(
+                    wes_views::named("Metric").unwrap().input().shape(),
+                    wes_core::Data::Record(
+                        [
+                            ("view".into(), wes_core::Data::Text("metric".into())),
+                            (
+                                "value".into(),
+                                wes_core::Data::Int(if restricted { 987654321 } else { 42 }),
+                            ),
+                        ]
+                        .into(),
+                    ),
+                    wes_core::Provenance::default(),
+                )
+                .unwrap();
+                Ok(if restricted {
+                    value.with_provenance(
+                        wes_core::Provenance::default().with_policy(
+                            &wes_core::flow::FlowPolicy::default()
+                                .confidential(wes_core::flow::Residence::Retainable),
+                        ),
+                    )
+                } else {
+                    value
+                })
+            })
+        }
+    }
+    let f = Fixture::configured(
+        |_| wes::web::Services::default(),
+        Arc::new(|w| {
+            w.register_provider(
+                ProviderDescription::new(
+                    "evidence",
+                    [{
+                        let mut capability = Capability::new(
+                            ["sample"],
+                            wes_views::named("Metric").unwrap().input().shape(),
+                            Safety::Safe,
+                        );
+                        capability.parameters = vec![wes_core::capability::Parameter::new(
+                            "restricted",
+                            wes_core::Shape::Primitive(wes_core::Primitive::Bool),
+                            true,
+                        )];
+                        capability
+                    }],
+                    vec![],
+                )
+                .unwrap(),
+                Arc::new(Evidence),
+            )?;
+            Ok(())
+        }),
+    )
+    .await;
+    let mut events = f.stream().await;
+    let generation = events.generation().await;
+    for (i, source) in [
+        ":view create Dashboard > board",
+        "evidence sample restricted:false > first",
+        ":view create Metric input:$first > card",
+        ":view connect $card to:$board",
+        "evidence sample restricted:true > second",
+        ":view create Metric input:$second > hidden",
+        ":view connect $hidden to:$board",
+        ":view create Timeline > empty",
+        ":view connect $empty to:$board",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            f.source(&generation, &format!("evidence-{i}"), source)
+                .await,
+            202
+        );
+        f.app.current().unwrap().session.wait_idle().await.unwrap();
+    }
+    let current = f.app.current().unwrap();
+    let state = current.session.snapshot().await.unwrap();
+    let root = state.names["board"].node.clone();
+    let frame = current.session.view_frame(root.clone()).await.unwrap();
+    let owner = &frame.instances[0];
+    let hidden = frame
+        .instances
+        .iter()
+        .find(|v| v.id == state.names["hidden"].node)
+        .unwrap();
+    assert!(hidden.input.is_none());
+    assert!(current.session.view_frame(hidden.id.clone()).await.is_err());
+    let read = |slot: &str, index: usize, epoch: &str| {
+        f.client
+            .get(f.url(&format!(
+                "/view-evidence/{root}/{}/{root}/{slot}/{index}",
+                owner.identity
+            )))
+            .header("X-Wes-Session", &generation)
+            .header("X-Wes-View-Epoch", epoch)
+            .header("X-Wes-View-Revision", owner.revision.to_string())
+            .header("X-Wes-Input-Revision", owner.input_revision.to_string())
+            .send()
+    };
+    let mut available = 0;
+    for index in 0..3 {
+        let reply = read("members", index, &frame.authority_epoch)
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), 200);
+        let text = reply.text().await.unwrap();
+        assert!(!text.contains("987654321"));
+        let input: Value = serde_json::from_str(&text).unwrap();
+        if input["available"] == true {
+            available += 1;
+            assert!(input["input"]["type"].is_object());
+        } else {
+            assert!(input["input"].is_null());
+            assert_eq!(input["complete"], false);
+        }
+    }
+    assert_eq!(available, 1);
+    assert_eq!(
+        read("other", 0, &frame.authority_epoch)
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(read("members", 0, "old-realm").await.unwrap().status(), 409);
+    assert_eq!(
+        read("members", 32, &frame.authority_epoch)
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let raw = f
+        .client
+        .get(f.url(&format!("/view-instances/{root}/{}", owner.identity)))
+        .header("X-Wes-Session", &generation)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!raw.contains("987654321"));
+    assert!(raw.contains(&frame.authority_epoch));
+    assert_eq!(
+        f.source(
+            &generation,
+            "capture-partial",
+            ":view capture $board > collected"
+        )
+        .await,
+        202
+    );
+    current.session.wait_idle().await.unwrap();
+    let state = current.session.snapshot().await.unwrap();
+    assert!(
+        state
+            .execution
+            .values
+            .contains_key(&state.names["collected"].node)
+    );
+    f.close().await;
 }

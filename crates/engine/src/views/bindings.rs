@@ -141,6 +141,13 @@ impl crate::workspace::Workspace {
                 .revisions
                 .push(format!("{}:{}", target.identity, target.revision));
             let instance = self.views.instances.get(&target.id).ok_or("View removed")?;
+            if target.input.is_none() && instance.snapshot.input.is_some() {
+                result.problems.insert(
+                    target.id.clone(),
+                    "Input unavailable; no source was rerun".into(),
+                );
+                continue;
+            }
             let mut fields = BTreeMap::new();
             for (field, binding) in &instance.bindings {
                 let read = (|| {
