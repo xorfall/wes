@@ -1244,6 +1244,18 @@ impl<T: Clone> Runtime<T> {
         effects.extend(self.schedule(downstream.into_iter().collect(), false, now));
         effects
     }
+    /// An explicit connection gap invalidates readiness without creating a new source run.
+    pub(crate) fn stream_reopening(&mut self, run: &Run) -> Option<Vec<Effect<T>>> {
+        if self.closed || !self.is_active(run) {
+            return None;
+        }
+        let lease = self.leases.get_mut(run.node())?;
+        if lease.run != *run || lease.kind != WorkKind::Open {
+            return None;
+        }
+        lease.kind = WorkKind::Opening;
+        Some(vec![Effect::StreamClosing(run.clone())])
+    }
     pub fn stream_closing(&mut self, run: &Run) -> Option<Vec<Effect<T>>> {
         if self.closed || !self.is_active(run) {
             return None;
