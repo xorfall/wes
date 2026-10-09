@@ -26,6 +26,12 @@ pub enum HttpOperation {
     Analysis,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonMode {
+    Parse,
+    Decode,
+}
+
 pub trait LocalServices: Send + Sync + std::fmt::Debug + 'static {
     fn http(
         &self,
@@ -47,6 +53,38 @@ pub trait LocalServices: Send + Sync + std::fmt::Debug + 'static {
         token: &CancellationToken,
         span: Span,
     ) -> Result<Value, Failure>;
+    fn decode(
+        &self,
+        _bytes: &[u8],
+        _contract: Option<&Contract>,
+        _token: &CancellationToken,
+        span: Span,
+    ) -> Result<Value, Failure> {
+        Err(Failure::new(
+            "CAL004",
+            span,
+            "diagnostic JSON reader is not configured",
+        ))
+    }
+    fn json(
+        &self,
+        bytes: &[u8],
+        contract: Option<&Contract>,
+        token: &CancellationToken,
+        span: Span,
+        mode: JsonMode,
+    ) -> Result<Value, Failure> {
+        match mode {
+            JsonMode::Decode => self.decode(bytes, contract, token, span),
+            JsonMode::Parse => self.read(
+                std::str::from_utf8(bytes)
+                    .map_err(|_| Failure::new("CAL004", span, "JSON text must be UTF-8"))?,
+                contract,
+                token,
+                span,
+            ),
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct BoundCalculation {
@@ -422,16 +460,19 @@ impl BoundCalculation {
                             }
                         }
                     }
-                    Request::ParseJson {
-                        text,
+                    Request::Json {
+                        bytes,
                         contract,
+                        mode,
                         span,
                         ..
                     } => {
                         let reader = self.json.clone();
                         let cancel = token.clone();
                         match tokio::task::spawn_blocking(move || match reader {
-                            Some(reader) => reader.read(&text, contract.as_deref(), &cancel, span),
+                            Some(reader) => {
+                                reader.json(&bytes, contract.as_deref(), &cancel, span, mode)
+                            }
                             None => Err(Failure::new(
                                 "CAL004",
                                 span,

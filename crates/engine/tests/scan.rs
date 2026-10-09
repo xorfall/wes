@@ -381,6 +381,40 @@ fn cancellation_and_fresh_vm_work_limits_preserve_only_committed_records_and_rel
     assert_eq!(done.progress.usage.input_records, 0);
 }
 #[test]
+fn diagnostic_json_native_work_is_debited_before_entering_a_local_service() {
+    let body = "const decoded=decodeJson(item); return {state:state,outputs:[]};";
+    let mut bounds = settings();
+    bounds.scratch.work = 1000;
+    let done = run(
+        input(
+            value(Data::List(vec![Data::Text("{".repeat(500).into())])),
+            body,
+            None,
+        ),
+        bounds,
+    );
+    let stop = done.stop.unwrap();
+    assert_eq!(stop.failure.code, "CAL006");
+    assert_eq!(stop.dimension, Some(Dimension::RecordWork));
+    assert_eq!(done.progress.usage.input_records, 0);
+
+    // With sufficient work, an unavailable service remains a failure rather
+    // than an apparently successful invalid-input diagnostic.
+    let done = run(
+        input(value(Data::List(vec![Data::Text("{".into())])), body, None),
+        settings(),
+    );
+    let stop = done.stop.unwrap();
+    assert_eq!(stop.failure.code, "CAL004");
+    assert!(
+        stop.failure
+            .message
+            .contains("local service is unavailable")
+    );
+    assert_eq!(done.progress.usage.input_records, 0);
+}
+
+#[test]
 fn cumulative_work_refusal_and_private_zero_output_remain_attempt_wide() {
     let mut settings = settings();
     settings.startup_work = 150_000;

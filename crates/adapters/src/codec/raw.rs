@@ -7,7 +7,7 @@ use serde::{
     de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::value::RawValue;
-use std::fmt;
+use std::{cell::Cell, fmt};
 use wes_core::{
     Data, Decimal, Primitive,
     contracts::{Contract, ContractKind},
@@ -62,15 +62,35 @@ impl Context {
         self.scan(raw)?;
         // Constant envelope/shape headers are not domain nodes. A small floor permits their
         // fields even when the final scalar consumed the remaining domain-node budget.
-        Ok(Object {
+        let exhausted = Cell::new(false);
+        Object {
             limit: self.left.max(8),
+            exhausted: &exhausted,
         }
-        .deserialize(&mut serde_json::Deserializer::from_str(raw.get()))?)
+        .deserialize(&mut serde_json::Deserializer::from_str(raw.get()))
+        .map_err(|error| {
+            if exhausted.get() {
+                CodecError::Work
+            } else {
+                CodecError::Json(error)
+            }
+        })
     }
     pub fn sequence<'a>(&mut self, raw: &'a RawValue) -> Result<Vec<&'a RawValue>, CodecError> {
         self.scan(raw)?;
-        Ok(Sequence { limit: self.left }
-            .deserialize(&mut serde_json::Deserializer::from_str(raw.get()))?)
+        let exhausted = Cell::new(false);
+        Sequence {
+            limit: self.left,
+            exhausted: &exhausted,
+        }
+        .deserialize(&mut serde_json::Deserializer::from_str(raw.get()))
+        .map_err(|error| {
+            if exhausted.get() {
+                CodecError::Work
+            } else {
+                CodecError::Json(error)
+            }
+        })
     }
 }
 pub(super) fn string(raw: &RawValue) -> Result<String, CodecError> {
@@ -99,16 +119,17 @@ pub(super) fn required<'a>(
         .ok_or_else(|| CodecError::Invalid(format!("missing '{key}'")))
 }
 
-struct Object {
+struct Object<'a> {
     limit: usize,
+    exhausted: &'a Cell<bool>,
 }
-impl<'de> DeserializeSeed<'de> for Object {
+impl<'de> DeserializeSeed<'de> for Object<'_> {
     type Value = IndexMap<String, &'de RawValue>;
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         deserializer.deserialize_map(self)
     }
 }
-impl<'de> Visitor<'de> for Object {
+impl<'de> Visitor<'de> for Object<'_> {
     type Value = IndexMap<String, &'de RawValue>;
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("an object with distinct keys")
@@ -117,6 +138,7 @@ impl<'de> Visitor<'de> for Object {
         let mut fields = IndexMap::new();
         while let Some(key) = map.next_key::<String>()? {
             if fields.len() >= self.limit {
+                self.exhausted.set(true);
                 return Err(de::Error::custom("object exceeds item budget"));
             }
             let value = map.next_value::<&RawValue>()?;
@@ -127,16 +149,17 @@ impl<'de> Visitor<'de> for Object {
         Ok(fields)
     }
 }
-struct Sequence {
+struct Sequence<'a> {
     limit: usize,
+    exhausted: &'a Cell<bool>,
 }
-impl<'de> DeserializeSeed<'de> for Sequence {
+impl<'de> DeserializeSeed<'de> for Sequence<'_> {
     type Value = Vec<&'de RawValue>;
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         deserializer.deserialize_seq(self)
     }
 }
-impl<'de> Visitor<'de> for Sequence {
+impl<'de> Visitor<'de> for Sequence<'_> {
     type Value = Vec<&'de RawValue>;
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("an array within its item budget")
@@ -145,6 +168,7 @@ impl<'de> Visitor<'de> for Sequence {
         let mut items = vec![];
         while let Some(item) = sequence.next_element::<&RawValue>()? {
             if items.len() >= self.limit {
+                self.exhausted.set(true);
                 return Err(de::Error::custom("array exceeds item budget"));
             }
             items.push(item);

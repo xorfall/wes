@@ -34,6 +34,31 @@ fn compile(code: &str) -> Result<calc::Compiled, wes_language::Diagnostic> {
 }
 
 #[test]
+fn diagnostic_json_decode_captures_contract_and_preserves_optional_result_shape() {
+    let compiled = compile("return decodeJson('1','Int');").unwrap();
+    assert_eq!(
+        compiled.output_shape(),
+        calc::json_decode_shape(Shape::Primitive(Primitive::Int))
+    );
+    assert_eq!(compiled.contracts.len(), 1);
+    assert!(compiled.purity.external_operations.is_empty());
+    assert_eq!(
+        compile("return decodeJson('null');")
+            .unwrap()
+            .output_shape(),
+        calc::json_decode_shape(Shape::Unknown)
+    );
+    for source in [
+        "const f=decodeJson; return f('1');",
+        "return decodeJson('1',$rows);",
+        "return decodeJson('1','MissingContract');",
+        "return decodeJson(1);",
+    ] {
+        assert!(compile(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn provably_non_callable_values_fail_before_execution_without_rejecting_dynamic_calls() {
     for source in [
         "const length=5; return length([200,503]);",

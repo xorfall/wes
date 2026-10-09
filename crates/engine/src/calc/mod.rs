@@ -166,7 +166,7 @@ impl Budget {
 }
 
 mod host;
-pub use host::{BoundCalculation, HttpOperation, LocalServices};
+pub use host::{BoundCalculation, HttpOperation, JsonMode, LocalServices};
 mod iteration;
 
 /// Safe metadata only. Never export source spans, literals, provider or dependency names.
