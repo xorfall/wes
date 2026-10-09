@@ -3,6 +3,8 @@ import type { ViewDefinition } from "./contract";
 export type { ViewDefinition, ContractSchema, ViewSize, ViewPlacement, ViewTier, ViewLayout } from "./contract";
 export * from "./values";
 export * from "./datasets";
+export * from "./commands";
+import type { ViewCommands } from "./commands";
 import type { ViewDatasets } from "./datasets";
 
 export type ReadonlyData<T> = T extends object ? Readonly<T> : T;
@@ -22,6 +24,7 @@ export interface ViewProps<Input, State, Event> {
     /** True while the reader's focus is inside this View; a selection may stay but read as inactive. */
     readonly active?: boolean; readonly inspect?: () => void;
     /** Bounded page reads of this input's Dataset fields; absent where the host cannot read them. */
+    readonly commands?: ViewCommands;
     readonly datasets?: ViewDatasets};
 }
 

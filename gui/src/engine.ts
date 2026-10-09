@@ -161,6 +161,21 @@ export class Engine {
     if (!text) this.compositions.delete(scope);
     else if (!this.compositions.has(scope)) this.compositions.set(scope, { generation: this.generation, context: this.environmentContext() });
   }
+  captureComposition() { const context=this.environmentContext(); return { generation: this.generation, context: context && {...context,revisions:{...context.revisions}} }; }
+  adoptComposition(captured: ReturnType<Engine["captureComposition"]>, scope = "prompt"): void {
+    if (!captured.generation || captured.generation !== this.generation || JSON.stringify(captured.context) !== JSON.stringify(this.environmentContext())) throw new Error("Session or environment changed; prepare the command again.");
+    this.compositions.set(scope, captured);
+  }
+  async prepareViewCommand(binding: import("./value-views/view-bindings").ViewBinding, template: string, arguments_: Readonly<Record<string, unknown>>, captured: ReturnType<Engine["captureComposition"]>, signal: AbortSignal): Promise<string> {
+    if (binding.generation !== this.generation || captured.generation !== this.generation) throw new Error("View changed");
+    const response = await fetch("/view-commands", { method: "POST", headers: this.headers({"X-Wes-Session": binding.generation, "Content-Type": "application/json"}),
+      body: stringifyExactJson({root: binding.root, instance: binding.rootInstance, member: binding.member, revision: binding.revision, inputRevision: binding.inputRevision, template, arguments: arguments_, environments: captured.context}),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]), cache: "no-store" });
+    if (!response.ok || binding.generation !== this.generation || signal.aborted) throw new Error("View command changed or is unavailable");
+    const draft = await readExactJson(response) as {source?: unknown};
+    if (typeof draft.source !== "string" || draft.source.length > 16 * 1024) throw new Error("Invalid command draft");
+    return draft.source;
+  }
   /** A retained editor and its returned prompt start with the same captured context. */
   copyComposition(from: string, to: string): void {
     const captured = this.compositions.get(from);

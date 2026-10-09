@@ -17,6 +17,8 @@ import fonts from "../../surface/fonts.css?inline";
 import authoring from "@wes/view-sdk/authoring.json";
 import type {PresentationNode} from "../../presentation/types";
 import {DatasetBridge,ViewDatasetContext,type DatasetRoute} from "../view-datasets";
+import {CommandBridge,type CommandReview} from "../view-commands";
+import {ComposeContext} from "../../surface/dataset-management";
 import {DatasetHostContext} from "../../surface/render/dataset-source";
 interface Model {input:unknown;identity?:string;inputRevision?:string;path:string;slots:Readonly<Record<string,readonly PresentationNode[]>>;mode:Mode;coordinated:boolean}
 interface InspectionSession { controller:InteractionController<unknown,unknown>; apply:(message:Record<string,unknown>)=>boolean }
@@ -83,6 +85,9 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const routeKey=route.kind==="frame" ? stringifyExactJson(["frame",route.binding.generation,route.binding.root,route.binding.rootInstance,route.binding.member,route.binding.revision,route.binding.inputRevision])
     : route.kind==="stored" ? stringifyExactJson(["stored",route.source.generation,route.source.handle,route.path]) : "none";
   const routeRef=useRef(route);routeRef.current=route;
+  const composer=useContext(ComposeContext),composerRef=useRef(composer);composerRef.current=composer;
+  const [review,setReview]=useState<CommandReview>();
+  const commandBridge=useRef<CommandBridge>();
   const bridge=useRef<DatasetBridge>(),drawn=useRef<{input:unknown;route:string}>();
   const rebindShared=useRef<()=>void>();
   useLayoutEffect(()=>rebindShared.current?.(),[host]);
@@ -105,9 +110,10 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const update=()=>{
     // A new input or binding ends every Dataset read in flight for the old one.
     const now={input:modelRef.current.input,route:routeKey};
-    if(drawn.current && (drawn.current.input!==now.input||drawn.current.route!==now.route))bridge.current?.reset();
+    if(drawn.current && (drawn.current.input!==now.input||drawn.current.route!==now.route)){bridge.current?.reset();commandBridge.current?.reset();}
     drawn.current=now;
     delivery.current?.update(()=>({input:modelRef.current.input,context:{mode:modelRef.current.mode,instance:modelRef.current.identity??null,coordinated:modelRef.current.coordinated,inspectionOnly:!!mirror,inspectionActive:outletRef.current?.selected===inspectionKey,inspectionOutlet:!!outletRef.current && modelRef.current.coordinated && !mirror,active:active.current,
+      commands:routeRef.current.kind==="frame" && !!composerRef.current?.reviewed && !mirror,commandEpoch:commandBridge.current?.current()??0,
       datasets:routeRef.current.kind!=="none" && !mirror,datasetEpoch:bridge.current?.current()??0},slots:Object.fromEntries(Object.entries(modelRef.current.slots).map(([name,nodes])=>[name,nodes.map((_node,index)=>({key:`${name}/${index}`,height:heights.current[`${name}/${index}`]??120}))]))}));
   };
   useLayoutEffect(update,[model,inspectionOutlet,inspectionActive,routeKey]);
@@ -138,13 +144,14 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     let inspectable=false;
     let nextState:unknown,lastOutputs:unknown={},lastEvents:readonly {port:string;value:unknown}[]=[];
     const limits=authoring.runtimeLimits;
-    const rate=new MessageRate();let closed=false,failed=false;
+    const rate=new MessageRate();let closed=false,failed=false,isReady=false;
     const detachShared=()=>{closeShared?.();closeShared=undefined;};
     const attachShared=()=>{detachShared();if(!closed&&!failed&&controller&&remote)closeShared=hostRef.current?.(modelRef.current.path,remote,controller);};
     rebindShared.current=attachShared;
     observed.restart();
     const datasets=new DatasetBridge(text=>{if(!closed&&!failed)channel.port1.postMessage(text);},limits.inputBytes);bridge.current=datasets;drawn.current=undefined;
-    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);datasets.close();setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
+    const commands=new CommandBridge(message=>{if(!closed&&!failed)channel.port1.postMessage(stringifyExactJson(message));},setReview);commandBridge.current=commands;
+    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);datasets.close();commands.close();setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
     const send=(value:unknown)=>{if(closed||failed)return;const text=stringifyExactJson(value);if(text.length>limits.messageCharacters)throw new Error("Message budget");channel.port1.postMessage(text);};
     const sync=()=>{if(controller)send({kind:"state",state:controller.committed(),revision:controller.committedRevision()});};
     const applyEvent=(message:Record<string,unknown>)=>{
@@ -189,7 +196,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
             remote={...module,outputSnapshot:()=>lastOutputs,outputEvents:()=>lastEvents};
             attachShared();setSession({controller,apply:applyEvent});sync();
           }
-          observed.ready();
+          isReady=true;observed.ready();
         }else if(message.kind==="event"){
           const accepted=mirror ? mirror.apply(message) : applyEvent(message);
           if(!controller)throw new Error("Unexpected event before readiness");
@@ -211,6 +218,9 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
         }else if(message.kind==="shortcut"){
           if(!["Tab","Enter","r","R","m","M"].includes(String(message.key))||!(message.ctrl||message.meta))throw new Error();
           iframe.dispatchEvent(new KeyboardEvent("keydown",{key:String(message.key),ctrlKey:!!message.ctrl,metaKey:!!message.meta,shiftKey:!!message.shift,bubbles:true,cancelable:true}));
+        }else if(message.kind==="command-prepare"){
+          const current=routeRef.current;
+          commands.handle(message,isReady&&!mirror&&current.kind==="frame"?current.binding:undefined,composerRef.current);
         }else if(message.kind==="dataset-read"){
           // A page read for this drawing's own input only; the inspection mirror reads nothing.
           if(mirror)throw new Error("Dataset reads are not available in inspection");
@@ -224,7 +234,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     connect.current=loaded;
     channel.port1.start();
     didLoad.current=false;iframe.srcdoc=document;
-    return ()=>{closed=true;abort.abort();d.close();datasets.close();if(bridge.current===datasets)bridge.current=undefined;channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
+    return ()=>{closed=true;abort.abort();d.close();datasets.close();commands.close();if(commandBridge.current===commands)commandBridge.current=undefined;if(bridge.current===datasets)bridge.current=undefined;channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
   },[document,asset,module,mirror,observed]);
   return <><div ref={box} style={{position:"relative",maxWidth:"100%",minWidth:0,overflow:"hidden"}}>
     {problem&&<p className="mono-warn" role="status">{problem}</p>}
@@ -233,6 +243,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
       <div style={{position:"relative",left:rect.x-clip.x,top:rect.y-clip.y,width:rect.width || "100%",maxHeight:rect.height || undefined,overflow:"auto"}}><SlotSize changed={size=>{if(size>0 && heights.current[rect.key]!==size){heights.current[rect.key]=size;update();}}}>{renderChild(child)}</SlotSize></div>
     </div>:null;})}
   </div>
+    {!mirror && review && <aside aria-label="Review command" className="view-command-review"><strong>Prepare command</strong><pre>{review.source}</pre><p>Review this command in the prompt before submitting it.</p><button className="cell-action" onClick={review.adopt}>Prepare in prompt</button><button className="cell-action" onClick={review.cancel}>Cancel</button></aside>}
     {!mirror && session && outlet?.selected===inspectionKey && outlet.target && createPortal(
       <InspectionContext.Provider value={undefined}><ExternalCanvas model={model} children={[]} renderChild={renderChild} module={module} asset={asset} mirror={session}/></InspectionContext.Provider>,outlet.target)}
   </>;

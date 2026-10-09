@@ -114,6 +114,7 @@ impl WorkspaceError {
 struct Stamp {
     owner: Arc<()>,
     revision: u64,
+    view_guard: Option<crate::views::commands::Guard>,
 }
 #[derive(Debug)]
 pub struct PreparedChange {
@@ -814,11 +815,20 @@ impl Workspace {
         if self.runtime.is_closed() {
             return Err(RuntimeError::Closed.into());
         }
+        let mut statement = statement.clone();
+        let mut stamp = self.stamp();
+        if statement.annotations.iter().any(|a| a.name.text == "view") {
+            stamp.view_guard = crate::views::commands::Context::capture(self).take_guard(
+                &mut statement,
+                &self.templates,
+                false,
+            )?;
+        }
         analysis::Analysis {
             reserved_names: &[],
             pipe_input: None,
             environment_context: None,
-            stamp: self.stamp(),
+            stamp,
             graph: self.runtime.graph(),
             providers: &self.providers,
             importers: &self.importers,
@@ -832,7 +842,7 @@ impl Workspace {
             data_typing: &|node| self.data_typing(node),
             allocation: analysis::NodeAllocation::Automatic,
         }
-        .prepare(statement)
+        .prepare(&statement)
     }
     pub fn prepare_type_load(
         &self,
@@ -1249,6 +1259,7 @@ impl Workspace {
         Stamp {
             owner: self.owner.clone(),
             revision: self.revision,
+            view_guard: None,
         }
     }
     fn check_stamp(&self, stamp: &Stamp) -> Result<(), WorkspaceError> {
@@ -1257,6 +1268,9 @@ impl Workspace {
         }
         if !Arc::ptr_eq(&self.owner, &stamp.owner) || self.revision != stamp.revision {
             return Err(WorkspaceError::Obsolete);
+        }
+        if let Some(guard) = &stamp.view_guard {
+            crate::views::commands::Context::capture(self).check(guard, &self.templates)?;
         }
         Ok(())
     }

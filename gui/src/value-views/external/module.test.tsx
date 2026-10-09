@@ -2,6 +2,8 @@ import {afterEach,expect,it,vi} from "vitest";
 import {act,create} from "react-test-renderer";
 import type {ContextType} from "react";
 import {externalModule} from "./module";
+import {ViewBindingContext,type ViewBinding} from "../view-bindings";
+import {ComposeContext} from "../../surface/dataset-management";
 import {InstanceInteractionHost} from "../interactive";
 import {valueViewModules} from "../registry";
 import {decodeContract} from "../definition";
@@ -16,7 +18,7 @@ vi.mock("./document",()=>({frameDocument:async()=>"<!doctype html><body></body>"
 afterEach(()=>{vi.unstubAllGlobals();vi.useRealTimers();});
 type Host=NonNullable<ContextType<typeof InstanceInteractionHost>>;
 
-async function mounted(member=false){
+async function mounted(member=false,commandSupport=false){
   vi.stubGlobal("ResizeObserver",class{observe(){} disconnect(){}});
   vi.stubGlobal("getComputedStyle",()=>({lineHeight:"21px"}));
   vi.useFakeTimers();
@@ -31,14 +33,16 @@ async function mounted(member=false){
   const model={input,path:"view/chart",identity:"chart-instance",slots:member?{members:[{kind:"leaf",path:"child"}]}:{},mode:"preview",coordinated:false};
   const write=vi.fn(),iframe={set srcdoc(value:string){write(value);},contentWindow:{postMessage:vi.fn()}};
   const close=vi.fn(),host=vi.fn<Host>(()=>close);
-  const view=(binding:Host)=><InstanceInteractionHost.Provider value={binding}><module.Component model={model} children={[]} renderChild={()=><span>Retained member</span>}/></InstanceInteractionHost.Provider>;
+  const prepare=vi.fn().mockResolvedValue('@view{proof} publish body:"synthetic"'),adopt=vi.fn();
+  const binding={engine:{captureComposition:()=>({generation:"g"}),prepareViewCommand:prepare},generation:"g",root:"chart",rootInstance:"chart-instance",member:"chart",revision:"0",inputRevision:"0",linkedInputs:[]} as unknown as ViewBinding;
+  const view=(hostBinding:Host,shown=model)=><ComposeContext.Provider value={commandSupport?{reviewed:adopt,compose:vi.fn(),taken:new Set()}:undefined}><ViewBindingContext.Provider value={commandSupport?()=>binding:undefined}><InstanceInteractionHost.Provider value={hostBinding}><module.Component model={shown} children={[]} renderChild={()=><span>Retained member</span>}/></InstanceInteractionHost.Provider></ViewBindingContext.Provider></ComposeContext.Provider>;
   let tree!:ReturnType<typeof create>;
   await act(async()=>{tree=create(view(host),{createNodeMock:node=>node.type==="iframe"?iframe:{}});});
   act(()=>tree.root.findByType("iframe").props.onLoad());
   const receive=(message:unknown)=>act(()=>channels[0]!.port1.onmessage!({data:stringifyExactJson(message)}));
   const state=initial(input);
   receive({kind:"ready",digest:definition.digest,state,outputs:outputs(state)});
-  return {tree,view,host,close,channels,write,iframe,receive};
+  return {tree,view,host,close,channels,write,iframe,receive,prepare,adopt,model};
 }
 
 it("rebinds coordination while retaining the iframe, channel and committed controller state",async()=>{
@@ -162,5 +166,19 @@ it("tells the View whether the reader's focus is inside it, without saying where
   doc.activeElement=elsewhere;fire("focusin");
   expect(renders().at(-1)!.context.active).toBe(false);
   expect(JSON.stringify(renders())).not.toContain("another cell");
+  act(()=>tree.unmount());
+});
+
+it("reviews commands outside the sandbox, adopts only on native click and withdraws on input change",async()=>{
+  const {tree,view,host,receive,prepare,adopt,model}=await mounted(false,true);
+  await act(async()=>{receive({kind:"command-prepare",request:1,epoch:0,template:"publish",arguments:{body:"synthetic"}});});
+  expect(prepare).toHaveBeenCalledOnce();expect(adopt).not.toHaveBeenCalled();
+  const panel=tree.root.findByProps({"aria-label":"Review command"});
+  expect(panel.findByType("pre").children.join("")).toContain("synthetic");
+  act(()=>panel.findAllByType("button")[0]!.props.onClick());expect(adopt).toHaveBeenCalledOnce();
+  await act(async()=>{receive({kind:"command-prepare",request:2,epoch:0,template:"publish",arguments:{body:"synthetic"}});});
+  expect(tree.root.findAllByProps({"aria-label":"Review command"})).toHaveLength(1);
+  act(()=>tree.update(view(host,{...model,input:{...model.input}})));
+  expect(tree.root.findAllByProps({"aria-label":"Review command"})).toHaveLength(0);expect(adopt).toHaveBeenCalledOnce();
   act(()=>tree.unmount());
 });
