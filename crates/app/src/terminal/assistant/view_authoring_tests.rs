@@ -51,10 +51,13 @@ async fn view_authoring_is_bounded_shared_product_context_without_execution_or_s
                 assert!(!reply.to_string().contains("#"));
                 assert!(reply["content"]["roles"].get("frame-focus").is_none());
             }
-            "sdk" => assert_eq!(
+            "sdk" => {
+                assert!(reply["content"]["commands"].as_str().unwrap().contains("ViewCommands"));
+                assert_eq!(
                 reply["content"]["declarations"],
                 include_str!("../../../../../packages/view-sdk/index.ts")
-            ),
+            );
+            },
             "types" => {
                 assert!(reply["content"]["inputRule"].as_str().unwrap().contains("Record"));
                 let source = reply["content"]["example"].as_str().unwrap();

@@ -25,6 +25,8 @@ use std::{
     },
     time::Duration,
 };
+#[path = "workspace/command_drafts.rs"]
+mod command_drafts;
 #[path = "workspace/controls.rs"]
 mod controls;
 #[path = "workspace/defined_views.rs"]
