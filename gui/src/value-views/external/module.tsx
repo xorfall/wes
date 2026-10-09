@@ -17,6 +17,7 @@ import fonts from "../../surface/fonts.css?inline";
 import authoring from "@wes/view-sdk/authoring.json";
 import type {PresentationNode} from "../../presentation/types";
 import {DatasetBridge,ViewDatasetContext,type DatasetRoute} from "../view-datasets";
+import {EvidenceBridge} from "../view-evidence";
 import {CommandBridge,type CommandReview} from "../view-commands";
 import {ComposeContext} from "../../surface/dataset-management";
 import {DatasetHostContext} from "../../surface/render/dataset-source";
@@ -48,6 +49,8 @@ export function externalModule(asset:ViewAsset):ValueViewModule {
 }
 function ExternalView(props:ViewComponentProps & {module:ValueViewModule;asset:ViewAsset}) {
   const inherited=useContext(InspectionContext);
+  const bindings=useContext(ViewDatasetContext);
+  const authorityEpoch=bindings?.((props.model as Model).path)?.authorityEpoch;
   const model=props.model as Model,ref=useRef<HTMLDivElement>(null);
   const [wide,setWide]=useState(false),[selected,select]=useState<string>(),[target,setTarget]=useState<HTMLElement|null>(null);
   useLayoutEffect(()=>{
@@ -59,7 +62,7 @@ function ExternalView(props:ViewComponentProps & {module:ValueViewModule;asset:V
   const enabled=grouped && wide;
   return <div ref={ref} className={`external-view-shell${enabled && selected ? " external-inspecting" : ""}`}>
     <InspectionContext.Provider value={enabled ? {selected,select,target} : inherited}>
-      <ExternalCanvas {...props}/>
+      <ExternalCanvas key={authorityEpoch} {...props}/>
       {enabled && selected && <aside className="external-inspection" aria-label="Timeline source inspection" onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();select(undefined);}}}>
         <header><strong>Source inspection</strong><button className="cell-action" onClick={()=>select(undefined)}>Close</button></header>
         <div ref={setTarget}/>
@@ -88,6 +91,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const composer=useContext(ComposeContext),composerRef=useRef(composer);composerRef.current=composer;
   const [review,setReview]=useState<CommandReview>();
   const commandBridge=useRef<CommandBridge>();
+  const evidenceBridge=useRef<EvidenceBridge>();
   const bridge=useRef<DatasetBridge>(),drawn=useRef<{input:unknown;route:string}>();
   const rebindShared=useRef<()=>void>();
   useLayoutEffect(()=>rebindShared.current?.(),[host]);
@@ -110,9 +114,10 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
   const update=()=>{
     // A new input or binding ends every Dataset read in flight for the old one.
     const now={input:modelRef.current.input,route:routeKey};
-    if(drawn.current && (drawn.current.input!==now.input||drawn.current.route!==now.route)){bridge.current?.reset();commandBridge.current?.reset();}
+    if(drawn.current && (drawn.current.input!==now.input||drawn.current.route!==now.route)){bridge.current?.reset();commandBridge.current?.reset();evidenceBridge.current?.reset();}
     drawn.current=now;
     delivery.current?.update(()=>({input:modelRef.current.input,context:{mode:modelRef.current.mode,instance:modelRef.current.identity??null,coordinated:modelRef.current.coordinated,inspectionOnly:!!mirror,inspectionActive:outletRef.current?.selected===inspectionKey,inspectionOutlet:!!outletRef.current && modelRef.current.coordinated && !mirror,active:active.current,
+      evidence:routeRef.current.kind==="frame" && !!routeRef.current.binding.authorityEpoch && !mirror,evidenceEpoch:evidenceBridge.current?.current()??0,
       commands:routeRef.current.kind==="frame" && !!composerRef.current?.reviewed && !mirror,commandEpoch:commandBridge.current?.current()??0,
       datasets:routeRef.current.kind!=="none" && !mirror,datasetEpoch:bridge.current?.current()??0},slots:Object.fromEntries(Object.entries(modelRef.current.slots).map(([name,nodes])=>[name,nodes.map((_node,index)=>({key:`${name}/${index}`,height:heights.current[`${name}/${index}`]??120}))]))}));
   };
@@ -150,8 +155,9 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     rebindShared.current=attachShared;
     observed.restart();
     const datasets=new DatasetBridge(text=>{if(!closed&&!failed)channel.port1.postMessage(text);},limits.inputBytes);bridge.current=datasets;drawn.current=undefined;
+    const evidence=new EvidenceBridge(message=>{if(!closed&&!failed)channel.port1.postMessage(stringifyExactJson(message));});evidenceBridge.current=evidence;
     const commands=new CommandBridge(message=>{if(!closed&&!failed)channel.port1.postMessage(stringifyExactJson(message));},setReview);commandBridge.current=commands;
-    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);datasets.close();commands.close();setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
+    const fail=(message:string,reason:RenderError)=>{if(closed||failed)return;failed=true;observed.failed(reason);datasets.close();commands.close();evidence.close();setSession(undefined);setProblem(message);delivery.current?.close();channel.port1.close();detachShared();stopController?.();stopController=undefined;};
     const send=(value:unknown)=>{if(closed||failed)return;const text=stringifyExactJson(value);if(text.length>limits.messageCharacters)throw new Error("Message budget");channel.port1.postMessage(text);};
     const sync=()=>{if(controller)send({kind:"state",state:controller.committed(),revision:controller.committedRevision()});};
     const applyEvent=(message:Record<string,unknown>)=>{
@@ -218,6 +224,9 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
         }else if(message.kind==="shortcut"){
           if(!["Tab","Enter","r","R","m","M"].includes(String(message.key))||!(message.ctrl||message.meta))throw new Error();
           iframe.dispatchEvent(new KeyboardEvent("keydown",{key:String(message.key),ctrlKey:!!message.ctrl,metaKey:!!message.meta,shiftKey:!!message.shift,bubbles:true,cancelable:true}));
+        }else if(message.kind==="evidence-read"){
+          const current=routeRef.current;
+          evidence.handle(message,isReady&&!mirror&&current.kind==="frame"?current.binding:undefined);
         }else if(message.kind==="command-prepare"){
           const current=routeRef.current;
           commands.handle(message,isReady&&!mirror&&current.kind==="frame"?current.binding:undefined,composerRef.current);
@@ -234,7 +243,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
     connect.current=loaded;
     channel.port1.start();
     didLoad.current=false;iframe.srcdoc=document;
-    return ()=>{closed=true;abort.abort();d.close();datasets.close();commands.close();if(commandBridge.current===commands)commandBridge.current=undefined;if(bridge.current===datasets)bridge.current=undefined;channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
+    return ()=>{closed=true;abort.abort();d.close();datasets.close();commands.close();evidence.close();if(commandBridge.current===commands)commandBridge.current=undefined;if(bridge.current===datasets)bridge.current=undefined;channel.port1.close();channel.port2.close();detachShared();stopController?.();if(rebindShared.current===attachShared)rebindShared.current=undefined;delivery.current=undefined;port.current=undefined;connect.current=undefined;sendTheme.current=undefined;};
   },[document,asset,module,mirror,observed]);
   return <><div ref={box} style={{position:"relative",maxWidth:"100%",minWidth:0,overflow:"hidden"}}>
     {problem&&<p className="mono-warn" role="status">{problem}</p>}

@@ -100,6 +100,14 @@ pub(super) async fn dataset(
             );
         }
     };
+    let authority = frame.authority_epoch.clone();
+    if request
+        .headers()
+        .get("X-Wes-View-Epoch")
+        .is_some_and(|v| v.to_str().ok() != Some(frame.authority_epoch.as_str()))
+    {
+        return StatusCode::CONFLICT.into_response();
+    }
     let bindings = frame.binding_revisions();
     let revisions = frame.revisions();
     let Some(selected) = frame
@@ -151,7 +159,10 @@ pub(super) async fn dataset(
         return datasets::error_response(Error::Storage(error));
     }
     match current.session.view_frame(node).await {
-        Ok(frame) if frame.binding_revisions() == bindings && frame.revisions() == revisions => {}
+        Ok(frame)
+            if frame.authority_epoch == authority
+                && frame.binding_revisions() == bindings
+                && frame.revisions() == revisions => {}
         _ => {
             return deny(
                 StatusCode::GONE,
@@ -244,8 +255,12 @@ pub(super) async fn read(
             .into_response();
     }
     let revisions = frame.revisions();
+    let authority = frame.authority_epoch.clone();
     let bindings = frame.binding_revisions();
-    let etag = format!("\"{:x}\"", Sha256::digest(format!("{revisions:?}")));
+    let etag = format!(
+        "\"{:x}\"",
+        Sha256::digest(format!("{authority}:{revisions:?}"))
+    );
     if request
         .headers()
         .get(header::IF_NONE_MATCH)
@@ -269,12 +284,17 @@ pub(super) async fn read(
     } else {
         wes_budgets::get("view.frame.finite.bytes") as usize
     };
+    let request_epoch = request
+        .headers()
+        .get("X-Wes-View-Epoch")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     let encoded = shared.encoders.spawn_blocking(move || -> Result<Vec<u8>, String> {
         let _permit = permit;
         let mut entries = Vec::new();
         let mut bytes = 0;
         for instance in frame.instances {
-            let unchanged=previous.iter().any(|p|p[0]==instance.id.as_str() && p[1]==instance.identity.as_ref() && p[2]==instance.revision.to_string() && p[3]==instance.input_revision.to_string());
+            let unchanged=request_epoch.as_deref()==Some(frame.authority_epoch.as_str()) && previous.iter().any(|p|p[0]==instance.id.as_str() && p[1]==instance.identity.as_ref() && p[2]==instance.revision.to_string() && p[3]==instance.input_revision.to_string());
             let input = if unchanged {None}else{instance.input.as_ref().and_then(|input| input.value()).map(|value| {
                 let encoded = encode_display_value(value, Limits { bytes: byte_limit, nodes: wes_budgets::get("view.frame.nodes") as usize })
                     .map_err(|e| e.to_string())?;
@@ -287,7 +307,7 @@ pub(super) async fn read(
                 "query":instance.query.as_ref().map(|q|serde_json::json!({"environment":q.environment.as_ref().and_then(|c|c.selected.as_deref()),"template":q.template,"mode":if q.adapter.is_some(){"live"}else{"finite"},"adapter":q.adapter.as_ref().map(|a|a.template.as_str()),"source":q.source.id().as_str(),"output":q.port,"trigger":q.trigger.as_str(),"running":instance.query_running})),"unchanged":unchanged,"inputReference":reference(instance.input.as_ref()),"inputDelivery":instance.input_delivery.as_str(),"observing":instance.observing,"inputProblem":instance.input_problem,"inputCautions":instance.input.as_ref().and_then(|i|i.value()).map(|v|v.provenance().cautions().iter().cloned().collect::<Vec<_>>()).unwrap_or_default(),"inputRevision":instance.input_revision.to_string(),"input":input,"linkedInputs":instance.linked_inputs,"members":instance.members.into_iter().map(|(s,ids)|
                     (s,ids.into_iter().map(|id|id.to_string()).collect::<Vec<_>>())).collect::<std::collections::BTreeMap<_,_>>() }));
         }
-        serde_json::to_vec(&serde_json::json!({"root":frame.root.as_str(),"instances":entries})).map_err(|e| e.to_string())
+        serde_json::to_vec(&serde_json::json!({"root":frame.root.as_str(),"authorityEpoch":frame.authority_epoch,"instances":entries})).map_err(|e| e.to_string())
     }).await;
     if !shared
         .application
@@ -297,7 +317,8 @@ pub(super) async fn read(
         return StatusCode::CONFLICT.into_response();
     }
     match current.session.view_frame(node.clone()).await {
-        Ok(frame) if frame.binding_revisions() == bindings => {}
+        Ok(frame)
+            if frame.authority_epoch == authority && frame.binding_revisions() == bindings => {}
         Ok(frame)
             if frame
                 .instances
@@ -331,7 +352,7 @@ pub(super) async fn read(
     }
 }
 
-fn reference(input: Option<&wes_engine::views::Input>) -> serde_json::Value {
+pub(super) fn reference(input: Option<&wes_engine::views::Input>) -> serde_json::Value {
     use wes_engine::views::InputBinding;
     match input.map(|i| &i.binding) {
         Some(InputBinding::Current(source)) => {

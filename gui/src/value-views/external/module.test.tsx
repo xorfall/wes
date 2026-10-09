@@ -42,7 +42,7 @@ async function mounted(member=false,commandSupport=false){
   const receive=(message:unknown)=>act(()=>channels[0]!.port1.onmessage!({data:stringifyExactJson(message)}));
   const state=initial(input);
   receive({kind:"ready",digest:definition.digest,state,outputs:outputs(state)});
-  return {tree,view,host,close,channels,write,iframe,receive,prepare,adopt,model};
+  return {tree,view,host,close,channels,write,iframe,receive,prepare,adopt,model,binding};
 }
 
 it("rebinds coordination while retaining the iframe, channel and committed controller state",async()=>{
@@ -180,5 +180,16 @@ it("reviews commands outside the sandbox, adopts only on native click and withdr
   expect(tree.root.findAllByProps({"aria-label":"Review command"})).toHaveLength(1);
   act(()=>tree.update(view(host,{...model,input:{...model.input}})));
   expect(tree.root.findAllByProps({"aria-label":"Review command"})).toHaveLength(0);expect(adopt).toHaveBeenCalledOnce();
+  act(()=>tree.unmount());
+});
+
+
+it("destroys the sandbox document when its authority realm changes",async()=>{
+  const {tree,view,host,channels,binding}=await mounted(false,true);
+  const old=tree.root.findByType("iframe");
+  (binding as {authorityEpoch?:string}).authorityEpoch="replacement-realm";
+  await act(async()=>{tree.update(view(host));});
+  expect(channels[0]!.port1.close).toHaveBeenCalledOnce();
+  expect(channels).toHaveLength(2);expect(tree.root.findByType("iframe")).not.toBe(old);
   act(()=>tree.unmount());
 });

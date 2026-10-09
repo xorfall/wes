@@ -225,6 +225,8 @@ pub struct Snapshot {
 }
 #[derive(Clone, Debug)]
 pub struct Frame {
+    /// Process-local read realm; changes on binding, source identity or classification changes.
+    pub authority_epoch: String,
     pub root: NodeId,
     pub instances: Vec<Snapshot>,
 }
@@ -425,6 +427,7 @@ impl Store {
             instances.push(instance.snapshot.clone());
         }
         Ok(Frame {
+            authority_epoch: String::new(),
             root: handle.id.clone(),
             instances,
         })
@@ -932,25 +935,56 @@ impl crate::workspace::Workspace {
     /// Public presentation of a live reference. Resolution and source checks share the owner turn;
     /// callers revalidate after encoding so deletion/privacy changes cannot release an old frame.
     pub fn view_frame(&self, node: &NodeId) -> Result<Frame, String> {
-        let root = self.view_frame_base(node)?;
-        let mut pending = root
-            .instances
-            .iter()
-            .filter_map(|i| i.query.as_ref().map(|q| q.source.clone()))
-            .collect::<Vec<_>>();
-        let mut seen = BTreeSet::new();
-        while let Some(source) = pending.pop() {
-            self.views.read(&source).map_err(|e| e.to_string())?;
-            if seen.insert(source.id.clone()) {
-                let frame = self.view_frame_base(&source.id)?;
-                pending.extend(
-                    frame
-                        .instances
-                        .into_iter()
-                        .filter_map(|i| i.query.map(|q| q.source)),
-                );
+        use sha2::{Digest, Sha256};
+        let mut root = self.view_frame_base(node)?;
+        let mut realm = Sha256::new();
+        realm.update(root.authority_epoch.as_bytes());
+        for entry in &mut root.instances {
+            let mut pending = entry
+                .query
+                .as_ref()
+                .map(|q| vec![q.source.clone()])
+                .unwrap_or_default();
+            let mut seen = BTreeSet::new();
+            let checked = (|| -> Result<(), String> {
+                while let Some(source) = pending.pop() {
+                    self.views
+                        .read(&source)
+                        .map_err(|_| "Query source unavailable".to_string())?;
+                    if seen.insert(source.id.clone()) {
+                        let frame = self.view_frame_base(&source.id)?;
+                        realm.update(frame.authority_epoch.as_bytes());
+                        pending.extend(
+                            frame
+                                .instances
+                                .into_iter()
+                                .filter_map(|i| i.query.map(|q| q.source)),
+                        );
+                    }
+                }
+                Ok(())
+            })();
+            if checked.is_err() {
+                if entry.id == root.root {
+                    return Err("View query source unavailable".into());
+                }
+                entry.input = None;
+                entry.query = None;
+                entry.input_problem = Some("Input unavailable; no source was rerun".into());
+                entry.linked_inputs.clear();
             }
         }
+        realm.update(
+            serde_json::to_vec(
+                &root
+                    .instances
+                    .iter()
+                    .map(|i| (i.id.as_str(), i.input.is_some(), i.input_problem.as_deref()))
+                    .collect::<Vec<_>>(),
+            )
+            .expect("read status"),
+        );
+        root.authority_epoch = format!("{:x}", realm.finalize());
         Ok(root)
     }
     fn view_frame_base(&self, node: &NodeId) -> Result<Frame, String> {
@@ -964,57 +998,103 @@ impl crate::workspace::Workspace {
         };
         let handle = self.views.resolve(&value).map_err(|e| e.to_string())?;
         let mut frame = self.views.frame(&handle).map_err(|e| e.to_string())?;
-        for instance in &mut frame.instances {
-            if instance
-                .query
-                .as_ref()
-                .is_some_and(|query| query.adapter.is_some())
-            {
-                instance.input_delivery = InputDelivery::Window;
-            }
-            if self.runtime().graph().node(&instance.id).is_none() {
-                return Err("A view instance was removed".into());
-            }
-            if let Some(input) = &instance.input {
-                if let InputBinding::Retained(reference) = &input.binding {
-                    if self.runtime().graph().node(reference.node()).is_none() {
-                        return Err("Retained input work was removed".into());
-                    }
-                }
-                if input.value.as_ref().is_some_and(|v| !public_input(v)) {
-                    return Err(
-                        "Confidential or unclassified input is not available to a public view"
-                            .into(),
-                    );
-                }
-                if let Some(source) = input.source() {
-                    instance.input_delivery = if self.has_stream_source(&source.output.node) {
-                        InputDelivery::Window
-                    } else {
-                        InputDelivery::Finite
-                    };
-                    let definition = self
-                        .runtime()
+        use sha2::{Digest, Sha256};
+        let mut realm = Sha256::new();
+        realm.update(self.views.command_epoch.as_bytes());
+        for entry in &frame.instances {
+            let input = entry.input.as_ref();
+            let source = input.and_then(Input::source);
+            let policy = input
+                .and_then(Input::value)
+                .map(|v| format!("{:?}", v.provenance().policy()));
+            let live = source.map(|s| {
+                (
+                    s.output.node.as_str(),
+                    self.runtime()
+                        .value_of(&s.output.node)
+                        .map(|v| format!("{:?}", v.provenance().policy())),
+                    self.runtime()
                         .graph()
-                        .node(&source.output.node)
-                        .ok_or("View source was removed")?
-                        .definition();
-                    if !source.matches(&source.output, &definition) {
+                        .node(&s.output.node)
+                        .is_some_and(|n| s.matches(&s.output, &n.definition())),
+                )
+            });
+            realm.update(
+                serde_json::to_vec(&(
+                    entry.id.as_str(),
+                    entry.identity.as_ref(),
+                    entry.revision,
+                    policy,
+                    live,
+                ))
+                .expect("frame authority metadata"),
+            );
+        }
+        frame.authority_epoch = format!("{:x}", realm.finalize());
+        for instance in &mut frame.instances {
+            let checked = (|| -> Result<(), String> {
+                if instance
+                    .query
+                    .as_ref()
+                    .is_some_and(|query| query.adapter.is_some())
+                {
+                    instance.input_delivery = InputDelivery::Window;
+                }
+                if self.runtime().graph().node(&instance.id).is_none() {
+                    return Err("A view instance was removed".into());
+                }
+                if let Some(input) = &instance.input {
+                    if let InputBinding::Retained(reference) = &input.binding {
+                        if self.runtime().graph().node(reference.node()).is_none() {
+                            return Err("Retained input work was removed".into());
+                        }
+                    }
+                    if input.value.as_ref().is_some_and(|v| !public_input(v)) {
                         return Err(
-                            "View source was replaced; explicitly bind the new source".into()
+                            "Confidential or unclassified input is not available to a public view"
+                                .into(),
                         );
                     }
-                    if (source.output.port == crate::graph::OutputPort::Data
-                        && self
+                    if let Some(source) = input.source() {
+                        instance.input_delivery = if self.has_stream_source(&source.output.node) {
+                            InputDelivery::Window
+                        } else {
+                            InputDelivery::Finite
+                        };
+                        let definition = self
                             .runtime()
-                            .value_of(&source.output.node)
-                            .is_some_and(|v| !public_input(v)))
-                        || matches!(self.runtime().output(&source.output), OutputState::Available(v)
+                            .graph()
+                            .node(&source.output.node)
+                            .ok_or("View source was removed")?
+                            .definition();
+                        if !source.matches(&source.output, &definition) {
+                            return Err(
+                                "View source was replaced; explicitly bind the new source".into()
+                            );
+                        }
+                        if (source.output.port == crate::graph::OutputPort::Data
+                            && self
+                                .runtime()
+                                .value_of(&source.output.node)
+                                .is_some_and(|v| !public_input(v)))
+                            || matches!(self.runtime().output(&source.output), OutputState::Available(v)
                         if !public_input(&v))
-                    {
-                        return Err("View source is now confidential or unclassified".into());
+                        {
+                            return Err("View source is now confidential or unclassified".into());
+                        }
                     }
                 }
+                Ok(())
+            })();
+            if checked.is_err() {
+                if instance.id == frame.root {
+                    return Err("View input is unavailable".into());
+                }
+                instance.input = None;
+                instance.query = None;
+                instance.query_running = false;
+                instance.input_problem = Some("Input unavailable; no source was rerun".into());
+                instance.linked_inputs.clear();
             }
         }
         Ok(frame)

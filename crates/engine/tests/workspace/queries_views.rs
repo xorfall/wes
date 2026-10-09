@@ -353,3 +353,65 @@ async fn pin_refuses_an_existing_result_name_and_direct_execution_cannot_claim_r
     assert!(workspace.runtime().value_of(&source).is_some());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn partial_public_frames_cannot_authorize_coordinated_state_after_source_classification_changes()
+ {
+    let (mut workspace, calls) = workspace();
+    let source = commit(&mut workspace, "catalog echo value:0 > sample").unwrap();
+    let first = ticket(workspace.start(Duration::ZERO));
+    let first = workspace.enter_ticket(first).unwrap().unwrap();
+    let range: wes_core::Interval = "2030-01-01T00:00:00Z/2030-01-01T01:00:00Z".parse().unwrap();
+    let input = Value::new(
+        wes_views::named("Timeline").unwrap().input().shape(),
+        Data::Record(
+            [
+                ("view".into(), Data::Text("timeline".into())),
+                ("id".into(), Data::Text("synthetic".into())),
+                ("title".into(), Data::Text("Signals".into())),
+                ("range".into(), Data::Interval(range)),
+                ("coverage".into(), Data::Interval(range)),
+                ("omitted".into(), Data::Int(0)),
+                ("sourceError".into(), Data::Text("".into())),
+                ("series".into(), Data::List(vec![])),
+                ("events".into(), Data::List(vec![])),
+            ]
+            .into(),
+        ),
+        Provenance::default(),
+    )
+    .unwrap();
+    workspace.complete(&first.run, Outcome::Produced(input.clone()), Duration::ZERO);
+    let group = commit(&mut workspace, ":view create TimelineGroup > group").unwrap();
+    let child = commit(
+        &mut workspace,
+        ":view create Timeline input:$sample > child",
+    )
+    .unwrap();
+    run_all(&mut workspace).await;
+    commit(&mut workspace, ":view connect $child to:$group");
+    run_all(&mut workspace).await;
+    let before = workspace.view_frame(&group).unwrap();
+    let identity = before.instances[0].identity.clone();
+    assert!(workspace.view_interaction(&group, &identity).is_ok());
+    let changed = ticket(refresh(&mut workspace, &source));
+    let changed = workspace.enter_ticket(changed).unwrap().unwrap();
+    let restricted = input.with_provenance(Provenance::default().with_policy(
+        &wes_core::flow::FlowPolicy::default().confidential(wes_core::flow::Residence::Retainable),
+    ));
+    workspace.complete(&changed.run, Outcome::Produced(restricted), Duration::ZERO);
+    let after = workspace.view_frame(&group).unwrap();
+    assert_ne!(before.authority_epoch, after.authority_epoch);
+    assert!(
+        after
+            .instances
+            .iter()
+            .find(|v| v.id == child)
+            .unwrap()
+            .input
+            .is_none()
+    );
+    assert!(workspace.view_interaction(&group, &identity).is_err());
+    assert!(workspace.view_frame(&child).is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
