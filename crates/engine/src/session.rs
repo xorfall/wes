@@ -313,6 +313,12 @@ enum Control {
     Snapshot(oneshot::Sender<SessionSnapshot>),
     Log(oneshot::Sender<LogSnapshot>),
     Values(oneshot::Sender<Option<ValueSnapshot>>),
+    WaitReady {
+        node: NodeId,
+        run: crate::runtime::RunId,
+        until: tokio::time::Instant,
+        reply: oneshot::Sender<Result<bool, DriverError>>,
+    },
     WaitIdle(oneshot::Sender<Result<(), DriverError>>),
     Shutdown(oneshot::Sender<()>),
 }
@@ -782,6 +788,29 @@ impl SessionHandle {
             .map_err(|_| SessionError::Stopped)?;
         receive.await.map_err(|_| SessionError::Stopped)
     }
+    /// Observe an already admitted exact stream run. Empty windows can be ready; retained data cannot.
+    pub async fn wait_source_ready(
+        &self,
+        node: NodeId,
+        run: crate::runtime::RunId,
+        budget: std::time::Duration,
+        caller: CancellationToken,
+    ) -> Result<bool, SessionError> {
+        if budget.is_zero() || budget > crate::streams::MAX_READY_WAIT {
+            return Err(DriverError::InvalidWait.into());
+        }
+        let until = tokio::time::Instant::now() + budget;
+        let (reply, receive) = oneshot::channel();
+        tokio::select! { biased;
+            () = caller.cancelled() => return Err(DriverError::WaitCancelled.into()),
+            _ = tokio::time::sleep_until(until) => return Ok(false),
+            sent = self.controls.send(Control::WaitReady { node, run, until, reply }) => sent.map_err(|_|SessionError::Stopped)?,
+        }
+        tokio::select! { biased;
+            () = caller.cancelled() => Err(DriverError::WaitCancelled.into()),
+            result = receive => result.map_err(|_|SessionError::Stopped)?.map_err(SessionError::from),
+        }
+    }
     pub async fn wait_idle(&self) -> Result<(), SessionError> {
         let (reply, receive) = oneshot::channel();
         self.controls
@@ -1197,7 +1226,7 @@ impl Actor {
                 },
                 control = self.controls.recv(), if self.controls_open => match control {
                     Some(control) => {
-                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewCommand(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
+                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewCommand(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::WaitReady { .. } | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
                         self.control(control);
                     },
                     None => {self.controls_open = false; self.close();}
@@ -2022,6 +2051,17 @@ impl Actor {
                     restoration: self.restoration.clone(),
                 });
             }
+            Control::WaitReady {
+                node,
+                run,
+                until,
+                reply,
+            } => self.waiters.insert(Waiter::SourceReady {
+                node,
+                run,
+                until,
+                reply,
+            }),
             Control::WaitIdle(reply) => {
                 if self.workspace.runtime().is_closed()
                     && self.io.is_idle()

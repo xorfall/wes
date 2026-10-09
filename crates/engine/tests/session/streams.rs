@@ -353,6 +353,18 @@ async fn source_stream_is_idle_finite_commands_progress_and_windows_do_not_flood
     let mut fixture = Fixture::new(store(), Journal::default());
     let stream = fixture.open().await;
     let node = stream.run.node().clone();
+    assert!(
+        fixture
+            .handle
+            .wait_source_ready(
+                node.clone(),
+                stream.run.id().clone(),
+                Duration::from_secs(2),
+                CancellationToken::new()
+            )
+            .await
+            .unwrap()
+    );
     assert_eq!(
         fixture.handle.snapshot().await.unwrap().execution.streaming,
         vec![node.clone()]

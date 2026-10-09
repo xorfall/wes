@@ -22,7 +22,9 @@ use wes_core::{ErrorValue, Provenance, Value};
 pub(crate) mod archive;
 pub(crate) const MAX_ARCHIVES: usize = 4;
 pub(crate) mod delivery;
+mod readiness;
 mod window;
+pub use readiness::{MAX_READY_WAIT, ReadyError, ReadyReceipt};
 pub use window::Limits;
 use window::Window;
 
@@ -75,6 +77,7 @@ pub enum StreamError {
     Closed,
 }
 struct State {
+    connection_epoch: uuid::Uuid,
     window: Window,
     phase: Phase,
     opened: bool,
@@ -395,6 +398,7 @@ pub(crate) fn spawn_with_archives(
     let cancellation = parent.child_token();
     let shared = Arc::new(Shared {
         state: Mutex::new(State {
+            connection_epoch: uuid::Uuid::new_v4(),
             window,
             phase: Phase::Opening,
             opened: false,
