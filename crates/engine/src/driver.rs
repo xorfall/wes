@@ -213,6 +213,12 @@ pub enum Reply<T> {
 }
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DriverError {
+    #[error("source run changed")]
+    SourceChanged,
+    #[error("source ended before readiness")]
+    SourceClosed,
+    #[error("source readiness wait cancelled")]
+    WaitCancelled,
     #[error(transparent)]
     Conversation(#[from] crate::conversations::ConversationError),
     #[error("too many pending execution waits")]
@@ -307,6 +313,29 @@ impl<T: Send + 'static> DriverHandle<T> {
             .await
             .map_err(|_| DriverError::Stopped)?;
         receive.await.map_err(|_| DriverError::Stopped)?
+    }
+    /// Wait only for the exact currently executing stream's open acknowledgement. No source is started.
+    pub async fn wait_source_ready(
+        &self,
+        node: NodeId,
+        run: RunId,
+        budget: Duration,
+        caller: CancellationToken,
+    ) -> Result<bool, DriverError> {
+        if budget.is_zero() || budget > crate::streams::MAX_READY_WAIT {
+            return Err(DriverError::InvalidWait);
+        }
+        let until = tokio::time::Instant::now() + budget;
+        let (reply, receive) = oneshot::channel();
+        tokio::select! { biased;
+            () = caller.cancelled() => return Err(DriverError::WaitCancelled),
+            _ = tokio::time::sleep_until(until) => return Ok(false),
+            sent = self.requests.send(Request::Wait(Waiter::SourceReady { node, run, until, reply })) => sent.map_err(|_| DriverError::Stopped)?,
+        }
+        tokio::select! { biased;
+            () = caller.cancelled() => Err(DriverError::WaitCancelled),
+            result = receive => result.map_err(|_|DriverError::Stopped)?,
+        }
     }
     /// Waits for data/error/cancel selections without starting work or blocking control handling.
     /// False means the settled selections are unavailable, or the wait expired. A wait timeout
