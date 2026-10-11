@@ -79,6 +79,19 @@ enum Input {
     Write(Vec<u8>),
     Resize(u16, u16),
 }
+#[derive(Clone, Serialize)]
+struct TargetIdentity {
+    environment: String,
+    revision: String,
+    target: String,
+}
+#[derive(Serialize)]
+pub(crate) struct Attachment {
+    id: String,
+    workspace_tools: bool,
+    selection: Option<TargetIdentity>,
+    destination: Option<String>,
+}
 pub(super) struct TerminalSession {
     api_library: Option<crate::api_library::ApiLibrary>,
     library_tasks: TaskTracker,
@@ -89,6 +102,7 @@ pub(super) struct TerminalSession {
     current: CurrentSession,
     client: String,
     environment: Option<String>,
+    target: Option<TargetIdentity>,
     token: String,
     workspace_tools: bool,
     stopped: CancellationToken,
@@ -289,6 +303,11 @@ impl Manager {
             current,
             client,
             environment: target.as_ref().map(|lease| lease.environment.clone()),
+            target: target.as_ref().map(|lease| TargetIdentity {
+                environment: lease.environment.clone(),
+                revision: lease.revision.to_string(),
+                target: lease.target.name().to_owned(),
+            }),
             token,
             workspace_tools,
             stopped: CancellationToken::new(),
@@ -307,19 +326,14 @@ impl Manager {
             _permit: permit,
             heartbeat: Mutex::new(std::time::Instant::now()),
         });
-        let observation = terminal
+        let commands = terminal
             .current
             .session
-            .observe()
+            .command_environment(terminal.client.clone(), terminal.environment.clone())
             .await
             .map_err(io::Error::other)?;
-        let names = bridge::terminal_catalogue(&observation, &terminal)
-            .map(|c| c.provider_names().map(str::to_owned).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let environment = bridge::terminal_context(&observation, &terminal)
-            .and_then(|context| context.selected)
-            .unwrap_or_else(|| "no-env".into());
-        let initial_environment = environment.clone();
+        let names = commands.providers.clone();
+        let initial_environment = commands.selected.clone().unwrap_or_else(|| "no-env".into());
         let idle_timeout = config.idle_timeout;
         let worker = terminal.clone();
         let (started, ready) = tokio::sync::oneshot::channel();
@@ -359,26 +373,65 @@ impl Manager {
         let registry = self.sessions.clone();
         let watch_id = id.clone();
         self.tasks.spawn(async move {
-            let mut displayed_environment = environment;
+            let mut displayed_commands = commands;
             loop {
-                tokio::select! { _ = updates.stopped.cancelled() => break, _ = tokio::time::sleep(Duration::from_millis(400)) => {} }
-                if updates.check(&application).is_err() || idle_timeout.is_some_and(|timeout| updates.heartbeat.lock().expect("terminal heartbeat").elapsed() > timeout) { updates.stopped.cancel(); registry.lock().expect("terminal registry").remove(&watch_id); break; }
+                tokio::select! {
+                    _ = updates.stopped.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(400)) => {}
+                }
+                if updates.check(&application).is_err()
+                    || idle_timeout.is_some_and(|timeout| {
+                        updates
+                            .heartbeat
+                            .lock()
+                            .expect("terminal heartbeat")
+                            .elapsed()
+                            > timeout
+                    })
+                {
+                    updates.stopped.cancel();
+                    registry
+                        .lock()
+                        .expect("terminal registry")
+                        .remove(&watch_id);
+                    break;
+                }
                 // New aliases become real executables. Removed aliases remain harmless stubs whose
                 // call-time resolution fails; we never reuse an old provider binding.
-                if updates.workspace_tools && let Ok(observation) = updates.current.session.observe().await {
-                    let names = bridge::terminal_catalogue(&observation, &updates).map(|c| c.provider_names().map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default();
-                    let environment = bridge::terminal_context(&observation, &updates)
-                        .and_then(|context| context.selected).unwrap_or_else(|| "no-env".into());
-                    let changed = environment != displayed_environment;
-                    let next = environment.clone();
-                    let path = updates.directory.path().to_path_buf();
-                    let published = tokio::task::spawn_blocking(move || {
-                        #[cfg(any(unix, windows))]
-                        if changed { prompt::publish_environment(&path, &next)?; }
-                        let _ = aliases(&path, names);
-                        Ok::<_, io::Error>(())
-                    }).await;
-                    if matches!(published, Ok(Ok(()))) { displayed_environment = environment; }
+                if !updates.workspace_tools {
+                    continue;
+                }
+                let Ok(commands) = updates
+                    .current
+                    .session
+                    .command_environment(updates.client.clone(), updates.environment.clone())
+                    .await
+                else {
+                    continue;
+                };
+                if commands == displayed_commands {
+                    continue;
+                }
+                let environment_changed = commands.selected != displayed_commands.selected;
+                let providers_changed = commands.providers != displayed_commands.providers;
+                let next = commands.clone();
+                let path = updates.directory.path().to_path_buf();
+                let published = tokio::task::spawn_blocking(move || {
+                    #[cfg(any(unix, windows))]
+                    if environment_changed {
+                        prompt::publish_environment(
+                            &path,
+                            next.selected.as_deref().unwrap_or("no-env"),
+                        )?;
+                    }
+                    if providers_changed {
+                        aliases(&path, next.providers)?;
+                    }
+                    Ok::<_, io::Error>(())
+                })
+                .await;
+                if matches!(published, Ok(Ok(()))) {
+                    displayed_commands = commands;
                 }
             }
         });
@@ -392,6 +445,49 @@ impl Manager {
             .filter(|s| s.current.generation == generation && s.client == client)
             .cloned()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, Unavailable))
+    }
+    /// Resolve an existing live shell after its owning UI was recreated. History is only
+    /// a pane selector: both client ownership and workspace generation must still match.
+    /// This never starts a process, renews target authority, or sends terminal input.
+    pub(crate) async fn find(
+        &self,
+        history: &str,
+        generation: &str,
+        client: &str,
+    ) -> io::Result<Option<Attachment>> {
+        let key = history::key(history)?;
+        let histories = self.histories.lock().await;
+        if histories.closing || histories.forgotten.contains(&key) {
+            return Ok(None);
+        }
+        let Some(terminal) = histories
+            .active
+            .get(&key)
+            .and_then(std::sync::Weak::upgrade)
+        else {
+            return Ok(None);
+        };
+        if terminal.stopped.is_cancelled()
+            || terminal.current.generation != generation
+            || terminal.client != client
+        {
+            return Ok(None);
+        }
+        let sessions = self.sessions.lock().expect("terminal registry");
+        let Some((id, _)) = sessions.iter().find(|(_, s)| Arc::ptr_eq(s, &terminal)) else {
+            return Ok(None);
+        };
+        Ok(Some(Attachment {
+            id: id.clone(),
+            workspace_tools: terminal.workspace_tools,
+            selection: terminal.target.clone(),
+            destination: terminal
+                .output
+                .lock()
+                .expect("terminal output")
+                .destination
+                .clone(),
+        }))
     }
     pub fn poll(&self, id: &str, generation: &str, client: &str, cursor: u64) -> io::Result<Frame> {
         let terminal = self.owned(id, generation, client)?;

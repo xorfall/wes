@@ -5,7 +5,7 @@ use std::sync::{
 };
 use tauri::{
     Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
-    webview::{NewWindowFeatures, NewWindowResponse},
+    webview::{NewWindowFeatures, NewWindowResponse, PageLoadEvent, PageLoadPayload},
 };
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -18,6 +18,27 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 /// here. So `close` is redirected onto a navigation the shell recognises and cancels, which keeps
 /// the client free of any knowledge of which shell it is running in.
 pub(crate) const SHELL: &str = "window.__WES_DESKTOP__ = true; window.close = function () { window.location.replace('/__wes/close'); };";
+
+/// One identity per native window, independent of its WebContent process. Inject through
+/// that window's load callback: WebKit shares initialization scripts with child windows.
+/// Neither saved workspaces nor browser storage carry ownership into another window/host.
+pub(crate) fn window_client<R: Runtime>()
+-> impl Fn(tauri::WebviewWindow<R>, PageLoadPayload<'_>) + Send + Sync + 'static {
+    let client = uuid::Uuid::new_v4();
+    move |window, load| {
+        if load.event() == PageLoadEvent::Finished {
+            if let Err(error) = window.eval(&client_script(client)) {
+                eprintln!("wes-desktop: window identity: {error}");
+                tracing::warn!(target: "wes.telemetry", notice = "ui_error");
+            }
+        }
+    }
+}
+fn client_script(client: uuid::Uuid) -> String {
+    format!(
+        "if (!window.__WES_WINDOW_CLIENT__) {{ Object.defineProperty(window, '__WES_WINDOW_CLIENT__', {{value: '{client}'}}); window.dispatchEvent(new Event('wes:window-client')); }}"
+    )
+}
 
 /// The path `window.close` turns into. Never fetched: the navigation to it is always cancelled.
 const CLOSING: &str = "/__wes/close";
@@ -167,6 +188,7 @@ pub(crate) fn result_window<R: Runtime>(
         .window_features(features)
         .incognito(incognito)
         .initialization_script(SHELL)
+        .on_page_load(window_client())
         // The page names itself after the result it is showing; the window follows it.
         .title("WesDesk")
         .on_document_title_changed(|window, title| {
@@ -194,7 +216,7 @@ pub(crate) fn result_window<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CLOSING, Destination, SHELL, destination, is_closing};
+    use super::{CLOSING, Destination, SHELL, client_script, destination, is_closing};
 
     fn url(text: &str) -> tauri::Url {
         text.parse().unwrap()
@@ -298,5 +320,23 @@ mod tests {
         assert!(SHELL.contains("window.__WES_DESKTOP__ = true"));
         assert!(SHELL.contains("window.close"));
         assert!(SHELL.contains(CLOSING));
+    }
+
+    #[test]
+    fn native_windows_capture_distinct_reload_identities() {
+        let first = client_script(uuid::Uuid::new_v4());
+        let second = client_script(uuid::Uuid::new_v4());
+        assert_ne!(first, second);
+        for script in [first, second] {
+            let identity = script
+                .split("{value: '")
+                .nth(1)
+                .unwrap()
+                .split('\'')
+                .next()
+                .unwrap();
+            assert!(uuid::Uuid::parse_str(identity).is_ok());
+            assert!(script.contains("wes:window-client"));
+        }
     }
 }

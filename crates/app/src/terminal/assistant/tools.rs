@@ -1232,6 +1232,39 @@ mod tests {
         assert_eq!(context["environment"]["selected"], "default");
         let observation = current.session.observe().await.unwrap();
         assert_eq!(observation.environment_clients["ui"].selected, None);
+        let cleared = current
+            .session
+            .command_environment("ui".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(cleared.selected, None);
+        assert!(cleared.providers.is_empty());
+        let other_client = current
+            .session
+            .command_environment("other-ui".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(other_client.selected.as_deref(), Some("default"));
+        assert!(!other_client.providers.is_empty());
+        let captured = current
+            .session
+            .command_environment("ui".into(), Some("default".into()))
+            .await
+            .unwrap();
+        assert_eq!(captured.selected.as_deref(), Some("default"));
+        assert!(
+            captured
+                .providers
+                .iter()
+                .any(|name| name == if cfg!(windows) { "cmd" } else { "sh" })
+        );
+        let unavailable = current
+            .session
+            .command_environment("ui".into(), Some("missing".into()))
+            .await
+            .unwrap();
+        assert_eq!(unavailable.selected.as_deref(), Some("missing"));
+        assert!(unavailable.providers.is_empty());
         // Explicit actor selection wins after initialization, including a cleared selection.
         let input = SourceInput::new("clear-actor".into(), ":env clear".into())
             .unwrap()

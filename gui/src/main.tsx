@@ -6,10 +6,12 @@ import { readOpenRoute, readScreenRoute } from "./surface/open-route";
 import { Boundary } from "./Boundary";
 import { defaults } from "./settings";
 import { initializeDesktopPreferences } from "./desktop-preferences";
+import { initializeDesktopClient } from "./client-identity";
 
 import "./base.css";
 
 async function start() {
+  await initializeDesktopClient();
   await initializeBudgets();
   initializeDiagnostics();
   const {followPresentations}=await import("./presentation/transport");

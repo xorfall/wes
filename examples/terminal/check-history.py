@@ -194,10 +194,23 @@ def check_application(binary):
         try:
             terminal = server.start(key)
             server.call('write', id=terminal, text=source + '\r'); server.output(terminal)
+            # Recreating the UI only resolves ownership; it cannot create a second shell
+            # or replay the command whose response the previous UI might have lost.
+            for _ in range(3):
+                attached = server.call('find', history=key)['terminal']
+                assert attached['id'] == terminal and attached['workspace_tools'] is True
+                assert attached['selection'] is None
+                assert (root/'marker').read_text() == 'ONLY_ONCE\n'
+            assert server.call('find', history=key, client='another-window')['terminal'] is None
+            assert server.call('find', history=str(uuid.uuid4()))['terminal'] is None
+            try: server.call('start', history=key)
+            except urllib.error.HTTPError as error: assert error.code == 400
+            else: raise AssertionError('reconnection created a duplicate shell')
             second = server.start(other)
             server.call('write', id=second, text=': SECOND_PANE\r'); server.output(second)
             # Generic end is not explicit pane deletion; restart must preserve ↑.
             server.call('close', id=terminal)
+            assert server.call('find', history=key)['terminal'] is None
             terminal = server.start(key)
             assert 'NATIVE_ÜNICODE' in server.recall(terminal)
             server.call('write', id=terminal, text='\x03'); server.output(terminal)
@@ -207,6 +220,7 @@ def check_application(binary):
         assert (root/'marker').read_text() == 'ONLY_ONCE\n'
         server = Server(binary, root, data)
         try:
+            assert server.call('find', history=key)['terminal'] is None, 'process restart restored a live shell'
             terminal = server.start(key)
             assert 'RUNNING_ON_QUIT' in server.recall(terminal)
             second = server.start(other)

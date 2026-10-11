@@ -1,5 +1,5 @@
 import { TerminalTargetReview, type TerminalReview } from "./TerminalTargetReview";
-import { targetKey, type TerminalTarget } from "./terminal-target";
+import { readTerminalTarget, targetKey, type TerminalTarget } from "./terminal-target";
 import { TerminalDiagnostics } from "./terminal-diagnostics";
 import type { LogContext } from "./application-log";
 import { TerminalUnavailable } from "./terminal-errors";
@@ -18,6 +18,24 @@ import { hyperlinkHandler, linkTerminal } from "./terminal-links";
 // ANSI palettes matched to the app's light/dark themes so program output stays legible on either ground.
 const LIGHT_ANSI = { black: "#24292f", red: "#cf222e", green: "#116329", yellow: "#4d2d00", blue: "#0969da", magenta: "#8250df", cyan: "#1b7c83", white: "#6e7781", brightBlack: "#57606a", brightRed: "#a40e26", brightGreen: "#1a7f37", brightYellow: "#633c01", brightBlue: "#218bff", brightMagenta: "#a475f9", brightCyan: "#3192aa", brightWhite: "#8c959f" };
 const DARK_ANSI = { black: "#484f58", red: "#ff7b72", green: "#3fb950", yellow: "#d29922", blue: "#58a6ff", magenta: "#bc8cff", cyan: "#39c5cf", white: "#b1bac4", brightBlack: "#6e7681", brightRed: "#ffa198", brightGreen: "#56d364", brightYellow: "#e3b341", brightBlue: "#79c0ff", brightMagenta: "#d2a8ff", brightCyan: "#56d4dd", brightWhite: "#ffffff" };
+interface TerminalAttachment {
+  id: string; cwd?: string; workspace_tools?: boolean; destination?: string;
+  selection?: TerminalTarget | null;
+}
+function recoveredTerminal(result: { terminal: TerminalAttachment | null }): TerminalAttachment | null {
+  const value = result?.terminal;
+  if (value === null) return null;
+  if (!value || typeof value.id !== "string" || !value.id || typeof value.workspace_tools !== "boolean"
+    || (value.selection !== null && !readTerminalTarget(value.selection))
+    || (value.destination !== null && value.destination !== undefined && typeof value.destination !== "string")) {
+    throw new Error("Invalid terminal recovery response. Existing shell status is unconfirmed.");
+  }
+  return value;
+}
+interface Lifetime {
+  disposed: boolean; starting: boolean; autoStarted: boolean; revision: number; id?: string;
+  recovering: boolean; recoveredGeneration?: string;
+}
 /** Derive the emulator theme from the app's own CSS tokens, so the terminal follows light/dark. */
 export function xtermTheme(host: HTMLElement): ITheme {
   const surface = host.closest?.(".wes-terminal");
@@ -63,6 +81,8 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState(false);
   const [restartRequired, setRestartRequired] = useState(false);
+  const [recovery, setRecovery] = useState<"checking" | "ready" | "failed">(engine.terminalRecovery && history ? "checking" : "ready");
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const diagnostics = useRef(new TerminalDiagnostics());
   const logScope = useRef<LogContext>({});
   logScope.current = { workspace: engine.binding, ...logContext, generation };
@@ -77,7 +97,7 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
   const directoryChanged = useRef(onDirectory); directoryChanged.current = onDirectory;
   const commandHandler = useRef(onCommand); commandHandler.current = onCommand;
   const focusWanted = useRef(focused); focusWanted.current = focused;
-  const lifetime = useRef<{ disposed: boolean; starting: boolean; autoStarted: boolean; revision: number; id?: string }>({ disposed: false, starting: false, autoStarted: false, revision: 0 });
+  const lifetime = useRef<Lifetime>({ disposed: false, starting: false, autoStarted: false, revision: 0, recovering: false });
   // Only the current owner may retire a terminal; old asynchronous replies are inert.
   const unavailable = (current: string, message: string) => {
     if (lifetime.current.disposed || lifetime.current.id !== current) return;
@@ -103,11 +123,34 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
       else diagnostics.current.connection("resize", error, "resize", contextFor(current));
     }
   };
+  const attach = (result: TerminalAttachment, selected: TerminalTarget | undefined, owner: Lifetime) => {
+    stopInput();
+    owner.id = result.id;
+    const current = result.id;
+    input.current = terminalInput(
+      text => engine.terminal({ action: "write", id: current, text }),
+      error => {
+        if (owner.disposed || owner.id !== current) return;
+        if (error instanceof TerminalUnavailable) { unavailable(current, error.message); return; }
+        identity.current = undefined;
+        fail("write", error, current, "Input delivery is unconfirmed and was not retried. The command may have run. Check its effects before restarting this terminal.");
+      },
+    );
+    directoryAllowed.current = result.workspace_tools !== false;
+    setRunningDestination(targetKey(selected));
+    setRunningIdentity(result.destination);
+    setRunningLabel(selected ? `${selected.environment} / ${selected.target}${result.workspace_tools === false ? " · remote shell, no workspace tools" : " · workspace tools"}` : "This computer · workspace tools");
+    if (directoryAllowed.current && result.cwd) directoryChanged.current?.(result.cwd);
+    emulator.current?.reset(); identity.current = result.id; setId(result.id); setEnded(false); setRestartRequired(false);
+    fit.current?.(true);
+    if (focusWanted.current) emulator.current?.focus();
+  };
   useEffect(() => {
-    const owner = { disposed: false, starting: false, autoStarted: false, revision: 0, id: undefined as string | undefined };
+    const owner: Lifetime = { disposed: false, starting: false, autoStarted: false, revision: 0, recovering: false };
     lifetime.current = owner;
     stopInput();
     identity.current = undefined; setId(undefined); setBusy(false); setReview(undefined); setRestartRequired(false); diagnostics.current.reset();
+    setRecovery(engine.terminalRecovery && history ? "checking" : "ready");
     if (!container.current) return;
     const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, fontFamily: xtermFont(container.current), allowProposedApi: false, theme: xtermTheme(container.current), linkHandler: hyperlinkHandler() });
     const fitting = new FitAddon(); term.loadAddon(fitting); term.open(container.current);
@@ -184,6 +227,31 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
     lastGeneration.current = generation;
   }, [generation]);
   useEffect(() => {
+    const owner = lifetime.current;
+    if (!engine.terminalRecovery || !history) { setRecovery("ready"); return; }
+    if (!generation) return;
+    if (owner.id || owner.recoveredGeneration === generation) { setRecovery("ready"); return; }
+    const controller = new AbortController(), revision = owner.revision;
+    owner.recovering = true; setRecovery("checking");
+    void engine.terminal<{ terminal: TerminalAttachment | null }>({ action: "find", history }, controller.signal).then(result => {
+      if (controller.signal.aborted || owner.disposed || lifetime.current !== owner || owner.revision !== revision || currentGeneration.current !== generation) return;
+      const terminal = recoveredTerminal(result);
+      owner.recoveredGeneration = generation; owner.recovering = false;
+      if (terminal) {
+        owner.autoStarted = true;
+        attach(terminal, terminal.selection ?? undefined, owner);
+        void resizeTerminal(terminal.id, emulator.current?.cols ?? 80, emulator.current?.rows ?? 24);
+      }
+      setRecovery("ready");
+    }).catch(error => {
+      if (controller.signal.aborted || owner.disposed || lifetime.current !== owner || owner.revision !== revision) return;
+      owner.recovering = false;
+      setRecovery("failed");
+      fail("reconnect", error, undefined, "Existing terminal lookup was not confirmed. Reconnect before starting another shell.");
+    });
+    return () => { controller.abort(); owner.recovering = false; };
+  }, [engine, generation, history, recoveryAttempt]);
+  useEffect(() => {
     if (!id) return;
     const controller = new AbortController();
     const term = emulator.current;
@@ -223,7 +291,7 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
   const visibleReview = review && review.owner === lifetime.current && review.generation === generation && targetKey(review.selected) === targetKey(target) ? review : undefined;
   const start = async (approval?: typeof review) => {
     const owner = lifetime.current;
-    if (owner.starting || owner.disposed) return;
+    if (owner.starting || owner.disposed || owner.recovering || (engine.terminalRecovery && history && owner.recoveredGeneration !== currentGeneration.current)) return;
     if (approval && (approval !== visibleReview || approval.owner !== owner || approval.generation !== currentGeneration.current || targetKey(approval.selected) !== targetKey(currentTarget.current))) return;
     owner.starting = true;
     const startedGeneration = currentGeneration.current, revision = ++owner.revision;
@@ -232,6 +300,19 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
     setBusy(true); setRestartRequired(false); diagnostics.current.reset();
     let operation = "prepare start";
     try {
+      // Also resolve an unknown start reply before an explicit retry. The host serializes
+      // this read with startup, so a lost reply cannot cause a second shell to be created.
+      if (!owner.id && engine.terminalRecovery && history) {
+        operation = "reconnect";
+        const existing = await engine.terminal<{ terminal: TerminalAttachment | null }>({ action: "find", history });
+        if (owner.disposed || lifetime.current !== owner || owner.revision !== revision || currentGeneration.current !== startedGeneration) return;
+        const terminal = recoveredTerminal(existing);
+        if (terminal) {
+          attach(terminal, terminal.selection ?? undefined, owner);
+          await resizeTerminal(terminal.id, emulator.current?.cols ?? 80, emulator.current?.rows ?? 24);
+          return;
+        }
+      }
       if (approval) {
         if (!targetChanged.current) throw new Error("This terminal cannot save a changed destination.");
         operation = "save reviewed target";
@@ -248,7 +329,7 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
       identity.current = undefined; owner.id = undefined; setId(undefined);
       operation = "start";
       directoryAllowed.current = !selected;
-      const result = await engine.terminal<{ review: TerminalReview } | { id: string; cwd?: string; workspace_tools?: boolean; target?: string; destination?: string }>({ action: "start", ...(selected ? { target: selected } : cwd ? { cwd } : {}), ...(history ? { history } : {}) });
+      const result = await engine.terminal<{ review: TerminalReview } | TerminalAttachment>({ action: "start", ...(selected ? { target: selected } : cwd ? { cwd } : {}), ...(history ? { history } : {}) });
       if (owner.disposed || lifetime.current !== owner || owner.revision !== revision || currentGeneration.current !== startedGeneration || targetKey(currentTarget.current) !== selectedKey) {
         if ("id" in result) await engine.terminal({ action: "close", id: result.id });
         return;
@@ -260,24 +341,7 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
         return;
       }
       setReview(undefined);
-      owner.id = result.id;
-      const current = result.id;
-      input.current = terminalInput(
-        text => engine.terminal({ action: "write", id: current, text }),
-        error => {
-          if (owner.disposed || owner.id !== current) return;
-          if (error instanceof TerminalUnavailable) { unavailable(current, error.message); return; }
-          identity.current = undefined;
-          fail("write", error, current, "Input delivery is unconfirmed and was not retried. The command may have run. Check its effects before restarting this terminal.");
-        },
-      );
-      directoryAllowed.current = result.workspace_tools !== false;
-      setRunningDestination(selectedKey);
-      setRunningIdentity(result.destination);
-      setRunningLabel(selected ? `${selected.environment} / ${selected.target}${result.workspace_tools === false ? " · remote shell, no workspace tools" : " · workspace tools"}` : "This computer · workspace tools");
-      if (directoryAllowed.current && result.cwd) directoryChanged.current?.(result.cwd);
-      emulator.current?.reset(); identity.current = result.id; setId(result.id); setEnded(false);
-      fit.current?.(true);
+      attach(result, selected, owner);
       await resizeTerminal(result.id, emulator.current?.cols ?? 80, emulator.current?.rows ?? 24);
       if (!owner.disposed && focusWanted.current) emulator.current?.focus();
     } catch (e) { if (!owner.disposed && owner.revision === revision) fail(operation, e, owner.id, `Terminal ${operation} was not confirmed. The request was not retried automatically.`); }
@@ -285,16 +349,18 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
   };
   useEffect(() => {
     const owner = lifetime.current;
-    if (autoStart && (!target || allowTargetStart) && generation && !owner.autoStarted) {
+    if (recovery === "ready" && autoStart && (!target || allowTargetStart) && generation && !owner.autoStarted) {
       owner.autoStarted = true;
       void start();
     }
-  }, [autoStart, allowTargetStart, generation, history]);
+  }, [autoStart, allowTargetStart, generation, history, recovery]);
   return <section className="shell-surface" hidden={!active} aria-label="Shell terminal"
     aria-description={id && !ended ? [runningLabel, runningDestination, runningIdentity].filter(Boolean).join(" · ")
       : destination ? `${destination.environment} / ${destination.target} · awaiting start` : undefined}>
     {visibleReview && <TerminalTargetReview review={visibleReview.evidence} busy={busy} onConfirm={() => void start(visibleReview)} onCancel={() => setReview(undefined)} />}
-    {!visibleReview && (!id || ended || restartRequired) && <button aria-label="Start terminal" disabled={busy || !generation} onClick={() => void start()}>Start terminal</button>}
+    {recovery === "failed" && <button aria-label="Reconnect terminal" disabled={!generation} onClick={() => setRecoveryAttempt(attempt => attempt + 1)}>Reconnect terminal</button>}
+    {recovery === "checking" && <p className="hint">Reconnecting terminal…</p>}
+    {recovery === "ready" && !visibleReview && (!id || ended || restartRequired) && <button aria-label="Start terminal" disabled={busy || !generation} onClick={() => void start()}>Start terminal</button>}
     {!visibleReview && !autoStart && !id && <p className="hint">Start a real shell to run programs such as Codex. Workspace tools are available in local shells. Remote shells use their target account; host tools are not forwarded.</p>}
     <div ref={container} className="terminal-emulator" />
   </section>;

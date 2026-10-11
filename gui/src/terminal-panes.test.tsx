@@ -36,6 +36,68 @@ const mount = async (engine: Engine, focused = false, onDirectory = vi.fn()) => 
   tree = create(<ShellTerminal engine={engine} active focused={focused} autoStart closeOnUnmount generation="g" cwd="/synthetic/project" onDirectory={onDirectory} />,
     { createNodeMock: node => node.props.className === "terminal-emulator" ? { clientWidth: 400, clientHeight: 300 } : null });
 });
+
+const recovered = { id: "existing", workspace_tools: true, selection: null, destination: "synthetic-host" };
+const recoverMount = async (engine: Engine, generation = "g") => act(async () => {
+  tree = create(<ShellTerminal engine={engine} active history="synthetic-pane" autoStart generation={generation} />,
+    { createNodeMock: node => node.props.className === "terminal-emulator" ? { clientWidth: 400, clientHeight: 300 } : null });
+});
+it("reattaches the existing owned shell after UI recreation without starting or replaying input", async () => {
+  const terminal = vi.fn().mockImplementation(async r => r.action === "find" ? { terminal: recovered } : {});
+  const engine = { terminal, terminalRecovery: true } as unknown as Engine;
+  await recoverMount(engine);
+  expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find", "resize"]);
+  expect(output.mock.calls.at(-1)![0].poll).toBeTypeOf("function");
+  await act(async () => tree!.unmount()); tree = undefined;
+  await recoverMount(engine);
+  expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find", "resize", "find", "resize"]);
+  await act(async () => dataHandlers.at(-1)!("new input"));
+  expect(terminal.mock.calls.filter(([r]) => r.action === "write").map(([r]) => r)).toEqual([{ action: "write", id: "existing", text: "new input" }]);
+});
+
+it("starts once after a confirmed empty lookup, and recovers a lost start reply on explicit retry", async () => {
+  let live = false;
+  const terminal = vi.fn().mockImplementation(async r => {
+    if (r.action === "find") return { terminal: live ? recovered : null };
+    if (r.action === "start") { live = true; throw new Error("Reply lost"); }
+    return {};
+  });
+  await recoverMount({ terminal, terminalRecovery: true } as unknown as Engine);
+  expect(terminal.mock.calls.filter(([r]) => r.action === "start")).toHaveLength(1);
+  await act(async () => tree!.root.findByProps({ "aria-label": "Start terminal" }).props.onClick());
+  expect(terminal.mock.calls.filter(([r]) => r.action === "start")).toHaveLength(1);
+  expect(terminal.mock.calls.filter(([r]) => r.action === "write" || r.action === "close")).toHaveLength(0);
+  expect(tree!.root.findAllByProps({ "aria-label": "Start terminal" })).toHaveLength(0);
+});
+
+it.each([undefined, { terminal: {} }])("blocks startup after an unknown or malformed lookup result", async response => {
+  const terminal = vi.fn().mockImplementation(async r => {
+    if (r.action === "find") {
+      if (!response) throw new Error("Unknown response");
+      return response;
+    }
+    return {};
+  });
+  await recoverMount({ terminal, terminalRecovery: true } as unknown as Engine);
+  expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find"]);
+  expect(tree!.root.findAllByProps({ "aria-label": "Start terminal" })).toHaveLength(0);
+  await act(async () => tree!.root.findByProps({ "aria-label": "Reconnect terminal" }).props.onClick());
+  expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find", "find"]);
+});
+
+it("ignores a delayed recovery reply after pane disposal or generation replacement", async () => {
+  let finish!: (value: unknown) => void;
+  const terminal = vi.fn().mockImplementation(r => r.action === "find" ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({}));
+  const engine = { terminal, terminalRecovery: true } as unknown as Engine;
+  await recoverMount(engine);
+  const obsolete = finish;
+  await act(async () => tree!.update(<ShellTerminal engine={engine} active history="synthetic-pane" autoStart generation="new-generation" />));
+  await act(async () => obsolete({ terminal: recovered }));
+  expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find", "find"]);
+  await act(async () => tree!.unmount()); tree = undefined;
+  await act(async () => finish({ terminal: recovered }));
+  expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find", "find"]);
+});
 it("starts one fresh shell, restores its directory, never steals ordinary split focus, and closes it", async () => {
   const terminal = vi.fn().mockResolvedValue({ id: "owned", cwd: "/synthetic/project" }); const engine = { terminal } as unknown as Engine;
   const onDirectory = vi.fn(); await mount(engine, false, onDirectory);

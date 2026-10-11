@@ -16,6 +16,7 @@ import { WorkspaceEvents } from "./workspace-events";
 import { decodeEvent } from "./protocol-decode";
 import { diagnosticsSession, clientDiagnostic, timeClientSubmit } from "./local-telemetry";
 import { TerminalUnavailable, TerminalRequestError } from "./terminal-errors";
+import { desktopClient } from "./client-identity";
 import { EngineRefusal, SUBMISSION_OUTCOME_HEADER, recordEngineFailure, recordExecutionFailure, requestOperation } from "./engine-diagnostics";
 import { StorageError, storageError } from "./storage-error";
 import { AssistantUi } from "./assistant-ui";
@@ -108,7 +109,9 @@ export class Engine {
     if (!Array.isArray(body.documents) || body.documents.some(d => typeof d.name !== "string" || typeof d.source !== "string" || typeof d.origin !== "string" || !Array.isArray(d.environments))) throw new Error("Invalid environment document response.");
     return body.documents;
   }
-  readonly client: string = crypto.randomUUID();
+  private readonly windowClient = desktopClient();
+  readonly client: string = this.windowClient ?? crypto.randomUUID();
+  readonly terminalRecovery = this.windowClient !== undefined;
   async trace(node: string, signal?: AbortSignal): Promise<StoredValue | undefined> {
     const generation = this.generation;
     if (!generation) throw new Error("Wait for the workspace connection.");

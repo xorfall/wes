@@ -11,6 +11,13 @@ pub struct ObservedCell {
     pub reply: Option<SubmissionReply>,
 }
 
+/// Command discovery only. Contains no execution state, cell sources, values or credentials.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandEnvironment {
+    pub selected: Option<String>,
+    pub providers: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionObservation {
     /// Present only for successfully completed current nodes. Never derived from Value data.
@@ -100,6 +107,42 @@ impl SessionObservation {
 }
 
 impl Actor {
+    pub(super) fn command_environment(
+        &self,
+        client: &str,
+        captured: Option<String>,
+    ) -> CommandEnvironment {
+        let saved = self.environment_clients.get(client);
+        let managed = captured.is_some() || self.workspace.environment_managed || saved.is_some();
+        let selected = if managed {
+            captured.or_else(|| {
+                saved.map_or_else(
+                    || self.workspace.default_environment.clone(),
+                    |context| context.selected.clone(),
+                )
+            })
+        } else {
+            None
+        };
+        let catalogue = if managed {
+            selected.as_ref().and_then(|name| {
+                let revision = self.workspace.environments().inspect(name)?.revision();
+                self.workspace
+                    .environment_images
+                    .get(name, revision)
+                    .map(|image| image.catalogue())
+            })
+        } else {
+            Some(self.workspace.catalogue())
+        };
+        CommandEnvironment {
+            selected,
+            providers: catalogue
+                .map(|catalogue| catalogue.provider_names().map(str::to_owned).collect())
+                .unwrap_or_default(),
+        }
+    }
+
     pub(super) fn observation(&self) -> SessionObservation {
         SessionObservation {
             completion_notices: self
