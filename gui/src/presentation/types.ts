@@ -75,7 +75,7 @@ export interface More {
   readonly chars?: number;
   /** Columns a table dropped, named. */
   readonly columns?: readonly string[];
-  /** Whether the counts are totals of a value read whole. Partial reads never state a total. */
+  /** Whether counts are complete. Partial reads and bounded text measurements give lower bounds. */
   readonly exact: boolean;
 }
 

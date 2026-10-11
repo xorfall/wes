@@ -153,6 +153,7 @@ export interface CellProps {
   readonly pinned?: boolean;
   /** Submitted command rows and their result identities. */
   readonly rows: readonly SourceRow[];
+  readonly sourceTruncated?: boolean;
   readonly time?: string;
   readonly timestamp?: string;
   /** Characters of the submitted command. */
@@ -254,7 +255,7 @@ export function identityText(nodes: readonly Identity[]): string {
 }
 
 /** Ledger: command band, run evidence, data and two bottom action groups. */
-export function Cell({ streamOutput = false, streamSource = false, pipeline = false, outputIdentity, theme, tailKeys = true, state, pinned = false, rows, time, timestamp, verdict, attempt,
+export function Cell({ streamOutput = false, streamSource = false, pipeline = false, outputIdentity, theme, tailKeys = true, state, pinned = false, rows, sourceTruncated = false, time, timestamp, verdict, attempt,
   blocks = [], tail = [], marks = [], actions = {}, confirmRepeat, view = "preview", onFocus, label, runActive }: CellProps) {
   const [asking, setAsking] = useState(false);
   const [cancelling, setCancelling] = useState<{ readonly token: number; readonly scope: string; readonly phase: "sending" | "requested" }>();
@@ -428,7 +429,9 @@ export function Cell({ streamOutput = false, streamSource = false, pipeline = fa
               <MonoLine segments={rows[at]!.segments} className="cell-source-line" sourceWrap />
             </div>)}
           </div></div>
-          {(rows.length > FOLD_ROWS || commandOverflow) && <button className="cell-fold" aria-expanded={unfolded} onClick={() => setUnfolded(was => !was)}>{unfolded ? "▾ fold command" : "▸ show full command"}</button>}
+          {sourceTruncated ? <button className="cell-fold" aria-description="Command preview is shortened. Open the complete source read only." disabled={!actions.openSource && !actions.peek}
+            onClick={() => actions.openSource ? actions.openSource() : actions.peek?.("source")}>open full command</button>
+            : (rows.length > FOLD_ROWS || commandOverflow) && <button className="cell-fold" aria-expanded={unfolded} onClick={() => setUnfolded(was => !was)}>{unfolded ? "▾ fold command" : "▸ show full command"}</button>}
         </div>
       </header>
       <section className={`cell-run cell-run-${runState}`} data-zone="run" aria-label="Run">

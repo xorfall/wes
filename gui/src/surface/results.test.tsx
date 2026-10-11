@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { useMemo } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vitest";
 import type { Engine } from "../engine";
@@ -20,6 +21,42 @@ function delayed() {
   const fetch = vi.fn((handle: string) => new Promise<StoredValue>(resolve => waiting.set(handle, resolve)));
   return { waiting, fetch };
 }
+
+it("does not rebuild held-result consumers for unrelated renders, but invalidates changed demand and reads", async () => {
+  const { waiting, fetch } = delayed();
+  const engine = { fetch } as unknown as Engine;
+  const rebuild = vi.fn();
+  let current!: ReturnType<typeof useResults>;
+  function Probe({ handles, generation = "g" }: { handles: string[]; generation?: string }) {
+    current = useResults(engine, generation, handles);
+    useMemo(() => { rebuild(current.held); }, [current.held]);
+    return null;
+  }
+  let tree!: ReactTestRenderer;
+  await act(async () => { tree = create(<Probe handles={["h1"]} />); });
+  await act(async () => { waiting.get("h1")!(value(1)); await flush(); });
+  const held = current.held;
+  rebuild.mockClear();
+  for (let n = 0; n < 100; n++) act(() => { tree.update(<Probe handles={["h1"]} />); });
+  expect(current.held).toBe(held);
+  expect(rebuild).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await act(async () => { tree.update(<Probe handles={["h2"]} />); });
+  expect(current.held.size).toBe(0);
+  await act(async () => { waiting.get("h2")!(value(2)); await flush(); });
+  expect(current.held.get("h2")?.data).toBe(2);
+  act(() => { current.retry("h2"); });
+  expect(current.held.size).toBe(0);
+  await act(async () => { waiting.get("h2")!(value(3)); await flush(); });
+  expect(current.held.get("h2")?.data).toBe(3);
+  await act(async () => { tree.update(<Probe generation="other" handles={["h2"]} />); });
+  expect(current.held.size).toBe(0);
+  await act(async () => { waiting.get("h2")!(value(4)); await flush(); });
+  expect(current.held.get("h2")?.data).toBe(4);
+  act(() => { tree.update(<Probe generation="other" handles={[]} />); });
+  expect(current.held.size).toBe(0);
+  act(() => tree.unmount());
+});
 
 it("bounds reads and skips thousands of obsolete requests while transport is busy", async () => {
   const { waiting, fetch } = delayed();

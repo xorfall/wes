@@ -21,7 +21,7 @@ import { valueViewModules } from "../value-views/registry";
  */
 import type { TypeShape } from "../protocol";
 import { describeType } from "../protocol";
-import { clusters, ellipsizeEnd, pad, width } from "./columns";
+import { clusters, clusterWidth, ellipsizeEnd, pad, textPrefix, width } from "./columns";
 import { compactDecimal, formatWire, formatWith, grouped, groupedDigits, isIdentifier, prettyType, shortIdentifier } from "./format";
 import { DATASET_COUNTS, DATASET_REFERENCE_FIELDS, datasetFacts, datasetSelect, datasetSummary, decodeDatasetData } from "./dataset";
 import { DecodedBytes, type Prepared } from "./prepare";
@@ -164,6 +164,8 @@ function offer(walk: Walk, name: OfferName) {
 /** A string on one line: tabs as a faint `⇥`, a trailing newline as a faint `⏎`, the rest as `+N lines`. */
 function textRuns(text: string, tone: Run["tone"], walk: Walk): Run[] {
   if (text === "") return [run("empty", "faint")];
+  const measured = textPrefix(text);
+  text = measured.text;
   const newline = text.endsWith("\n");
   const lines = (newline ? text.slice(0, -1) : text).split("\n");
   const first = lines[0] ?? "";
@@ -173,8 +175,9 @@ function textRuns(text: string, tone: Run["tone"], walk: Walk): Run[] {
     if (at > 0) runs.push(run("⇥", "faint"));
     if (part !== "") runs.push(run(identifierText(part, walk), tone));
   });
-  if (lines.length > 1) runs.push(run(`  +${lines.length - 1} lines`, "faint"));
+  if (lines.length > 1) runs.push(run(`  +${measured.whole ? "" : "≥"}${lines.length - 1} lines`, "faint"));
   else if (newline) runs.push(run(" ⏎", "faint"));
+  if (!measured.whole) runs.push(run("…", "faint"));
   return runs;
 }
 
@@ -313,23 +316,36 @@ function fitRuns(runs: readonly Run[], columns: number): Run[] {
 
 function textNode(path: string, text: string, walk: Walk, decoded: boolean, foldable = false): PresentationNode {
   if (text === "") return { kind: "empty", path, text: "empty" };
-  const newline = text.endsWith("\n");
-  const all = (newline ? text.slice(0, -1) : text).split("\n");
-  // A foldable block is the whole value by definition: it wraps whatever the policy says of text.
-  const wrapped = walk.policy.wrapText || foldable ? all.flatMap((line) => wrap(line, walk.context.columns)) : all;
+  const measured = textPrefix(text);
+  const newline = measured.whole && text.endsWith("\n");
+  const all = (newline ? measured.text.slice(0, -1) : measured.text).split("\n");
   const lines: Run[][] = [];
-  for (const line of wrapped) {
-    if (!spend(walk)) break;
+  let total = 0;
+  const take = (line: string) => {
+    total++;
+    if (!spend(walk)) return;
     const runs: Run[] = [];
     line.split("\t").forEach((part, at) => {
       if (at > 0) runs.push(run("⇥", "faint"));
       if (part !== "") runs.push(run(part, "literal"));
     });
     lines.push(fitRuns(runs, walk.context.columns));
+  };
+  for (const [at, source] of all.entries()) {
+    let previous: string | undefined;
+    for (const line of walk.policy.wrapText || foldable ? wrap(source, walk.context.columns) : [source]) {
+      // Count only the bounded prefix after spending the visible line budget. Do not build
+      // an array of every wrapped line, or visit the rest of the original payload.
+      if (previous !== undefined) take(previous);
+      previous = line;
+    }
+    // A clipped last piece is still an existing line, not evidence of another line
+    // beyond it. Show its bounded preview, while leaving the remaining count unknown.
+    if (previous !== undefined) take(!measured.whole && at === all.length - 1 ? previous + "…" : previous);
   }
-  const left = wrapped.length - lines.length;
+  const left = total - lines.length;
   if (decoded) walk.notices.includes("Bytes read as utf-8") || walk.notices.push("Bytes read as utf-8");
-  return { kind: "text", path, lines, newline: newline && left === 0, ...(foldable ? { disclosure: "folds" as const } : {}), ...(left > 0 ? { more: { lines: left, exact: walk.facts.whole !== false } } : {}) };
+  return { kind: "text", path, lines, newline: newline && left === 0, ...(foldable ? { disclosure: "folds" as const } : {}), ...(left > 0 || !measured.whole ? { more: { ...(left > 0 ? { lines: left } : {}), exact: measured.whole && walk.facts.whole !== false } } : {}) };
 }
 
 /** The single-line text of a scalar, when it is one: a string or decoded Bytes without a newline inside. */
@@ -374,7 +390,11 @@ function scalarNode(path: string, type: TypeShape, data: unknown, walk: Walk, fo
   const node = lineNode(path, scalarRuns(type, data, beside, format, walk.declared(path)), beside);
   const more: More = structured
     ? { lines: typeStructure(described).split("\n").length - 1, exact: true }
-    : { chars: width(text, Number.POSITIVE_INFINITY) - beside.context.columns, exact: true };
+    : (() => {
+      const measured = textPrefix(text);
+      const omitted = Math.max(0, width(measured.text) - beside.context.columns);
+      return { ...(omitted > 0 ? { chars: omitted } : {}), exact: measured.whole && walk.facts.whole !== false };
+    })();
   return { ...node, more, disclosure: "opens" };
 }
 
@@ -394,23 +414,21 @@ function ownBudget(walk: Walk): Walk {
 }
 
 /** A line cut into pieces of `columns` display columns, for the expanded and window modes. */
-function wrap(line: string, columns: number): string[] {
-  if (columns <= 0 || width(line) <= columns) return [line];
-  const out: string[] = [];
+function* wrap(line: string, columns: number): IterableIterator<string> {
+  if (columns <= 0) { yield line; return; }
   let piece = "";
   let used = 0;
   for (const cluster of clusters(line)) {
-    const w = width(cluster);
+    const w = clusterWidth(cluster);
     if (used + w > columns) {
-      out.push(piece);
+      if (piece !== "") yield piece;
       piece = "";
       used = 0;
     }
     piece += cluster;
     used += w;
   }
-  if (piece !== "") out.push(piece);
-  return out;
+  if (piece !== "" || line === "") yield piece;
 }
 
 function bytesNode(path: string, bytes: DecodedBytes, walk: Walk): PresentationNode {
