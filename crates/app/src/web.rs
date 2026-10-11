@@ -1326,10 +1326,13 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
             Ok(context) => context,
             Err(failure) => return failure.value_response(&handle),
         };
-    // The owner's descriptor/size admission precedes the ordinary payload read. It still checks
-    // authority, and the read below keeps its exact snapshot validation.
+    // Bound inspection before a descriptor fallback can decode an ordinary stored body. The
+    // shared owner keeps scope/policy checks, and the read below keeps exact snapshot validation.
     if let Some(maximum) = maximum {
-        match worker.describe(handle.clone(), vec![]).await {
+        match worker
+            .describe_bounded(handle.clone(), maximum as u64)
+            .await
+        {
             Ok(Some(snapshot)) if snapshot.charge <= maximum as u64 => {}
             Ok(Some(_)) => return value_errors::Failure::PreviewLimit.response(Some(&handle)),
             Ok(None) => {

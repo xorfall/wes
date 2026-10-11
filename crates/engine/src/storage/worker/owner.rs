@@ -88,6 +88,25 @@ impl<V: ValueStore> Owner<V> {
         }
         Ok(())
     }
+    fn checked_snapshot(
+        &self,
+        snapshot: Option<crate::storage::StoredSnapshot>,
+    ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
+        if let Some(snapshot) = &snapshot {
+            if snapshot.provenance.policy().is_private()
+                || snapshot.provenance.policy().is_unknown()
+            {
+                // These values keep their existing bounded read/hold path; they cannot become
+                // public deferred snapshots or acquire persistence permission through metadata.
+                return Ok(None);
+            }
+            if !snapshot.provenance.policy().dataset_reads().is_empty() {
+                self.datasets()?
+                    .check_read_origins(snapshot.provenance.policy().dataset_reads())?;
+            }
+        }
+        Ok(snapshot)
+    }
     pub(super) fn route_evictions(&mut self, maximum: usize) -> Result<bool, StoreError> {
         if self.pending_evictions.is_empty() {
             let batch = self.values.take_evicted(maximum)?;
@@ -285,21 +304,15 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         fields: &[String],
     ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
         self.check_scope(handle)?;
-        let snapshot = self.values.describe(handle, fields)?;
-        if let Some(snapshot) = &snapshot {
-            if snapshot.provenance.policy().is_private()
-                || snapshot.provenance.policy().is_unknown()
-            {
-                // These values keep their existing bounded read/hold path; they cannot become
-                // public deferred snapshots or acquire persistence permission through metadata.
-                return Ok(None);
-            }
-            if !snapshot.provenance.policy().dataset_reads().is_empty() {
-                self.datasets()?
-                    .check_read_origins(snapshot.provenance.policy().dataset_reads())?;
-            }
-        }
-        Ok(snapshot)
+        self.checked_snapshot(self.values.describe(handle, fields)?)
+    }
+    fn describe_bounded(
+        &self,
+        handle: &ValueHandle,
+        maximum: u64,
+    ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
+        self.check_scope(handle)?;
+        self.checked_snapshot(self.values.describe_bounded(handle, maximum)?)
     }
     fn read_selected(
         &self,

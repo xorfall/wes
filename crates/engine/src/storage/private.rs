@@ -64,6 +64,16 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
         }
         self.backing.describe(h, fields)
     }
+    fn describe_bounded(
+        &self,
+        h: &ValueHandle,
+        maximum: u64,
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        if self.private.contains_key(h) {
+            return Ok(None);
+        }
+        self.backing.describe_bounded(h, maximum)
+    }
     fn read_selected(
         &self,
         h: &ValueHandle,

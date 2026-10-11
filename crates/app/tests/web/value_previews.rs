@@ -9,6 +9,7 @@ async fn body(response: reqwest::Response) -> Value {
 struct CountReads {
     values: TieredValues,
     reads: Arc<AtomicUsize>,
+    inspections: Arc<AtomicUsize>,
 }
 impl ValueStore for CountReads {
     fn store(&mut self, v: &wes_core::Value) -> Result<ValueHandle, StoreError> {
@@ -23,6 +24,7 @@ impl ValueStore for CountReads {
         h: &ValueHandle,
         path: &[String],
     ) -> Result<Option<wes_engine::storage::StoredSnapshot>, StoreError> {
+        self.inspections.fetch_add(1, Ordering::SeqCst);
         self.values.describe(h, path)
     }
     fn encoded(&self, h: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
@@ -51,7 +53,9 @@ impl ValueStore for CountReads {
 #[tokio::test]
 async fn oversized_preview_is_refused_before_payload_read_and_full_read_still_works() {
     let reads = Arc::new(AtomicUsize::new(0));
+    let inspections = Arc::new(AtomicUsize::new(0));
     let count = reads.clone();
+    let inspect_count = inspections.clone();
     let f = Fixture::configured_store(
         |_| wes::web::Services::default(),
         Arc::new(|_| Ok(())),
@@ -60,6 +64,7 @@ async fn oversized_preview_is_refused_before_payload_read_and_full_read_still_wo
                 CountReads {
                     values,
                     reads: count,
+                    inspections: inspect_count,
                 },
                 StoreWorkerLimits::default(),
             )
@@ -76,6 +81,7 @@ async fn oversized_preview_is_refused_before_payload_read_and_full_read_still_wo
     .unwrap();
     let handle = f.worker.store(value).await.unwrap();
     reads.store(0, Ordering::SeqCst);
+    inspections.store(0, Ordering::SeqCst);
     let response = f
         .client
         .get(f.url(&format!("/values/{handle}?max_bytes=512")))
@@ -85,9 +91,14 @@ async fn oversized_preview_is_refused_before_payload_read_and_full_read_still_wo
         .unwrap();
     assert_eq!(response.status(), 413);
     let problem: Value = body(response).await;
-    assert_eq!(problem["error"]["code"], "VALUE_PREVIEW_LIMIT");
+    assert_eq!(problem["error"]["code"], "VALUE_CAPACITY");
     assert_eq!(problem["error"]["retryable"], false);
     assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        inspections.load(Ordering::SeqCst),
+        0,
+        "the ordinary file descriptor itself decodes its payload"
+    );
     let response = f
         .client
         .get(f.url(&format!("/values/{handle}")))
@@ -177,7 +188,7 @@ async fn bounded_read_does_not_make_an_unpublished_private_handle_accessible() {
     let f = Fixture::new().await;
     let private = wes_core::Value::new(
         Shape::Primitive(wes_core::Primitive::Text),
-        wes_core::Data::Text("PRIVATE_FIXTURE_CANARY".into()),
+        wes_core::Data::Text("PRIVATE_FIXTURE_CANARY".repeat(300).into()),
         wes_core::Provenance::default()
             .with_policy(&wes_core::flow::FlowPolicy::default().private()),
     )
