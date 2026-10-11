@@ -147,6 +147,7 @@ export function openFacts(input: OpenInput): readonly FactGroup[] {
         )
       : undefined,
     node?.private ? fact("private", "memory only; gone when the engine restarts", "mono-warn") : undefined,
+    node?.confidential && !node.private ? fact("confidential", `encrypted local storage; ${node.residence === "temporary" ? "temporary only" : "explicit Keep permitted"}`, "mono-warn") : undefined,
     fact("retention", node?.retention),
     fact(node?.private ? "memory charge" : "storage bytes", node?.bytes === undefined ? undefined : `${node.bytes} bytes · ${node.private ? "bounded private memory, not an archive size" : "encoded value, type and provenance"}`),
     node === undefined ? undefined : fact("kept", node.kept ? "yes" : "no"),

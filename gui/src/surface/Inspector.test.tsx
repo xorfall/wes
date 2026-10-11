@@ -10,6 +10,15 @@ import { resultAccess } from "./result-access";
 const nodes:WorkspaceNode[]=[{id:"n",name:"sample",command:"synthetic",dependsOn:[],state:"ready",handle:"h",kept:true,provenance:{},cautions:[]}];
 const stored:StoredValue={type:{kind:"unknown"},data:{message:"authorized synthetic value"},provenance:{}};
 const trees:ReactTestRenderer[]=[];
+it.each(["temporary", "retainable"] as const)("explains %s confidential storage while permitting a local read",async residence=>{
+ const {api,props}=fixture({confidential:true,residence});let tree!:ReactTestRenderer;
+ await act(async()=>{tree=create(<Inspector {...props}/>);});trees.push(tree);
+ const output=JSON.stringify(tree.toJSON());
+ expect(api.fetch).toHaveBeenCalledWith("h");expect(output).toContain("authorized synthetic value");
+ expect(output).toContain("Confidential · encrypted storage");
+ expect(output).toContain(residence==="temporary" ? "temporary only; Keep unavailable" : "Keep explicitly to retain");
+ expect(output).toContain("terminal and AI export unavailable");
+});
 afterEach(()=>{act(()=>trees.splice(0).forEach(tree=>tree.unmount()));vi.useRealTimers();});
 function fixture(over:Partial<WorkspaceNode>={}) {
  const api={fetch:vi.fn(async()=>stored),liveView:vi.fn(async()=>stored)};

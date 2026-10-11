@@ -20,6 +20,7 @@ pub(super) struct Arguments {
     pub credentials_stdin: bool,
     pub grant_provider: Option<String>,
     pub home: PathBuf,
+    pub storage_key_file: Option<PathBuf>,
     pub workspace: WorkspaceName,
     pub command: Option<String>,
     pub file: Option<PathBuf>,
@@ -32,7 +33,7 @@ pub(super) struct Arguments {
     pub auto_keep: AutoKeep,
     pub node_timeout: Duration,
 }
-pub(super) const USAGE: &str = "Usage: wes --export-view-toolchain NEW_DIRECTORY\n       wes [--home DIR] [--workspace NAME] --command SOURCE\n       wes [--home DIR] [--workspace NAME] --file FILE\n       wes [--home DIR] [--workspace NAME] --test SCENARIO_YAML\n       wes [--home DIR] [--workspace NAME] --serve PORT [--site DIR]\n       wes [--home DIR] --api-request FILE_OR_DASH\n\nStartup options:\n  --sequential             Execute top-level statements in order in one live session; stop on failure\n  --json                   Print structured values, including help (--command/--file)\n  --home DIR               Data folder (default ~/.wes); shared by named workspaces\n  --api-request FILE_OR_DASH  Library JSON action; '-' reads stdin; excludes command/file/test/serve\n  --test FILE              Run one sequential API scenario; print a policy-checked JSON report\n  --file FILE              Capture one UTF-8 wes script (1 MiB); excludes --command/--test/--serve\n  --env NAME               Explicit environment for batch work\n  --env-revision SHA256    Required revision when selecting installed definitions\n  --env-file FILE          Apply this reviewed package before any command; drift refuses execution\n  --env-lock FILE          Install captured definitions into an empty environment registry\n  --activate-env           Explicitly reopen selected environment execution after load\n  --credentials-stdin      Read a bounded JSON reference/value map from stdin (never source/argv)\n  --grant-provider ALIAS   Grant selected environment/revision credentials for 5 minutes\n  --concurrency COUNT       Concurrent entered operations, 1..1024 (default 4)\n  --max-streams COUNT       Reserved stream slots across all workspaces, 1..1024 (default 32)\n  --live-budget BYTES       Positive live-result budget or unlimited (default 1073741824)\n  --keep-under BYTES        Keep finite results at or below BYTES of encoded storage, including type/provenance (default 10485760)\n  --no-auto-keep            Disable automatic finite-result retention; excludes --keep-under\n  --node-timeout SECONDS    Positive default finite node timeout (default 900)\n\nRuns source or serves the browser client on 127.0.0.1.\nBuild gui first and pass --site gui/dist to serve its assets.\nUse --sequential for workflows combining declarations and workspace lifecycle operations.\nUse --serve for ongoing streams; --command/--file capture the window available after opening.\nIn batch mode, @interactive processes inherit this client's input/output; captured output stays empty.\nScript-relative input paths use the script directory. CLI paths keep the launch directory as base.\nIn --serve mode, @interactive processes use browser input and bounded live output.\nThe default timeout does not limit open streams or interactive conversations; explicit node timeouts do.\nConcurrency and stream capacity are shared across all workspaces.\nOperations hold concurrency while executing; opening streams release it once open.\nInteractive conversations retain concurrency; stream slots remain reserved through cleanup.\n:env disable affects this live session, not saved definitions.\nFor installed-registry reads, omit --env-file; use --env NAME --env-revision REVISION to select without applying a package.\nOther options configure each opened workspace; changing retention does not archive earlier results.";
+pub(super) const USAGE: &str = "Usage: wes --export-view-toolchain NEW_DIRECTORY\n       wes [--home DIR] [--workspace NAME] --command SOURCE\n       wes [--home DIR] [--workspace NAME] --file FILE\n       wes [--home DIR] [--workspace NAME] --test SCENARIO_YAML\n       wes [--home DIR] [--workspace NAME] --serve PORT [--site DIR]\n       wes [--home DIR] --api-request FILE_OR_DASH\n\nStartup options:\n  --sequential             Execute top-level statements in order in one live session; stop on failure\n  --json                   Print structured values, including help (--command/--file)\n  --storage-key-file FILE  External 32-byte key for a new encrypted home; required on every reopen\n  --home DIR               Data folder (default ~/.wes); shared by named workspaces\n  --api-request FILE_OR_DASH  Library JSON action; '-' reads stdin; excludes command/file/test/serve\n  --test FILE              Run one sequential API scenario; print a policy-checked JSON report\n  --file FILE              Capture one UTF-8 wes script (1 MiB); excludes --command/--test/--serve\n  --env NAME               Explicit environment for batch work\n  --env-revision SHA256    Required revision when selecting installed definitions\n  --env-file FILE          Apply this reviewed package before any command; drift refuses execution\n  --env-lock FILE          Install captured definitions into an empty environment registry\n  --activate-env           Explicitly reopen selected environment execution after load\n  --credentials-stdin      Read a bounded JSON reference/value map from stdin (never source/argv)\n  --grant-provider ALIAS   Grant selected environment/revision credentials for 5 minutes\n  --concurrency COUNT       Concurrent entered operations, 1..1024 (default 4)\n  --max-streams COUNT       Reserved stream slots across all workspaces, 1..1024 (default 32)\n  --live-budget BYTES       Positive live-result budget or unlimited (default 1073741824)\n  --keep-under BYTES        Keep finite results at or below BYTES of encoded storage, including type/provenance (default 10485760)\n  --no-auto-keep            Disable automatic finite-result retention; excludes --keep-under\n  --node-timeout SECONDS    Positive default finite node timeout (default 900)\n\nRuns source or serves the browser client on 127.0.0.1.\nBuild gui first and pass --site gui/dist to serve its assets.\nUse --sequential for workflows combining declarations and workspace lifecycle operations.\nUse --serve for ongoing streams; --command/--file capture the window available after opening.\nIn batch mode, @interactive processes inherit this client's input/output; captured output stays empty.\nScript-relative input paths use the script directory. CLI paths keep the launch directory as base.\nIn --serve mode, @interactive processes use browser input and bounded live output.\nThe default timeout does not limit open streams or interactive conversations; explicit node timeouts do.\nConcurrency and stream capacity are shared across all workspaces.\nOperations hold concurrency while executing; opening streams release it once open.\nInteractive conversations retain concurrency; stream slots remain reserved through cleanup.\n:env disable affects this live session, not saved definitions.\nFor installed-registry reads, omit --env-file; use --env NAME --env-revision REVISION to select without applying a package.\nOther options configure each opened workspace; changing retention does not archive earlier results.";
 
 pub(super) fn arguments() -> Result<Option<Arguments>, String> {
     parse(std::env::args_os().skip(1))
@@ -61,6 +62,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Arguments>, 
         (None, None, None, None);
     let (mut activate_environment, mut credentials_stdin) = (false, false);
     let mut environment_lock = None;
+    let mut storage_key_file = None;
     let mut file = None;
     let mut test = None;
     let mut api_request = None;
@@ -97,6 +99,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Arguments>, 
         if !matches!(
             flag,
             "--home"
+                | "--storage-key-file"
                 | "--api-request"
                 | "--env"
                 | "--env-revision"
@@ -156,6 +159,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Arguments>, 
                 )
             }
             "--home" => home = Some(PathBuf::from(value)),
+            "--storage-key-file" => storage_key_file = Some(PathBuf::from(value)),
             "--workspace" => {
                 workspace = Some(
                     value
@@ -280,6 +284,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Arguments>, 
         activate_environment,
         credentials_stdin,
         grant_provider,
+        storage_key_file,
         home: home
             .or_else(|| std::env::home_dir().map(|h| wes::data_home::default_home(&h)))
             .ok_or("Cannot determine home directory; pass --home DIR")?,

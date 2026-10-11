@@ -42,6 +42,7 @@ pub struct FileValues {
     holds: HashMap<ValueHandle, Weak<()>>,
     drafts: HashMap<ValueHandle, segmented::Draft>,
     manifests: Arc<std::sync::Mutex<segmented::ManifestCache>>,
+    protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
 }
 impl FileValues {
     /// Opens a private directory. Existing directories are never chmod'ed or recursively cleaned.
@@ -51,11 +52,27 @@ impl FileValues {
         durability: Durability,
         budget: Option<NonZeroU64>,
     ) -> Result<Self, StoreError> {
+        Self::open_protected(path, limits, durability, budget, None)
+    }
+    pub fn open_protected(
+        path: &Path,
+        limits: Limits,
+        durability: Durability,
+        budget: Option<NonZeroU64>,
+        protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
+    ) -> Result<Self, StoreError> {
+        let directory = OwnedDirectory::open(path, DirectoryKind::Values, durability)
+            .map_err(directory_error)?;
+        crate::protected_storage::check_mode(&directory, "values", protection.as_deref())
+            .map_err(|e| StoreError::backend("opening storage protection", e))?;
+        directory
+            .sync()
+            .map_err(|e| StoreError::backend("syncing storage protection", e))?;
         Ok(Self {
-            directory: OwnedDirectory::open(path, DirectoryKind::Values, durability)
-                .map_err(directory_error)?,
+            directory,
             limits,
             budget,
+            protection,
             evicted: VecDeque::new(),
             published: HashMap::new(),
             next_publication: 0,
@@ -63,6 +80,67 @@ impl FileValues {
             drafts: HashMap::new(),
             manifests: Default::default(),
         })
+    }
+    fn protect_object(&self, handle: &ValueHandle, bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
+        match &self.protection {
+            Some(p) => p
+                .seal("values", handle.as_str(), bytes)
+                .map_err(|e| StoreError::backend("protecting a snapshot", e)),
+            None => Ok(bytes.to_vec()),
+        }
+    }
+    fn snapshot_header(
+        &self,
+        handle: &ValueHandle,
+        prefix: &[u8],
+        maximum: usize,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        use std::io::{Seek, SeekFrom};
+        let Some(mut file) = self.file(handle)? else {
+            return Ok(None);
+        };
+        let size = file
+            .metadata()
+            .map_err(|e| StoreError::backend("sizing snapshot metadata", e))?
+            .len();
+        if self.protection.is_none() {
+            let mut probe = vec![0; prefix.len()];
+            let n = file
+                .read(&mut probe)
+                .map_err(|e| StoreError::backend("reading snapshot format", e))?;
+            if !probe[..n].starts_with(prefix) {
+                return Ok(None);
+            }
+            file.seek(SeekFrom::Start(0))
+                .map_err(|e| StoreError::backend("seeking snapshot metadata", e))?;
+        }
+        let physical = maximum.saturating_add(
+            self.protection
+                .as_ref()
+                .map_or(0, |_| crate::protected_storage::OVERHEAD),
+        );
+        if size > physical as u64 {
+            return if self.protection.is_some() {
+                Ok(None)
+            } else {
+                Err(StoreError::Limit("snapshot metadata"))
+            };
+        }
+        let mut bytes = Vec::new();
+        file.take(physical as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| StoreError::backend("reading snapshot metadata", e))?;
+        if bytes.len() > physical {
+            return Err(StoreError::Limit("snapshot metadata"));
+        }
+        let bytes = match &self.protection {
+            Some(p) => p
+                .open("values", handle.as_str(), &bytes, maximum)
+                .map_err(|_| StoreError::Corrupt)?
+                .to_vec(),
+            None => bytes,
+        };
+        Ok(bytes.starts_with(prefix).then_some(bytes))
     }
     pub fn handles(&self) -> Result<Vec<ValueHandle>, StoreError> {
         let mut handles = self
@@ -137,7 +215,13 @@ impl FileValues {
     }
     fn adopt_spill(&mut self, handle: &ValueHandle, bytes: &[u8]) -> Result<(), StoreError> {
         if self.size(handle)?.is_none() {
-            self.admit_spill(bytes.len() as u64)?;
+            self.admit_spill(
+                bytes.len() as u64
+                    + self
+                        .protection
+                        .as_ref()
+                        .map_or(0, |_| crate::protected_storage::OVERHEAD as u64),
+            )?;
         }
         self.adopt(handle, bytes)
     }
@@ -151,8 +235,11 @@ impl FileValues {
         encoded: &[u8],
         sync: impl FnOnce(&cap_std::fs::File) -> io::Result<()>,
     ) -> Result<(), StoreError> {
-        codec::decode_value(encoded, self.limits)
+        let decoded = codec::decode_value(encoded, self.limits)
             .map_err(|e| codec_error("validating adopted bytes", e))?;
+        if decoded.value.provenance().policy().is_confidential() && self.protection.is_none() {
+            return Err(StoreError::Restricted);
+        }
         if let Some(existing) = self.encoded(handle)? {
             return if existing == encoded {
                 self.confirm_existing(handle, sync)
@@ -160,6 +247,16 @@ impl FileValues {
                 Err(StoreError::Conflict)
             };
         }
+        let sealed;
+        let encoded = match &self.protection {
+            Some(protection) => {
+                sealed = protection
+                    .seal("values", handle.as_str(), encoded)
+                    .map_err(|e| StoreError::backend("encrypting a result", e))?;
+                &sealed
+            }
+            None => encoded,
+        };
         let temporary = format!(".wes-pending-{}", Uuid::new_v4());
         let mut options = private_options();
         options.write(true).create_new(true);
@@ -278,15 +375,22 @@ impl FileValues {
             if !metadata.is_file() {
                 return Err(StoreError::NotRegular);
             }
+            let segmented = self.segmented_size(&handle)?.is_some();
+            let physical = if segmented {
+                metadata.len().saturating_add(
+                    self.binary_file(&handle, false)?
+                        .metadata()
+                        .map_err(|e| StoreError::backend("sizing stored extents", e))?
+                        .len(),
+                )
+            } else {
+                metadata.len()
+            };
             files.push(HeldFile {
                 publication: self.published.get(&handle).copied(),
                 handle: handle.clone(),
-                bytes: self.segmented_size(&handle)?.unwrap_or(metadata.len()),
-                artifacts: if self.segmented_size(&handle)?.is_some() {
-                    2
-                } else {
-                    1
-                },
+                bytes: physical,
+                artifacts: if segmented { 2 } else { 1 },
                 modified: metadata
                     .modified()
                     .map(|time| time.into_std())
@@ -383,25 +487,26 @@ fn write_and_sync<W: Write>(
 impl ValueStore for FileValues {
     fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
         use sha2::{Digest, Sha256};
-        let Some(mut file) = self.file(handle)? else {
-            return Ok(None);
-        };
-        let mut digest = Sha256::new();
-        let mut buffer = [0u8; 65536];
-        loop {
-            let count = file
-                .read(&mut buffer)
-                .map_err(|e| StoreError::backend("hashing a snapshot", e))?;
-            if count == 0 {
-                break;
-            }
-            digest.update(&buffer[..count]);
+        if let Some((_, bytes)) = self.composite_header(handle)? {
+            return Ok(Some(format!("sha256:{:x}", Sha256::digest(bytes))));
         }
-        Ok(Some(format!("sha256:{:x}", digest.finalize())))
+        if let Some(snapshot) = self.describe_segmented(handle, &[])? {
+            return Ok(Some(snapshot.digest.clone()));
+        }
+        Ok(self
+            .encoded(handle)?
+            .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes))))
+    }
+
+    fn supports_confidential(&self) -> bool {
+        self.protection.is_some()
     }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
-        let encoded = codec::encode_value(value, self.limits)
-            .map_err(|e| codec_error("encoding a result", e))?;
+        let encoded = match &self.protection {
+            Some(_) => codec::encode_protected_value(value, self.limits),
+            None => codec::encode_value(value, self.limits),
+        }
+        .map_err(|e| codec_error("encoding a result", e))?;
         let handle = ValueHandle::fresh();
         self.adopt(&handle, &encoded)?;
         Ok(handle)
@@ -506,15 +611,34 @@ impl ValueStore for FileValues {
             .metadata()
             .map_err(|e| StoreError::backend("sizing a result", e))?
             .len();
-        if size > self.limits.bytes as u64 {
+        let maximum = self
+            .limits
+            .bytes
+            .saturating_add(if self.protection.is_some() {
+                crate::protected_storage::OVERHEAD
+            } else {
+                0
+            });
+        if size > maximum as u64 {
             return Err(StoreError::Limit("stored result read bytes"));
         }
         let mut bytes = vec![];
-        file.take((self.limits.bytes as u64).saturating_add(1))
+        file.take((maximum as u64).saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|e| StoreError::backend("reading a result", e))?;
-        if bytes.len() > self.limits.bytes {
+        if bytes.len() > maximum {
             return Err(StoreError::Limit("stored result read bytes"));
+        }
+        let bytes = match &self.protection {
+            Some(p) => p
+                .open("values", handle.as_str(), &bytes, self.limits.bytes)
+                .map_err(|_| StoreError::Corrupt)?
+                .to_vec(),
+            None => bytes,
+        };
+        let value = codec::decode_value(&bytes, self.limits).map_err(stored_decode_error)?;
+        if value.value.provenance().policy().is_confidential() && self.protection.is_none() {
+            return Err(StoreError::Restricted);
         }
         Ok(Some(bytes))
     }
@@ -525,7 +649,13 @@ impl ValueStore for FileValues {
         self.file(handle)?
             .map(|file| {
                 file.metadata()
-                    .map(|metadata| metadata.len())
+                    .map(|metadata| {
+                        metadata.len().saturating_sub(
+                            self.protection
+                                .as_ref()
+                                .map_or(0, |_| crate::protected_storage::OVERHEAD as u64),
+                        )
+                    })
                     .map_err(|e| StoreError::backend("sizing a result", e))
             })
             .transpose()
@@ -594,9 +724,26 @@ impl TieredValues {
         durability: Durability,
         live_budget: Option<NonZeroU64>,
     ) -> Result<Self, StoreError> {
-        let live = FileValues::open(live, limits, durability, live_budget)?;
-        let mut temporary = temporary::TemporaryValues::open(&live.directory, limits, live_budget)?;
-        let mut archive = FileValues::open(archive, limits, durability, None)?;
+        Self::open_protected(live, archive, limits, durability, live_budget, None)
+    }
+    pub fn open_protected(
+        live: &Path,
+        archive: &Path,
+        limits: Limits,
+        durability: Durability,
+        live_budget: Option<NonZeroU64>,
+        protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
+    ) -> Result<Self, StoreError> {
+        let live =
+            FileValues::open_protected(live, limits, durability, live_budget, protection.clone())?;
+        let mut temporary = temporary::TemporaryValues::open(
+            &live.directory,
+            limits,
+            live_budget,
+            protection.clone(),
+        )?;
+        let mut archive =
+            FileValues::open_protected(archive, limits, durability, None, protection)?;
         temporary.manifests = live.manifests.clone();
         archive.manifests = live.manifests.clone();
         Ok(Self {
@@ -796,6 +943,9 @@ impl ValueStore for TieredValues {
             None => self.archive.digest(handle),
         }
     }
+    fn supports_confidential(&self) -> bool {
+        self.live.supports_confidential() && self.archive.supports_confidential()
+    }
     fn retained_persistence(&self) -> wes_engine::history::Persistence {
         match self.archive.directory.durability() {
             Durability::File => wes_engine::history::Persistence::FileSynced,
@@ -812,6 +962,9 @@ impl ValueStore for TieredValues {
         value: &Value,
         placement: ValuePlacement,
     ) -> Result<ValueHandle, StoreError> {
+        if value.provenance().policy().is_confidential() && !self.supports_confidential() {
+            return Err(StoreError::Restricted);
+        }
         match placement {
             ValuePlacement::ManagedFile => self.store(value),
             ValuePlacement::Memory => self.memory.store(value, self.live.limits),
@@ -883,7 +1036,18 @@ impl ValueStore for TieredValues {
             None => self.archive.size(handle),
         }
     }
+    fn automatic_retention_allowed(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        Ok(self
+            .read(handle)?
+            .is_some_and(|v| !v.value.provenance().policy().is_confidential()))
+    }
     fn keep(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self
+            .describe(handle, &[])?
+            .is_some_and(|v| !v.provenance.policy().allows_retention())
+        {
+            return Err(StoreError::Restricted);
+        }
         if self.archive.composite_header(handle)?.is_some() {
             self.archive.confirm_composite(handle)?;
             return Ok(true);

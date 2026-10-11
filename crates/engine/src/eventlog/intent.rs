@@ -419,7 +419,7 @@ impl Intent {
         policy: &FlowPolicy,
     ) -> Result<(Prepared, Handle), String> {
         let policy = self.policy.join(policy);
-        if self.cancelled() || policy.is_private() || policy.is_unknown() {
+        if self.cancelled() || self.worker.admit_dataset_policy(&policy).is_err() {
             return Err("Recording source admission was cancelled or is not exportable".into());
         }
         Prepared::prepare(

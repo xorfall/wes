@@ -56,6 +56,14 @@ is not automatically public. Source access does not authorize exporting inferred
 private values or advisory text. MCP
 `validate` still checks syntax/admission, not eventual import or runtime success.
 
+## Confidential storage
+
+Environment bindings can distinguish memory-only private output from confidential
+output allowed in encrypted temporary or retained storage. See
+[Confidential evidence storage](confidential-storage.md) for the policy, key setup,
+architecture and current boundaries. Encryption does not grant export or execution
+permission, and confidential retention requires an explicit Keep.
+
 ## Agent discovery and View development
 
 MCP `help` exposes required importer arguments and provider invocation examples.

@@ -78,6 +78,29 @@ refusal. Reopening preserves older captured digests and tones without reading th
 current registry or replaying a producer. Full captured-domain lookup for
 incomplete previews is deferred; absence from a preview is unknown membership.
 
+## Confidential storage
+
+These cases use generated keys, isolated data homes and loopback services. No
+contributor credentials or external service is used:
+
+```sh
+cargo test -p wes-core --offline -- --test-threads=4
+cargo test -p wes-adapters --offline -- --test-threads=4
+cargo test -p wes-engine --offline -- --test-threads=4
+cargo test -p wes --test confidential_storage --offline
+(cd gui && npm run typecheck && npx vitest run)
+```
+
+The runtime acceptance captures an HTTP response, derives a list, runs Dataset
+analysis, explicitly keeps results, shuts down and reopens with the original key.
+It verifies preserved run identities, no producer replay and no plaintext sentinel
+in the home. Storage tests cover wrong/missing/foreign keys, object identity swaps,
+tampering, bounded reads, private memory-only values, temporary Keep refusal,
+encrypted catalog rotation, uncertain commit reconciliation and torn appends.
+Transport tests refuse confidential selection/export before reading a child field;
+GUI tests distinguish local display from retention and export permission.
+Run the full workspace suite after changes to these shared contracts.
+
 ## Build cache size
 
 Development and test builds use `line-tables-only` debug information: backtraces

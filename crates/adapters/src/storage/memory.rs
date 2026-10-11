@@ -63,7 +63,7 @@ impl MemoryValues {
                 .min(usize::try_from(self.budget.get()).unwrap_or(usize::MAX)),
             ..limits
         };
-        let bytes = codec::encode_value(value, limit).map_err(|error| match error {
+        let bytes = codec::encode_protected_value(value, limit).map_err(|error| match error {
             codec::CodecError::Bytes => StoreError::Limit("encoded memory result"),
             codec::CodecError::Work => StoreError::Limit("encoded memory result work"),
             error => StoreError::backend("encoding a memory result", error),

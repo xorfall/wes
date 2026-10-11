@@ -696,6 +696,9 @@ pub trait DatasetStorage: Send {
             Ok(())
         }
     }
+    fn supports_confidential(&self) -> bool {
+        false
+    }
     fn read_access(&self) -> Result<std::collections::BTreeSet<String>, StoreError> {
         Ok(Default::default())
     }

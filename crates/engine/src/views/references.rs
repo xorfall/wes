@@ -124,8 +124,8 @@ impl crate::workspace::Workspace {
         }
         let input = snapshot.input.as_ref().ok_or("View has no input to pin")?;
         let value = input.value().ok_or("View input is unavailable")?;
-        if value.provenance().policy().is_private() || !value.data().is_storable_snapshot() {
-            return Err("Pin requires a public materialized input".into());
+        if !value.provenance().policy().allows_retention() || !value.data().is_storable_snapshot() {
+            return Err("Pin requires a materialized input whose policy permits retention".into());
         }
         if snapshot.input_problem.is_some() {
             return Err("Resolve the view input problem before Pin".into());

@@ -203,6 +203,7 @@ async fn run(mut args: Arguments) -> Result<bool, Error> {
     let mut scenario_context = None;
     let runtime = wes::runtime::launch(RuntimeOptions {
         home: args.home.clone(),
+        storage_key_file: args.storage_key_file.clone(),
         base,
         workspace: args.workspace.clone(),
         concurrency: args.concurrency,
@@ -522,7 +523,7 @@ async fn execute(
                 }
             }
         } else if let Some(value) = snapshot.execution.values.get(node) {
-            if value.provenance().policy().is_private() {
+            if value.provenance().policy().is_confidential() {
                 withheld_notice(json);
                 continue;
             }

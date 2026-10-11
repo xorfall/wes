@@ -92,7 +92,8 @@ pub fn retained_resources(
         let Some(value) = observation.state.execution.values.get(node.id()) else {
             continue;
         };
-        if value.provenance().policy().is_private() || value.provenance().policy().is_unknown() {
+        if value.provenance().policy().is_confidential() || value.provenance().policy().is_unknown()
+        {
             continue;
         }
         let Data::Record(fields) = value.data() else {

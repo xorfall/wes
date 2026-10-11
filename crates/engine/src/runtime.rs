@@ -719,6 +719,16 @@ impl<T: Clone> Runtime<T> {
     pub fn value_of(&self, node: &NodeId) -> Option<&Value> {
         self.entries.get(node)?.value.as_ref()
     }
+    /// Captured result policy and attribution do not depend on decoded payload residency.
+    /// This is metadata, never a read grant or a materialization operation.
+    pub fn result_provenance(&self, node: &NodeId) -> Option<&wes_core::Provenance> {
+        let entry = self.entries.get(node)?;
+        entry
+            .value
+            .as_ref()
+            .map(Value::provenance)
+            .or_else(|| entry.stored.as_ref().map(|snapshot| &snapshot.provenance))
+    }
     pub fn stored_output(&self, node: &NodeId) -> Option<StoredOutputRef> {
         let entry = self.entries.get(node)?;
         Some(StoredOutputRef {

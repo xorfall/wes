@@ -96,6 +96,9 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
         }
         self.backing.source_range(s, from, maximum)
     }
+    fn supports_confidential(&self) -> bool {
+        self.backing.supports_confidential()
+    }
     fn retained_persistence(&self) -> crate::history::Persistence {
         self.backing.retained_persistence()
     }

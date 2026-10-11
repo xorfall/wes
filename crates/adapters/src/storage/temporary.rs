@@ -23,6 +23,7 @@ impl TemporaryValues {
         parent: &OwnedDirectory,
         limits: Limits,
         budget: Option<NonZeroU64>,
+        protection: Option<Arc<crate::protected_storage::ObjectProtection>>,
     ) -> Result<Self, StoreError> {
         for entry in parent
             .entries()
@@ -89,6 +90,7 @@ impl TemporaryValues {
             holds: Default::default(),
             drafts: Default::default(),
             manifests: Default::default(),
+            protection,
         };
         Ok(Self {
             values: Some(values),

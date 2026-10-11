@@ -154,8 +154,9 @@ impl Fingerprint {
             self.text("source-sha256/v1");
             self.text(hash);
         }
-        if i.private_output {
-            self.text("private-output/v1");
+        if i.output_policy != crate::flow::OutputPolicy::Public {
+            self.text("output-policy/v2");
+            self.text(i.output_policy.as_str());
         }
         self.text(i.source.kind());
         self.text(i.source.location());

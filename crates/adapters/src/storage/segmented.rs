@@ -64,7 +64,12 @@ fn metadata_limit() -> usize {
 }
 impl Draft {
     pub(super) fn disk_charge(&self) -> u64 {
-        self.total.saturating_add(self.charge())
+        self.total.saturating_add(self.charge()).saturating_add(
+            self.ports
+                .values()
+                .map(|p| p.chunks.len() as u64 * crate::protected_storage::OVERHEAD as u64)
+                .sum::<u64>(),
+        )
     }
     pub(super) fn charge(&self) -> u64 {
         4096 + self
@@ -88,7 +93,7 @@ impl FileValues {
                 .sum(),
         }
     }
-    fn binary_file(
+    pub(super) fn binary_file(
         &self,
         handle: &ValueHandle,
         writable: bool,
@@ -115,7 +120,7 @@ impl FileValues {
         Ok(file)
     }
     fn manifest(&self, handle: &ValueHandle) -> Result<Option<Arc<CapturedManifest>>, StoreError> {
-        let Some(mut file) = self.file(handle)? else {
+        let Some(file) = self.file(handle)? else {
             return Ok(None);
         };
         let info = file
@@ -135,30 +140,11 @@ impl FileValues {
                 return Ok(Some(captured.clone()));
             }
         }
-        let mut prefix = [0u8; 27];
-        let n = file
-            .read(&mut prefix)
-            .map_err(|e| StoreError::backend("reading snapshot header", e))?;
-        if !prefix[..n].starts_with(b"{\"format\":\"wes.segmented\"") {
+        let Some(bytes) =
+            self.snapshot_header(handle, b"{\"format\":\"wes.segmented\"", metadata_limit())?
+        else {
             return Ok(None);
-        }
-        file.seek(SeekFrom::Start(0))
-            .map_err(|e| StoreError::backend("seeking snapshot header", e))?;
-        if file
-            .metadata()
-            .map_err(|e| StoreError::backend("sizing snapshot header", e))?
-            .len()
-            > metadata_limit() as u64
-        {
-            return Err(StoreError::Limit("snapshot metadata"));
-        }
-        let mut bytes = Vec::new();
-        file.take(metadata_limit() as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| StoreError::backend("reading snapshot header", e))?;
-        if bytes.len() > metadata_limit() {
-            return Err(StoreError::Limit("snapshot metadata"));
-        }
+        };
         let m: Manifest = serde_json::from_slice(&bytes).map_err(|_| StoreError::Corrupt)?;
         if m.format != "wes.segmented"
             || m.version != 1
@@ -215,7 +201,7 @@ impl FileValues {
                 total = total
                     .checked_add(c.bytes.into())
                     .ok_or(StoreError::Corrupt)?;
-                offsets.push((c.offset, u64::from(c.bytes)));
+                offsets.push((c.offset, self.chunk_size(c.bytes)));
             }
             if total != leaf.bytes {
                 return Err(StoreError::Corrupt);
@@ -229,13 +215,13 @@ impl FileValues {
             }
             end = end.checked_add(length).ok_or(StoreError::Corrupt)?;
         }
-        if end != m.total
+        if m.leaves.iter().map(|l| l.bytes).sum::<u64>() != m.total
             || self
                 .binary_file(handle, false)?
                 .metadata()
                 .map_err(|e| StoreError::backend("sizing segmented payload", e))?
                 .len()
-                != m.total
+                != end
         {
             return Err(StoreError::Corrupt);
         }
@@ -301,14 +287,35 @@ impl FileValues {
             charge,
         })))
     }
+    fn chunk_size(&self, bytes: u32) -> u64 {
+        u64::from(bytes)
+            + self
+                .protection
+                .as_ref()
+                .map_or(0, |_| crate::protected_storage::OVERHEAD as u64)
+    }
+    fn protect_chunk(
+        &self,
+        handle: &ValueHandle,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<Vec<u8>, StoreError> {
+        match &self.protection {
+            Some(p) => p
+                .seal("snapshot-chunk", &format!("{handle}:{offset}"), bytes)
+                .map_err(|e| StoreError::backend("protecting snapshot chunk", e)),
+            None => Ok(bytes.to_vec()),
+        }
+    }
     fn read_chunk(
         &self,
+        handle: &ValueHandle,
         file: &mut cap_std::fs::File,
         chunk: &Chunk,
     ) -> Result<Vec<u8>, StoreError> {
         file.seek(SeekFrom::Start(chunk.offset))
             .map_err(|e| StoreError::backend("seeking snapshot chunk", e))?;
-        let mut bytes = vec![0; chunk.bytes as usize];
+        let mut bytes = vec![0; self.chunk_size(chunk.bytes) as usize];
         file.read_exact(&mut bytes).map_err(|e| {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 StoreError::Corrupt
@@ -316,7 +323,19 @@ impl FileValues {
                 StoreError::backend("reading snapshot chunk", e)
             }
         })?;
-        if hash(&bytes) != chunk.digest {
+        let bytes = match &self.protection {
+            Some(p) => p
+                .open(
+                    "snapshot-chunk",
+                    &format!("{handle}:{}", chunk.offset),
+                    &bytes,
+                    CHUNK_BYTES,
+                )
+                .map_err(|_| StoreError::Corrupt)?
+                .to_vec(),
+            None => bytes,
+        };
+        if bytes.len() != chunk.bytes as usize || hash(&bytes) != chunk.digest {
             return Err(StoreError::Corrupt);
         }
         Ok(bytes)
@@ -354,7 +373,7 @@ impl FileValues {
         for c in leaf.chunks.iter().skip(first) {
             let next = position + u64::from(c.bytes);
             if next > from && position < end {
-                let bytes = self.read_chunk(&mut file, c)?;
+                let bytes = self.read_chunk(&snapshot.handle, &mut file, c)?;
                 output.extend_from_slice(
                     &bytes[(from.saturating_sub(position)) as usize
                         ..(end.min(next) - position) as usize],
@@ -395,7 +414,7 @@ impl FileValues {
                     .map_err(|_| StoreError::Limit("materialized payload"))?,
             );
             for c in &leaf.chunks {
-                bytes.extend_from_slice(&self.read_chunk(&mut file, c)?);
+                bytes.extend_from_slice(&self.read_chunk(handle, &mut file, c)?);
             }
             let value = if leaf.text {
                 Data::Text(
@@ -493,7 +512,10 @@ impl FileValues {
         if memory.saturating_add(CHUNK_BYTES as u64 + 512) > metadata_limit() as u64 {
             return Err(StoreError::Limit("acquisition metadata"));
         }
-        self.admit_spill_admission(bytes.len() as u64 + 512, 0)?;
+        self.admit_spill_admission(
+            bytes.len() as u64 + 512 + 2 * crate::protected_storage::OVERHEAD as u64,
+            0,
+        )?;
         let d = self
             .drafts
             .get_mut(handle)
@@ -510,7 +532,13 @@ impl FileValues {
             part.buffer.extend_from_slice(&remaining[..count]);
             remaining = &remaining[count..];
             if part.buffer.len() == CHUNK_BYTES {
-                flush(&mut d.file, &mut d.written, part)?;
+                flush(
+                    &mut d.file,
+                    &mut d.written,
+                    part,
+                    self.protection.as_deref(),
+                    handle,
+                )?;
             }
         }
         Ok(())
@@ -539,8 +567,12 @@ impl FileValues {
         {
             return Err(StoreError::Restricted);
         }
-        let shell_bytes = codec::encode_value(shell, self.limits)
-            .map_err(|e| codec_error("capturing acquired contract", e))?;
+        let shell_bytes = if self.protection.is_some() {
+            codec::encode_protected_value(shell, self.limits)
+        } else {
+            codec::encode_value(shell, self.limits)
+        }
+        .map_err(|e| codec_error("capturing acquired contract", e))?;
         let d = self
             .drafts
             .get_mut(handle)
@@ -549,7 +581,13 @@ impl FileValues {
             return Err(StoreError::MissingValue);
         }
         for part in d.ports.values_mut() {
-            flush(&mut d.file, &mut d.written, part)?;
+            flush(
+                &mut d.file,
+                &mut d.written,
+                part,
+                self.protection.as_deref(),
+                handle,
+            )?;
         }
         let mut leaves = Vec::new();
         let mut ports = std::collections::BTreeSet::new();
@@ -584,7 +622,19 @@ impl FileValues {
         // become a hidden Keep dependency. Copy scratch is admitted before compaction begins.
         let selected_bytes = leaves.iter().map(|l| l.bytes).sum::<u64>();
         if selected_bytes != d.total {
-            self.admit_spill(selected_bytes)?;
+            self.admit_spill(
+                selected_bytes
+                    + leaves
+                        .iter()
+                        .map(|l| {
+                            l.chunks.len() as u64
+                                * self
+                                    .protection
+                                    .as_ref()
+                                    .map_or(0, |_| crate::protected_storage::OVERHEAD as u64)
+                        })
+                        .sum::<u64>(),
+            )?;
             let pending = format!(".wes-pending-{}", Uuid::new_v4());
             let mut options = private_options();
             options.read(true).write(true).create_new(true);
@@ -597,12 +647,13 @@ impl FileValues {
                 let mut offset = 0;
                 for l in &mut leaves {
                     for c in &mut l.chunks {
-                        let bytes = self.read_chunk(&mut source, c)?;
+                        let bytes = self.read_chunk(handle, &mut source, c)?;
+                        let protected = self.protect_chunk(handle, offset, &bytes)?;
                         target
-                            .write_all(&bytes)
+                            .write_all(&protected)
                             .map_err(|e| StoreError::backend("compacting acquired payload", e))?;
                         c.offset = offset;
-                        offset += bytes.len() as u64;
+                        offset += protected.len() as u64;
                     }
                 }
                 target
@@ -628,7 +679,7 @@ impl FileValues {
         for l in leaves.iter().filter(|l| l.text) {
             let mut carry = Vec::new();
             for c in &l.chunks {
-                carry.extend_from_slice(&self.read_chunk(&mut file, c)?);
+                carry.extend_from_slice(&self.read_chunk(handle, &mut file, c)?);
                 match std::str::from_utf8(&carry) {
                     Ok(_) => carry.clear(),
                     Err(e) if e.error_len().is_none() => {
@@ -659,6 +710,7 @@ impl FileValues {
         if encoded.len() > metadata_limit() {
             return Err(StoreError::Limit("snapshot metadata"));
         }
+        let encoded = self.protect_object(handle, &encoded)?;
         self.admit_spill(encoded.len() as u64)?;
         let mut options = private_options();
         options.write(true).create_new(true);
@@ -726,8 +778,10 @@ impl FileValues {
             let mut chunks = m.leaves.iter().flat_map(|l| &l.chunks).collect::<Vec<_>>();
             chunks.sort_by_key(|c| c.offset);
             for c in &chunks {
+                let bytes = self.read_chunk(handle, &mut source, c)?;
+                let protected = target.protect_chunk(handle, c.offset, &bytes)?;
                 output
-                    .write_all(&self.read_chunk(&mut source, c)?)
+                    .write_all(&protected)
                     .map_err(|e| StoreError::backend("copying retained payload", e))?;
             }
             output
@@ -747,12 +801,15 @@ impl FileValues {
                         .metadata()
                         .map_err(|e| StoreError::backend("checking retained payload", e))?
                         .len()
-                        != m.total
+                        != chunks
+                            .iter()
+                            .map(|c| target.chunk_size(c.bytes))
+                            .sum::<u64>()
                     {
                         return Err(StoreError::Conflict);
                     }
                     for c in &chunks {
-                        target.read_chunk(&mut prior, c)?;
+                        target.read_chunk(handle, &mut prior, c)?;
                     }
                     prior
                         .sync_all()
@@ -764,7 +821,8 @@ impl FileValues {
                 .directory
                 .open_with(&pending_header, &options)
                 .map_err(|e| StoreError::backend("preparing retained snapshot", e))?;
-            file.write_all(header)
+            let protected = target.protect_object(handle, header)?;
+            file.write_all(&protected)
                 .and_then(|()| file.sync_all())
                 .map_err(|e| StoreError::backend("preparing retained snapshot", e))?;
             drop(file);
@@ -807,7 +865,7 @@ impl FileValues {
         let (m, _, _, _) = &*captured;
         let mut file = self.binary_file(handle, false)?;
         for c in m.leaves.iter().flat_map(|l| &l.chunks) {
-            self.read_chunk(&mut file, c)?;
+            self.read_chunk(handle, &mut file, c)?;
         }
         Ok(())
     }
@@ -827,18 +885,30 @@ fn flush(
     file: &mut cap_std::fs::File,
     written: &mut u64,
     part: &mut Part,
+    protection: Option<&crate::protected_storage::ObjectProtection>,
+    handle: &ValueHandle,
 ) -> Result<(), StoreError> {
     if part.buffer.is_empty() {
         return Ok(());
     }
-    file.write_all(&part.buffer)
+    let bytes = match protection {
+        Some(p) => p
+            .seal(
+                "snapshot-chunk",
+                &format!("{handle}:{}", *written),
+                &part.buffer,
+            )
+            .map_err(|e| StoreError::backend("protecting acquired chunk", e))?,
+        None => part.buffer.clone(),
+    };
+    file.write_all(&bytes)
         .map_err(|e| StoreError::backend("writing finite acquisition", e))?;
     part.chunks.push(Chunk {
         offset: *written,
         bytes: part.buffer.len() as u32,
         digest: hash(&part.buffer),
     });
-    *written += part.buffer.len() as u64;
+    *written += bytes.len() as u64;
     part.buffer.clear();
     Ok(())
 }

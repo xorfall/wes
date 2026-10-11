@@ -797,7 +797,9 @@
       "type": "Text",
       "choices": [
         "public",
-        "private"
+        "private",
+        "confidential-temporary",
+        "confidential"
       ]
     },
     "env.overrides": {
