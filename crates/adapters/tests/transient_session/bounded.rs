@@ -469,6 +469,37 @@ async fn bounded_pipeline(bytes: u64, worker_limits: StoreWorkerLimits, resident
             saved.diagnostics
         );
     }
+    let Data::Record(saved) = read(&handle, "saved_whole").await else {
+        panic!("saved membership");
+    };
+    let Data::List(members) = &saved["members"] else {
+        panic!("saved members");
+    };
+    let member = |name: &str| {
+        members
+            .iter()
+            .find_map(|row| match row {
+                Data::Record(fields) if fields["name"] == Data::Text(name.into()) => Some(fields),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing saved member {name}"))
+    };
+    assert_eq!(member("raw")["retainedReference"], Data::Bool(true));
+    assert_eq!(
+        member("raw")["availability"],
+        Data::Text("stored; decoded capacity required".into())
+    );
+    assert!(!member("raw").contains_key("value"));
+    assert_eq!(member("code")["value"], Data::Int(0));
+    let refused = handle
+        .read_sandbox_export("saved_raw", false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.read_failure_kind(),
+        Some(wes_engine::storage::ReadFailureKind::Capacity)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         read(&handle, "saved_whole.raw.exitCode").await,
         Data::Int(0)
