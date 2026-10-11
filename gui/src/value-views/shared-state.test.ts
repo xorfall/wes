@@ -13,7 +13,7 @@ function host(initial=state()) {
   const commit=vi.fn(async(edit:SharedCommit)=>{
     const conflict=edit.revision!==current.revision;
     if(!conflict)current={...current,fields:edit.fields,outputs:edit.outputs,revision:String(BigInt(current.revision)+1n)};
-    return {state:current,conflict};
+    return {state:current,outcome:conflict?"rejected" as const:"committed" as const};
   });
   const transport:StateTransport={watch:listener=>{listeners.add(listener);listener({frame:current});return ()=>{listeners.delete(listener);};},commit};
   return {transport,commit,publish:()=>listeners.forEach(l=>l({frame:current})),current:()=>current};
@@ -42,11 +42,11 @@ it("coalesces state only, rejects conflicting commits without replay, and ignore
   expect(b.snapshot().error).toContain("another view");
   h.publish();await vi.advanceTimersByTimeAsync(1000);expect(h.commit).toHaveBeenCalledTimes(2);
   closeA();closeB();
-  let reply!:(r:{state:SharedState;conflict:boolean})=>void;
-  const slow={...h.transport,commit:vi.fn(()=>new Promise<{state:SharedState;conflict:boolean}>(r=>reply=r))};
+  let reply!:(r:{state:SharedState;outcome:"committed"|"rejected"})=>void;
+  const slow={...h.transport,commit:vi.fn(()=>new Promise<{state:SharedState;outcome:"committed"|"rejected"}>(r=>reply=r))};
   const c=controller(),close=attachSharedState(module,c,slow);
   c.emit({kind:"selection",range:null});await vi.advanceTimersByTimeAsync(50);close();
-  reply({state:{...state(),fields:{...state().fields,selection:viewport}},conflict:false});
+  reply({state:{...state(),fields:{...state().fields,selection:viewport}},outcome:"committed" as const});
   await vi.advanceTimersByTimeAsync(1);expect((c.committed() as any).selection).toBeNull();
 });
 it("first mount initializes once, rejects protocol mismatch and never initializes an existing selection",async()=>{
@@ -57,6 +57,34 @@ it("first mount initializes once, rejects protocol mismatch and never initialize
   expect(h.commit).toHaveBeenCalledTimes(1);next();
   const invalid=host({...state(),digest:"different"}),c=controller(),stop=attachSharedState(module,c,invalid.transport);
   expect(c.snapshot().error).toContain("contract");stop();
+});
+it("reports a known initialization refusal without adopting empty fields or retrying on polls",async()=>{
+  vi.useFakeTimers();
+  const empty={...state(),revision:"0",fields:{},outputs:{}};
+  const h=host(empty),a=controller(),settled=vi.fn();
+  const commit=vi.fn(async()=>({state:empty,outcome:"rejected" as const,problem:"Shared state charge exceeds 16384 units"}));
+  const close=attachSharedState(module,a,{...h.transport,commit,settled});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(a.snapshot().error).toContain("initialization was rejected");
+  expect(a.snapshot().error).toContain("16384 units");
+  expect(a.snapshot().error).not.toContain("not confirmed");
+  expect(settled).toHaveBeenLastCalledWith(false);
+  h.publish();await vi.advanceTimersByTimeAsync(1000);
+  expect(commit).toHaveBeenCalledOnce();
+  expect(a.emit({kind:"selection",range:viewport})).toBe(false);
+  close();
+});
+it("restores confirmed state after a known refusal and allows a new explicit edit",async()=>{
+  vi.useFakeTimers();const h=host(),a=controller();
+  const commit=vi.fn().mockResolvedValueOnce({state:state(),outcome:"rejected",problem:"Shared state charge exceeds 16384 units"}).mockImplementation(h.transport.commit);
+  const close=attachSharedState(module,a,{...h.transport,commit});
+  a.emit({kind:"selection",range:viewport});await vi.advanceTimersByTimeAsync(50);
+  expect((a.committed() as any).selection).toBeNull();
+  expect(a.snapshot().error).toContain("charge exceeds");
+  expect(a.snapshot().error).not.toContain("not confirmed");
+  expect(a.emit({kind:"selection",range:viewport})).toBe(true);
+  await vi.advanceTimersByTimeAsync(50);
+  expect(commit).toHaveBeenCalledTimes(2);expect(a.snapshot().error).toBeUndefined();close();
 });
 it("delivers repeated events in order while initialization, cursor and remote adoption emit none",async()=>{
   vi.useFakeTimers();const h=host(),a=controller(),b=controller();
@@ -76,7 +104,7 @@ it("delivers repeated events in order while initialization, cursor and remote ad
 it("bounds event delivery, rejects overflow visibly and never retries events after an unconfirmed write",async()=>{
   vi.useFakeTimers();const h=host(),a=controller();
   let reject!:(error:Error)=>void;
-  const commit=vi.fn(()=>new Promise<{state:SharedState;conflict:boolean}>((_resolve,r)=>reject=r));
+  const commit=vi.fn(()=>new Promise<{state:SharedState;outcome:"committed"|"rejected"}>((_resolve,r)=>reject=r));
   const close=attachSharedState(module,a,{...h.transport,commit});
   const event={kind:"item",item:{source:"requests",series:"latency",id:"sample",at:viewport.start,value:"10"}};
   expect(a.emit(event)).toBe(true);await vi.advanceTimersByTimeAsync(1);
@@ -90,7 +118,7 @@ it("bounds event delivery, rejects overflow visibly and never retries events aft
 it("only enables result capture for confirmed state, never during pending or unconfirmed updates",async()=>{
   vi.useFakeTimers();const h=host(),a=controller(),settled=vi.fn();
   let reject!:(e:Error)=>void;
-  const commit=vi.fn(()=>new Promise<{state:SharedState;conflict:boolean}>((_r,no)=>{reject=no;}));
+  const commit=vi.fn(()=>new Promise<{state:SharedState;outcome:"committed"|"rejected"}>((_r,no)=>{reject=no;}));
   const close=attachSharedState(module,a,{...h.transport,commit,settled});
   expect(settled).toHaveBeenLastCalledWith(true);
   a.emit({kind:"selection-preview",range:viewport});expect(settled).toHaveBeenLastCalledWith(true);

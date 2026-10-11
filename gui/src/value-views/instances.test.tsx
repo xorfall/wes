@@ -33,7 +33,7 @@ it("releases the old mount when the workspace generation changes even if a node 
   const value:import("../protocol").StoredValue={type:{kind:"meta",name:"ViewInstance"},data:{id:"id1",instance:"identity"},provenance:{}};
   let tree!:ReturnType<typeof create>;
   act(()=>{tree=create(<InstanceView value={value} engine={engine} mode="window"/>);});
-  expect(watchViewFrame).toHaveBeenCalledWith("id1","identity",expect.any(Function));
+  expect(watchViewFrame).toHaveBeenCalledWith("id1","identity",expect.any(Function),{reopen:false});
   generation="second";
   act(()=>tree.update(<InstanceView value={value} engine={engine} mode="window"/>));
   expect(close).toHaveBeenCalledTimes(1);
@@ -73,7 +73,7 @@ it("isolates identical timeline inputs in separate roots from a coordinator and 
   const listeners=new Map<string,Set<(sample:FrameSample<import("./shared-state").SharedState>)=>void>>();
   const commitViewState=vi.fn(async(_id:string,_identity:string,_generation:string,edit:import("./shared-state").SharedCommit)=>{
     const previous=states.get(edit.owner)!,state={...previous,fields:edit.fields,outputs:edit.outputs,revision:String(BigInt(previous.revision)+1n)};
-    states.set(edit.owner,state);listeners.get(edit.owner)?.forEach(listener=>listener({frame:state}));return {state,conflict:false};
+    states.set(edit.owner,state);listeners.get(edit.owner)?.forEach(listener=>listener({frame:state}));return {state,outcome:"committed" as const};
   });
   const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:frames[id]!});return ()=>{};},
     watchViewState:(id:string,_identity:string,_generation:string,listener:(sample:FrameSample<import("./shared-state").SharedState>)=>void)=>{const owner=id==="member"?"group":id,set=listeners.get(owner)??new Set();listeners.set(owner,set);set.add(listener);listener({frame:states.get(owner)!});return ()=>{set.delete(listener);};},commitViewState} as unknown as import("../engine").Engine;
@@ -143,7 +143,7 @@ it("coordinates three compact plots by declared owner without leaking hover or s
   const listeners=new Map<string,Set<(sample:FrameSample<import("./shared-state").SharedState>)=>void>>();
   const commitViewState=vi.fn(async(_id:string,_identity:string,_generation:string,edit:import("./shared-state").SharedCommit)=>{
     const previous=states.get(edit.owner)!,state={...previous,fields:edit.fields,outputs:edit.outputs,revision:String(BigInt(previous.revision)+1n)};
-    states.set(edit.owner,state);listeners.get(edit.owner)?.forEach(listener=>listener({frame:state}));return {state,conflict:false};
+    states.set(edit.owner,state);listeners.get(edit.owner)?.forEach(listener=>listener({frame:state}));return {state,outcome:"committed" as const};
   });
   const engine={viewWorkspaceName:()=>"research",onViewWorkspace:()=>()=>{},viewGeneration:()=>"session",watchViewFrame:(_id:string,_identity:string,listener:(sample:FrameSample)=>void)=>{listener({frame:current});return ()=>{};},
     watchViewState:(id:string,_identity:string,_generation:string,listener:(sample:FrameSample<import("./shared-state").SharedState>)=>void)=>{const owner=owners[id]!,set=listeners.get(owner)??new Set();listeners.set(owner,set);set.add(listener);listener({frame:states.get(owner)!});return ()=>{set.delete(listener);};},commitViewState} as unknown as import("../engine").Engine;
@@ -380,7 +380,7 @@ it("holds Apply until the mounted selection has been confirmed",async()=>{
   expect(apply().props.disabled).toBe(false);
   act(()=>tree.root.findByType("select").props.onChange({target:{value:"b"}}));expect(apply().props.disabled).toBe(true);
   await act(async()=>{await vi.advanceTimersByTimeAsync(50);});expect(apply().props.disabled).toBe(true);
-  await act(async()=>{confirm({state:{...shared,revision:"2",fields:{value:"b"},outputs:{value:"b"}},conflict:false});await Promise.resolve();});
+  await act(async()=>{confirm({state:{...shared,revision:"2",fields:{value:"b"},outputs:{value:"b"}},outcome:"committed" as const});await Promise.resolve();});
   expect(apply().props.disabled).toBe(false);act(()=>tree.unmount());
 });
 

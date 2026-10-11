@@ -131,7 +131,7 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
     setSample({});
     cache.current=new FramePresentationCache();
     if(!engine||!id||!instance){setSample({problem:"Open this view in its workspace to resolve its live instance."});return;}
-    return engine.watchViewFrame(id,instance,setSample);
+    return engine.watchViewFrame(id,instance,setSample,{reopen:attempt>0});
   },[engine,id,instance,generation,attempt]);
   const linked=sample.frame?.instances.some(i=>i.linkedInputs.length)??false;
   useEffect(()=>{

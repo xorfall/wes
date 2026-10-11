@@ -11,10 +11,15 @@ export interface SharedState {
   readonly fields:Readonly<Record<string,unknown>>; readonly outputs:Readonly<Record<string,unknown>>;
 }
 export type SharedCommit = Omit<SharedState,"definition"|"digest"> & {readonly events?:readonly {port:string;value:unknown}[]};
+export interface SharedCommitResult {
+  readonly state:SharedState;
+  readonly outcome:"committed"|"rejected";
+  readonly problem?:string;
+}
 export interface StateTransport {
   settled?(ready:boolean):void;
   watch(listener:(sample:FrameSample<SharedState>)=>void):()=>void;
-  commit(edit:SharedCommit,signal:AbortSignal):Promise<{state:SharedState;conflict:boolean;problem?:string}>;
+  commit(edit:SharedCommit,signal:AbortSignal):Promise<SharedCommitResult>;
 }
 /** Latest state is replaceable, events are not. One write and one pending snapshot per mount.
  * Conflicts adopt the owner's state without replay. Opening only initializes empty state. */
@@ -33,10 +38,10 @@ export function attachSharedState(module:ValueViewModule, controller:SharedInter
     return {fields:Object.fromEntries(fields.map(name=>[name,values[name]])),outputs:Object.fromEntries(Object.entries(definition.outputs).filter(([,port])=>port.shared && port.mode==="state").map(([name])=>[name,all[name]]))};
   };
   const adopt=(state:SharedState)=>{
+    if(!/^\d+$/.test(state.revision)||!/^\d+$/.test(state.definitionRevision))throw new Error("Invalid shared state revision");
     if(current?.identity===state.identity && (BigInt(state.revision)<BigInt(current.revision) || BigInt(state.definitionRevision)<BigInt(current.definitionRevision)))return;
     const owner=valueViewModules.named(state.definition,state.artifact)?.definition;
     if(!owner || owner.digest!==state.digest || protocolIdentity(owner)!==protocolIdentity(definition))throw new Error("Coordinator protocol changed");
-    if(!/^\d+$/.test(state.revision)||!/^\d+$/.test(state.definitionRevision))throw new Error("Invalid shared state revision");
     if(Object.keys(state.fields).length!==fields.length||fields.some(name=>!Object.hasOwn(state.fields,name)))throw new Error("Invalid shared state fields");
     const shape=definition.contracts[definition.interaction!.state]!.fields!;
     for(const name of fields)decodeContract(definition,shape[name]!.type,state.fields[name]);
@@ -49,12 +54,24 @@ export function attachSharedState(module:ValueViewModule, controller:SharedInter
     timer=undefined;
     if(busy||(!pending&&!events.length)||!current||signal.signal.aborted)return;
     const submitted=events.shift()??pending!;if(!events.length && submitted===pending)pending=undefined;busy=true;report();
-    const initial=current.revision==="0";
     void transport.commit({...current,...submitted},signal.signal).then(result=>{
       if(signal.signal.aborted)return;
-      current=result.state;
-      if(result.conflict){const lost=!!submitted.events?.length || events.length>0;events.length=0;pending=undefined;adopt(result.state);if(!initial||lost)controller.problem(result.problem ? `${result.problem} ${lost?"Events were not confirmed or replayed.":""}` : lost?"View events were not confirmed and were not replayed; another view changed the selection.":"Selection changed in another view; current selection restored.");}
+      if(result.outcome==="rejected"){
+        const lost=!!submitted.events?.length || events.length>0;
+        events.length=0;pending=undefined;
+        const problem=result.problem??"Selection changed in another view; current selection restored.";
+        if(result.state.revision==="0"){
+          // Revision zero is an uninitialized owner, not a valid empty state.
+          // Keep the local draft visible, but never retry initialization on polling.
+          current=undefined;blocked=`Shared view initialization was rejected. ${problem}`;
+          controller.problem(blocked);
+        }else{
+          adopt(result.state);
+          controller.problem(`${problem}${lost?" View events were rejected and were not replayed.":""}`);
+        }
+      }
       else if(!pending&&!events.length)adopt(result.state);
+      else current=result.state;
     }).catch(()=>{
       if(signal.signal.aborted)return;
       events.length=0;pending=undefined;current=undefined;blocked="View update was not confirmed and was not replayed. Reopen the view to reconnect.";controller.problem(blocked);
@@ -78,6 +95,7 @@ export function attachSharedState(module:ValueViewModule, controller:SharedInter
     if(signal.signal.aborted||busy||pending||events.length)return;
     if(sample.problem){current=undefined;report();controller.problem(sample.problem);return;}
     if(!sample.frame)return;
+    if(blocked){controller.problem(blocked);return;}
     try {
       if(sample.frame.revision==="0"){
         current=sample.frame;pending=snapshot(controller.committed());flush();

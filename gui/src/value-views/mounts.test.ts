@@ -81,3 +81,61 @@ it("notifies all displays of a failed renewal and does not reopen for a new dupl
   expect(action.mock.calls.filter(c=>c[3]==="touch")).toHaveLength(1);
   a.close();b.close();
 });
+
+it("explicitly replaces a failed shared lease without letting old displays close its replacement",async()=>{
+  vi.useFakeTimers();let opened=0;
+  const action=vi.fn(async(_n:string,_i:string,_g:string,verb:string,token?:string)=>{
+    if(verb==="open")return `lease-${++opened}`;
+    if(verb==="touch"&&token==="lease-1")throw new Error("expired");
+    return undefined;
+  });
+  const mounts=new ViewMounts(action),failed=vi.fn();
+  const inline=mounts.mount("n","i","g",failed),inspector=mounts.mount("n","i","g",failed);
+  await inline.ready;await inspector.ready;await vi.advanceTimersByTimeAsync(1000);
+  inspector.close();
+  const retry=mounts.mount("n","i","g",undefined,true);
+  expect(await retry.ready).toBe("lease-2");
+  expect(action.mock.calls.filter(c=>c[3]==="close"&&c[4]==="lease-1")).toHaveLength(1);
+  inline.close();
+  const duplicate=mounts.mount("n","i","g");expect(await duplicate.ready).toBe("lease-2");
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(action.mock.calls.filter(c=>c[3]==="open")).toHaveLength(2);
+  expect(action.mock.calls.some(c=>c[3]==="touch"&&c[4]==="lease-2")).toBe(true);
+  expect(action.mock.calls.some(c=>c[3]==="close"&&c[4]==="lease-2")).toBe(false);
+  retry.close();duplicate.close();
+  expect(action.mock.calls.filter(c=>c[3]==="close"&&c[4]==="lease-2")).toHaveLength(1);
+});
+
+it("allows explicit recovery from a rejected shared open while ordinary duplicates stay failed",async()=>{
+  vi.useFakeTimers();let opened=0;
+  const action=vi.fn(async(_n:string,_i:string,_g:string,verb:string)=>{
+    if(verb==="open"&&++opened===1)throw new Error("open unconfirmed");
+    return verb==="open"?"replacement":undefined;
+  });
+  const mounts=new ViewMounts(action),first=mounts.mount("n","i","g");
+  await expect(first.ready).rejects.toThrow("unconfirmed");
+  const duplicate=mounts.mount("n","i","g");await expect(duplicate.ready).rejects.toThrow("unconfirmed");
+  await vi.advanceTimersByTimeAsync(5000);expect(opened).toBe(1);
+  const retry=mounts.mount("n","i","g",undefined,true);expect(await retry.ready).toBe("replacement");
+  first.close();duplicate.close();
+  const shared=mounts.mount("n","i","g");expect(await shared.ready).toBe("replacement");
+  expect(opened).toBe(2);retry.close();shared.close();
+});
+
+it("keeps a retired failed lease charged until cleanup acknowledges before admitting its replacement",async()=>{
+  vi.useFakeTimers();let finishClose!:()=>void;
+  const action=vi.fn(async(node:string,_i:string,_g:string,verb:string)=>{
+    if(node==="failed"&&verb==="touch")throw new Error("expired");
+    if(node==="failed"&&verb==="close")await new Promise<void>(resolve=>{finishClose=resolve;});
+    return verb==="open"?`${node}-lease`:undefined;
+  });
+  const mounts=new ViewMounts(action),failed=mounts.mount("failed","i","g");
+  const others=Array.from({length:max_active_view_roots()-1},(_,n)=>mounts.mount(String(n),"i","g"));
+  await failed.ready;await Promise.all(others.map(mount=>mount.ready));await vi.advanceTimersByTimeAsync(1000);
+  const retry=mounts.mount("failed","i","g",undefined,true);
+  expect(retry.waiting).toBe(true);
+  failed.close();expect(action.mock.calls.filter(c=>c[0]==="failed"&&c[3]==="open")).toHaveLength(1);
+  finishClose();await retry.ready;
+  expect(action.mock.calls.filter(c=>c[0]==="failed"&&c[3]==="open")).toHaveLength(2);
+  retry.close();finishClose();others.forEach(mount=>mount.close());
+});

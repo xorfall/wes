@@ -57,6 +57,18 @@ describe("Dataset input contract", () => {
   it("never lets a View's own outputs or state hold a Dataset", () => {
     expect(() => decodeContract(definition, "Events", { kind: "dataset", reference: reference() })).toThrow();
   });
+  it("requires captured element proof for a present optional Dataset, including inside an Option", () => {
+    const dataset = { kind: "dataset", reference: reference() };
+    for (const extra of [{ linked: dataset }, { maybe: { kind: "some", value: dataset } }]) {
+      expect(() => decodeContract(definition, "Input", { ...wire(), ...extra }, true, INPUT)).toThrow();
+    }
+    const withProof: TypeShape = { ...INPUT, fields: [...INPUT.fields,
+      { name: "linked", type: { kind: "dataset", element: ROW } },
+      { name: "maybe", type: { kind: "option", element: { kind: "dataset", element: ROW } } },
+    ] };
+    expect(decodeContract(definition, "Input", { ...wire(), linked: dataset, maybe: { kind: "some", value: dataset } }, true, withProof))
+      .toMatchObject({ linked: dataset, maybe: dataset });
+  });
 });
 
 describe("request shape and target", () => {

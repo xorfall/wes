@@ -105,6 +105,27 @@ it("ends frame reads and reports a failed renewal without automatically reopenin
   close();disconnect();await vi.advanceTimersByTimeAsync(1);
 });
 
+it("reopens a failed shared display only explicitly and reads through the replacement lease",async()=>{
+  vi.useFakeTimers();vi.stubGlobal("EventSource",Events);let opened=0;
+  const fetch=vi.fn(async(_url:string,init:{body?:string;headers?:Record<string,string>})=>{
+    const action=init.body?JSON.parse(init.body):undefined;
+    if(action?.action==="open")return {ok:true,status:200,text:async()=>JSON.stringify({token:`lease-${++opened}`})};
+    const expired=action?.action==="touch"&&action.token==="lease-1";
+    return {ok:!expired,status:expired?403:action?200:304,text:async()=>expired?"display expired":"{}"};
+  });
+  vi.stubGlobal("fetch",fetch);
+  const engine=new Engine(),disconnect=engine.listen(()=>{},()=>{});Events.current.say("g");
+  const inline=engine.watchViewFrame("n","i",()=>{}),inspector=engine.watchViewFrame("n","i",()=>{});
+  await vi.advanceTimersByTimeAsync(1100);inspector();
+  const retry=engine.watchViewFrame("n","i",()=>{},{reopen:true});
+  await vi.advanceTimersByTimeAsync(100);inline();await vi.advanceTimersByTimeAsync(1100);
+  expect(opened).toBe(2);
+  expect(fetch.mock.calls.some(([url,init])=>url.startsWith("/view-instances/")&&init.headers?.["X-Wes-View-Mount"]==="lease-2")).toBe(true);
+  expect(fetch.mock.calls.every(([url])=>url.startsWith("/view-mounts/")||url.startsWith("/view-instances/"))).toBe(true);
+  expect(fetch.mock.calls.filter(([,init])=>init.body).every(([,init])=>["open","touch","close"].includes(JSON.parse(init.body!).action))).toBe(true);
+  retry();disconnect();await vi.advanceTimersByTimeAsync(1);
+});
+
 it("sends each engine's own identity for source, console, repeat and revision submissions", async () => {
   vi.stubGlobal("EventSource", Events);
   const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
@@ -575,22 +596,22 @@ it("submits workspace plans through the normal cell request path", async () => {
 it("carries ordered view events in the same CAS request and preserves the owner's rejection reason",async()=>{
   vi.stubGlobal("EventSource",Events);
   const state={owner:"id1",identity:"instance",definitionRevision:"0",revision:"1",definition:"timeline",digest:"digest",fields:{},outputs:{}};
-  const fetch=vi.fn().mockResolvedValue({ok:true,status:200,text:async()=>JSON.stringify(state)});vi.stubGlobal("fetch",fetch);
+  const fetch=vi.fn().mockResolvedValue({ok:true,status:200,text:async()=>JSON.stringify({...state,outcome:"committed"})});vi.stubGlobal("fetch",fetch);
   const engine=new Engine();const close=engine.listen(()=>{},()=>{});Events.current.say("g");
   const events=[{port:"picked",value:7},{port:"picked",value:7}];
   await engine.commitViewState("id1","instance","g",{...state,events},new AbortController().signal);
   expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({owner:"id1",identity:"instance",definitionRevision:"0",revision:"1",fields:{},outputs:{},events});
-  fetch.mockResolvedValueOnce({ok:false,status:409,text:async()=>JSON.stringify({...state,problem:"View event capacity exceeded"})});
+  fetch.mockResolvedValueOnce({ok:false,status:409,text:async()=>JSON.stringify({...state,outcome:"rejected",problem:"View event capacity exceeded"})});
   const result=await engine.commitViewState("id1","instance","g",{...state,events},new AbortController().signal);
-  expect(result).toMatchObject({conflict:true,problem:"View event capacity exceeded"});expect(fetch).toHaveBeenCalledTimes(2);close();
+  expect(result).toMatchObject({outcome:"rejected" as const,problem:"View event capacity exceeded"});expect(fetch).toHaveBeenCalledTimes(2);close();
 });
 it("retries only an explicit pre-mutation admission refusal for shared view writes, never an unknown outcome",async()=>{
  vi.useFakeTimers();vi.stubGlobal("EventSource",Events);
  const engine=new Engine(),close=engine.listen(()=>{},()=>{});Events.current.say("g");
  const edit={owner:"node",identity:"instance",definitionRevision:"0",revision:"1",fields:{},outputs:{}};
- const fetch=vi.fn().mockResolvedValueOnce(new Response(null,{status:503})).mockResolvedValueOnce(new Response(JSON.stringify({...edit,definition:"timeline",digest:"digest"}),{status:200}));vi.stubGlobal("fetch",fetch);
+ const fetch=vi.fn().mockResolvedValueOnce(new Response(null,{status:503})).mockResolvedValueOnce(new Response(JSON.stringify({...edit,definition:"timeline",digest:"digest",outcome:"committed"}),{status:200}));vi.stubGlobal("fetch",fetch);
  const pending=engine.commitViewState("node","instance","g",edit,new AbortController().signal);
- await vi.advanceTimersByTimeAsync(50);expect((await pending).conflict).toBe(false);expect(fetch).toHaveBeenCalledTimes(2);
+ await vi.advanceTimersByTimeAsync(50);expect((await pending).outcome).toBe("committed");expect(fetch).toHaveBeenCalledTimes(2);
  fetch.mockReset().mockRejectedValue(new Error("connection lost"));
  await expect(engine.commitViewState("node","instance","g",edit,new AbortController().signal)).rejects.toThrow("connection lost");
  await vi.advanceTimersByTimeAsync(500);expect(fetch).toHaveBeenCalledOnce();close();

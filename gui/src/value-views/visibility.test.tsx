@@ -18,7 +18,7 @@ function fixture(count=20){
   vi.stubGlobal("IntersectionObserver",intersection);
   let generation="first",active=0;
   const records:{node:string;generation:string;listener:(sample:FrameSample)=>void;close:ReturnType<typeof vi.fn>}[]=[];
-  const watchViewFrame=vi.fn((node:string,_identity:string,listener:(sample:FrameSample)=>void)=>{
+  const watchViewFrame=vi.fn((node:string,_identity:string,listener:(sample:FrameSample)=>void,_options?:{reopen?:boolean})=>{
     active++;
     const close=vi.fn(()=>{active--;});
     records.push({node,generation,listener,close});
@@ -78,6 +78,8 @@ it("reopens a failed display only on explicit action, without applying a query o
   expect(f.watchViewFrame).toHaveBeenCalledOnce();
   act(()=>reopen.props.onClick());
   expect(f.records[0]!.close).toHaveBeenCalledOnce();expect(f.watchViewFrame).toHaveBeenCalledTimes(2);
+  expect(f.watchViewFrame.mock.calls[0]?.[3]).toEqual({reopen:false});
+  expect(f.watchViewFrame.mock.calls[1]?.[3]).toEqual({reopen:true});
   expect(f.active).toBe(1);
   expect(f.applyViewQuery).not.toHaveBeenCalled();expect(f.viewObservation).not.toHaveBeenCalled();
   expect(JSON.stringify(f.tree.toJSON())).not.toContain("expired or closed");
