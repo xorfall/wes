@@ -17,6 +17,7 @@ import type { Workspace, WorkspaceNode } from "../workspace";
 import type { CellState, Mark, RepeatGuard } from "./Cell";
 import { documentLabel, documentOperation } from "./document-command";
 import { commandSegments } from "./command-line";
+import { textPrefix } from "../presentation/columns";
 import type { CellView, ResultArrangement } from "../cells";
 import { summarize } from "../presentation/summary";
 import { formatExecutionDuration } from "../presentation/format";
@@ -74,6 +75,8 @@ export interface SessionCell {
   readonly pinned: boolean;
   /** The command as submitted, one line per row, with the nodes each line makes. */
   readonly rows: readonly SourceRow[];
+  /** The band is bounded; the complete source remains available in its read-only viewer. */
+  readonly sourceTruncated?: boolean;
   /** When it ran, `21:23`. */
   readonly time?: string;
   readonly timestamp?: string;
@@ -530,8 +533,11 @@ function squeeze(text: string): string {
  * The command band: the text split into lines, coloured as one command so a multi-line `:calc`
  * keeps its colours, and each node placed on the line that makes it.
  */
-export function rowsOf(text: string, nodes: readonly WorkspaceNode[], values: ReadonlyMap<string, FormValue>, language?: Language): { rows: SourceRow[]; rowOf: Map<string, number> } {
-  const segments = commandSegments(text, language);
+export function rowsOf(text: string, nodes: readonly WorkspaceNode[], values: ReadonlyMap<string, FormValue>, language?: Language): { rows: SourceRow[]; rowOf: Map<string, number>; sourceTruncated: boolean } {
+  // CSS clipping does not bound highlighting or DOM construction. Large source belongs in the
+  // read-only viewer; its band is a plain prefix so a cut token is never diagnosed as malformed.
+  const preview = textPrefix(text, 2048);
+  const segments = preview.whole ? commandSegments(preview.text, language) : [{ text: preview.text }];
   const lines: Segment[][] = [[]];
   for (const segment of segments) {
     const parts = segment.text.split("\n");
@@ -540,11 +546,11 @@ export function rowsOf(text: string, nodes: readonly WorkspaceNode[], values: Re
       if (part !== "") lines[lines.length - 1]!.push(segment.role ? { text: part, role: segment.role } : { text: part });
     });
   }
-  const raw = text.split("\n").map(squeeze);
+  const raw = preview.text.split("\n").map(squeeze);
   const rowOf = new Map<string, number>();
   let at = 0;
   for (const node of nodes) {
-    const stage = squeeze(node.command);
+    const stage = squeeze(node.command.slice(0, preview.text.length));
     const found = stage === "" ? -1 : raw.findIndex((line, index) => index >= at && (line.includes(stage) || (line !== "" && stage.includes(line))));
     if (found >= 0) at = found;
     rowOf.set(node.id, Math.min(at, lines.length - 1));
@@ -553,7 +559,7 @@ export function rowsOf(text: string, nodes: readonly WorkspaceNode[], values: Re
     segments: line,
     nodes: nodes.filter((node) => rowOf.get(node.id) === index).map((node) => identityOf(node, values.get(node.id))),
   }));
-  return { rows, rowOf };
+  return { rows, rowOf, sourceTruncated: !preview.whole };
 }
 
 function clock(at: string | undefined): string | undefined {
@@ -583,7 +589,7 @@ export function readCell(input: SessionInput, cell: ClientCell, now: Date, durat
   const definitionNotices = definitions.map(node => ({ severity: "info" as const, message: nodes.length === 1
     ? "Current definition shown; the submitted source is preserved in source details."
     : `Submitted source is superseded for ${node.name ? `$${node.name}` : node.id}. Current definition: ${node.currentDefinition}` }));
-  const { rows, rowOf } = rowsOf(shown, nodes, values, input.language);
+  const { rows, rowOf, sourceTruncated } = rowsOf(shown, nodes, values, input.language);
   const value = valueOf(nodes, input.held);
   return {
     id: cell.id,
@@ -594,6 +600,7 @@ export function readCell(input: SessionInput, cell: ClientCell, now: Date, durat
     state,
     pinned: cell.pinned,
     rows,
+    sourceTruncated,
     ...(clock(nodes[0]?.startedAt) ? { time: clock(nodes[0]?.startedAt)!, timestamp: nodes[0]?.startedAt } : {}),
     chars: shown.length,
     source: cell.document?.source ?? cell.text,

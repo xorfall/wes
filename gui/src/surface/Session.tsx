@@ -289,6 +289,7 @@ export function Session({
       outputIdentity={`${history?.generation ?? ""}:${cell.source ?? ""}`}
       pinned={cell.pinned}
       rows={cell.rows}
+      sourceTruncated={cell.sourceTruncated}
       {...(cell.time ? { time: cell.time, timestamp: cell.timestamp } : {})}
       chars={cell.chars}
       verdict={cell.verdict}

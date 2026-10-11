@@ -104,12 +104,15 @@ export function useResults(engine: Engine, generation: string | undefined, handl
   useEffect(() => {
     demand.update(generation === undefined ? [] : JSON.parse(wanted) as string[]);
   }, [demand, generation, wanted, revision]);
-  const held = new Map<string, StoredValue>();
-  // Never return a value no longer requested, even before effect cleanup.
-  for (const handle of handles) {
-    const value = demand.reads.get(handle)?.value;
-    if (value) held.set(handle, value);
-  }
+  const held = useMemo(() => {
+    const values = new Map<string, StoredValue>();
+    // Never return a value no longer requested, even before effect cleanup.
+    for (const handle of JSON.parse(wanted) as string[]) {
+      const value = demand.reads.get(handle)?.value;
+      if (value) values.set(handle, value);
+    }
+    return values;
+  }, [demand, wanted, revision]);
   return { held, reads: demand.reads as ReadonlyMap<string, ResultRead>,
     observations: observations.select(nodes, held, demand.reads), retry: (handle: string) => demand.retry(handle) };
 }

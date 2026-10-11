@@ -8,17 +8,27 @@
  * ask this module rather than `String.length`.
  */
 
-const segmenter: Intl.Segmenter | undefined =
-  typeof Intl !== "undefined" && "Segmenter" in Intl ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : undefined;
+import { graphemeSegments, splitGraphemes } from "unicode-segmenter/grapheme";
+
+/** Maximum UTF-16 input inspected solely to lay out a preview or count its omissions. */
+export const TEXT_MEASURE_UNITS = 16_384;
+
+/** A bounded prefix ending at a confirmed grapheme boundary, never inside an unfinished cluster. */
+export function textPrefix(text: string, units = TEXT_MEASURE_UNITS): { text: string; whole: boolean } {
+  if (text.length <= units) return { text, whole: true };
+  const prefix = text.slice(0, units);
+  let end = 0;
+  // The final cluster may continue beyond the slice. Every preceding boundary is confirmed.
+  for (const part of graphemeSegments(prefix)) end = part.index;
+  return { text: prefix.slice(0, end), whole: false };
+}
 
 /** The ellipsis every shortened text ends or breaks with. One column. */
 export const ELLIPSIS = "…";
 
-/** Grapheme clusters, in order. Falls back to code points where `Intl.Segmenter` is missing. */
+/** Lazy extended grapheme clusters without copying the input into native ICU segmentation. */
 export function* clusters(text: string): IterableIterator<string> {
-  if (segmenter) {
-    for (const part of segmenter.segment(text)) yield part.segment;
-  } else yield* text;
+  yield* splitGraphemes(text);
 }
 
 /** East Asian Wide and Fullwidth ranges, plus the emoji blocks drawn at double width. */
@@ -53,15 +63,16 @@ export function clusterWidth(cluster: string): number {
   return wide(first) ? 2 : 1;
 }
 
-/** Display columns of a single-line text. */
+/** Display columns; with a finite limit, incomplete measurement conservatively reports overflow. */
 export function width(text: string, limit = Infinity): number {
+  const measured = Number.isFinite(limit) ? textPrefix(text) : { text, whole: true };
   let columns = 0;
-  for (const cluster of clusters(text)) {
+  for (const cluster of clusters(measured.text)) {
     columns += clusterWidth(cluster);
     // Callers testing fit need only know that it exceeds the available columns.
     if (columns > limit) return columns;
   }
-  return columns;
+  return measured.whole ? columns : Math.max(columns, limit + 1);
 }
 
 /** The text shortened to `columns`, ending in `…` when anything was left out. */
@@ -70,7 +81,7 @@ export function ellipsizeEnd(text: string, columns: number): string {
   if (columns <= 0) return "";
   let used = 0;
   let out = "";
-  for (const cluster of clusters(text)) {
+  for (const cluster of clusters(textPrefix(text).text)) {
     const w = clusterWidth(cluster);
     if (used + w > columns - 1) break;
     out += cluster;
@@ -88,32 +99,33 @@ export function ellipsizeEnd(text: string, columns: number): string {
 export function ellipsizeMiddle(text: string, columns: number): string {
   if (width(text, columns) <= columns) return text;
   if (columns <= 1) return columns === 1 ? ELLIPSIS : "";
-  const parts = Array.from(clusters(text));
   const room = columns - 1;
   const headRoom = Math.ceil(room / 2);
   const tailRoom = room - headRoom;
   let head = "";
   let used = 0;
-  for (const cluster of parts) {
+  for (const cluster of clusters(text)) {
     const w = clusterWidth(cluster);
     if (used + w > headRoom) break;
     head += cluster;
     used += w;
   }
-  let tail = "";
+  // Keep only the suffix that fits, rather than retaining every cluster in the payload.
+  const tail: { text: string; width: number }[] = [];
   used = 0;
-  for (let at = parts.length - 1; at >= 0; at -= 1) {
-    const w = clusterWidth(parts[at]!);
-    if (used + w > tailRoom) break;
-    tail = parts[at] + tail;
+  for (const cluster of clusters(text)) {
+    const w = clusterWidth(cluster);
+    if (w === 0) continue;
+    tail.push({ text: cluster, width: w });
     used += w;
+    while (used > tailRoom) used -= tail.shift()!.width;
   }
-  return head + ELLIPSIS + tail;
+  return head + ELLIPSIS + tail.map(part => part.text).join("");
 }
 
 /** Pads with spaces to `columns` display columns. Never shortens. */
 export function pad(text: string, columns: number): string {
-  const missing = columns - width(text);
+  const missing = columns - width(text, columns);
   return missing > 0 ? text + " ".repeat(missing) : text;
 }
 
