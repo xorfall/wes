@@ -180,7 +180,7 @@ it("opens a restored multiline calculation's source read only, leaving the draft
   await act(async () => tree.root.findAllByProps({ className: "cell-source" })[0]!.props.onClick({
     metaKey: true, button: 0, preventDefault() {}, stopPropagation() {},
   }));
-  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#source\/restored-calc/), "_blank");
+  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#source\/restored-calc/), window.__WES_DESKTOP__ ? "_blank" : "wes-result");
   expect(tree.root.findAllByType(PeekScreen)).toHaveLength(0);
 });
 
@@ -303,10 +303,10 @@ it("opens the selected graph node and obeys screen/window preferences", async ()
   await act(async () => tree.root.findByType(OpenScreen).props.onClose());
   // With results opening in a window, the graph and the settings go to a window of their own too.
   await submit("/settings results open window"); await submit("/graph");
-  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#graph/), "_blank");
+  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#graph/), window.__WES_DESKTOP__ ? "_blank" : "wes-graph");
   expect(tree.root.findAllByType(GraphScreen)).toHaveLength(0);
   await submit("/settings appearance");
-  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#settings\/appearance/), "_blank");
+  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#settings\/appearance/), window.__WES_DESKTOP__ ? "_blank" : "wes-settings");
   expect(submits()).toHaveLength(0);
 
 });
@@ -323,7 +323,7 @@ it("opens the settings from the top line the way /settings does, and moves betwe
   // With results opening in a window, the glyph opens a window of its own, like the typed command.
   await submit("/settings results open window");
   await press();
-  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#settings/), "_blank");
+  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#settings/), window.__WES_DESKTOP__ ? "_blank" : "wes-settings");
   expect(tree.root.findAllByType(SettingsScreen)).toHaveLength(0);
   // In a pane, the tabs move that pane between sections and its head follows.
   await submit("/settings results open screen");
@@ -1836,7 +1836,7 @@ it("opens /spec in the chosen destination and preserves explicit pane and popup 
   await emit({ event: "workspace-context", name: "api-import-lab", saved: [] });
   await submit("/settings results open window");
   await submit("/spec");
-  expect(window.open).toHaveBeenLastCalledWith("#spec?workspace=api-import-lab", "_blank");
+  expect(window.open).toHaveBeenLastCalledWith("#spec?workspace=api-import-lab", window.__WES_DESKTOP__ ? "_blank" : "wes-spec");
   expect(tree.root.findAllByType(SpecScreen)).toHaveLength(0);
   expect(tree.root.findAllByType(Session)).toHaveLength(1);
   await submit("/settings results open screen");
@@ -1941,7 +1941,7 @@ it.each(["command", "source button"])("opens a resultless import source through 
   await submit("/settings results open window");
   const sourceActions = session().props.actions(session().props.model.cells[0]);
   await act(async () => sourceActions.openSource());
-  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#source\/import-cell/), "_blank");
+  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#source\/import-cell/), window.__WES_DESKTOP__ ? "_blank" : "wes-result");
   expect(tree.root.findAllByType(PeekScreen)).toHaveLength(0);
   vi.mocked(window.open).mockReturnValueOnce(null);
   await act(async () => sourceActions.openSource());
@@ -2012,12 +2012,12 @@ it("opens the focused workspace graph from the header without changing drafts", 
   expect(tree.root.findByType(Prompt).props.draft).toBe("unfinished draft");
   await submit("/settings results open window");
   await press();
-  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#graph/), "_blank");
+  expect(window.open).toHaveBeenLastCalledWith(expect.stringMatching(/^#graph/), window.__WES_DESKTOP__ ? "_blank" : "wes-graph");
   expect(tree.root.findAllByType(GraphScreen)).toHaveLength(0);
   await paneSubmit("p1", "/bsplitx graph-lab");
   await emitWorkspace("graph-lab", { event: "session", workspace: "graph-lab", generation: "graph-g1" }, env("DEV"));
   await press();
-  expect(window.open).toHaveBeenLastCalledWith("#graph?workspace=graph-lab", "_blank");
+  expect(window.open).toHaveBeenLastCalledWith("#graph?workspace=graph-lab", window.__WES_DESKTOP__ ? "_blank" : "wes-graph");
   vi.mocked(window.open).mockReturnValueOnce(null);
   await press();
   expect(tree.root.findByProps({ "data-pane-id": "p2" }).findByType(GraphScreen).props.chrome).toBe("pane");

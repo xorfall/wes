@@ -23,6 +23,8 @@ import { Hints } from "./Hints";
 import { couldNotDraw, readOpen } from "./open-model";
 import { topLine, type SessionContext } from "./session-model";
 import type { OpenRoute } from "./open-route";
+import { openRoute, resultPickerRoute } from "./open-route";
+import { WindowWorkspacePicker } from "./WindowWorkspacePicker";
 import { announceSettings, followSettings } from "./settings-channel";
 import { useTableViewOwner } from "./table-view-owner";
 import { storedIdentity } from "./render/dataset-source";
@@ -90,6 +92,12 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
       style={surfaceTypeStyle(settings)}
     >
       <Hints />
+      <WindowWorkspacePicker key={route.workspace} binding={route.workspace} workspace={workspace} onChoose={name => window.__WES_RETARGET__?.(resultPickerRoute(name))} />
+      <div className="window-result-picker"><label>Result <select aria-label="Window result" className="settings-field" value={node?.id ?? ""} onChange={event => { if (event.target.value) window.__WES_RETARGET__?.(openRoute(event.target.value, "result", engine.binding ?? workspace.identity?.name)); }}>
+        <option value="">Select a result</option>
+        {workspace.nodes.map(item => <option value={item.id} key={item.id}>{item.name ? `$${item.name}` : item.id} · {item.state}</option>)}
+      </select></label></div>
+      {!route.node && !route.cell ? <p className="window-result-empty mono-faint">Select a result from this workspace to inspect.</p> : <>
       {route.peek ? <PeekScreen engine={engine}
         top={topLine(context)}
         subject={missing ? couldNotDraw("subject", `no ${route.cell === undefined ? "result" : "cell"} called ${route.cell ?? route.node} is here any more`) : [{ text: node?.name ? `$${node.name}` : route.cell ?? route.node ?? "", role: "mono-ref" }]}
@@ -110,6 +118,7 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
         readStatus={observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retry(handle) : undefined} /></div> : handle && !stored ? <ReadStatus problem={reads.get(handle)?.problem} problemCode={reads.get(handle)?.problemCode} withdrawn={reads.get(handle)?.withdrawn} onRetry={() => retry(handle)} /> : undefined}
         onClose={() => window.close()}
       />}
+      </>}
       {trouble && <MonoLine segments={[{ text: trouble, role: "mono-bad" }]} className="surface-trouble" />}
     </div>
   );

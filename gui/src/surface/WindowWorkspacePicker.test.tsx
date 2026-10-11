@@ -1,0 +1,31 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { emptyWorkspace } from "../workspace";
+import { WindowWorkspacePicker } from "./WindowWorkspacePicker";
+const open = vi.hoisted(() => vi.fn());
+vi.mock("../workspace-binding", () => ({ openWorkspace: open }));
+let tree: ReactTestRenderer | undefined;
+afterEach(() => { act(() => tree?.unmount()); open.mockReset(); });
+it("opens an existing workspace explicitly and only changes this window after confirmation", async () => {
+  let finish!: () => void;
+  open.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+  const chosen = vi.fn();
+  const workspace = { ...emptyWorkspace, identity: { event: "workspace-context" as const, name: "alpha", saved: ["alpha", "beta"] } };
+  act(() => { tree = create(<WindowWorkspacePicker binding="alpha" workspace={workspace} onChoose={chosen} />); });
+  act(() => tree!.root.findByType("select").props.onChange({ target: { value: "beta" } }));
+  expect(open).toHaveBeenCalledExactlyOnceWith("beta", false);
+  expect(chosen).not.toHaveBeenCalled();
+  expect(tree!.root.findByType("select").props.disabled).toBe(true);
+  await act(async () => finish());
+  expect(chosen).toHaveBeenCalledExactlyOnceWith("beta");
+});
+it("does not apply a late workspace-open reply after the document has been retargeted", async () => {
+  let finish!: () => void;
+  open.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+  const chosen = vi.fn();
+  act(() => { tree = create(<WindowWorkspacePicker binding="alpha" workspace={emptyWorkspace} onChoose={chosen} />); });
+  act(() => tree!.root.findByType("select").props.onChange({ target: { value: "beta" } }));
+  act(() => { tree!.update(<WindowWorkspacePicker binding="gamma" workspace={emptyWorkspace} onChoose={chosen} />); });
+  await act(async () => finish());
+  expect(chosen).not.toHaveBeenCalled();
+});

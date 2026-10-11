@@ -73,9 +73,8 @@ function firstClause(message: string): string {
   return first.length <= 60 ? first : `${first.slice(0, 59)}…`;
 }
 
-/** `selected` outranks everything, because the panel is about that node whatever else it is. */
-export function stateOf(node: WorkspaceNode, selected: string | undefined): GraphNodeState {
-  if (node.id === selected) return "selected";
+/** Selection is an outline; the engine state remains visible in the node and minimap. */
+export function stateOf(node: WorkspaceNode, _selected: string | undefined): GraphNodeState {
   switch (node.state) {
     case "running": return "running";
     case "stale": return "stale";
@@ -86,20 +85,22 @@ export function stateOf(node: WorkspaceNode, selected: string | undefined): Grap
   }
 }
 
-/** One edge per declared dependency, and only between nodes the workspace still has. */
+/** Declared dependencies and explicit selection relationships, between nodes still present. */
 export function edgesOf(nodes: readonly WorkspaceNode[]): GraphEdge[] {
   const present = new Set(nodes.map((node) => node.id));
-  return nodes.flatMap((node) =>
-    node.dependsOn.filter((from) => present.has(from)).map((from) => node.dependencyLifetime === "creation"
+  return nodes.flatMap((node) => [
+    ...node.dependsOn.filter((from) => present.has(from)).map((from) => node.dependencyLifetime === "creation"
       ? { from, to: node.id, lifetime: "creation" as const, constructed: constructed(node) }
       : node.dependencyLifetime === "captured"
         ? { from, to: node.id, lifetime: "captured" as const, captured: inputsCaptured(node) }
         : { from, to: node.id }),
-  );
+    ...[...new Set(node.selectionSources ?? [])].filter(from => present.has(from))
+      .map(from => ({ from, to: node.id, kind: "selection" as const })),
+  ]);
 }
 
 /** Whether a producer's update still makes this edge's consumer out of date, per the engine's lifetime. */
-const carriesCurrency = (edge: GraphEdge) => !edge.constructed && !edge.captured;
+const carriesCurrency = (edge: GraphEdge) => edge.kind !== "selection" && !edge.constructed && !edge.captured;
 
 /**
  * Everything an update reaches from these, following the edges the given way round. The engine
@@ -140,7 +141,7 @@ export function dependentsOf(edges: readonly GraphEdge[], id: string): Set<strin
  */
 export function cyclesIn(nodes: readonly WorkspaceNode[], edges: readonly GraphEdge[]): string[][] {
   const next = new Map<string, string[]>();
-  for (const edge of edges) next.set(edge.from, [...(next.get(edge.from) ?? []), edge.to]);
+  for (const edge of edges) if (edge.kind !== "selection") next.set(edge.from, [...(next.get(edge.from) ?? []), edge.to]);
   const index = new Map<string, number>();
   const low = new Map<string, number>();
   const stack: string[] = [];
@@ -306,6 +307,7 @@ export function readGraph(workspace: Workspace, options: GraphOptions = {}): Gra
         name: nameOf(node),
         ...(detail === undefined ? {} : { detail }),
         state: stateOf(node, options.selected),
+        ...(node.id === options.selected ? { selected: true } : {}),
       };
     }),
     edges: allEdges.filter((edge) => present.has(edge.from) && present.has(edge.to)),

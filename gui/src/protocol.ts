@@ -310,6 +310,8 @@ export type Event =
       readonly traced?: boolean;
       readonly node: string;
       readonly dependsOn: string[];
+      /** Authored selection sources. Display evidence only; updates do not execute this call. */
+      readonly selectionSources?: readonly string[];
       readonly name: string;
       readonly command: string;
       /** Whether somebody can type at it while it runs. */

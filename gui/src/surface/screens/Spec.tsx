@@ -39,15 +39,31 @@ export function SpecScreen({top,onClose,onSubmit,chrome="full",binding}:{binding
   const [libraryRead,setLibraryRead]=useState<HomeRead>(READING);const [importsRead,setImportsRead]=useState<HomeRead>(binding?READING:READ);
   const [expanded,setExpanded]=useState<ReadonlySet<string>>(new Set());const [describeOpen,setDescribeOpen]=useState<boolean>();
   const listAll=async(signal?:AbortSignal)=>{try{const r=await libraryRequest<{packages:SpecPackage[];drafts:DraftSummary[]}>({action:"list"},signal);setPackages(r.packages);setDrafts(Array.isArray(r.drafts)?r.drafts:[]);setLibraryRead(READ);}catch(e){if(!signal?.aborted)setLibraryRead(failedRead(e));throw e;}};
-  const listImports=async(signal?:AbortSignal)=>{if(!binding)return;try{const r=await workspaceSpecs<{specs:ImportedSpec[]}>(binding,undefined,signal);setImports(r.specs);setImportsRead(READ);}catch(e){if(!signal?.aborted)setImportsRead(failedRead(e));throw e;}};
+  const listImports=async(signal?:AbortSignal)=>{if(!binding)return;try{const r=await workspaceSpecs<{specs:ImportedSpec[]}>(binding,undefined,signal);if(!signal?.aborted){setImports(r.specs);setImportsRead(READ);}}catch(e){if(!signal?.aborted)setImportsRead(failedRead(e));throw e;}};
   // An opened editor reports a failed refresh in its status line; the landing shows it in the section that failed.
   const load=async(signal?:AbortSignal)=>{await Promise.all([listAll(signal),listImports(signal)]);};
   const reload=(signal?:AbortSignal)=>settled(listAll(signal),listImports(signal));
   const runRef=useRef(run);runRef.current=run;
-  useEffect(()=>{const abort=new AbortController();void reload(abort.signal);return()=>abort.abort();},[]);
+  useEffect(()=>{const abort=new AbortController();void settled(listAll(abort.signal));return()=>abort.abort();},[]);
+  useEffect(()=>{
+    const abort=new AbortController();setImports([]);setImported(undefined);setImportsRead(binding?READING:READ);
+    void settled(listImports(abort.signal));return()=>abort.abort();
+  },[binding?.workspace,binding?.generation]);
   const accept=(r:SpecResult)=>{setSelected(r);setSource(r.source);setAlias(r.descriptor.provider);setValid(true);setDiagnostics(r.descriptor.diagnostics??[]);setTarget(undefined);};
   const pick=(next:string)=>setTarget(target===next?undefined:next);
   const guard=(action:()=>void)=>{if(dirty||draftDirty()){pending.current=action;setLeavingDirty(true);}else action();};
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const documentWindow = window;
+    const leave = (event: Event) => {
+      const proceed = (event as CustomEvent<{ proceed?: unknown }>).detail?.proceed;
+      if ((dirty || draftDirty()) && typeof proceed === "function") {
+        event.preventDefault(); guard(proceed as () => void);
+      }
+    };
+    documentWindow.addEventListener?.("wes:before-route", leave);
+    return () => documentWindow.removeEventListener?.("wes:before-route", leave);
+  }, [dirty, openedDraft]);
   const backToLibrary=()=>guard(()=>{setOpenedDraft(undefined);setSelected(undefined);setImported(undefined);setMessage("");setFailed(false);draftControls.current=undefined;});
   const selectDraft=(d:DraftSummary)=>guard(()=>{setSelected(undefined);setMessage("");setFailed(false);setDraftSubject([]);setDraftRevision(d.revision);setOpenedDraft(d);});
   const select=(p:SpecPackage)=>guard(()=>void run(async()=>{setOpenedDraft(undefined);accept(await libraryRequest<SpecResult>({action:"inspect",key:p.key,revision:p.revision}));setTab("operations");setEndpoint("");setReplace(false);}));
