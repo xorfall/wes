@@ -38,6 +38,7 @@ export function InteractiveModule({ module, model, shared, path, render }: {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
   const port = useMemo(() => ({ state: snapshot.state, revision: snapshot.revision,
     emit: (event: unknown) => lease.active && controller.emit(event),
+    activate: (event: unknown) => lease.active && controller.emit(event, true),
   }), [snapshot, controller, lease]);
   return <>{snapshot.error && <p className="mono-warn" role="status">{snapshot.error}</p>}{render(port, controller)}</>;
 }

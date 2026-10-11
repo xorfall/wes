@@ -14,19 +14,19 @@ export function startFrame(view:Renderer) {
   let port:MessagePort|undefined,input:unknown,state:unknown=null,revision=0,sequence=0,acknowledged=0,ready=false,pending=false;
   let slots:Record<string,readonly {key:string;height:number}[]>={},root:ReturnType<typeof createRoot>;
   let context:{mode:"preview"|"expanded"|"window";instance:string|null;coordinated?:boolean;inspectionOnly?:boolean;inspectionOutlet?:boolean;inspectionActive?:boolean;active?:boolean;datasets?:boolean;datasetEpoch?:number}={mode:"window",instance:null};
-  const queue:unknown[]=[];
+  const queue:{event:unknown;activation:boolean}[]=[];
   const send=(value:unknown,limit=MAX_EVENT)=>{const text=stringifyExactJson(value);if(text.length>limit)throw new Error("Frame message budget");port?.postMessage(text);};
   const fail=()=>{queue.length=0;pending=true;datasets.cancelAll("failed");try{send({kind:"error",message:"View renderer failed. Close and reopen to retry."});}catch{}};
   // Dataset pages are read only through the host; the frame never holds an address or token.
   const datasets=new FrameDatasets(value=>send(value));
-  function emit(event:unknown) {
+  function emit(event:unknown, activation=false) {
     if(!view.definition.interaction||pending&&queue.length>=authoring.runtimeLimits.pendingEvents)return fail();
-    try {if(stringifyExactJson(event).length>MAX_EVENT)throw new Error();queue.push(event);flush();}catch{fail();}
+    try {if(stringifyExactJson(event).length>MAX_EVENT)throw new Error();queue.push({event,activation});flush();}catch{fail();}
   }
   function flush(){
     if(pending||!queue.length)return;
-    try {const event=queue.shift(),next=view.reduce!(state,event);
-      send({kind:"event",base:revision,event,state:next,outputs:view.outputs!(next),events:view.eventOutputs?.(state,next,event)??[]});pending=true;
+    try {const {event,activation}=queue.shift()!,next=view.reduce!(state,event);
+      send({kind:activation?"activate":"event",base:revision,event,state:next,outputs:view.outputs!(next),events:view.eventOutputs?.(state,next,event)??[]});pending=true;
     }catch{fail();}
   }
   let geometryTimer:ReturnType<typeof setTimeout>|undefined;
@@ -53,7 +53,7 @@ export function startFrame(view:Renderer) {
     const width=document.documentElement.clientWidth,height=window.innerHeight,leading=parseFloat(style.lineHeight)||21;
     const allocation={width,height,columns:Math.max(1,Math.floor(width/advance)),rows:Math.max(1,Math.floor(height/leading))};
     const {datasets:readable,datasetEpoch:_epoch,...shown}=context;
-    return <Component input={input} state={state} revision={revision} emit={emit} slots={nodes} context={{...shown,allocation,datasets:readable?datasets:undefined,inspect:context.inspectionOutlet && view.Inspection ? ()=>send({kind:"inspect"}) : undefined}}/>;
+    return <Component input={input} state={state} revision={revision} emit={emit} activate={event=>emit(event,true)} slots={nodes} context={{...shown,allocation,datasets:readable?datasets:undefined,inspect:context.inspectionOutlet && view.Inspection ? ()=>send({kind:"inspect"}) : undefined}}/>;
   }
   function paint(){try{root.render(<Frame/>);}catch{fail();}}
   const connect=(event:MessageEvent)=>{

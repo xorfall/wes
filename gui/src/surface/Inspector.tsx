@@ -1,3 +1,4 @@
+import { selectionSource } from "./selection-source";
 import { stringifyExactJson } from "../exact-json";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Engine } from "../engine";
@@ -115,7 +116,7 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
         {partial && node?.failure && <p className="mono-bad">{node.failureRecord?.code ? `${node.failureRecord.code} · ` : ""}{node.failure}</p>}
         {!permitted && node && <p className="mono-warn">{node.accessWithdrawn ? WITHDRAWN_TITLE : node.doubt ? "Outcome uncertain · result not read" : `${node.state} · no current value`}</p>}
         {(problem || sample.problem) && <p className="mono-warn" role="alert">Read failed · {problem ?? sample.problem} {!(problem && problemWithdrawn) && <button className="cell-action" onClick={()=>setRetry(n=>n+1)}>retry reading</button>}</p>}
-        {value ? <ValueBlock engine={engine} value={value} {...(stored ? { stored } : {})} {...(node?.name ? { name: node.name } : {})} cacheKey={`${generation}:${node?.id}:inspector:${safeSnapshot ? `snapshot:${safeSnapshot.revision}` : live ? `${JSON.stringify(sample.metadata?.epochs)}:${sample.metadata?.revision??sample.revision}` : node?.handle}`} bindingKey={`${generation}:${node?.id}:inspector`} mode="window" inCell={false} facts={{whole:true,stopped}}/>
+        {value ? <ValueBlock selectionSource={!safeSnapshot && !live ? selectionSource(node) : undefined} engine={engine} value={value} {...(stored ? { stored } : {})} {...(node?.name ? { name: node.name } : {})} cacheKey={`${generation}:${node?.id}:inspector:${safeSnapshot ? `snapshot:${safeSnapshot.revision}` : live ? `${JSON.stringify(sample.metadata?.epochs)}:${sample.metadata?.revision??sample.revision}` : node?.handle}`} bindingKey={`${generation}:${node?.id}:inspector`} mode="window" inCell={false} facts={{whole:true,stopped}}/>
           : permitted && !problem && <p className="mono-dim">{node?.handle || live ? "Reading value…" : "no value · inspect run history for the recorded outcome"}</p>}
         {/* Beside the generic value view, not instead of it; only a typed ScanResult has one. */}
         <ScanReceiptDetails value={isWithdrawn(stored) ? undefined : value} {...(node ? { node } : {})} />

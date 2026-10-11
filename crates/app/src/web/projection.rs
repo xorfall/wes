@@ -74,6 +74,13 @@ fn input_preview(
     }
     *nodes -= 1;
     match input {
+        Input::Selection { source, fields, .. } => {
+            text.push_str(&format!("{}.selected", reference(source)));
+            if !fields.is_empty() {
+                text.push('.');
+                text.push_str(&fields.join("."));
+            }
+        }
         Input::FromNode(output) => text.push_str(&reference(output)),
         Input::FieldPath { output, fields } => {
             text.push_str(&format!("{}.{}", reference(output), fields.join(".")))
@@ -433,6 +440,7 @@ pub(super) fn build(
             sources.insert(*node, cell.input.text());
         }
         out.push(format!("cell:{}", cell.input.cell()), json!({"event":"planned", "cell":cell.input.cell(), "text":cell.input.text(), "document":cell.input.document().map(|source| json!({"source":source})), "nodes":nodes,
+            "selectionSource":nodes.first().and_then(|id| execution.graph.nodes().find(|n| n.id().as_str() == *id)).and_then(|node| node.payload().call()).and_then(|call| call.selection_sources().first().map(|source| source.node.to_string())),
             "receipts":reply.as_ref().ok().map(|r|r.receipts.iter().map(crate::execution_status::operation_receipt).collect::<Vec<_>>()),
             "diagnostics":reply.as_ref().ok().map(|r| r.diagnostics.diagnostics.iter().map(|d| diagnostic(d, cell.input.text())).collect::<io::Result<Vec<_>>>()).transpose()?,
             "restored":reply.as_ref().is_ok_and(|r|r.restored),

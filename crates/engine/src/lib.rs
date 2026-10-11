@@ -20,6 +20,7 @@ pub mod providers;
 pub mod recording;
 pub mod runtime;
 pub mod scan;
+pub mod selection;
 pub mod session;
 pub mod source;
 pub mod storage;

@@ -56,6 +56,7 @@ pub struct SourceInput {
     revision_of: Option<String>,
     cooperative: bool,
     reactive: bool,
+    selection: Option<crate::selection::Selection>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Repeat {
@@ -78,10 +79,27 @@ impl SourceInput {
             revision_of: None,
             cooperative: false,
             reactive: false,
+            selection: None,
         })
     }
     pub fn source_name(&self) -> &str {
         &self.source_name
+    }
+    /// A host-admitted interaction supplies one immutable invocation input. The selector
+    /// is request identity, never a source-text substitution or replay instruction.
+    pub fn with_selection(
+        mut self,
+        selection: crate::selection::Selection,
+    ) -> Result<Self, SourceError> {
+        selection.validate().map_err(|_| SourceError::Identity)?;
+        if self.revision_of.is_some() || self.reactive || self.document.is_some() {
+            return Err(SourceError::Identity);
+        }
+        self.selection = Some(selection);
+        Ok(self)
+    }
+    pub fn selection(&self) -> Option<&crate::selection::Selection> {
+        self.selection.as_ref()
     }
     pub fn with_source_name(mut self, name: String) -> Result<Self, SourceError> {
         validate_source_name(&name)?;
@@ -135,6 +153,9 @@ impl SourceInput {
     }
     /// Raw editor bytes remain separate from command syntax, identity-bound and durable.
     pub fn with_document(mut self, document: Option<String>) -> Result<Self, SourceError> {
+        if self.selection.is_some() && document.is_some() {
+            return Err(SourceError::Identity);
+        }
         if document
             .as_ref()
             .is_some_and(|s| s.len() > max_source_bytes())
@@ -208,7 +229,8 @@ impl SourceInput {
         Ok(self)
     }
     pub fn with_revision(mut self, origin: String) -> Result<Self, SourceError> {
-        if self.repeat.is_some()
+        if self.selection.is_some()
+            || self.repeat.is_some()
             || origin == self.cell
             || origin.trim().is_empty()
             || origin.len() > MAX_CELL_BYTES
@@ -247,6 +269,7 @@ impl SourceInput {
             && self.environments == other.environments
             && self.repeat == other.repeat
             && self.revision_of == other.revision_of
+            && self.selection == other.selection
     }
     pub(crate) fn context_charge(&self) -> usize {
         self.environments
@@ -254,6 +277,13 @@ impl SourceInput {
             .map_or(0, |c| 2048 + c.revisions.len() * 1024)
             + self.document.as_ref().map_or(0, |s| s.len() * 16)
             + self.source_name.len() * 6
+            + self.selection.as_ref().map_or(0, |selection| {
+                if matches!(selection, crate::selection::Selection::Rendered { .. }) {
+                    512 * 1024
+                } else {
+                    2048
+                }
+            })
     }
     pub fn cell(&self) -> &str {
         &self.cell
@@ -431,6 +461,10 @@ pub async fn prepare_replay(
     })
 }
 impl PreparedSource {
+    pub(crate) fn selection_call(&self) -> Option<&crate::providers::BoundCall> {
+        self.batch.selection_call()
+    }
+
     pub fn input(&self) -> &SourceInput {
         &self.input
     }
@@ -523,6 +557,12 @@ impl ParsedSource {
 }
 /// Pure syntax and whole-source mode classification. Call from a bounded analysis worker.
 pub fn preflight(input: SourceInput) -> Result<SourcePreparation<ParsedSource>, SourceError> {
+    if input.selection().is_some()
+        && (input.is_reactive() || input.document().is_some() || input.revision_of().is_some())
+    {
+        return Err(SourceError::Identity);
+    }
+
     preflight_with_package(input, wes_language::calc::Package::standard())
 }
 fn preflight_with_package(

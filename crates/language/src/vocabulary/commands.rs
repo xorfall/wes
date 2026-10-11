@@ -274,13 +274,13 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         path: &["node", "refresh"],
         operation: Refresh,
         short: Some("refresh"),
-        summary: "Start a new run of the same node definition.",
+        summary: "Start a new run of the same node definition. Selection-bound commands use their last captured inputs; refresh never reads the current UI selection.",
     },
     CommandPath {
         path: &["node", "change"],
         operation: Change,
         short: Some("change"),
-        summary: "Change a provider node's arguments.",
+        summary: "Change a provider node's arguments. This edits its definition; a selection activation instead captures inputs for one run without changing the definition.",
     },
     CommandPath {
         path: &["node", "cancel"],

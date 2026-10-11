@@ -104,6 +104,22 @@ pub struct PreparedBatch {
     unbound: Vec<String>,
 }
 impl PreparedBatch {
+    pub(crate) fn selection_call(&self) -> Option<&crate::providers::BoundCall> {
+        match self.changes.as_slice() {
+            [
+                BatchChange::Declaration(PreparedChange {
+                    operation:
+                        Change::Node {
+                            task: BoundTask::Call(call),
+                            ..
+                        },
+                    ..
+                }),
+            ] if !call.selection_sources().is_empty() => Some(call),
+            _ => None,
+        }
+    }
+
     /// Information returned by commit, including notices stored in the prepared operations.
     pub(crate) fn success_diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
         self.changes.iter().flat_map(|change| {

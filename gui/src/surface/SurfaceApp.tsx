@@ -1,3 +1,4 @@
+import { useSelectionCells } from "./selection-cells";
 import { reportApplicationProblem } from "../application-log";
 import { roleStyles } from "@wes/view-sdk/theme";
 import { SpecScreen } from "./screens/Spec";
@@ -98,6 +99,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
   };
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
   const [cells, setCells] = useState<readonly ClientCell[]>([]);
+  useSelectionCells(engine, setCells);
   const [sandbox, setSandbox] = useState<SandboxObservation>();
   useEffect(() => engine.onSandbox((cell, result) => {
     setCells(previous => previous.filter(item => item.id !== cell));

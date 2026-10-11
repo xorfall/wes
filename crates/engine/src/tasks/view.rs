@@ -57,6 +57,10 @@ pub struct BoundView {
     pub(crate) scope: crate::access::WriteScope,
 }
 impl BoundView {
+    pub(crate) fn selection_shape(&self, views: &wes_views::Catalogue) -> Option<wes_core::Shape> {
+        let package = views.get(self.task.tail.first()?)?;
+        crate::selection::selected_shape(package)
+    }
     pub(crate) fn supports(command: MetaCommand) -> bool {
         matches!(
             command,

@@ -172,6 +172,12 @@ pub(crate) fn command_help(path: &[String]) -> Data {
                 ),
             ),
             (
+                "selection",
+                text(
+                    "In the GUI, provider arguments such as id:$rows.selected.id create a waiting cell. Command-click a table row or activate a View's declared selection to capture typed inputs and run the same node. One source and one finite provider command are supported. A new activation replaces pending input, waits for prior physical execution to exit, and never changes the authored definition. Clearing selection does not run or cancel work. :inspect shows selectedType; :refresh repeats the last captured inputs. View authors use activate(event); emit(event) only changes local/shared state.",
+                ),
+            ),
+            (
                 "views",
                 text(
                     "A view follows one result. Compose multiple referenced inputs in a named pure :calc or adapter and bind its result. Nested ?template placeholders are unsupported; whole-argument placeholders retain their contract checks.",

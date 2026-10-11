@@ -20,6 +20,12 @@ pub(super) async fn begin(
             bound.invocation.provider.name(),
             bound.invocation.capability.path.join(" ")
         );
+        if let Some(record) = bound.invocation_record(run) {
+            journal
+                .record_invocation(admission, run, record)
+                .await
+                .map_err(|_| Box::new(recording_denied(cancellation)))?;
+        }
         journal
             .calling(admission, run, capability, bound.traits().repeatable, at)
             .await

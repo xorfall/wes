@@ -160,6 +160,15 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
       if(!entry?.instance||!module.definition?.interaction?.sharedFields.length)return ()=>{};
       const closeLocal=local.attach(owner(entry.id),module,controller);
       const close=attachSharedState(module,controller,{
+        activate: state => {
+          const port = ["selected", "selection"].find(name => {
+            const output = module.definition?.outputs[name];
+            return output?.shared && output.mode === "state";
+          });
+          if (port && state.outputs[port] !== null && state.outputs[port] !== undefined) {
+            engine.selections.activate({ kind: "view", source: state.owner, identity: state.identity, revision: state.revision, port });
+          }
+        },
         settled:ready=>setSettled(old=>old[entry.id]===ready?old:{...old,[entry.id]:ready}),
         watch:listener=>engine.watchViewState(entry.id,entry.instance,generation,listener),
         commit:(edit,signal)=>engine.commitViewState(entry.id,entry.instance,generation,edit,signal),

@@ -16,6 +16,7 @@ reasons! {
     Unknown => ("unknown", "The reason this result became stale was not recorded."),
     DefinitionChanged => ("definition_changed", "The definition changed; the previous result is no longer current."),
     DependencyChanged => ("dependency_changed", "An upstream definition changed; this result needs to be recalculated."),
+    InvocationPending => ("invocation_pending", "A newer invocation is waiting for the prior execution to exit; the previous result remains visible."),
     RefreshRequested => ("refresh_requested", "A new run was requested; the previous result is no longer current."),
     DependencyRefreshed => ("dependency_refreshed", "An upstream result was requested again; this result is no longer current."),
     InputBehind => ("input_behind", "The calculation completed an older input while newer input arrived; waiting to compute the latest committed input."),

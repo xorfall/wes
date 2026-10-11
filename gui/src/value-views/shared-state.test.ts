@@ -127,3 +127,27 @@ it("only enables result capture for confirmed state, never during pending or unc
   reject(new Error("unknown outcome"));await vi.advanceTimersByTimeAsync(1);
   expect(settled).toHaveBeenLastCalledWith(false);expect(commit).toHaveBeenCalledOnce();close();
 });
+
+it("activates only acknowledged explicit intents, including repeated identical selections",async()=>{
+  vi.useFakeTimers();const h=host(),a=controller(),activate=vi.fn();
+  const close=attachSharedState(module,a,{...h.transport,activate});
+  a.emit({kind:"selection",range:viewport});await vi.advanceTimersByTimeAsync(50);
+  expect(activate).not.toHaveBeenCalled();
+  a.emit({kind:"selection",range:viewport},true);
+  a.emit({kind:"selection",range:viewport},true);
+  expect(activate).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(activate).toHaveBeenCalledTimes(2);
+  expect(activate.mock.calls.map(([state])=>state.revision)).toEqual(["3","4"]);
+  expect(h.commit.mock.calls.every(([edit])=>!("activation" in edit))).toBe(true);
+  a.emit({kind:"selection",range:null});await vi.advanceTimersByTimeAsync(50);
+  expect(activate).toHaveBeenCalledTimes(2);close();
+});
+it.each(["rejected","unknown"])("never activates or replays a %s shared selection",async(outcome)=>{
+  vi.useFakeTimers();const h=host(),a=controller(),activate=vi.fn();
+  const commit=vi.fn(async()=>{if(outcome==="unknown")throw new Error("lost reply");return {state:state(),outcome:"rejected" as const};});
+  const close=attachSharedState(module,a,{...h.transport,commit,activate});
+  a.emit({kind:"selection",range:viewport},true);await vi.advanceTimersByTimeAsync(100);
+  h.publish();await vi.advanceTimersByTimeAsync(100);
+  expect(commit).toHaveBeenCalledOnce();expect(activate).not.toHaveBeenCalled();close();
+});

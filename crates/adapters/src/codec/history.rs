@@ -123,6 +123,13 @@ fn record<'a>(
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "lowercase", deny_unknown_fields)]
 enum JournalWire<'a> {
+    Invocation {
+        node: Cow<'a, str>,
+        run: Cow<'a, str>,
+        cell: Cow<'a, str>,
+        request: Cow<'a, str>,
+        arguments: Option<String>,
+    },
     Views {
         id: Cow<'a, str>,
         value: String,
@@ -629,6 +636,24 @@ fn journal_wire(entry: &JournalEntry, limits: Limits) -> Result<JournalWire<'_>,
                 run: run_text(s.run.as_ref()),
             }
         }
+        JournalEntry::Invocation(record) => {
+            if !record.validate() {
+                return Err(invalid("invalid invocation record"));
+            }
+            JournalWire::Invocation {
+                node: record.node.as_str().into(),
+                run: record.run.as_str().into(),
+                cell: record.cell.as_str().into(),
+                request: record.request.as_str().into(),
+                arguments: record
+                    .arguments
+                    .as_ref()
+                    .map(|value| {
+                        String::from_utf8(super::encode_value(value, limits)?).map_err(invalid)
+                    })
+                    .transpose()?,
+            }
+        }
         JournalEntry::Views(record) => {
             record.validate().map_err(invalid)?;
             JournalWire::Views {
@@ -959,6 +984,29 @@ fn journal_entry(wire: JournalWire<'_>, limits: Limits) -> Result<JournalEntry, 
                 return Err(invalid("invalid public trace record"));
             }
             JournalEntry::Trace(record)
+        }
+        JournalWire::Invocation {
+            node,
+            run,
+            cell,
+            request,
+            arguments,
+        } => {
+            let record = wes_engine::selection::InvocationRecord {
+                node: NodeId::new(&node).map_err(invalid)?,
+                run: RunId::new(&run).map_err(invalid)?,
+                cell: cell.into_owned(),
+                request: request.into_owned(),
+                arguments: arguments
+                    .map(|value| {
+                        super::decode_value(value.as_bytes(), limits).map(|decoded| decoded.value)
+                    })
+                    .transpose()?,
+            };
+            if !record.validate() {
+                return Err(invalid("invalid invocation record"));
+            }
+            JournalEntry::Invocation(record)
         }
         JournalWire::Views { id, value } => {
             let record = wes_engine::views::ViewRecord {

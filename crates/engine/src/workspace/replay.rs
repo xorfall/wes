@@ -130,6 +130,37 @@ impl ReplayWorkspace {
         self.used.extend(record.nodes.iter().cloned());
         Ok(())
     }
+    pub(crate) fn restore_invocation(
+        &mut self,
+        record: &crate::selection::InvocationRecord,
+    ) -> Result<(), WorkspaceError> {
+        if !record.validate() {
+            return Err(WorkspaceError::Obsolete);
+        }
+        let call = self
+            .workspace
+            .runtime
+            .graph()
+            .node(&record.node)
+            .and_then(|node| node.payload().call())
+            .ok_or(WorkspaceError::Obsolete)?;
+        if record.arguments.is_none() {
+            self.workspace
+                .runtime
+                .forget_invocation_payload(&record.node);
+            return Ok(());
+        }
+        let call = call
+            .clone()
+            .restore_arguments(record)
+            .ok_or(WorkspaceError::Obsolete)?;
+        self.workspace.runtime.restore_invocation_payload(
+            record.node.clone(),
+            crate::tasks::BoundTask::Call(call.clone()),
+            call.captured_policy(),
+        );
+        Ok(())
+    }
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
     }

@@ -1,3 +1,4 @@
+import { useSelectionCells } from "./selection-cells";
 /**
  * A second session, in a pane of its own.
  *
@@ -93,6 +94,8 @@ export function SessionPane(props: SessionPaneProps) {
   latest.current = cells;
   /** The attempts sent or explicitly revealed here; these cells belong to this pane. */
   const mine = useRef(new Set<string>());
+  const claimSelection = useCallback((attempt: string) => { mine.current.add(attempt); props.claim(attempt); }, [props.claim]);
+  useSelectionCells(engine, setCells, claimSelection);
   useEffect(() => {
     const jump = props.jump;
     if (!jump?.source || jump.pane !== props.definition?.pane) return;

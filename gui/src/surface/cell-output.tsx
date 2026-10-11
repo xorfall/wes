@@ -1,3 +1,4 @@
+import { selectionSource } from "./selection-source";
 import { resultArrangement } from "../cells";
 import { resultAccess } from "./result-access";
 import { SnapshotNotice } from "./SnapshotNotice";
@@ -169,7 +170,7 @@ export function cellBlocks(input: OutputInput): CellBlock[] {
         ? <LiveView mode={mode} collapsed={arrangement.view==="collapsed"} key={`${input.generation}:${node.id}:${node.command}:${JSON.stringify(node.environment)}`} engine={input.engine} generation={input.generation} node={node} workspace={workspace.identity?.name} sourceLabel={source => { const named = workspace.nodes.find(candidate => candidate.id === source)?.name; return named ? `$${named}` : source; }} />
         : undefined)
       ?? stateBlock(node, input) ?? (value && displayHandle
-      ? <div className={`result-observation${cell.streamOutput ? "" : " result-observation-inline"}`}>{cell.streamOutput && status}{partial && <MonoLine segments={[{ text: evidenceLabel(node)!, role: "mono-warn" }]} className="value-line result-partial" />}<SnapshotNotice value={value} onRefresh={input.onRefresh} refreshing={node.state === "pending" || node.state === "running"} /><ValueBlock engine={input.engine} value={value} {...(node.name ? { name: node.name } : {})} cacheKey={`${input.generation ?? ""}:${displayHandle}`} {...(input.generation ? { stored: { handle: displayHandle, generation: input.generation } } : {})} bindingKey={`${input.generation ?? ""}:${node.id}`} mode={mode} collapsed={arrangement.view === "collapsed"}
+      ? <div className={`result-observation${cell.streamOutput ? "" : " result-observation-inline"}`}>{cell.streamOutput && status}{partial && <MonoLine segments={[{ text: evidenceLabel(node)!, role: "mono-warn" }]} className="value-line result-partial" />}<SnapshotNotice value={value} onRefresh={input.onRefresh} refreshing={node.state === "pending" || node.state === "running"} /><ValueBlock selectionSource={selectionSource(node, observation)} engine={input.engine} value={value} {...(node.name ? { name: node.name } : {})} cacheKey={`${input.generation ?? ""}:${displayHandle}`} {...(input.generation ? { stored: { handle: displayHandle, generation: input.generation } } : {})} bindingKey={`${input.generation ?? ""}:${node.id}`} mode={mode} collapsed={arrangement.view === "collapsed"}
           instanceDisplay={instanceDisplay} facts={stoppedStream(node) ? STOPPED : WHOLE} lines={PREVIEW_LINES} /></div>
       : line([{ text: "no result", role: "mono-faint" }]));
     // The run's own progress stays in the run zone, at a fixed height, above any failure record.

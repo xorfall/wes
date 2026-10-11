@@ -1,3 +1,4 @@
+import { beforeEach } from "vitest";
 vi.mock("./workspace-events", () => ({ WorkspaceEvents: function(path: string) { return new EventSource(path); } }));
 import { afterEach, expect, it, vi } from "vitest";
 import { Engine } from "./engine";
@@ -130,3 +131,5 @@ it("restores only valid identities referenced by active or hidden panes and remo
   await expect(restoreWorkspace("hidden", invalid.workspaceBindings?.hidden)).rejects.toThrow("Reopen");
   expect(fetch).not.toHaveBeenCalled();
 });
+
+beforeEach(() => { vi.spyOn(Engine.prototype, "selectionTemplate").mockResolvedValue(undefined); });

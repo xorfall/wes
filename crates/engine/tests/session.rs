@@ -20,6 +20,8 @@ mod requests;
 mod sandbox;
 #[path = "session/scan.rs"]
 mod scan;
+#[path = "session/selection.rs"]
+mod selection;
 #[path = "session/sequential_requests.rs"]
 mod sequential_requests;
 #[path = "session/typed_calculations.rs"]

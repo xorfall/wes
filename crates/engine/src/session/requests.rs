@@ -341,6 +341,42 @@ fn fingerprint(input: &SourceInput, context: &str, sequential: bool) -> String {
             .and_then(|r| r.from.as_ref())
             .map(|n| n.as_str()),
     );
+    // Native identity components, length delimited independently from source text.
+    match input.selection() {
+        None => field(None),
+        Some(crate::selection::Selection::Rendered {
+            source,
+            run,
+            view,
+            artifact,
+            value,
+        }) => {
+            field(Some("rendered"));
+            field(Some(source.as_str()));
+            field(Some(run.as_str()));
+            field(Some(view));
+            field(Some(artifact));
+            field(Some(&format!("{value:?}")));
+        }
+        Some(crate::selection::Selection::Row { source, run, row }) => {
+            field(Some("row"));
+            field(Some(source.as_str()));
+            field(Some(run.as_str()));
+            field(Some(&row.to_string()));
+        }
+        Some(crate::selection::Selection::View {
+            source,
+            identity,
+            revision,
+            port,
+        }) => {
+            field(Some("view"));
+            field(Some(source.as_str()));
+            field(Some(identity));
+            field(Some(&revision.to_string()));
+            field(Some(port));
+        }
+    }
     hash.update([
         u8::from(input.is_cooperative()),
         u8::from(input.is_reactive()),

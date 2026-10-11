@@ -347,6 +347,10 @@ export function verdictOf(
   durations: ReadonlyMap<string, Span> = new Map(),
   rejected = false,
 ): VerdictField[] {
+  if (cell.state === "waiting") return [
+    { segments: [{ text: "waiting for selection", role: "mono-dim" }], keep: true, slot: "state" },
+    { segments: [{ text: "activate a View selection or ⌘ click a table row", role: "mono-dim" }], keep: true },
+  ];
   if (rejected) return [
     { segments: [{ text: "not run", role: "mono-warn" }], keep: true, slot: "state" },
     { segments: [{ text: refusal ?? "The attempt was rejected.", role: "mono-ink" }], keep: true },

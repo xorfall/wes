@@ -43,7 +43,7 @@ it("keeps compact status Views near preferred width while plots and compositions
     expect(valueViewModules.named(name)!.definition!.layout!.expanded.placement).toEqual({width:"fill",align:"start"});
 });
 it("bounds a composed Dashboard preview and discloses the remaining members without dropping them in expanded/window",()=>{
-  const props={input:{view:"dashboard" as const,title:"Operations"},state:undefined as never,revision:0,emit:()=>{},slots:{members:["first","second","third","fourth"].map(name=><p key={name}>{name}</p>)}};
+  const props={input:{view:"dashboard" as const,title:"Operations"},state:undefined as never,revision:0,activate:()=>{},emit:()=>{},slots:{members:["first","second","third","fourth"].map(name=><p key={name}>{name}</p>)}};
   const preview=renderToStaticMarkup(<dashboard.Component {...props} context={{...context,mode:"preview"}}/>);
   expect(preview).toContain("first");expect(preview).toContain("second");expect(preview).not.toContain("third");expect(preview).toContain("2 more views");
   for(const mode of ["expanded","window"] as const){
@@ -57,27 +57,27 @@ it("matches declared metric input structurally and preserves exact values in the
   expect(valueViewModules.named("metric")!.matches(type,value)).toBe(true);
   expect(valueViewModules.named("metric")!.matches({kind:"unknown"},value)).toBe(false);
   expect(valueViewModules.named("metric")!.matches(type,{view:"metric",value:"wrong"})).toBe(false);
-  const html=renderToStaticMarkup(<metric.Component input={value} state={undefined as never} revision={0} emit={()=>{}} slots={{}} context={context}/>);
+  const html=renderToStaticMarkup(<metric.Component input={value} state={undefined as never} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={context}/>);
   expect(html).toContain("9007199254740993");expect(html).not.toContain("9007199254740992");
 });
 it("rejects malformed metrics before an author receives them and escapes labels",()=>{
   for(const input of [{view:"metric",value:"1"},{view:"other",value:1},{view:"metric"}])
     expect(()=>decodeContract(definition,definition.input,input)).toThrow();
-  const html=renderToStaticMarkup(<metric.Component input={{...valid,label:"<script>"}} state={undefined as never} revision={0} emit={()=>{}} slots={{}} context={context}/>);
+  const html=renderToStaticMarkup(<metric.Component input={{...valid,label:"<script>"}} state={undefined as never} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={context}/>);
   expect(html).toContain("&lt;script&gt;");expect(html).toContain("status-ok");
 });
 it("uses Choice state and outputs from the public SDK and leaves unavailable selections visible",()=>{
   const input={view:"choice" as const,title:"Feed",options:[{value:"demo",label:"Demo"}]};
   const state=choice.initial!(input),next=choice.reduce!(state,{value:"other"});
   expect(choice.outputs!(next)).toEqual({value:"other"});
-  const html=renderToStaticMarkup(<choice.Component input={input} state={next} revision={1} emit={()=>{}} slots={{}} context={context}/>);
+  const html=renderToStaticMarkup(<choice.Component input={input} state={next} activate={()=>{}} revision={1} emit={()=>{}} slots={{}} context={context}/>);
   expect(html).toContain("Selection unavailable");
-  expect(()=>renderToStaticMarkup(<choice.Component input={{...input,options:[...input.options,...input.options]}} state={state} revision={0} emit={()=>{}} slots={{}} context={context}/>)).toThrow(/distinct/);
+  expect(()=>renderToStaticMarkup(<choice.Component input={{...input,options:[...input.options,...input.options]}} state={state} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={context}/>)).toThrow(/distinct/);
 });
 it("draws bounded histograms and retains exact labels and counts when drawing is unsafe",()=>{
   const input=parseExactJson('{"view":"histogram","bins":[{"lower":9007199254740993,"upper":9007199254740994,"count":9007199254740993}],"total":9007199254740993}') as HistogramInput;
-  const html=renderToStaticMarkup(<histogram.Component input={input} state={undefined as never} revision={0} emit={()=>{}} slots={{}} context={context}/>);
+  const html=renderToStaticMarkup(<histogram.Component input={input} state={undefined as never} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={context}/>);
   expect(html).toContain("9007199254740993");expect(html).toContain("exact drawing range");expect(html).not.toContain("<svg");
-  const empty=renderToStaticMarkup(<histogram.Component input={{view:"histogram",bins:[],total:0}} state={undefined as never} revision={0} emit={()=>{}} slots={{}} context={context}/>);
+  const empty=renderToStaticMarkup(<histogram.Component input={{view:"histogram",bins:[],total:0}} state={undefined as never} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={context}/>);
   expect(empty).toContain("No samples");
 });

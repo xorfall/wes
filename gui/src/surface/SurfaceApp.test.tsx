@@ -89,6 +89,7 @@ let send: ReturnType<typeof vi.fn<(request: Request) => Promise<Response>>>;
 const ok = () => new Response("", { status: 200 });
 const value = (data: string): StoredValue => ({ type: { kind: "primitive", name: "Text" }, data, provenance: {} });
 beforeEach(async () => {
+  vi.spyOn(Engine.prototype, "selectionTemplate").mockResolvedValue(undefined);
   applicationLog.clear();
   vi.spyOn(Engine.prototype, "terminal").mockResolvedValue({ target: null });
   preferenceFixture.state = { saving: false };

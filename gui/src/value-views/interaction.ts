@@ -10,6 +10,8 @@ export interface InteractionPort<State, Event> {
   readonly revision: number;
   /** False means malformed, over budget, rejected by the reducer, or unmounted. */
   emit(event: Event): boolean;
+  /** Explicit activation of this instance’s typed selection, separately from ordinary state edits. */
+  activate(event: Event): boolean;
 }
 export interface InteractionDefinition<State, Event> {
   readonly protocol: InteractionProtocol<State, Event>;
@@ -75,7 +77,7 @@ export class InteractionController<State, Event> {
   private current: InteractionSnapshot<State>;
   private published: InteractionSnapshot<State>;
   private readonly listeners = new Set<() => void>();
-  private beforeCommit?: (previous: Readonly<State>, next: Readonly<State>, event:Event) => boolean;
+  private beforeCommit?: (previous: Readonly<State>, next: Readonly<State>, event:Event, activation: boolean) => boolean;
   private pending: unknown;
   private scheduled = false;
   constructor(readonly definition: InteractionDefinition<State, Event>, model: unknown, private readonly scheduler = frames) {
@@ -116,21 +118,21 @@ export class InteractionController<State, Event> {
   }
   committed(): Readonly<State> { return this.current.state; }
   committedRevision():number {return this.current.revision;}
-  intercept(commit: (previous: Readonly<State>, next: Readonly<State>, event:Event) => boolean): () => void {
+  intercept(commit: (previous: Readonly<State>, next: Readonly<State>, event:Event, activation: boolean) => boolean): () => void {
     this.beforeCommit = commit;
     return () => { if(this.beforeCommit === commit)this.beforeCommit = undefined; };
   }
   problem(error: string) {
     this.current = Object.freeze({...this.current,error}); this.publish();
   }
-  emit(input: unknown): boolean {
+  emit(input: unknown, activation = false): boolean {
     try {
       const event = message(input);
       if (!this.definition.protocol.event(event)) throw new Error("Invalid event");
       const reduced = this.definition.reduce(this.current.state, event);
       const state = share(this.current.state, message(reduced));
       if (!this.definition.protocol.state(state)) throw new Error("Invalid state");
-      if(this.beforeCommit && !this.beforeCommit(this.current.state,state,event))return false;
+      if(this.beforeCommit && !this.beforeCommit(this.current.state,state,event,activation))return false;
       if (!this.current.error && state === this.current.state) return true;
       this.current = Object.freeze({ state, revision: this.current.revision + 1 });
       this.publish(); return true;

@@ -32,6 +32,8 @@ export interface TableGridProps {
   readonly tints?: readonly (string | undefined)[];
   /** Rows the value has in all, for assistive technology; the rows drawn are a page of it. */
   readonly total?: number;
+  /** Trusted Shift-click on a row activates it; ordinary selection remains local. */
+  readonly onActivate?: (row: number) => void;
   readonly onSelect?: (row: number) => void;
   readonly selected?: number;
   readonly sort?:{readonly column:string;readonly descending:boolean};
@@ -100,7 +102,7 @@ function useBeyond(ref: React.RefObject<HTMLDivElement | null>): string {
   return edges;
 }
 
-export function TableGrid({ rowKeys, columns, rows, styles, tints, total, renderCell, details, labels, toolbar, pinned = true, headerStart, onResize, footer, onSelect, selected, onSort, sort }: TableGridProps) {
+export function TableGrid({ rowKeys, columns, rows, styles, tints, total, renderCell, details, labels, toolbar, pinned = true, headerStart, onResize, footer, onActivate, onSelect, selected, onSort, sort }: TableGridProps) {
   const box = useRef<HTMLDivElement>(null);
   const elements=useRef(new Map<string,HTMLTableRowElement>()),userScroll=useRef(false),follow=useRef(true),anchor=useRef<{key:string;offset:number}>();
   const [anchorNotice,setAnchorNotice]=useState<string>();
@@ -148,7 +150,13 @@ export function TableGrid({ rowKeys, columns, rows, styles, tints, total, render
               {headerStart?.(at)}{onSort ? <button className="table-sort" onClick={()=>onSort(at)}>{labels?.[at] ?? column.name}{sort?.column===column.name ? sort.descending ? " ↓" : " ↑" : ""}</button> : labels?.[at] ?? column.name}{grip(at)}
             </th>)}
           </tr></thead>
-          <tbody>{rows.map((row, at) => <Fragment key={rowKeys?.[at] ?? at}><tr data-item-key={rowKeys?.[at]} ref={el=>{const key=rowKeys?.[at];if(key){if(el)elements.current.set(key,el);else elements.current.delete(key);}}} role="row" className={`value-table-row${selected===at ? " table-row-selected" : ""}${tints?.[at] ? ` table-row-tint table-row-tint-${tints[at]}` : ""}`} onClick={()=>onSelect?.(at)}>
+          <tbody>{rows.map((row, at) => <Fragment key={rowKeys?.[at] ?? at}><tr data-item-key={rowKeys?.[at]} ref={el=>{const key=rowKeys?.[at];if(key){if(el)elements.current.set(key,el);else elements.current.delete(key);}}} role="row" className={`value-table-row${selected===at ? " table-row-selected" : ""}${tints?.[at] ? ` table-row-tint table-row-tint-${tints[at]}` : ""}`} title={onActivate ? "Shift-click to activate this row" : undefined} onClick={event=>{
+            onSelect?.(at);
+            if (onActivate && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && event.button === 0 && event.isTrusted && !event.defaultPrevented && !(event.target as Element).closest?.("button,a,input,select,textarea,[role='button'],[contenteditable]")) {
+              event.preventDefault();
+              onActivate(at);
+            }
+          }}>
             {row.map((cell,index)=>{const text=cellText(cell,columns[index]?.key ?? false),shown=styles?.[at]?.[index]==="badge" ? <span className="value-badge">{text}</span> : text;
               return <td role="cell" key={index} className={cellClass(columns[index],pinned)}>{renderCell ? renderCell(at,index,shown) : shown}</td>;})}
           </tr>{details?.[at] && <tr role="row" className="value-table-detail-row"><td role="cell" colSpan={Math.max(1,columns.length)} className="value-table-detail"><div className="table-detail-width">{details[at]}</div></td></tr>}</Fragment>)}</tbody>

@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useEffect } from "react";
 import { StreamItemsContext } from "./stream-items";
 /**
  * Tier 3: one renderer per presentation kind, registered by name.
@@ -37,6 +37,7 @@ export function segments(runs: readonly Run[]): Segment[] {
 
 /** Everything a renderer may be told besides its node. */
 export interface DrawProps {
+  readonly onActivateRow?: (sourceIndex: number) => void;
   readonly onSort?:(path:string,column:string)=>void;
   /** Opens or closes a nested value by its path; absent where nothing can be toggled. */
   readonly onToggle?: (path: string) => void;
@@ -137,6 +138,7 @@ function Table({ node, props }: { node: Extract<PresentationNode, { kind: "table
   const [selectedKey,setSelectedKey]=useState<string>();
   const selected=itemKeys && selectedKey!==undefined ? [...itemKeys].find(([,key])=>key===selectedKey)?.[0] : selectedIndex;
   const select=(index:number)=>{setSelected(index);setSelectedKey(itemKeys?.get(index));};
+  useEffect(() => { setSelected(undefined); setSelectedKey(undefined); }, [JSON.stringify(node.sort), node.arrangement.filter]);
   const [tab,setTab]=useState("rows");
   const inspected=node.inspection?.rows.find(row=>row.index===selected);
   const details = node.details?.map((row) => {
@@ -153,6 +155,7 @@ function Table({ node, props }: { node: Extract<PresentationNode, { kind: "table
     {node.inspection?.mode==="window" && <div className="table-inspection-tabs" role="tablist" aria-label="Table inspection">{["rows","row","columns"].map(name=><button key={name} role="tab" aria-selected={tab===name} className="cell-action" onClick={()=>setTab(name)}>{name}</button>)}</div>}
     <div hidden={tab!=="rows"}>
     <TableGrid rowKeys={rowKeys?.every(key=>key!==undefined) ? rowKeys as string[] : undefined} columns={node.columns} rows={node.rows.map((row) => row.map(segments))} styles={node.styles} tints={node.tints} total={node.total}
+    onActivate={node.path === "" && props.onActivateRow && node.inspection ? row => props.onActivateRow!(node.inspection!.rows[row]!.index) : undefined}
     sort={node.sort} onSelect={node.inspection ? row=>select(node.inspection!.rows[row]!.index) : undefined} selected={node.inspection?.rows.findIndex(row=>row.index===selected)}
     onSort={props.onSort ? column=>props.onSort!(node.path,node.columns[column]!.name) : undefined}
     labels={node.columns.map((column) => column.label)} pinned={!arrangement.unpinned}

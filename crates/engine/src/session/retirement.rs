@@ -423,6 +423,7 @@ impl RetirementPlan {
                 JournalEntry::Observed(o) => self.nodes.contains(o.node()),
                 JournalEntry::Snapshot(s) => self.nodes.contains(s.observation.node()),
                 JournalEntry::Result(r) => self.nodes.contains(&r.node),
+                JournalEntry::Invocation(t) => self.nodes.contains(&t.node),
                 JournalEntry::Trace(t) => self.nodes.contains(&t.node),
                 JournalEntry::Noticed(n) => {
                     n.context().node().is_some_and(|n| self.nodes.contains(n))

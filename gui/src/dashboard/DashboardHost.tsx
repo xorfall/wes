@@ -1,3 +1,4 @@
+import { selectionSource } from "../surface/selection-source";
 import {useCallback,useEffect,useMemo,useState,type ReactNode} from 'react';
 import type {Engine} from '../engine';
 import type {Workspace,WorkspaceNode} from '../workspace';
@@ -27,7 +28,7 @@ function MemberResult({member,node,engine,generation,onValue}:{member:DashboardM
   const failure=read?.problem?<p role="status">{read.problem}{!read.withdrawn&&<> <button className="cell-action" onClick={()=>retry(handle!)}>Read again</button></>}</p>:undefined;
   if(!value&&failure)return failure;
   if(!value)return <p className="mono-dim" role="status">Reading existing result…</p>;
-  return <>{failure}{observation?.state!=='current'&&observation&&<p className="mono-dim" role="status">{observation.staleReason??'Waiting for the latest publication…'}</p>}<ValueBlock engine={engine} value={value} cacheKey={`${generation}:${observation?.handle??handle}`} {...((observation?.handle??handle)&&generation?{stored:{handle:(observation?.handle??handle)!,generation}}:{})} bindingKey={`dashboard:${member.id}`} mode="expanded" inCell={false}/></>;
+  return <>{failure}{observation?.state!=='current'&&observation&&<p className="mono-dim" role="status">{observation.staleReason??'Waiting for the latest publication…'}</p>}<ValueBlock selectionSource={selectionSource(node,observation)} engine={engine} value={value} cacheKey={`${generation}:${observation?.handle??handle}`} {...((observation?.handle??handle)&&generation?{stored:{handle:(observation?.handle??handle)!,generation}}:{})} bindingKey={`dashboard:${member.id}`} mode="expanded" inCell={false}/></>;
 }
 function useReportValue(node:string,value:StoredValue|undefined,onValue:(node:string,value:StoredValue)=>void){useEffect(()=>{if(value)onValue(node,value);},[node,value,onValue]);}
 

@@ -18,10 +18,18 @@ use wes_language::{
 
 pub type Guards = IndexMap<String, Vec<Arc<Contract>>>;
 mod projection;
+mod selection;
 pub use projection::{InputProblem, InputResolutionError, project_value};
 #[derive(Clone, Debug)]
 pub enum Input {
     Literal(Value),
+    /// A typed invocation parameter supplied by an explicit interaction. It is not a
+    /// graph dependency and is never resolved from mutable UI state by a worker.
+    Selection {
+        source: OutputRef,
+        fields: Vec<String>,
+        shape: Shape,
+    },
     FromNode(OutputRef),
     FieldPath {
         output: OutputRef,
@@ -93,6 +101,9 @@ impl Input {
                 compose_list(values, item_shape).map(Cow::Owned)
             }
             Self::Literal(value) => Ok(Cow::Borrowed(value)),
+            Self::Selection { source, fields, .. } => {
+                Err(InputResolutionError::unavailable(source, fields))
+            }
             Self::FromNode(output) => inputs
                 .get(&output.node)
                 .map(Cow::Borrowed)
@@ -109,7 +120,7 @@ impl Input {
     }
     pub fn dependency(&self) -> Option<&OutputRef> {
         match self {
-            Self::Literal(_) | Self::Record(_) | Self::List { .. } => None,
+            Self::Literal(_) | Self::Selection { .. } | Self::Record(_) | Self::List { .. } => None,
             Self::FromNode(output) | Self::FieldPath { output, .. } => Some(output),
         }
     }
@@ -118,7 +129,7 @@ impl Input {
             Self::FromNode(output) | Self::FieldPath { output, .. } => vec![output],
             Self::Record(fields) => fields.values().flat_map(Self::dependencies).collect(),
             Self::List { items, .. } => items.iter().flat_map(Self::dependencies).collect(),
-            Self::Literal(_) => vec![],
+            Self::Literal(_) | Self::Selection { .. } => vec![],
         }
     }
     pub fn literal_values(&self) -> Vec<&Value> {
@@ -135,6 +146,7 @@ impl Input {
                 shape: value.shape().clone(),
                 provenance: value.provenance().clone(),
             }),
+            Self::Selection { shape, .. } => Some(Typing::new(shape.clone())),
             Self::FromNode(output) => origin(output),
             Self::FieldPath { output, fields } => {
                 let mut typing = origin(output)?;
@@ -733,6 +745,7 @@ pub fn given(
         Input::FromNode(output) => {
             GivenValue::Known(typing(output).unwrap_or_else(|| Typing::new(Shape::Unknown)))
         }
+        Input::Selection { shape, .. } => GivenValue::Known(Typing::new(shape.clone())),
         Input::FieldPath { output, fields } => {
             match typing(output).and_then(|mut typing| {
                 typing.shape = field_shape(&typing.shape, fields)?;
