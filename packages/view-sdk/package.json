@@ -20,6 +20,7 @@
     "contract.ts",
     "values.ts",
     "datasets.ts",
+    "commands.ts",
     "time.ts",
     "geometry.ts",
     "frame.tsx",

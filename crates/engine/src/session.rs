@@ -352,6 +352,10 @@ enum Control {
         reply: oneshot::Sender<CommandEnvironment>,
     },
     DisplayValue(NodeId, oneshot::Sender<Result<DisplaySample, SessionError>>),
+    ViewCommand(
+        crate::views::commands::CommandRequest,
+        oneshot::Sender<Result<crate::views::commands::CommandDraft, SessionError>>,
+    ),
     ViewFrame(
         NodeId,
         Option<(String, String)>,
@@ -634,6 +638,17 @@ impl SessionHandle {
         let (reply, receive) = oneshot::channel();
         self.controls
             .send(Control::ViewFrame(node, Some((identity, mount)), reply))
+            .await
+            .map_err(|_| SessionError::Stopped)?;
+        receive.await.map_err(|_| SessionError::Stopped)?
+    }
+    pub async fn prepare_view_command(
+        &self,
+        request: crate::views::commands::CommandRequest,
+    ) -> Result<crate::views::commands::CommandDraft, SessionError> {
+        let (reply, receive) = oneshot::channel();
+        self.controls
+            .send(Control::ViewCommand(request, reply))
             .await
             .map_err(|_| SessionError::Stopped)?;
         receive.await.map_err(|_| SessionError::Stopped)?
@@ -1329,7 +1344,7 @@ impl Actor {
                 },
                 control = self.controls.recv(), if self.controls_open => match control {
                     Some(control) => {
-                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SavedCapture { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::CommandEnvironment { .. } | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
+                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SavedCapture { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::CommandEnvironment { .. } | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewCommand(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
                         self.control(control);
                     },
                     None => {self.controls_open = false; self.close();}
@@ -2101,6 +2116,20 @@ impl Actor {
                         .view_mount(&node, &identity, action)
                         .map_err(SessionError::AccessDenied)
                 };
+                let _ = reply.send(result);
+            }
+            Control::ViewCommand(request, reply) => {
+                let result =
+                    if self.checkpoints.rejects_sources() || self.workspace.runtime().is_closed() {
+                        Err(SessionError::CheckpointBusy)
+                    } else {
+                        self.workspace.prepare_view_command(request).map_err(|_| {
+                            SessionError::AccessDenied(
+                                "View command is unavailable, invalid or changed; review it again"
+                                    .into(),
+                            )
+                        })
+                    };
                 let _ = reply.send(result);
             }
             Control::ViewFrame(node, mount, reply) => {

@@ -28,6 +28,8 @@ mod scan;
 mod telemetry;
 #[path = "web/value_previews.rs"]
 mod value_previews;
+#[path = "web/view_commands.rs"]
+mod view_commands;
 #[path = "web/view_instances.rs"]
 mod view_instances;
 #[path = "web/view_packages.rs"]

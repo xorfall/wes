@@ -9,6 +9,7 @@ use std::{
 };
 use wes_core::{Data, Value};
 mod bindings;
+pub mod commands;
 mod evidence;
 pub(crate) use persistence::input_digest as query_input_digest;
 mod observations;
@@ -263,6 +264,7 @@ struct Instance {
 /// All edits validate before changing state. A workspace owner serializes access to this store.
 #[derive(Debug)]
 pub struct Store {
+    command_epoch: uuid::Uuid,
     owner: Arc<()>,
     packages: wes_views::Catalogue,
     instances: BTreeMap<NodeId, Instance>,
@@ -286,6 +288,7 @@ impl Store {
     ) -> Result<Self, Error> {
         let definitions = wes_views::Catalogue::new(packages).map_err(|_| Error::Incompatible)?;
         Ok(Self {
+            command_epoch: uuid::Uuid::new_v4(),
             owner: Arc::new(()),
             packages: definitions,
             instances: BTreeMap::new(),
