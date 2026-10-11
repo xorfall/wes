@@ -448,3 +448,196 @@ async fn abandoned_preparation_releases_only_its_writer_authority_without_io_or_
     drop(store);
     storage.join().await.unwrap();
 }
+
+#[tokio::test]
+async fn confidential_recording_reopens_locally_without_reacquiring_its_source() {
+    for residence in [
+        wes_core::flow::Residence::Temporary,
+        wes_core::flow::Residence::Retainable,
+    ] {
+        confidential_recording_roundtrip(residence).await;
+    }
+}
+
+#[tokio::test]
+async fn confidential_recording_refuses_an_ordinary_sink_before_source_entry() {
+    let home = home();
+    let (store, storage) = worker(&home);
+    for residence in [
+        wes_core::flow::Residence::Temporary,
+        wes_core::flow::Residence::Retainable,
+    ] {
+        let result = eventlog::Prepared::prepare(
+            store.clone(),
+            call().run.id().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            schema(),
+            FlowPolicy::default().confidential(residence),
+            Default::default(),
+            1,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(wes_engine::storage::StoreError::Restricted)
+        ));
+    }
+    // Source entry requires Prepared; neither refused attempt can launch a producer.
+    store.shutdown().await.unwrap();
+    storage.join().await.unwrap();
+}
+
+async fn confidential_recording_roundtrip(residence: wes_core::flow::Residence) {
+    use wes_adapters::protected_storage::ObjectProtection;
+    let home = home();
+    let key = ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [2; 32]).unwrap();
+    let datasets = home.path().join("datasets");
+    let values = home.path().join("values");
+    let open = || {
+        spawn_storage(
+            FileValues::open_protected(
+                &values,
+                Default::default(),
+                Durability::File,
+                None,
+                Some(key.clone()),
+            )
+            .unwrap(),
+            DatasetStore::open_protected(
+                &datasets,
+                Durability::File,
+                StoreLimits::default(),
+                Some(key.clone()),
+            )
+            .unwrap(),
+            StoreWorkerLimits::default(),
+        )
+        .unwrap()
+    };
+    let (store, storage) = open();
+    let mut call = call();
+    let mut cap = Capability::new(
+        ["synthetic-secret-events"],
+        Shape::Primitive(Primitive::Text),
+        Safety::Safe,
+    );
+    cap.streaming = true;
+    call.capability = Arc::new(cap);
+    let policy = FlowPolicy::default().confidential(residence);
+    let schema = ResolvedContractBundle::capture(
+        ContractRegistry::new().resolve("Text").unwrap(),
+        Default::default(),
+    )
+    .unwrap();
+    let (prepared, archive) = eventlog::Prepared::prepare(
+        store.clone(),
+        call.run.id().to_string(),
+        uuid::Uuid::new_v4().to_string(),
+        schema,
+        policy.clone(),
+        Default::default(),
+        1,
+    )
+    .await
+    .unwrap();
+    let (entered, mut entries) = mpsc::unbounded_channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (_stream, task) = eventlog::spawn(
+        call,
+        Arc::new(Source {
+            entered,
+            calls: calls.clone(),
+        }),
+        Provenance::default().with_policy(&policy),
+        Default::default(),
+        CancellationToken::new(),
+        prepared,
+    )
+    .unwrap();
+    let (sink, finish) = entries.recv().await.unwrap();
+    let mut updates = archive.subscribe();
+    let secret = Value::new(
+        Shape::Primitive(Primitive::Text),
+        Data::Text("recorded-confidential-sentinel".into()),
+        Provenance::default(),
+    )
+    .unwrap();
+    sink.send(secret).await.unwrap();
+    until(&mut updates, |s| s.reference.records() == 1).await;
+    finish.send(()).unwrap();
+    task.join().await.unwrap();
+    let reference = archive.snapshot().reference;
+    let roots = store
+        .dataset_plan_delete(reference.clone())
+        .await
+        .unwrap()
+        .references;
+    let recording_root = roots
+        .iter()
+        .find(|root| root.kind == wes_engine::storage::datasets::DatasetRootKind::Recording)
+        .unwrap();
+    assert_eq!(
+        recording_root.retention,
+        if residence == wes_core::flow::Residence::Temporary {
+            wes_engine::storage::Retention::Temporary
+        } else {
+            wes_engine::storage::Retention::Protected
+        }
+    );
+    assert!(
+        store
+            .dataset_inspect(reference.clone())
+            .await
+            .unwrap()
+            .policy
+            .is_confidential()
+    );
+    drop(sink);
+    drop(updates);
+    drop(archive);
+    store.shutdown().await.unwrap();
+    storage.join().await.unwrap();
+    let (store, storage) = open();
+    let page = store
+        .dataset_page(
+            reference,
+            PageRequest {
+                charge: None,
+                from: 0,
+                rows: 1,
+                bytes: 65536,
+                segments: 1,
+                work: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        page.rows[0].value.data(),
+        &Data::Text("recorded-confidential-sentinel".into())
+    );
+    assert!(page.rows[0].value.provenance().policy().is_confidential());
+    assert_eq!(
+        page.rows[0].value.provenance().policy().residence(),
+        residence
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    fn no_plaintext(path: &std::path::Path) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                no_plaintext(&p);
+            } else {
+                assert!(
+                    !std::fs::read(p)
+                        .unwrap()
+                        .windows(30)
+                        .any(|w| w == b"recorded-confidential-sentinel")
+                );
+            }
+        }
+    }
+    no_plaintext(home.path());
+    store.shutdown().await.unwrap();
+    storage.join().await.unwrap();
+}

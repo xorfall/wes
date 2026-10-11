@@ -174,18 +174,53 @@ impl Sandboxes {
                 may_have_applied: false,
             });
         }
-        self.read_saved(&saved, saved_name, true).await
+        self.read_saved(&saved, saved_name, true, false).await
     }
     pub(super) async fn read_saved(
         &self,
         saved: &SavedSelection,
         reference: &str,
         inspect: bool,
+        cooperative: bool,
     ) -> Result<Reply, SessionError> {
         let suffix = reference
             .strip_prefix(&saved.name)
             .and_then(|s| s.strip_prefix('.'));
         let worker = self.storage.as_ref().ok_or(SessionError::NoStorage)?;
+        let mut withheld = std::collections::BTreeSet::new();
+        if cooperative {
+            for member in &saved.members {
+                if !saved.single
+                    && suffix.is_some_and(|s| s.split('.').next() != Some(&member.name))
+                {
+                    continue;
+                }
+                if let Some(payload) = &member.payload {
+                    // A child projection never relaxes the captured root's export policy.
+                    let snapshot = worker
+                        .describe(
+                            crate::storage::ValueHandle::new(&payload.handle)
+                                .map_err(super::super::saved::store_error)?,
+                            vec![],
+                        )
+                        .await
+                        .map_err(super::super::saved::store_error)?
+                        .ok_or(SessionError::UnknownValue)?;
+                    if snapshot.digest != payload.digest {
+                        return Err(super::super::saved::store_error(
+                            crate::storage::StoreError::Conflict,
+                        ));
+                    }
+                    let policy = snapshot.provenance.policy();
+                    if policy.is_confidential() || policy.is_unknown() {
+                        if !inspect {
+                            return Err(SessionError::Authority);
+                        }
+                        withheld.insert(member.name.as_str());
+                    }
+                }
+            }
+        }
         let mut loaded_values = BTreeMap::new();
         let data = if !inspect && saved.single {
             let fields =
@@ -220,6 +255,13 @@ impl Sandboxes {
             let mut remaining = 4 * 1024 * 1024;
             for member in &saved.members {
                 if selected.is_some_and(|s| s != member.name) {
+                    continue;
+                }
+                if withheld.contains(member.name.as_str()) {
+                    rows.push(record([
+                        ("name", text(&member.name)),
+                        ("state", text("withheld")),
+                    ]));
                     continue;
                 }
                 let mut row = indexmap::IndexMap::from([

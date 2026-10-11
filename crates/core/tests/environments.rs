@@ -485,3 +485,43 @@ fn auth_choices_are_canonical_revisioned_environment_data() {
     }
     assert!(Package::parse(&base.replace("auth: {listItems:", "auth: {'list items':")).is_ok());
 }
+
+#[test]
+fn output_confidentiality_is_validated_and_part_of_captured_revision() {
+    use wes_core::flow::OutputPolicy;
+    let parse = |output: &str| {
+        Package::parse(&"version: 1\ntargets: {local: {kind: local}}\nenvironments: {qa: {imports: {echo: {source: {kind: process, bin: fixture}, bind: {target: local, output: OUTPUT}}}}}".replace("OUTPUT",output))
+    };
+    let mut revisions = std::collections::BTreeSet::new();
+    for (text, policy) in [
+        ("public", OutputPolicy::Public),
+        ("private", OutputPolicy::Private),
+        (
+            "confidential-temporary",
+            OutputPolicy::ConfidentialTemporary,
+        ),
+        ("confidential", OutputPolicy::Confidential),
+    ] {
+        let package = parse(text).unwrap();
+        assert_eq!(
+            package.definitions()["qa"].imports["echo"].output_policy,
+            policy
+        );
+        let mut sources = CapturedSources::default();
+        for source in package.required_sources() {
+            sources
+                .insert(
+                    source,
+                    CapturedSource::new("process/v1", "fixture").unwrap(),
+                )
+                .unwrap();
+        }
+        revisions.insert(
+            wes_core::environments::EffectiveEnvironment::resolve(&package, "qa", None, &sources)
+                .unwrap()
+                .revision(),
+        );
+    }
+    assert_eq!(revisions.len(), 4);
+    assert!(parse("confidentail").is_err());
+}

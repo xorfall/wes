@@ -47,10 +47,53 @@ impl DatasetReadOrigin {
     }
 }
 
+/// Maximum residence allowed by the data policy, independently of current retention.
+/// Ordering is intentional: a join always chooses the more restrictive ceiling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Residence {
+    Memory,
+    Temporary,
+    #[default]
+    Retainable,
+}
+
+/// A declaration classifies future provider output; it never relabels an existing value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OutputPolicy {
+    #[default]
+    Public,
+    Private,
+    ConfidentialTemporary,
+    Confidential,
+}
+impl OutputPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+            Self::ConfidentialTemporary => "confidential-temporary",
+            Self::Confidential => "confidential",
+        }
+    }
+    pub fn policy(self) -> FlowPolicy {
+        match self {
+            Self::Public => FlowPolicy::default(),
+            Self::Private => FlowPolicy::default().private(),
+            Self::ConfidentialTemporary => FlowPolicy::default().confidential(Residence::Temporary),
+            Self::Confidential => FlowPolicy::default().confidential(Residence::Retainable),
+        }
+    }
+    pub fn is_sensitive(self) -> bool {
+        self != Self::Public
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlowPolicy {
     origins: BTreeSet<String>,
-    private: bool,
+    confidential: bool,
+    residence: Residence,
     unknown: bool,
     dataset_reads: BTreeSet<DatasetReadOrigin>,
 }
@@ -59,13 +102,25 @@ impl FlowPolicy {
         &self.origins
     }
     pub fn is_private(&self) -> bool {
-        self.private
+        self.confidential && self.residence == Residence::Memory
+    }
+    pub fn is_confidential(&self) -> bool {
+        self.confidential
+    }
+    pub fn residence(&self) -> Residence {
+        self.residence
+    }
+    pub fn allows_retention(&self) -> bool {
+        !self.unknown && self.residence == Residence::Retainable
     }
     pub fn is_unknown(&self) -> bool {
         self.unknown
     }
     pub fn is_empty(&self) -> bool {
-        self.origins.is_empty() && self.dataset_reads.is_empty() && !self.private && !self.unknown
+        self.origins.is_empty()
+            && self.dataset_reads.is_empty()
+            && !self.confidential
+            && !self.unknown
     }
     /// A trusted control-plane acknowledgement contains no read content. Preserve
     /// confidentiality and environment labels, but do not gate an effect receipt
@@ -74,7 +129,8 @@ impl FlowPolicy {
     pub fn for_control_acknowledgement(&self) -> Self {
         Self {
             origins: self.origins.clone(),
-            private: self.private,
+            confidential: self.confidential,
+            residence: self.residence,
             unknown: self.unknown,
             dataset_reads: BTreeSet::new(),
         }
@@ -97,7 +153,14 @@ impl FlowPolicy {
         self
     }
     pub fn private(mut self) -> Self {
-        self.private = true;
+        self.confidential = true;
+        self.residence = Residence::Memory;
+        self
+    }
+    /// Adds confidentiality without relaxing an already restricted residence ceiling.
+    pub fn confidential(mut self, residence: Residence) -> Self {
+        self.confidential = true;
+        self.residence = self.residence.min(residence);
         self
     }
     pub fn unknown(mut self) -> Self {
@@ -119,7 +182,8 @@ impl FlowPolicy {
     }
     pub fn join(&self, other: &Self) -> Self {
         let mut joined = self.clone();
-        joined.private |= other.private;
+        joined.confidential |= other.confidential;
+        joined.residence = joined.residence.min(other.residence);
         joined.unknown |= other.unknown;
         for origin in &other.origins {
             joined = joined.from_origin(origin.clone());

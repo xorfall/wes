@@ -17,6 +17,33 @@ async fn run_all(workspace: &mut Workspace) {
 }
 
 #[tokio::test]
+async fn environment_help_explains_confidential_residence_without_execution() {
+    let (mut workspace, calls) = workspace();
+    let node = commit(&mut workspace, ":help env plan > guidance").unwrap();
+    run_all(&mut workspace).await;
+    let Data::Record(fields) = workspace.runtime().value_of(&node).unwrap().data() else {
+        panic!("help record")
+    };
+    let Data::Record(fields) = &fields["invocation"] else {
+        panic!("invocation guidance")
+    };
+    let Data::Text(syntax) = &fields["syntax"] else {
+        panic!("syntax guidance")
+    };
+    for phrase in [
+        "private is memory-only",
+        "confidential-temporary",
+        "explicit Keep only",
+        "strictest residence wins",
+        "--storage-key-file",
+        "do not grant terminal, MCP or file export",
+    ] {
+        assert!(syntax.contains(phrase), "{phrase}: {syntax}");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn help_values_compose_in_a_draft_and_success_closes_the_error_branch() {
     let (mut workspace, calls) = workspace();
     let mut draft = workspace.draft().unwrap();

@@ -13,7 +13,7 @@ fn render_target(
     if stopped.is_some()
         || value.shape() != &Shape::Meta(MetaType::ViewInstance)
         || value.management_authority().is_none()
-        || value.provenance().policy().is_private()
+        || value.provenance().policy().is_confidential()
         || value.provenance().policy().is_unknown()
     {
         return None;
@@ -56,7 +56,7 @@ async fn render_status(
         .as_ref()
         .and_then(|input| input.value())
         .is_some_and(|value| {
-            value.provenance().policy().is_private() || value.provenance().policy().is_unknown()
+            value.provenance().policy().is_confidential() || value.provenance().policy().is_unknown()
         })
     {
         return Ok(render_unverified("reference_unavailable"));
@@ -98,7 +98,7 @@ async fn render_status(
         .as_ref()
         .and_then(|input| input.value())
         .is_some_and(|value| {
-            value.provenance().policy().is_private() || value.provenance().policy().is_unknown()
+            value.provenance().policy().is_confidential() || value.provenance().policy().is_unknown()
         })
     {
         return Ok(render_unverified("reference_unavailable"));

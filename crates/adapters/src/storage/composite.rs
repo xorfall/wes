@@ -59,35 +59,14 @@ impl FileValues {
         &self,
         handle: &ValueHandle,
     ) -> Result<Option<(Composite, Vec<u8>)>, StoreError> {
-        let Some(mut file) = self.file(handle)? else {
+        let Some(bytes) = self.snapshot_header(
+            handle,
+            b"{\"format\":\"wes.composite\"",
+            wes_budgets::get("storage.acquisition.metadata.bytes") as usize,
+        )?
+        else {
             return Ok(None);
         };
-        let mut prefix = [0; 27];
-        let n = file
-            .read(&mut prefix)
-            .map_err(|e| StoreError::backend("reading record snapshot", e))?;
-        if !prefix[..n].starts_with(b"{\"format\":\"wes.composite\"") {
-            return Ok(None);
-        }
-        use std::io::{Seek, SeekFrom};
-        file.seek(SeekFrom::Start(0))
-            .map_err(|e| StoreError::backend("seeking record snapshot", e))?;
-        let maximum = wes_budgets::get("storage.acquisition.metadata.bytes");
-        if file
-            .metadata()
-            .map_err(|e| StoreError::backend("sizing record snapshot", e))?
-            .len()
-            > maximum
-        {
-            return Err(StoreError::Limit("record snapshot metadata"));
-        }
-        let mut bytes = Vec::new();
-        file.take(maximum + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| StoreError::backend("reading record snapshot", e))?;
-        if bytes.len() as u64 > maximum {
-            return Err(StoreError::Limit("record snapshot metadata"));
-        }
         let root: Composite = serde_json::from_slice(&bytes).map_err(|_| StoreError::Corrupt)?;
         if root.format != "wes.composite"
             || root.version != 1
@@ -298,7 +277,8 @@ impl FileValues {
                 .open_with(&pending, &options)
                 .map_err(|e| StoreError::backend("preparing record snapshot", e))?;
             let result = (|| {
-                file.write_all(&bytes)
+                let protected = self.protect_object(handle, &bytes)?;
+                file.write_all(&protected)
                     .and_then(|()| file.sync_all())
                     .map_err(|e| StoreError::backend("syncing record snapshot", e))?;
                 self.directory

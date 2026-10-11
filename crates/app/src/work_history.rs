@@ -283,7 +283,7 @@ impl Owner {
             return false;
         };
         let policy = value.value.provenance().policy();
-        !policy.is_private() && !policy.is_unknown()
+        policy.allows_retention()
     }
     pub(crate) async fn protect_run(
         &self,
@@ -322,7 +322,7 @@ impl Owner {
                 .map_err(|_| Error::EvidenceMissing)?
                 .ok_or(Error::EvidenceMissing)?;
             let policy = value.value.provenance().policy();
-            if policy.is_private() || policy.is_unknown() {
+            if !policy.allows_retention() {
                 return Err(Error::EvidenceMissing);
             }
             drop(value);

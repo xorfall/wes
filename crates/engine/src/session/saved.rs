@@ -57,7 +57,7 @@ impl Actor {
                 .workspace
                 .typing(output)
                 .ok_or(SessionError::UnknownValue)?;
-            if typing.provenance.policy().is_private() || typing.provenance.policy().is_unknown() {
+            if !typing.provenance.policy().allows_retention() {
                 return Err(SessionError::Authority);
             }
             let mut value = match self.workspace.runtime().output(output) {
@@ -86,6 +86,9 @@ impl Actor {
             if let crate::runtime::OutputState::Stored(stored) =
                 self.workspace.runtime().output(output)
             {
+                if !stored.snapshot.provenance.policy().allows_retention() {
+                    return Err(SessionError::Authority);
+                }
                 let shape = crate::plan::field_shape(&stored.snapshot.shape, &fields)
                     .ok_or(SessionError::UnknownValue)?;
                 physical_fields = stored.snapshot.selection.clone();
@@ -97,8 +100,7 @@ impl Actor {
                 });
                 capture.shapes.insert(name.clone(), shape);
             } else if let Some(value) = value {
-                if value.provenance().policy().is_private()
-                    || value.provenance().policy().is_unknown()
+                if !value.provenance().policy().allows_retention()
                     || self.workspace.dataset_access.blocks(&value)
                 {
                     return Err(SessionError::Authority);
@@ -234,11 +236,18 @@ impl Capture {
                     payload.digest = digest.clone();
                     continue;
                 }
-                let digest = worker
-                    .digest(crate::storage::ValueHandle::new(&payload.handle).map_err(store_error)?)
+                let snapshot = worker
+                    .describe(
+                        crate::storage::ValueHandle::new(&payload.handle).map_err(store_error)?,
+                        vec![],
+                    )
                     .await
                     .map_err(store_error)?
                     .ok_or(SessionError::UnknownValue)?;
+                if !snapshot.provenance.policy().allows_retention() {
+                    return Err(SessionError::Authority);
+                }
+                let digest = snapshot.digest.clone();
                 if !payload.digest.is_empty() && payload.digest != digest {
                     return Err(store_error(crate::storage::StoreError::Conflict));
                 }

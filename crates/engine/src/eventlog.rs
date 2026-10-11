@@ -183,6 +183,7 @@ impl Prepared {
         first: u64,
         receiver: archive::Receiver,
     ) -> Result<(Self, Handle), StoreError> {
+        worker.admit_dataset_policy(&policy)?;
         if first == 0
             || limits.records == 0
             || limits.records > wes_budgets::get("dataset.writer.records")

@@ -63,6 +63,8 @@ impl AcquisitionContext {
     pub async fn begin(&self, maximum: u64) -> Result<Acquisition, StoreError> {
         if self.provenance.policy().is_private()
             || self.provenance.policy().is_unknown()
+            || (self.provenance.policy().is_confidential()
+                && !self.worker.supports_confidential_values())
             || self.worker.placement != ValuePlacement::MemoryAndDisk
         {
             return Err(StoreError::Restricted);
@@ -101,7 +103,9 @@ impl Acquisition {
         let handle = self.handle.clone();
         let port = port.to_owned();
         self.worker
-            .request((bytes.len() + 4096) as u32, move |store| {
+            // A backend may protect a chunk using additional bounded encryption buffers.
+            // Reserve the storage working allowance before any backend allocation or write.
+            .request(self.worker.limits.bytes.get(), move |store| {
                 store.append_acquisition(&handle, &port, &bytes)
             })
             .await?
@@ -326,4 +330,56 @@ pub fn acquisition_error(error: StoreError) -> InvocationError {
         format!("Finite acquisition refused: {error}. Inspect acquisition limits and storage state before any new operation. No provider was replayed."),
         None,
     ))
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    struct NoAcquisition;
+    impl ValueStore for NoAcquisition {
+        fn store(&mut self, _: &Value) -> Result<ValueHandle, StoreError> {
+            panic!("before dispatch")
+        }
+        fn read(&self, _: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
+            panic!("before dispatch")
+        }
+        fn encoded(&self, _: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
+            panic!("before dispatch")
+        }
+        fn size(&self, _: &ValueHandle) -> Result<Option<u64>, StoreError> {
+            panic!("before dispatch")
+        }
+        fn release(&mut self, _: &ValueHandle) -> Result<bool, StoreError> {
+            panic!("before dispatch")
+        }
+        fn begin_acquisition(
+            &mut self,
+            _: u64,
+            _: std::sync::Weak<()>,
+        ) -> Result<ValueHandle, StoreError> {
+            panic!("unsupported protection reached acquisition dispatch")
+        }
+    }
+    #[tokio::test]
+    async fn unsupported_confidential_acquisition_refuses_before_backend_dispatch() {
+        use wes_core::flow::{FlowPolicy, Residence};
+        let (worker, task) = spawn_store(NoAcquisition, StoreWorkerLimits::default()).unwrap();
+        let worker = worker.with_placement(ValuePlacement::MemoryAndDisk);
+        for residence in [
+            Residence::Memory,
+            Residence::Temporary,
+            Residence::Retainable,
+        ] {
+            let provenance =
+                Provenance::default().with_policy(&FlowPolicy::default().confidential(residence));
+            assert!(matches!(
+                AcquisitionContext::new(worker.clone(), provenance)
+                    .begin(1024)
+                    .await,
+                Err(StoreError::Restricted)
+            ));
+        }
+        drop(worker);
+        task.join().await.unwrap();
+    }
 }

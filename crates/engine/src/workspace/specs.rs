@@ -51,7 +51,7 @@ impl Workspace {
                             captured
                                 .and_then(|capture| capture.request().arguments().get("endpoint"))
                                 .and_then(|value| {
-                                    if value.provenance().policy().is_private() {
+                                    if value.provenance().policy().is_confidential() {
                                         return None;
                                     }
                                     match value.data() {
