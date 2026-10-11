@@ -56,7 +56,26 @@ pub(super) async fn read(
             false,
         );
     }
-    let before = match shared.values.read(handle.clone()).await {
+    let (_, worker) =
+        match super::read_context::resolve(&current.session, &shared.values, request.headers())
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    if request.headers().contains_key("X-Wes-Scope") && (input.head || input.extent.is_some()) {
+        return error_response(Error::Invalid);
+    }
+    let _hold = match worker.hold(handle.clone()).await {
+        Ok(Some(hold)) => hold,
+        Ok(None) => {
+            return error_response(Error::Storage(
+                wes_engine::storage::StoreError::DatasetMissing,
+            ));
+        }
+        Err(error) => return error_response(Error::Storage(error)),
+    };
+    let before = match worker.read(handle.clone()).await {
         Ok(Some(value)) => value,
         Ok(None) => {
             return failure(
@@ -73,11 +92,10 @@ pub(super) async fn read(
         Err(error) => return error_response(error),
     };
     let advanced = input.head || input.extent.is_some();
-    let response =
-        match dataset_reads::read(&shared.values, &before.value, input, 1024 * 1024).await {
-            Ok(value) => value,
-            Err(error) => return error_response(error),
-        };
+    let response = match dataset_reads::read(&worker, &before.value, input, 1024 * 1024).await {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
     if !shared
         .application
         .current()
@@ -98,9 +116,10 @@ pub(super) async fn read(
             false,
         );
     }
-    match shared.values.read_matches(handle, before.value).await {
+    match worker.read_matches(handle, before.value).await {
         Ok(true) => {}
-        _ => {
+        Err(error) => return error_response(Error::Storage(error)),
+        Ok(false) => {
             return failure(
                 StatusCode::GONE,
                 "DATASET_WITHDRAWN",
@@ -138,13 +157,13 @@ pub(super) async fn read(
         );
     }
     if let Some(shown) = advanced_extent {
-        match shared.values.dataset_head(reference.clone()).await {
+        match worker.dataset_head(reference.clone()).await {
             Ok(info) if dataset_reads::extends(&info.reference, &shown) => {}
             Ok(_) => return error_response(Error::Invalid),
             Err(error) => return error_response(Error::Storage(error)),
         }
     }
-    if let Err(error) = shared.values.dataset_inspect(reference).await {
+    if let Err(error) = worker.dataset_inspect(reference).await {
         return error_response(Error::Storage(error));
     }
     match encoded {
@@ -161,6 +180,9 @@ pub(super) fn error_response(error: Error) -> Response {
     let (status, code) = match &error {
         Error::Unavailable | Error::Storage(wes_engine::storage::StoreError::Restricted) => {
             (StatusCode::FORBIDDEN, "DATASET_ACCESS_REFUSED")
+        }
+        Error::Storage(wes_engine::storage::StoreError::ScopeUnavailable) => {
+            (StatusCode::GONE, "DATASET_SCOPE_ENDED")
         }
         Error::Invalid => (StatusCode::BAD_REQUEST, "DATASET_INVALID"),
         Error::MissingStream => (StatusCode::BAD_REQUEST, "DATASET_STREAM_MISSING"),

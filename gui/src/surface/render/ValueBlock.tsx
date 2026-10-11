@@ -75,7 +75,8 @@ export interface ValueBlockProps {
    * The stored result this value was read from, for the session it was read in. Datasets inside
    * the value page through it; without it they show their descriptor only.
    */
-  readonly stored?: { readonly handle: string; readonly generation: string };
+  readonly stored?: import("./dataset-source").StoredIdentity;
+  readonly readScope?: string;
   /** The result's workspace name, which management commands use to refer to it. */
   readonly name?: string;
 }
@@ -89,13 +90,13 @@ export function ValueBlock(props:ValueBlockProps) {
   /** A list whose presentation entry declares a log mapping reads as a log, like Docker's events. */
   const log=logShape(props.value,registry);
   return log ? <LogView value={props.value} mode={props.mode} identity={props.bindingKey} collapsed={props.collapsed} {...(log.mapping?{mapping:log.mapping}:{})}/> : isViewInstance(props.value) ? <div className="value-instance-block">{props.collapsed && <p className="mono-dim">View · ${id}</p>}<div hidden={props.collapsed}><InstanceView value={props.value} engine={props.engine} mode={props.mode}
-    display={props.inCell===false?undefined:props.instanceDisplay??{label:`$${id}`}}/></div></div> : <DataValueBlock {...props}/>;
+    readScope={props.readScope} display={props.inCell===false?undefined:props.instanceDisplay??{label:`$${id}`}}/></div></div> : <DataValueBlock {...props}/>;
 }
 function DataValueBlock(props: ValueBlockProps) {
   const { engine, stored, collapsed = false, mode } = props;
   useSyncExternalStore(datasetWithdrawals.subscribe, datasetWithdrawals.snapshot, datasetWithdrawals.snapshot);
   const handle = stored?.handle, generation = stored?.generation;
-  const source = useMemo(() => engine && handle !== undefined && generation ? { engine, handle, generation } : undefined, [engine, handle, generation]);
+  const source = useMemo(() => engine && handle !== undefined && generation ? { engine, handle, generation, scope:stored?.scope,select:stored?.select } : undefined, [engine, handle, generation,stored?.scope,stored?.select]);
   const selectionHost = useMemo(() => engine && props.selectionSource ? renderedSelectionHost(engine.selections, props.selectionSource) : undefined, [engine, props.selectionSource?.node, props.selectionSource?.run]);
   const name = props.name;
   const host = useMemo(() => ({ ...(source ? { source } : {}), ...(name ? { name } : {}), mode, collapsed }), [source, name, mode, collapsed]);

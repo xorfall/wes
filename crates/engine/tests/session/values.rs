@@ -58,6 +58,14 @@ impl ValueStore for Store {
         state.order.push(handle.clone());
         Ok(handle)
     }
+    fn store_with_placement(
+        &mut self,
+        value: &Value,
+        _: wes_engine::storage::ValuePlacement,
+    ) -> Result<ValueHandle, StoreError> {
+        // This synthetic port only has process memory; it never creates a payload file.
+        self.store(value)
+    }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
         Ok(self
             .state
@@ -389,6 +397,63 @@ async fn manual_keep_acknowledges_archive_and_exact_run_then_release_forgets_onl
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     stop(handle, task).await;
     shutdown_store(store, storage_task).await;
+    recorder.shutdown().await.unwrap();
+    writer.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_publication_skips_file_ownership_but_explicit_keep_records_the_exact_run() {
+    use wes_engine::{history::JournalEntry, storage::ValuePlacement};
+    let records = Arc::new(Mutex::new(vec![]));
+    let (recorder, writer) = spawn_recorder(
+        LogSink {
+            records: records.clone(),
+            gate: None,
+            fail_observation: false,
+        },
+        RecorderLimits::default(),
+    )
+    .unwrap();
+    let (storage, storage_task) = spawn_store(store(), StoreWorkerLimits::default()).unwrap();
+    let (workspace, calls) = workspace(None, None);
+    let (handle, task) = session::spawn_with_storage(
+        workspace,
+        RecordingMode::Required(CallJournal::new(
+            recorder.clone(),
+            RequiredPersistence::FileSynced,
+        )),
+        no_files(),
+        NonZeroUsize::new(1).unwrap(),
+        SessionStorage {
+            worker: storage.clone().with_placement(ValuePlacement::Memory),
+            auto_keep: AutoKeep::Never,
+        },
+    )
+    .unwrap();
+    submit(
+        &handle,
+        "memory-source",
+        "catalog echo value:synthetic > answer",
+    )
+    .await;
+    handle.wait_idle().await.unwrap();
+    let (node, output) = current(&handle, "answer").await;
+    let stored = output.stored.unwrap();
+    assert!(!stored.kept);
+    assert!(!stored.requires_ownership_record);
+    assert!(!records.lock().unwrap().iter().any(|r| matches!(
+        r,
+        Record::Journal(JournalEntry::Payload { .. } | JournalEntry::Result(_))
+    )));
+    let receipt = handle.keep(stored.handle.clone()).await.unwrap();
+    assert!(receipt.problem.is_none());
+    assert_eq!(receipt.journal.len(), 1);
+    assert_eq!(receipt.journal[0].node, node);
+    assert_eq!(receipt.journal[0].run, output.run);
+    assert!(records.lock().unwrap().iter().any(|r| matches!(r, Record::Journal(JournalEntry::Result(result)) if result.node == node && result.run == output.run && result.handle == stored.handle)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    stop(handle, task).await;
+    shutdown_store(storage, storage_task).await;
     recorder.shutdown().await.unwrap();
     writer.join().await.unwrap();
 }

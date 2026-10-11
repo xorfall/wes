@@ -85,6 +85,16 @@ impl DatasetStore {
         sync: impl FnOnce(&cap_std::fs::File) -> io::Result<()>,
     ) -> Result<ReferenceReceipt, DatasetError> {
         let content = matches!(purpose, ReferencePurpose::Content);
+        if changes.iter().any(|root| {
+            !root.prefixes.is_empty()
+                && matches!(
+                    root.lifetime,
+                    wes_engine::storage::DatasetLifetime::Transient(_)
+                )
+                && root.lifetime != self.current_lifetime()
+        }) {
+            return Err(DatasetError::Conflict);
+        }
         if !content
             && changes.iter().any(|root| {
                 root.kind != catalog::RootKind::Workspace || root.owner_workspace.is_none()
@@ -194,6 +204,17 @@ impl DatasetStore {
                     || r.transaction == candidate.transaction
             })
         {
+            return Err(DatasetError::Conflict);
+        }
+        if previous.is_some_and(|r| {
+            r.lifetime != candidate.lifetime
+                && candidate.kind != catalog::RootKind::Checkpoint
+                && !(matches!(
+                    r.lifetime,
+                    wes_engine::storage::DatasetLifetime::Transient(_)
+                ) && candidate.lifetime == wes_engine::storage::DatasetLifetime::Durable
+                    && candidate.retention == RootRetention::Protected)
+        }) {
             return Err(DatasetError::Conflict);
         }
         // Unknown roots are conservative protection, never silently downgraded by recovery.

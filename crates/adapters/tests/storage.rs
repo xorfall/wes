@@ -5,7 +5,416 @@ use wes_adapters::{
     storage::{Durability, FileValues, TieredValues},
 };
 use wes_core::{Data, Primitive, Provenance, Shape, Value};
-use wes_engine::storage::{StoreError, ValueHandle, ValueStore};
+use wes_engine::storage::{StoreError, ValueHandle, ValuePlacement, ValueStore};
+
+#[tokio::test]
+async fn retiring_a_scope_does_not_route_its_pending_losses_to_the_parent() {
+    use wes_engine::storage::{PublicationPolicy, StoreWorkerLimits, spawn_store};
+    let root = private_temp();
+    let store = tiered(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        None,
+    )
+    .with_memory_budget(NonZeroU64::new(4096).unwrap(), 1)
+    .unwrap();
+    let (worker, task) = spawn_store(store, StoreWorkerLimits::default()).unwrap();
+    let scope = worker.transient_scope().unwrap();
+    assert!(
+        scope
+            .clone()
+            .with_placement(ValuePlacement::ManagedFile)
+            .publish(value(3), PublicationPolicy::Temporary)
+            .await
+            .is_err()
+    );
+    let first = scope
+        .publish(value(1), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    scope
+        .publish(value(2), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    scope.close_transient_scope().await.unwrap();
+    assert!(
+        worker
+            .take_evicted(std::num::NonZeroUsize::new(10).unwrap())
+            .await
+            .unwrap()
+            .handles
+            .is_empty()
+    );
+    assert!(worker.read(first.handle).await.unwrap().is_none());
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn shared_memory_evictions_wake_readers_and_are_delivered_only_to_the_owner_scope() {
+    use wes_engine::storage::{PublicationPolicy, StoreWorkerLimits, spawn_store};
+    let root = private_temp();
+    let backend = tiered(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        None,
+    )
+    .with_memory_budget(NonZeroU64::new(4096).unwrap(), 1)
+    .unwrap();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    let a = worker.transient_scope().unwrap();
+    let b = worker.transient_scope().unwrap();
+    let first = a
+        .publish(value(2), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    let mut wakes = a.eviction_updates();
+    wakes.borrow_and_update();
+    let second = b
+        .publish(value(3), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(wakes.has_changed().unwrap());
+    let maximum = std::num::NonZeroUsize::new(8).unwrap();
+    assert!(
+        worker
+            .take_evicted(maximum)
+            .await
+            .unwrap()
+            .handles
+            .is_empty()
+    );
+    assert!(b.take_evicted(maximum).await.unwrap().handles.is_empty());
+    assert_eq!(
+        a.take_evicted(maximum).await.unwrap().handles,
+        vec![first.handle]
+    );
+    assert_eq!(
+        b.read(second.handle).await.unwrap().unwrap().value,
+        value(3)
+    );
+    a.close_transient_scope().await.unwrap();
+    b.close_transient_scope().await.unwrap();
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn malformed_file_target_refuses_release_before_removing_the_memory_copy() {
+    let root = private_temp();
+    let live = root.path().join("live");
+    let archive = root.path().join("archive");
+    let mut store = tiered(&live, &archive, None);
+    let captured = value(23);
+    let handle = store
+        .store_with_placement(&captured, ValuePlacement::Memory)
+        .unwrap();
+    let target = root.path().join("unrelated");
+    fs::write(&target, b"unrelated bytes").unwrap();
+    for directory in [&live, &archive] {
+        let link = directory.join(format!("{handle}.json"));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(store.release(&handle).is_err());
+        assert_eq!(store.read(&handle).unwrap().unwrap().value, captured);
+        assert_eq!(fs::read(&target).unwrap(), b"unrelated bytes");
+        fs::remove_file(link).unwrap();
+    }
+    assert!(store.release(&handle).unwrap());
+}
+
+#[test]
+fn memory_publication_keeps_exact_identity_without_a_live_file_and_reopens_from_archive() {
+    use wes_engine::storage::Retention;
+    let root = private_temp();
+    let live = root.path().join("live");
+    let archive = root.path().join("archive");
+    let captured = value(41);
+    let exact = encode_value(&captured, Limits::default()).unwrap();
+    let handle;
+    {
+        let mut store = tiered(&live, &archive, None);
+        handle = store
+            .store_with_placement(&captured, ValuePlacement::Memory)
+            .unwrap();
+        assert_eq!(
+            fs::read_dir(&live)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|e| e == "json"))
+                .count(),
+            0
+        );
+        assert!(!store.has_temporary_file(&handle).unwrap());
+        assert_eq!(store.encoded(&handle).unwrap().unwrap(), exact);
+        assert_eq!(store.retention_usage().unwrap().memory_count, 1);
+        assert!(
+            store
+                .keep_with_reason(&handle, Retention::Protected)
+                .unwrap()
+        );
+        assert_eq!(store.retention_usage().unwrap().memory_count, 0);
+        assert_eq!(store.encoded(&handle).unwrap().unwrap(), exact);
+        assert!(store.take_evicted(1).unwrap().handles.is_empty());
+    }
+    let store = tiered(&live, &archive, None);
+    assert_eq!(store.read(&handle).unwrap().unwrap().value, captured);
+    assert_eq!(store.retention(&handle).unwrap(), Retention::Protected);
+}
+
+#[test]
+fn memory_admission_refuses_oversize_without_disk_or_eviction_and_unsaved_does_not_restore() {
+    let root = private_temp();
+    let live = root.path().join("live");
+    let archive = root.path().join("archive");
+    let small = value(8);
+    let bound = encode_value(&small, Limits::default()).unwrap().len() as u64;
+    let handle;
+    {
+        let mut store = tiered(&live, &archive, None)
+            .with_memory_budget(NonZeroU64::new(bound).unwrap(), 1)
+            .unwrap();
+        handle = store
+            .store_with_placement(&small, ValuePlacement::Memory)
+            .unwrap();
+        assert!(
+            store
+                .store_with_placement(&value(9), ValuePlacement::Memory)
+                .is_err()
+        );
+        assert_eq!(store.read(&handle).unwrap().unwrap().value, small);
+        assert!(store.take_evicted(2).unwrap().handles.is_empty());
+        assert!(!store.has_temporary_file(&handle).unwrap());
+    }
+    assert!(
+        tiered(&live, &archive, None)
+            .read(&handle)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn memory_holds_prevent_loss_and_remain_charged_after_keep_until_drop() {
+    use wes_engine::storage::Retention;
+    let root = private_temp();
+    let small = value(8);
+    let size = encode_value(&small, Limits::default()).unwrap().len() as u64;
+    let mut store = tiered(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        None,
+    )
+    .with_memory_budget(NonZeroU64::new(size).unwrap(), 1)
+    .unwrap();
+    let handle = store
+        .store_with_placement(&small, ValuePlacement::Memory)
+        .unwrap();
+    let hold = store.hold(&handle).unwrap().unwrap();
+    assert!(
+        store
+            .store_with_placement(&small, ValuePlacement::Memory)
+            .is_err()
+    );
+    assert!(store.release(&handle).is_err());
+    assert!(
+        store
+            .keep_with_reason(&handle, Retention::Protected)
+            .unwrap()
+    );
+    assert_eq!(store.retention_usage().unwrap().memory_bytes, size);
+    assert!(
+        store
+            .store_with_placement(&small, ValuePlacement::Memory)
+            .is_err()
+    );
+    drop(hold);
+    let fresh = store
+        .store_with_placement(&small, ValuePlacement::Memory)
+        .unwrap();
+    assert_ne!(fresh, handle);
+    assert_eq!(
+        store.encoded(&handle).unwrap().unwrap(),
+        encode_value(&small, Limits::default()).unwrap()
+    );
+    assert!(store.take_evicted(2).unwrap().handles.is_empty());
+}
+
+#[test]
+fn memory_eviction_is_bounded_visible_and_real_reads_update_recency() {
+    let root = private_temp();
+    let mut store = tiered(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        None,
+    )
+    .with_memory_budget(NonZeroU64::new(4096).unwrap(), 2)
+    .unwrap();
+    let a = store
+        .store_with_placement(&value(8), ValuePlacement::Memory)
+        .unwrap();
+    let b = store
+        .store_with_placement(&value(9), ValuePlacement::Memory)
+        .unwrap();
+    store.read(&a).unwrap().unwrap();
+    let c = store
+        .store_with_placement(&value(10), ValuePlacement::Memory)
+        .unwrap();
+    assert!(store.read(&b).unwrap().is_none());
+    assert!(store.read(&a).unwrap().is_some());
+    assert!(store.read(&c).unwrap().is_some());
+    assert_eq!(store.take_evicted(1).unwrap().handles, vec![b]);
+    assert_eq!(store.retention_usage().unwrap().memory_count, 2);
+}
+
+#[test]
+fn memory_limits_cannot_discard_an_existing_cache_or_undelivered_loss_notices() {
+    let root = private_temp();
+    let mut store = tiered(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        None,
+    )
+    .with_memory_budget(NonZeroU64::new(4096).unwrap(), 1)
+    .unwrap();
+    let a = store
+        .store_with_placement(&value(8), ValuePlacement::Memory)
+        .unwrap();
+    let b = store
+        .store_with_placement(&value(9), ValuePlacement::Memory)
+        .unwrap();
+    assert!(matches!(
+        store.store_with_placement(&value(10), ValuePlacement::Memory),
+        Err(StoreError::Limit(_))
+    ));
+    assert!(store.read(&a).unwrap().is_none());
+    assert!(store.read(&b).unwrap().is_some());
+    assert!(store.release(&b).unwrap());
+    assert!(matches!(
+        store.with_memory_budget(NonZeroU64::new(8192).unwrap(), 2),
+        Err(StoreError::Conflict)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_archive_inspection_preserves_memory_loss_notifications() {
+    let root = private_temp();
+    let archive = root.path().join("archive");
+    let mut store = tiered(&root.path().join("live"), &archive, None)
+        .with_memory_budget(NonZeroU64::new(4096).unwrap(), 1)
+        .unwrap();
+    let a = store
+        .store_with_placement(&value(8), ValuePlacement::Memory)
+        .unwrap();
+    store
+        .store_with_placement(&value(9), ValuePlacement::Memory)
+        .unwrap();
+    let target = root.path().join("unrelated");
+    fs::write(&target, "safe").unwrap();
+    let link = archive.join(format!("{a}.json"));
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(store.take_evicted(1).is_err());
+    fs::remove_file(link).unwrap();
+    assert_eq!(store.take_evicted(1).unwrap().handles, [a]);
+    assert_eq!(fs::read_to_string(target).unwrap(), "safe");
+}
+
+#[tokio::test]
+async fn worker_memory_placement_and_auto_keep_are_independent() {
+    use wes_engine::storage::{PublicationPolicy, Retention, StoreWorkerLimits, spawn_store};
+    let root = private_temp();
+    let (worker, task) = spawn_store(
+        tiered(
+            &root.path().join("live"),
+            &root.path().join("archive"),
+            None,
+        ),
+        StoreWorkerLimits::default(),
+    )
+    .unwrap();
+    let memory = worker.clone().with_placement(ValuePlacement::Memory);
+    let transient = memory
+        .publish(value(8), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(!transient.kept);
+    assert!(!transient.requires_ownership_record);
+    let automatic = memory
+        .publish(value(9), PublicationPolicy::AutomaticUpToBytes(u64::MAX))
+        .await
+        .unwrap();
+    assert!(automatic.kept);
+    assert!(!automatic.requires_ownership_record);
+    assert_eq!(automatic.retention, Retention::Automatic);
+    let ordinary = worker
+        .publish(value(10), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(ordinary.requires_ownership_record);
+    assert!(!ordinary.kept);
+    let lease = memory
+        .hold(transient.handle.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(memory.release(transient.handle.clone()).await.is_err());
+    let kept = worker.retain(transient.handle.clone()).await.unwrap();
+    assert_eq!(kept.handle, transient.handle);
+    assert_eq!(kept.retention, Retention::Protected);
+    drop(lease);
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+    let reopened = tiered(
+        &root.path().join("new-live"),
+        &root.path().join("archive"),
+        None,
+    );
+    assert_eq!(
+        reopened.read(&kept.handle).unwrap().unwrap().value,
+        value(8)
+    );
+    assert_eq!(
+        reopened.read(&automatic.handle).unwrap().unwrap().value,
+        value(9)
+    );
+    assert!(reopened.read(&ordinary.handle).unwrap().is_none());
+}
+
+#[test]
+fn file_holds_protect_admitted_reads_through_promotion_and_archive_only_reads() {
+    use wes_engine::storage::Retention;
+    let root = private_temp();
+    let live = root.path().join("live");
+    let archive = root.path().join("archive");
+    let mut store = tiered(&live, &archive, Some(1));
+    let first = store.store(&value(8)).unwrap();
+    let hold = store.hold(&first).unwrap().unwrap();
+    store.store(&value(9)).unwrap();
+    assert!(store.read(&first).unwrap().is_some());
+    assert!(store.release(&first).is_err());
+    store
+        .keep_with_reason(&first, Retention::Protected)
+        .unwrap();
+    assert!(store.release(&first).is_err());
+    drop(hold);
+    store.store(&value(10)).unwrap();
+    assert!(!store.has_temporary_file(&first).unwrap());
+    assert!(
+        store
+            .take_evicted(10)
+            .unwrap()
+            .handles
+            .iter()
+            .all(|h| h != &first)
+    );
+    let hold = store.hold(&first).unwrap().unwrap();
+    assert!(store.release(&first).is_err());
+    drop(hold);
+    assert!(store.release(&first).unwrap());
+    assert!(store.read(&first).unwrap().is_none());
+    assert!(store.hold(&ValueHandle::fresh()).unwrap().is_none());
+}
 
 fn private_temp() -> TempDir {
     let mut builder = tempfile::Builder::new();

@@ -147,6 +147,13 @@ pub(super) async fn state(
     {
         return StatusCode::CONFLICT.into_response();
     }
+    let (session, _worker) =
+        match super::read_context::resolve(&current.session, &shared.values, request.headers())
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
     let Ok(node) = NodeId::new(node) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -161,8 +168,7 @@ pub(super) async fn state(
     {
         return StatusCode::CONFLICT.into_response();
     }
-    let Ok((mut owner, mut state)) = current
-        .session
+    let Ok((mut owner, mut state)) = session
         .view_interaction(node.clone(), identity.clone(), None)
         .await
     else {
@@ -193,8 +199,7 @@ pub(super) async fn state(
         else {
             return StatusCode::BAD_REQUEST.into_response();
         };
-        match current
-            .session
+        match session
             .view_interaction(node.clone(), identity.clone(), Some(edit))
             .await
         {
@@ -211,8 +216,7 @@ pub(super) async fn state(
                 }
                 problem = Some(error.to_string());
                 status = StatusCode::CONFLICT;
-                let Ok(pair) = current
-                    .session
+                let Ok(pair) = session
                     .view_interaction(node.clone(), identity.clone(), None)
                     .await
                 else {

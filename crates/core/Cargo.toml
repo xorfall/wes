@@ -9,7 +9,7 @@ description = "wes immutable domain values, shapes and contracts"
 
 [dependencies]
 bigdecimal.workspace = true
-indexmap.workspace = true
+indexmap = { workspace = true, features = ["serde"] }
 thiserror.workspace = true
 regex.workspace = true
 yaml-rust2.workspace = true

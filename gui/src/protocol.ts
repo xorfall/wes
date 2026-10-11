@@ -238,6 +238,7 @@ export type Event =
         readonly classes: readonly { kind: Retention; count: number; bytes: number }[];
         readonly liveBytes: number; readonly archiveBytes: number;
         readonly privateCount: number; readonly privateBytes: number;
+        readonly memoryCount: number; readonly memoryBytes: number;
       };
       readonly places: {
         readonly name: string;

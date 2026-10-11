@@ -138,6 +138,8 @@ pub struct Branch {
 pub enum Expression {
     /// An authored program owned by a separate volatile execution context.
     Sandbox(Vec<Statement>),
+    /// A finite analysis with process-owned results and explicit retention.
+    Transient(Vec<Statement>),
     Fork(Vec<Branch>),
     /// One declaration unit containing ordered stages. No implicit workspace names.
     Pipeline(Vec<Statement>),
@@ -267,8 +269,12 @@ impl fmt::Display for Statement {
             f.write_str(" ")?;
         }
         match &self.expression {
-            Expression::Sandbox(statements) => {
-                f.write_str(":sandbox {\n")?;
+            Expression::Sandbox(statements) | Expression::Transient(statements) => {
+                f.write_str(if matches!(self.expression, Expression::Transient(_)) {
+                    ":transient {\n"
+                } else {
+                    ":sandbox {\n"
+                })?;
                 for statement in statements {
                     writeln!(f, "{statement}")?;
                 }
@@ -343,7 +349,7 @@ impl Statement {
     /// Includes nested branch work so admission limits cannot be evaded by grouping.
     pub fn stage_count(&self) -> usize {
         match &self.expression {
-            Expression::Sandbox(statements) => {
+            Expression::Sandbox(statements) | Expression::Transient(statements) => {
                 1 + statements.iter().map(Self::stage_count).sum::<usize>()
             }
             Expression::Pipeline(stages) => stages.iter().map(Self::stage_count).sum(),

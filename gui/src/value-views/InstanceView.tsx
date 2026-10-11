@@ -95,13 +95,13 @@ export function presentFrame(frame:ViewFrame, context:Context, patches?:InputPat
   return build(frame.root);
 }
 
-export function InstanceView({value,engine,mode,display}:{value:StoredValue;engine?:Engine;mode:Mode;display?:InstanceDisplay}){
+export function InstanceView({value,engine,mode,display,readScope}:{readScope?:string;value:StoredValue;engine?:Engine;mode:Mode;display?:InstanceDisplay}){
   const identity=displayIdentity(value,engine?.viewGeneration());
   if(engine&&display)return <InstancePlacement key={identity} value={value} engine={engine} display={display}>
-    {report=><ActiveInstanceView value={value} engine={engine} mode={mode} onFrame={report}/>}
+    {report=><ActiveInstanceView readScope={readScope} value={value} engine={engine} mode={mode} onFrame={report}/>}
   </InstancePlacement>;
   return <div className="view-instance-viewport">
-    <ActiveInstanceView key={identity} value={value} engine={engine} mode={mode}/>
+    <ActiveInstanceView readScope={readScope} key={identity} value={value} engine={engine} mode={mode}/>
   </div>;
 }
 
@@ -113,7 +113,7 @@ const OBSERVATION={
   stop:"Stop reading results into this view. Source commands keep running, and reopening the view does not resume reading.",
 };
 const PIN_DESCRIPTION="Keep exactly the displayed input as a new protected result, then switch this view to it once retention is acknowledged. The source is not run again. Keep is a separate action for whole results.";
-function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engine?:Engine;mode:Mode;onFrame?:(frame:ViewFrame)=>void}){
+function ActiveInstanceView({value,engine,mode,onFrame,readScope}:{readScope?:string;value:StoredValue;engine?:Engine;mode:Mode;onFrame?:(frame:ViewFrame)=>void}){
   const box=useRef<HTMLDivElement>(null),columns=useColumns(box);
   const id=typeof value.data==="object"&&value.data!==null&&"id" in value.data ? String(value.data.id):undefined;
   const instance=typeof value.data==="object"&&value.data!==null&&"instance" in value.data ? String(value.data.instance):undefined;
@@ -131,13 +131,13 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
     setSample({});
     cache.current=new FramePresentationCache();
     if(!engine||!id||!instance){setSample({problem:"Open this view in its workspace to resolve its live instance."});return;}
-    return engine.watchViewFrame(id,instance,setSample,{reopen:attempt>0});
-  },[engine,id,instance,generation,attempt]);
+    return engine.watchViewFrame(id,instance,setSample,readScope?{reopen:attempt>0,readScope}:{reopen:attempt>0});
+  },[engine,id,instance,generation,attempt,readScope]);
   const linked=sample.frame?.instances.some(i=>i.linkedInputs.length)??false;
   useEffect(()=>{
     setPatches({});
     if(linked && engine && id && instance && generation)return engine.watchViewInputs(id,instance,generation,setPatches);
-  },[linked,engine,id,instance,generation]);
+  },[linked,engine,id,instance,generation,readScope]);
   const shown=useMemo(()=>{
     if(!sample.frame)return {};
     try{return {node:presentFrame(sample.frame,{mode,columns,lines:mode==="preview"?200:4000,density:"normal",locale:"en-GB",timeZone:"UTC"},patches.frame,cache.current)};}
@@ -221,12 +221,12 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
   const stateful=interactive.length>0, shared=interactive.some(definition=>Object.values(definition.outputs??{}).some(port=>port.shared));
   const frozen=`${connected>0?`the inputs of this view and its ${connected} connected ${connected===1?"view":"views"}`:"this view’s inputs"}, where they came from${stateful?`, confirmed view state${shared?" and outputs":""}`:""}`;
   return <div className="view-instance" ref={box}>
-    {engine && sample.frame && <details className="view-result-actions"><summary>{outputs.length?"Outputs & snapshot":"Snapshot"}</summary><div className="view-observation-controls">
+    {engine && sample.frame && !readScope && <details className="view-result-actions"><summary>{outputs.length?"Outputs & snapshot":"Snapshot"}</summary><div className="view-observation-controls">
       {outputs.map(({entry,port})=><button key={`${entry.id}/${port}`} disabled={controlling||!settled[entry.id]} aria-description={`Save the confirmed ${port} output of ${entry.id} as a new result`} onClick={()=>void capture(entry.id,port)}>Save ${entry.id}.{port} as result</button>)}
       <button disabled={controlling||unsettled} aria-description={`Create a separate result holding ${frozen}`} onClick={()=>void capture(sample.frame!.root)}>Save snapshot as result</button>
       <span className="mono-faint">{`Creates a separate result holding ${frozen}. Source commands are not rerun; this view keeps showing.${stateful?" Pending edits must be confirmed first.":""} The result uses your normal retention settings; check its kept status.`}</span>
     </div></details>}
-    {queries.map(entry=><div className="view-observation-controls" key={entry.id}>
+    {!readScope && queries.map(entry=><div className="view-observation-controls" key={entry.id}>
       <span>{entry.query!.environment && `${entry.query!.environment} · `}{entry.query!.template}{entry.query!.adapter?` → ${entry.query!.adapter}`:""}</span><button disabled={controlling||unsettled} aria-description="Run this view's query now. Only SAFE operations are admitted. Opening, observing or selecting never applies it." onClick={()=>void applyQuery(entry)}>Apply</button>
       {(entry.observing||entry.query!.running) && <button disabled={controlling} aria-description="Stop this view's query and cancel its request. Source commands are not affected." onClick={()=>void stopQuery(entry)}>Stop query</button>}
       <span className="mono-faint">{entry.query!.running?(entry.query!.mode==="live"?"Live query · bounded stream window":"Query in progress · previous result remains visible"):entry.observing?"Following committed selections":"Query not running · Apply to run it"}</span>
@@ -238,12 +238,12 @@ function ActiveInstanceView({value,engine,mode,onFrame}:{value:StoredValue;engin
     {entries.filter(i=>!i.query).map(i=>i.inputProblem?<p className="mono-warn" key={i.id} role="status">{i.inputProblem}</p>:null)}{patches.problem && <p className="mono-warn" role="status">{patches.problem}</p>}{sample.problem||shown.problem
     ? <div><p className="mono-warn" role="status">{sample.problem??shown.problem}</p>{engine && sample.problem && <button className="cell-action" onClick={()=>setAttempt(old=>old+1)}>Reopen view</button>}</div>
     : shown.node ? <ViewDatasetContext.Provider value={datasetBindings}><InstanceInteractionHost.Provider value={interactionHost}><RenderObservationContext.Provider value={observation}><Presented node={shown.node}/></RenderObservationContext.Provider></InstanceInteractionHost.Provider></ViewDatasetContext.Provider> : <p className="mono-faint" role="status">{sample.paused?"View paused while other visible views are active. It will open when space is available.":"Reading view…"}</p>}
-    {engine && root && <ReferenceFooter entry={root} following={following.length>0} active={active} controlling={controlling||unsettled}
+    {engine && root && <ReferenceFooter transient={!!readScope} entry={root} following={following.length>0} active={active} controlling={controlling||unsettled}
       request={pinRequest?.revision===root.revision ? pinRequest.name : undefined} onObserve={()=>void observe()} onPin={()=>void pin(root)}/>}</div>;
 }
 
 /** What the view's input refers to, and the actions on that reference, below the view it describes. */
-function ReferenceFooter({entry,following,active,controlling,request,onObserve,onPin}:{entry:Entry;following:boolean;active:boolean;controlling:boolean;request?:string;onObserve:()=>void;onPin:()=>void}){
+function ReferenceFooter({entry,following,active,controlling,request,onObserve,onPin,transient}:{transient?:boolean;entry:Entry;following:boolean;active:boolean;controlling:boolean;request?:string;onObserve:()=>void;onPin:()=>void}){
   const label=referenceLabel(entry);
   const refusal=pinRefusal(entry);
   const rootCurrent=entry.inputReference.kind==="current";
@@ -257,7 +257,7 @@ function ReferenceFooter({entry,following,active,controlling,request,onObserve,o
       <span className="mono-faint">{rootCurrent
         ? active?"Reading committed results":"Not reading · Start to read committed results"
         : active?"Members: reading committed results":"Members: not reading · Start to read their committed results"}</span></>}
-    <button aria-description={refusal??PIN_DESCRIPTION} disabled={controlling||refusal!==undefined} onClick={onPin}>Pin input</button>
+    {!transient && <button aria-description={refusal??PIN_DESCRIPTION} disabled={controlling||refusal!==undefined} onClick={onPin}>Pin input</button>}
     {refusal && <span className="mono-faint">{refusal}</span>}
     {request && <span className="mono-dim" role="status">{`Pin requested as $${request}. Its cell reports retention and binding; this view changes only after both succeed.`}</span>}
   </footer>;

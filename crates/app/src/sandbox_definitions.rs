@@ -20,6 +20,7 @@ struct Document {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Saved {
+    kind: wes_engine::session::sandbox::Kind,
     name: String,
     source: String,
     owner: String,
@@ -98,7 +99,7 @@ impl DefinitionStore for FileDefinitions {
         }
         let document: Document =
             serde_json::from_slice(&bytes).map_err(|_| "Invalid sandbox definitions")?;
-        if document.version != 1 {
+        if document.version != 2 {
             return Err("Unsupported sandbox definition version".into());
         }
         document
@@ -106,6 +107,7 @@ impl DefinitionStore for FileDefinitions {
             .into_iter()
             .map(|s| {
                 Ok(Definition {
+                    kind: s.kind,
                     name: s.name,
                     source: s.source,
                     owner: s.owner,
@@ -134,10 +136,11 @@ impl DefinitionStore for FileDefinitions {
     }
     fn save(&self, definitions: &[Definition]) -> Result<(), String> {
         let document = Document {
-            version: 1,
+            version: 2,
             definitions: definitions
                 .iter()
                 .map(|d| Saved {
+                    kind: d.kind,
                     name: d.name.clone(),
                     source: d.source.clone(),
                     owner: d.owner.clone(),
@@ -187,5 +190,28 @@ impl DefinitionStore for FileDefinitions {
         })();
         let _ = directory.remove_file(&temporary);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unsupported_definition_documents_are_not_migrated_or_removed() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace =
+            wes_engine::workspace::WorkspaceName::new("definition-fixture".into()).unwrap();
+        let store = FileDefinitions::new(home.path().to_owned(), &workspace);
+        std::fs::create_dir_all(&store.directory).unwrap();
+        let file = store.directory.join(&store.name);
+        for bytes in [
+            r#"{"version":1,"definitions":[{"name":"sample","source":"1 + 2 > value","owner":"fixture","environment":null}]}"#,
+            r#"{"version":2,"definitions":[{"name":"sample","source":"1 + 2 > value","owner":"fixture","environment":null}]}"#,
+        ] {
+            std::fs::write(&file, bytes).unwrap();
+            assert!(store.load().is_err());
+            assert!(store.remove().is_err());
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), bytes);
+        }
     }
 }

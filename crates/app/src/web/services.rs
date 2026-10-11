@@ -40,7 +40,7 @@ pub(super) struct StorageReport {
 impl StorageReport {
     pub fn event(&self) -> serde_json::Value {
         json!({"event":"storage","workspace":self.workspace,"places":self.places.iter().map(|p|json!({"name":p.name,"where":p.location,"holds":p.holds,"durable":p.durable,"files":p.files,"bytes":p.bytes})).collect::<Vec<_>>(),
-            "retention":{"classes":self.retention.classes.iter().map(|(kind,count,bytes)|json!({"kind":kind.as_str(),"count":count,"bytes":bytes})).collect::<Vec<_>>(),"liveBytes":self.retention.live_bytes,"archiveBytes":self.retention.archive_bytes,"privateCount":self.retention.private_count,"privateBytes":self.retention.private_bytes}})
+            "retention":{"classes":self.retention.classes.iter().map(|(kind,count,bytes)|json!({"kind":kind.as_str(),"count":count,"bytes":bytes})).collect::<Vec<_>>(),"liveBytes":self.retention.live_bytes,"archiveBytes":self.retention.archive_bytes,"privateCount":self.retention.private_count,"privateBytes":self.retention.private_bytes,"memoryCount":self.retention.memory_count,"memoryBytes":self.retention.memory_bytes}})
     }
 }
 pub(super) async fn storage(shared: &Shared, current: crate::CurrentSession) -> Response {

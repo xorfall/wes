@@ -104,6 +104,25 @@ pub struct PreparedBatch {
     unbound: Vec<String>,
 }
 impl PreparedBatch {
+    pub(crate) fn finite_analysis(&self) -> bool {
+        self.changes.iter().all(|change| match change {
+            BatchChange::Declaration(PreparedChange {
+                operation: Change::Node { task, .. },
+                ..
+            }) => {
+                !matches!(task, BoundTask::SourceLaunch(_))
+                    && !task.lifetime()
+                    && !task
+                        .call()
+                        .is_some_and(|call| call.streaming() || call.interactive())
+            }
+            BatchChange::Control(PreparedControl {
+                operation: Control::Policy(_, crate::runtime::Policy::Reactive),
+                ..
+            }) => false,
+            _ => true,
+        })
+    }
     pub(crate) fn selection_call(&self) -> Option<&crate::providers::BoundCall> {
         match self.changes.as_slice() {
             [
@@ -301,7 +320,12 @@ impl Workspace {
     pub fn draft(&self) -> Result<DeclarationDraft, WorkspaceError> {
         self.next_revision()?;
         Ok(DeclarationDraft {
-            reserved_names: vec![],
+            reserved_names: self
+                .saved_selections
+                .iter()
+                .chain(self.pending_saves.iter())
+                .map(|s| s.name.clone())
+                .collect(),
             access: Default::default(),
             environments: self.environments.planning_snapshot(),
             environment_images: self.environment_images.clone(),
@@ -455,7 +479,7 @@ impl Workspace {
 
 impl DeclarationDraft {
     pub(crate) fn with_reserved_names(mut self, names: impl Iterator<Item = String>) -> Self {
-        self.reserved_names = names.collect();
+        self.reserved_names.extend(names);
         self
     }
     pub(crate) fn with_access(mut self, access: crate::access::WriteScope) -> Self {

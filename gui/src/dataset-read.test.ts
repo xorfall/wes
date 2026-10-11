@@ -94,6 +94,7 @@ describe("dataset page decoding", () => {
     expect(await failure(410, "DATASET_WITHDRAWN")).toMatchObject({ kind: "withdrawn", message: "Access withdrawn" });
     expect(await failure(403, "DATASET_ACCESS_REFUSED")).toMatchObject({ kind: "withdrawn", message: "Access withdrawn" });
     expect(await failure(404, "DATASET_MISSING")).toMatchObject({ kind: "missing" });
+    expect(await failure(410, "DATASET_SCOPE_ENDED")).toMatchObject({kind:"missing",message:"synthetic DATASET_SCOPE_ENDED"});
     expect(await failure(413, "DATASET_READ_LIMIT")).toMatchObject({ kind: "limit" });
     expect(await failure(500, "DATASET_READ_FAILED")).toMatchObject({ kind: "failed" });
     expect(await failure(409, "DATASET_SESSION_CHANGED")).toMatchObject({ kind: "session" });
@@ -147,4 +148,20 @@ describe("Engine.readDataset", () => {
     await expect(engine("g2").readDataset("h", "g1", reference(), "", { from: "0" }, 2, new AbortController().signal)).rejects.toMatchObject({ kind: "session" });
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+it("reads an exact projected Dataset through the live scope and never retries expired scope authority",async()=>{
+  const reader=Object.assign(new Engine(),{generation:"g1"}) as Engine;
+  const fetch=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(reply()),{status:200})).mockResolvedValueOnce(new Response(JSON.stringify({error:{code:"DATASET_SCOPE_ENDED",message:"Scope ended",retryable:false}}),{status:410}));
+  vi.stubGlobal("fetch",fetch);
+  try {
+    const scope="00000000-0000-4000-8000-0000000000d4";
+    const args=["h","g1",reference(),"/events",{from:"9007199254740990"},2,new AbortController().signal,"outputs",{scope,select:"/analysis"}] as const;
+    await reader.readDataset(...args);
+    expect(fetch.mock.calls[0]![0]).toBe("/datasets/h?select=%2Fanalysis%2Fevents&from=9007199254740990&limit=2");
+    expect(fetch.mock.calls[0]![1].headers["X-Wes-Scope"]).toBe(scope);
+    await expect(reader.readDataset(...args)).rejects.toMatchObject({kind:"missing"});
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls.every(([url])=>url.startsWith("/datasets/"))).toBe(true);
+  } finally {vi.unstubAllGlobals();}
 });

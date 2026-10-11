@@ -748,7 +748,7 @@ impl SessionValues {
                                     result.problem = Some(error);
                                 }
                             }
-                        } else if !streaming && let Some((recorder, required)) = &recording {
+                        } else if !streaming && stored.requires_ownership_record && let Some((recorder, required)) = &recording {
                             // Finite public Temporary bytes need ownership for later
                             // explicit work deletion, not a false retention receipt.
                             let owned = Record::Journal(JournalEntry::Payload { node: node.clone(), run: run.clone(), handle: stored.handle.clone() });
@@ -767,6 +767,10 @@ impl SessionValues {
                 Completed::Published { node, result, charge, recording_failed, version, streaming, previous, pin }
             });
         }
+    }
+    pub(super) fn eviction_wakeup(&mut self) {
+        self.evictions_due = true;
+        self.pump();
     }
     /// Applies only run/handle-authorized evictions. Late storage completion cannot resurrect a node.
     pub async fn completed(&mut self, workspace: &mut Workspace) -> ValueEffects {

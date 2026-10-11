@@ -12,9 +12,9 @@ import type { StoredIdentity } from "../surface/render/dataset-source";
  * chart dispatch, the same refusal to pretend a private or missing value is readable. This wraps
  * that dispatch around one fetched value so panels never reimplement it.
  */
-export function ValueView({ value, cacheKey, engine, stored, name, selectionSource }: { readonly selectionSource?:ValueBlockProps["selectionSource"]; readonly value: StoredValue; readonly cacheKey?: string; readonly engine?: Engine; readonly stored?: StoredIdentity; readonly name?: string }) {
+export function ValueView({ value, cacheKey, engine, stored, name, selectionSource, readScope }: { readonly readScope?:string; readonly selectionSource?:ValueBlockProps["selectionSource"]; readonly value: StoredValue; readonly cacheKey?: string; readonly engine?: Engine; readonly stored?: StoredIdentity; readonly name?: string }) {
   if (httpTrace(value.data)) return <HttpInspection data={value.data} />;
-  return <ValueBlock selectionSource={selectionSource} engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} cacheKey={cacheKey ?? `view:${keyOf(value)}`} mode="window" inCell={false} />;
+  return <ValueBlock readScope={readScope} selectionSource={selectionSource} engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} cacheKey={cacheKey ?? `view:${keyOf(value)}`} mode="window" inCell={false} />;
 }
 
 /** Identity for values drawn outside a cell, where no handle names them. */

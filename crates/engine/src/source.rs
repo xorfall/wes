@@ -512,6 +512,16 @@ impl PreparedSource {
         workspace: &mut Workspace,
         now: std::time::Duration,
     ) -> Result<BatchApplied, WorkspaceError> {
+        if workspace.transient_storage.is_some() && !self.batch.finite_analysis() {
+            return Err(WorkspaceError::Rejected {
+                diagnostics: vec![Diagnostic::error(
+                    "TRN001",
+                    Span::at(0),
+                    "Transient analysis requires finite operations; no execution was started.",
+                )],
+                issues: vec![],
+            });
+        }
         if workspace
             .safe_observation
             .is_some_and(|kind| !self.batch.safe_observation(kind))
@@ -519,6 +529,9 @@ impl PreparedSource {
             return Err(WorkspaceError::UnsafeObservation);
         }
         workspace.commit_batch(self.batch, now)
+    }
+    pub(crate) fn finite_analysis(&self) -> bool {
+        self.batch.finite_analysis()
     }
 }
 

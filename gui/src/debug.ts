@@ -76,6 +76,7 @@ export function report(
     lines.push("", "payloads      unique handles by retention reason (not a whole-disk quota)");
     for (const item of storage.retention.classes) lines.push(`  ${item.kind.padEnd(12)}${item.count} results, ${bytes(item.bytes)}`);
     lines.push(`  physical copies: live ${bytes(storage.retention.liveBytes)}, archive ${bytes(storage.retention.archiveBytes)}`);
+    lines.push(`  encoded memory: ${storage.retention.memoryCount} results, ${bytes(storage.retention.memoryBytes)}`);
     lines.push(`  private memory: ${storage.retention.privateCount} results, ${bytes(storage.retention.privateBytes)} logical charge`);
     lines.push("  Automatic cleanup is off. Unknown means no recorded retention reason, not permission to delete.");
   }

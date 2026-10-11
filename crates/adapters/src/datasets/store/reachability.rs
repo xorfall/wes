@@ -6,6 +6,7 @@ impl DatasetStore {
         &mut self,
     ) -> Result<wes_engine::storage::datasets::DatasetCleanup, DatasetError> {
         self.ready()?;
+        self.expire_scopes()?;
         // Snapshot away superseded journal transactions before unlinking the
         // objects they used for successor validation. The selected prefixes and
         // their commit-proof manifest lineage remain reachable.
@@ -36,7 +37,7 @@ impl DatasetStore {
                     &reference,
                     self.limits.objects.index.traversal_nodes,
                 )?;
-                if first && !deleted {
+                if first && !deleted && self.scope_is_open(&manifest.lifetime) {
                     selected.push(manifest.clone());
                 }
                 first = false;
@@ -141,6 +142,17 @@ impl DatasetStore {
             shared_bytes: Some(shared_bytes),
             pending_bytes: Some(pending_bytes),
             complete: pending_bytes == 0,
+            preserve_retained_captures: self
+                .references
+                .values()
+                .filter(|r| {
+                    matches!(
+                        r.lifetime,
+                        wes_engine::storage::DatasetLifetime::Transient(_)
+                    ) && r.prefixes.is_empty()
+                })
+                .flat_map(|r| r.captures.iter().map(|c| c.handle.clone()))
+                .collect(),
             released_captures: self
                 .references
                 .values()

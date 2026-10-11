@@ -181,10 +181,7 @@ fn payloads(image: &HistoryImage) -> BTreeSet<ValueHandle> {
         .journal()
         .iter()
         .flat_map(|e| {
-            let mut handles = Vec::new();
-            if let Some(handle) = e.payload_reference() {
-                handles.push(handle.clone());
-            }
+            let mut handles = e.payload_references();
             if let JournalEntry::Retired(r) = e {
                 handles.extend(r.payloads.iter().cloned());
             }

@@ -178,6 +178,9 @@ impl RecorderTask {
     }
 }
 impl Recorder {
+    pub(crate) fn check_record(&self, record: &Arc<Record>) -> Result<(), RejectedRecord> {
+        self.cost(record).map(|_| ())
+    }
     pub async fn claim_request(
         &self,
         record: crate::history::RequestRecord,
@@ -562,6 +565,9 @@ pub(crate) fn record_charge(record: &Record) -> u64 {
     }
     let mut size = 1024u64;
     match record {
+        Record::Journal(JournalEntry::Saved(saved) | JournalEntry::SaveIntent(saved)) => {
+            return saved.charge();
+        }
         Record::Journal(
             JournalEntry::Payload { node, run, handle }
             | JournalEntry::ProtectedRun { node, run, handle },

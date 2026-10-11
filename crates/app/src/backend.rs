@@ -170,10 +170,7 @@ pub trait WorkspaceBackend: Send {
             let mut references = self.payload_references(
                 handle,
                 name,
-                image
-                    .journal()
-                    .iter()
-                    .any(|e| e.payload_reference() == Some(handle)),
+                image.journal().iter().any(|e| e.references_payload(handle)),
                 image.charged_bytes(),
             )?;
             for (view, saved) in image

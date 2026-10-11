@@ -17,14 +17,20 @@ pub(super) async fn read(
     {
         return StatusCode::CONFLICT.into_response();
     }
+    let (session, _worker) =
+        match super::read_context::resolve(&current.session, &shared.values, request.headers())
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
     let Ok(node) = NodeId::new(node) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let Ok(_permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let Ok(patches) = current
-        .session
+    let Ok(patches) = session
         .view_input_patches(node.clone(), identity.clone())
         .await
     else {
@@ -88,7 +94,7 @@ pub(super) async fn read(
     {
         return StatusCode::CONFLICT.into_response();
     }
-    match current.session.view_input_patches(node, identity).await {
+    match session.view_input_patches(node, identity).await {
         Ok(now) if now.revisions == patches.revisions && now.problems == patches.problems => {}
         Ok(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Err(_) => return StatusCode::FORBIDDEN.into_response(),

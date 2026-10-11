@@ -500,7 +500,7 @@ export function decodeDatasetHead(raw: unknown, original: DatasetReference, show
 const FAILURES: Readonly<Record<string, DatasetFailureKind>> = {
   DATASET_READ_BUSY: "busy", DATASET_RETIREMENT_BUSY: "busy",
   DATASET_WITHDRAWN: "withdrawn", DATASET_ACCESS_REFUSED: "withdrawn",
-  DATASET_MISSING: "missing",
+  DATASET_MISSING: "missing", DATASET_SCOPE_ENDED: "missing",
   DATASET_READ_LIMIT: "limit", DATASET_REPLY_LIMIT: "limit",
   DATASET_SESSION_CHANGED: "session", DATASET_SESSION_ENDED: "session",
   DATASET_CONTINUITY_CHANGED: "continuity",
@@ -517,7 +517,7 @@ export async function datasetFailure(response: Response): Promise<DatasetReadErr
       ({ code, message, retryable } = body.error as { code: string; message: string; retryable: boolean });
     }
   } catch { /* An unreadable body keeps the status explanation. */ }
-  const kind = response.status === 410 || response.status === 403 ? "withdrawn"
+  const kind = code === "DATASET_SCOPE_ENDED" ? "missing" : response.status === 410 || response.status === 403 ? "withdrawn"
     : FAILURES[code] ?? (response.status === 404 ? "missing" : response.status === 413 ? "limit" : response.status === 409 ? "session" : response.status >= 500 ? "failed" : "invalid");
   // A withdrawn answer never carries a reason that could describe the withdrawn data.
   return new DatasetReadError(kind, response.status, code, kind === "withdrawn" ? "Access withdrawn" : message, kind === "busy" && retryable);

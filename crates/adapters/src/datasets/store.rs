@@ -34,6 +34,7 @@ mod port;
 mod reachability;
 mod reconciliation;
 mod references;
+mod scopes;
 mod transaction;
 mod traversal;
 mod workspaces;
@@ -173,6 +174,8 @@ struct Snapshot {
     writes: BTreeMap<String, catalog::WriteWitness>,
 }
 pub struct DatasetStore {
+    scope: Option<wes_engine::storage::TransientScope>,
+    scopes: BTreeMap<String, wes_engine::storage::TransientScopeWitness>,
     files: ObjectFiles,
     catalog_dir: Dir,
     limits: StoreLimits,
@@ -252,6 +255,8 @@ impl DatasetStore {
             snapshot
         };
         let mut store = Self {
+            scope: None,
+            scopes: BTreeMap::new(),
             files,
             catalog_dir,
             limits,
@@ -278,6 +283,11 @@ impl DatasetStore {
             changes: tokio::sync::watch::channel(Default::default()).0,
         };
         store.reload()?;
+        // A torn/uncertain catalog remains open for explicit reconciliation;
+        // reopening cannot silently repair or trim an unknown transaction.
+        if store.ready().is_ok() {
+            store.expire_scopes()?;
+        }
         Ok(store)
     }
     pub fn store_id(&self) -> &str {
@@ -312,7 +322,9 @@ impl DatasetStore {
     }
     pub fn descriptor(&self, dataset: &str) -> Result<DatasetRef, DatasetError> {
         let (reference, manifest) = self.root(dataset)?.ok_or(DatasetError::Unavailable)?;
-        descriptor(&reference, &manifest)
+        let prefix = descriptor(&reference, &manifest)?;
+        self.check_lifetime(&prefix, &manifest.lifetime)?;
+        Ok(prefix)
     }
     /// Storage identity validation is additional to, never a replacement for, the runtime's
     /// guarded result read. An uncommitted physical manifest cannot be laundered into a read.
@@ -338,6 +350,9 @@ impl DatasetStore {
             self.committed_generation(reference, reference.generation(), roots, authorize, work)?;
         if &descriptor(&object, &manifest)? != reference {
             return Err(DatasetError::Unavailable);
+        }
+        if authorize {
+            self.check_lifetime(reference, &manifest.lifetime)?;
         }
         Ok(manifest)
     }
@@ -593,6 +608,7 @@ impl DatasetStore {
         self.check_same_attempt(&original, &latest, work)?;
         self.check_policy_reads(&latest.dataset_reads.iter().cloned().collect())?;
         let head = descriptor(&root.manifest, &latest)?;
+        self.check_lifetime(&head, &latest.lifetime)?;
         self.info_from_manifest(&head, latest, work)
     }
     fn check_same_attempt(
@@ -703,6 +719,9 @@ impl DatasetStore {
         self.ready()?;
         if self.gates.contains_key(&candidate.dataset) {
             return Err(DatasetError::Withdrawn);
+        }
+        if candidate.lifetime != self.current_lifetime() {
+            return Err(DatasetError::Conflict);
         }
         self.next_sequence
             .checked_add(1)
@@ -1008,6 +1027,9 @@ impl DatasetStore {
             } else {
                 false
             };
+            if candidate.lifetime != previous.lifetime && !continuation {
+                return Err(DatasetError::Conflict);
+            }
             if previous.lifecycle != Lifecycle::Open
                 && (candidate.summary != previous.summary
                     || candidate.index != previous.index
@@ -1380,10 +1402,12 @@ impl DatasetStore {
                 ) {
                     return Err(DatasetError::StorageCorrupt);
                 }
-                if let Some(checkpoint) = manifest.checkpoint {
+                if let Some(checkpoint) = &manifest.checkpoint
+                    && self.payload_required(prefix, &manifest.lifetime, &references)
+                {
                     let cp = self
                         .files
-                        .read_checkpoint(&checkpoint, &manifest.dataset, None)?;
+                        .read_checkpoint(checkpoint, &manifest.dataset, None)?;
                     let same_attempt = write.state == catalog::WriteState::Committed
                         || write.operation == catalog::WriteOperation::Append;
                     if cp.analysis != write.owner.lineage
@@ -1396,6 +1420,9 @@ impl DatasetStore {
             }
         }
         for reference in references.values() {
+            if !self.scope_is_open(&reference.lifetime) {
+                continue;
+            }
             for prefix in &reference.prefixes {
                 let manifest = self.resolve_committed(prefix, &roots, false)?;
                 self.verify_manifest(&manifest)?;
@@ -1408,12 +1435,14 @@ impl DatasetStore {
             {
                 continue;
             }
-            self.verify_manifest(
-                &self
-                    .files
-                    .read_manifest(&root.manifest, None)
-                    .map_err(|_| DatasetError::StorageCorrupt)?,
-            )?;
+            let manifest = self
+                .files
+                .read_manifest(&root.manifest, None)
+                .map_err(|_| DatasetError::StorageCorrupt)?;
+            let prefix = descriptor(&root.manifest, &manifest)?;
+            if self.payload_required(&prefix, &manifest.lifetime, &references) {
+                self.verify_manifest(&manifest)?;
+            }
         }
         let valid_bytes = prefix + recovery.commits.last().map_or(0, |entry| entry.end);
         let next_sequence = recovery
@@ -1535,6 +1564,11 @@ fn encode_snapshot(snapshot: &Snapshot, limits: StoreLimits) -> Result<Vec<u8>, 
     }
     for (id, change) in &snapshot.references {
         if id != &change.root
+            || !change.lifetime.valid()
+            || (matches!(
+                change.lifetime,
+                wes_engine::storage::DatasetLifetime::Transient(_)
+            ) && change.retention != RootRetention::Temporary)
             || !catalog::valid_uuid(id)
             || !catalog::valid_uuid(&change.transaction)
             || change.expected_generation.checked_add(1) != Some(change.generation)
@@ -1621,6 +1655,26 @@ fn descriptor(reference: &ObjectRef, manifest: &Manifest) -> Result<DatasetRef, 
 }
 
 impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
+    fn enter_scope(
+        &mut self,
+        scope: Option<&wes_engine::storage::TransientScope>,
+    ) -> Result<(), wes_engine::storage::StoreError> {
+        self.scope = None;
+        if let Some(scope) = scope {
+            if !scope.is_open() {
+                return Err(wes_engine::storage::StoreError::ScopeUnavailable);
+            }
+            self.scopes.retain(|_, witness| witness.is_open());
+            if !self.scopes.contains_key(scope.id())
+                && self.scopes.len() >= wes_budgets::get("values.outputs") as usize
+            {
+                return Err(wes_engine::storage::StoreError::Limit("transient scopes"));
+            }
+            self.scopes.insert(scope.id().into(), scope.witness());
+            self.scope = Some(scope.clone());
+        }
+        Ok(())
+    }
     fn read_access(&self) -> Result<BTreeSet<String>, wes_engine::storage::StoreError> {
         self.ready().map_err(storage_error)?;
         Ok(self.gates.keys().cloned().collect())
@@ -1703,6 +1757,14 @@ impl wes_engine::storage::datasets::DatasetStorage for DatasetStore {
                     .iter()
                     .any(|capture| capture.handle == identity.as_str())
         }))
+    }
+    fn hold(
+        &self,
+        reference: &DatasetRef,
+    ) -> Result<wes_engine::storage::datasets::DatasetReadLease, wes_engine::storage::StoreError>
+    {
+        self.read_exact(reference).map_err(storage_error)?;
+        self.acquire_reader(reference).map_err(storage_error)
     }
     fn value_root(
         &self,

@@ -35,10 +35,32 @@ const HANDLES_PER_NODE = 4;
 /** Largest dataset reply read, as the server bounds it. */
 const DATASET_REPLY_BYTES = 1024 * 1024;
 
+export interface ScopeResultSource {
+  readonly handle?: string | null; readonly scope?: string | null; readonly select: string;
+  readonly type: StoredValue["type"]; readonly meta?: StoredValue["meta"];
+  readonly node?:string; readonly run?:string|null; readonly revision?:string; readonly evidence?:string|null;
+}
 export interface SandboxObservation {
+  readonly kind: "sandbox" | "transient" | "saved";
+  readonly scope: string | null; readonly sources: Readonly<Record<string,ScopeResultSource>>;
   readonly name: string; readonly generation: string; readonly reference: string | null;
   readonly inspect: boolean | null; readonly value: StoredValue;
-  readonly state: "active" | "stopped" | "not run" | "removed";
+  readonly state: "active" | "stopped" | "not run" | "removed" | "saved" | "unconfirmed";
+}
+function sandboxObservation(value: unknown): SandboxObservation {
+  const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!object(value)
+    || !["sandbox", "transient", "saved"].includes(value.kind as string)
+    || !(value.scope === null || typeof value.scope === "string")
+    || !object(value.sources)
+    || typeof value.name !== "string" || typeof value.generation !== "string"
+    || !(value.reference === null || typeof value.reference === "string")
+    || !(value.inspect === null || typeof value.inspect === "boolean")
+    || !["active", "stopped", "not run", "removed", "saved", "unconfirmed"].includes(value.state as string)
+    || !object(value.value) || !object(value.value.type) || !object(value.value.provenance) || !("data" in value.value)) {
+    throw new Error("Invalid analysis observation.");
+  }
+  return value as unknown as SandboxObservation;
 }
 export interface EnvironmentDocument {
   readonly name: string;
@@ -67,7 +89,7 @@ export class Engine {
       headers: this.headers({ "X-Wes-Session": generation }), cache: "no-store", signal,
     });
     if (!response.ok) throw new Error(await response.text() || "Sandbox observation is unavailable.");
-    const result = (await readExactJson<{sandbox:SandboxObservation}>(response)).sandbox as SandboxObservation;
+    const result = sandboxObservation((await readExactJson<{sandbox:unknown}>(response)).sandbox);
     if (generation !== this.generation || result.generation !== generation) throw new Error("Workspace changed; sandbox observation discarded.");
     return result;
   }
@@ -99,7 +121,13 @@ export class Engine {
     if (binding !== undefined && !workspaceName(binding)) throw new Error("Invalid workspace binding");
     if (client !== undefined) this.client = client;
   }
-  private headers(extra: Record<string, string> = {}): Record<string, string> { return { ...workspaceHeaders(this.binding), ...extra }; }
+  private readonly readScopes = new Map<string,string>();
+  private readonly scopeReaders = new Map<string,number>();
+  private readonly mountScopes = new Map<string,string>();
+  private headers(extra: Record<string, string> = {}, node?: string): Record<string, string> {
+    const scope=node ? this.readScopes.get(node) : undefined;
+    return { ...workspaceHeaders(this.binding), ...(scope ? {"X-Wes-Scope":scope} : {}), ...extra };
+  }
   async environmentDocuments(signal?: AbortSignal): Promise<readonly EnvironmentDocument[]> {
     const generation = this.generation;
     if (!generation) throw new Error("Wait for the workspace connection before opening environment documents.");
@@ -557,8 +585,8 @@ export class Engine {
    * the session changed is dropped, never returned. `stream` selects the result's own snapshot's
    * outputs or its skipped records; the reply must be of that stream, under the same authority.
    */
-  async readDataset(handle: string, generation: string, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal, stream: DatasetStream = "outputs"): Promise<DatasetRead> {
-    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, {}, generation, datasetQuery(select, position, position ? limit : undefined, undefined, stream),
+  async readDataset(handle: string, generation: string, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal, stream: DatasetStream = "outputs", context?:{readonly scope?:string;readonly select?:string}): Promise<DatasetRead> {
+    return this.datasetGet(`/datasets/${encodeURIComponent(handle)}`, context?.scope?{"X-Wes-Scope":context.scope}:{}, generation, datasetQuery((context?.select??"")+select, position, position ? limit : undefined, undefined, stream),
       raw => decodeDatasetRead(raw, expected, position ? limit : undefined, stream), signal);
   }
   /**
@@ -590,9 +618,10 @@ export class Engine {
   async readViewDataset(binding: ViewDatasetBinding, expected: DatasetReference, select: string, position: DatasetPosition | undefined, limit: number, signal: AbortSignal): Promise<DatasetRead> {
     const path = `/view-datasets/${[binding.root, binding.rootInstance, binding.member].map(encodeURIComponent).join("/")}`;
     // View reads are always the frozen input's outputs: the View route refuses head and extent reads.
-    return this.datasetGet(path, { "X-Wes-View-Revision": binding.revision, "X-Wes-Input-Revision": binding.inputRevision },
+    return this.datasetGet(path, { ...this.scopeHeader(binding.root), "X-Wes-View-Revision": binding.revision, "X-Wes-Input-Revision": binding.inputRevision },
       binding.generation, datasetQuery(select, position, position ? limit : undefined), raw => decodeDatasetRead(raw, expected, position ? limit : undefined), signal);
   }
+  private scopeHeader(node:string):Record<string,string>{const scope=this.readScopes.get(node);return scope?{"X-Wes-Scope":scope}:{};}
   /** One bounded dataset GET: exact session, at most 1 MiB of reply, retry only a retryable busy. */
   private async datasetGet(path: string, extra: Record<string, string>, generation: string, query: string, decode: (raw: unknown) => DatasetRead | undefined, signal: AbortSignal): Promise<DatasetRead> {
     const changed = () => new DatasetReadError("session", 409, "DATASET_SESSION_CHANGED", "Workspace changed; the dataset read was discarded.", false);
@@ -642,7 +671,7 @@ export class Engine {
     this.nodeHandles.delete(node);
     liveReader(this).withdraw(node);
     this.valuePackages.invalidate();
-    this.viewFrames.purge(); this.viewInputs.purge(); this.viewStates.purge();
+    this.viewFrames.purge(); this.viewInputs.purge(); this.viewStates.purge(); this.readScopes.clear(); this.scopeReaders.clear(); this.mountScopes.clear();
   }
   private readonly valuePackages=new ValuePackages(async()=>{
     const generation=this.generation;
@@ -673,7 +702,7 @@ export class Engine {
     if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
     const [id,instance,mount]=node.split("/");
     const response=await fetch(`/view-instances/${encodeURIComponent(id!)}/${encodeURIComponent(instance!)}`, {
-      headers:this.headers({"X-Wes-Session":generation,"X-Wes-View-Mount":mount!,...(previous?{"X-Wes-View-Revisions":stringifyExactJson(previous.instances.map(i=>[i.id,i.instance,i.revision,i.inputRevision]))}:{}),...(etag?{"If-None-Match":etag}:{})}),signal,cache:"no-store",
+      headers:this.headers({"X-Wes-Session":generation,"X-Wes-View-Mount":mount!,...(previous?{"X-Wes-View-Revisions":stringifyExactJson(previous.instances.map(i=>[i.id,i.instance,i.revision,i.inputRevision]))}:{}),...(etag?{"If-None-Match":etag}:{})},id),signal,cache:"no-store",
     });
     if(generation!==this.generation)throw new Error("Workspace changed; view discarded.");
     if(response.status===304)return undefined;
@@ -681,6 +710,8 @@ export class Engine {
     if(!response.ok)throw new Error(await response.text()||`View unavailable (HTTP ${response.status}).`);
     const raw=await readExactJson(response) as ViewFrame;
     const frame=mergeViewFrame(raw,previous);
+    const scope=this.readScopes.get(id!);
+    if(scope)for(const entry of frame.instances){if(!this.readScopes.has(entry.id)&&this.readScopes.size>=max_active_view_roots()*max_view_frame_instances())throw new Error("View scope capacity is full.");this.readScopes.set(entry.id,scope);}
     await loadFramePackages(frame,digest=>this.readViewAsset(digest));
     if(generation!==this.generation)throw new Error("Workspace changed; view discarded.");
     return {frame,etag:response.headers.get("ETag")??""};
@@ -688,7 +719,7 @@ export class Engine {
   private readonly viewInputs = new ViewFrameReader<InputPatches>(async(node,generation,signal,etag)=>{
     if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
     const response=await fetch(`/view-inputs/${node.split("/").map(encodeURIComponent).join("/")}`,{
-      headers:this.headers({"X-Wes-Session":generation,...(etag?{"If-None-Match":etag}:{})}),signal,cache:"no-store",
+      headers:this.headers({"X-Wes-Session":generation,...(etag?{"If-None-Match":etag}:{})},node.split("/")[0]),signal,cache:"no-store",
     });
     if(generation!==this.generation)throw new Error("Workspace changed; input discarded.");
     if(response.status===304)return undefined;
@@ -703,7 +734,7 @@ export class Engine {
   private readonly viewStates = new ViewFrameReader<SharedState>(async (node,generation,signal,etag)=>{
     if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
     const response=await fetch(`/view-interaction/${node.split("/").map(encodeURIComponent).join("/")}`,{
-      headers:this.headers({"X-Wes-Session":generation,...(etag?{"If-None-Match":etag}:{})}),signal,cache:"no-store",
+      headers:this.headers({"X-Wes-Session":generation,...(etag?{"If-None-Match":etag}:{})},node.split("/")[0]),signal,cache:"no-store",
     });
     if(generation!==this.generation)throw new Error("Workspace changed; selection discarded.");
     if(response.status===304)return undefined;
@@ -718,7 +749,7 @@ export class Engine {
     if(generation!==this.generation)throw new Error("Workspace changed");
     const {owner,identity,definitionRevision,revision,fields,outputs,events=[]}=edit;
     const deadline=AbortSignal.any([signal,AbortSignal.timeout(2000)]);
-    const request={method:"PUT",headers:this.headers({"X-Wes-Session":generation,"Content-Type":"application/json"}),
+    const request={method:"PUT",headers:this.headers({"X-Wes-Session":generation,"Content-Type":"application/json"},node),
       body:stringifyExactJson({owner,identity,definitionRevision,revision,fields,outputs,events}),signal:deadline};
     let response:Response;
     for(let attempt=0;;attempt++) {
@@ -745,15 +776,20 @@ export class Engine {
   }
   private async viewMountAction(node:string,identity:string,generation:string,action:string,token?:string):Promise<string|undefined>{
     if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
+    const mountKey=`${generation}:${node}:${identity}`;
+    const scope=this.mountScopes.get(mountKey)??this.readScopes.get(node);
+    if(scope&&action==="open")this.mountScopes.set(mountKey,scope);
     const deadline=AbortSignal.timeout(2000);
+    let confirmed=false;
     try {
       const response=await fetch(`/view-mounts/${encodeURIComponent(node)}/${encodeURIComponent(identity)}`,{
-        method:"POST",headers:this.headers({"X-Wes-Session":generation,"Content-Type":"application/json"}),
+        method:"POST",headers:this.headers({"X-Wes-Session":generation,"Content-Type":"application/json",...(scope?{"X-Wes-Scope":scope}:{})}),
         body:stringifyExactJson({action,...(token?{token}:{})}),signal:deadline,
       });
       if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
       if(!response.ok)throw new Error(await response.text()||"View display session is unavailable; reopen the view and press Start.");
       const value=await readExactJson(response) as {token?:string};
+      confirmed=true;
       if(action!=="close" && action!=="touch")this.viewFrames.invalidate();
       return value.token;
     } catch(error) {
@@ -761,6 +797,8 @@ export class Engine {
       if(deadline.aborted)throw new Error("View session request exceeded its 2-second budget. Its outcome is unconfirmed; reopen the view to reconnect. No command was rerun.");
       if(error instanceof DOMException && error.name==="AbortError")throw new Error("View session connection was interrupted. Its outcome is unconfirmed; reopen the view to reconnect. No command was rerun.");
       throw error;
+    } finally {
+      if(action==="close" || action==="open"&&!confirmed)this.mountScopes.delete(mountKey);
     }
   }
   private readonly viewMounts=new ViewMounts((node,identity,generation,action,token)=>this.viewMountAction(node,identity,generation,action,token));
@@ -789,9 +827,14 @@ export class Engine {
     return name;
   }
   viewGeneration():string|undefined { return this.generation; }
-  watchViewFrame(node:string, instance:string, changed:(sample:FrameSample)=>void,options?:{reopen?:boolean}):()=>void {
+  watchViewFrame(node:string, instance:string, changed:(sample:FrameSample)=>void,options?:{reopen?:boolean;readScope?:string}):()=>void {
     if(!this.generation){changed({problem:"Wait for the workspace connection before opening this view."});return ()=>{};}
     const generation=this.generation;
+    if(options?.readScope) {
+      if(!this.readScopes.has(node) && this.readScopes.size>=max_active_view_roots()*max_view_frame_instances()){changed({problem:"View scope capacity is full; close an analysis before opening more."});return ()=>{};}
+      this.readScopes.set(node,options.readScope);
+      this.scopeReaders.set(options.readScope,(this.scopeReaders.get(options.readScope)??0)+1);
+    }
     let closed=false,failed=false,stop:(()=>void)|undefined;
     const mount=this.viewMounts.mount(node,instance,generation,error=>{
       if(closed)return;
@@ -799,7 +842,20 @@ export class Engine {
     },options?.reopen);
     if(mount.waiting)changed({paused:true});
     void mount.ready.then(token=>{if(!closed&&!failed)stop=this.viewFrames.watch(`${node}/${instance}/${token}`,generation,changed);}).catch(error=>{if(!closed)changed({problem:error instanceof Error?error.message:"View unavailable"});});
-    return ()=>{closed=true;stop?.();mount.close();};
+    return ()=>{
+      if(closed)return;
+      closed=true;stop?.();mount.close();
+      const scope=options?.readScope;
+      if(scope){
+        const users=(this.scopeReaders.get(scope)??1)-1;
+        if(users)this.scopeReaders.set(scope,users);
+        else {
+          this.scopeReaders.delete(scope);
+          // In-flight mount closure keeps its captured scope; a later open must register again.
+          for(const [id,registered] of this.readScopes)if(registered===scope)this.readScopes.delete(id);
+        }
+      }
+    };
   }
   async liveView(node: string, generation: string, signal: AbortSignal): Promise<DisplayRead | undefined> {
     if (generation !== this.generation) throw new DisplayReadError("Workspace changed; discard its display samples.", "withdrawn");
@@ -885,10 +941,13 @@ export class Engine {
         throw new EngineRefusal(response.status, await response.text(), requestOperation(request), notStarted ? "not-started" : undefined);
       }
       if (request.request === "submit" && response.headers?.get("content-type")?.includes("application/json")) {
-        const reply = await readExactJson(response) as { sandbox?: SandboxObservation };
+        const reply = await readExactJson(response) as { sandbox?: unknown };
 
-        if (reply.sandbox && generation === this.generation && reply.sandbox.generation === generation) {
-          for (const listener of this.sandboxListeners) listener(request.cell, reply.sandbox);
+        if (reply.sandbox !== undefined) {
+          const observation = sandboxObservation(reply.sandbox);
+          if (generation === this.generation && observation.generation === generation) {
+            for (const listener of this.sandboxListeners) listener(request.cell, observation);
+          }
         }
       }
       outcome = "ok";

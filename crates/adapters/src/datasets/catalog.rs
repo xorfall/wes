@@ -65,6 +65,7 @@ pub enum RootRetention {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceRootChange {
+    pub lifetime: wes_engine::storage::DatasetLifetime,
     pub root: String,
     pub kind: RootKind,
     pub expected_generation: u64,
@@ -360,6 +361,11 @@ fn validate(commit: &CatalogCommit, limits: CatalogLimits) -> Result<(), FormatE
     let mut total = 0usize;
     for root in &commit.references {
         if !valid_uuid(&root.root)
+            || !root.lifetime.valid()
+            || (matches!(
+                root.lifetime,
+                wes_engine::storage::DatasetLifetime::Transient(_)
+            ) && root.retention != RootRetention::Temporary)
             || root.expected_generation.checked_add(1) != Some(root.generation)
             || !roots.insert(&root.root)
             || root.transaction != commit.transaction

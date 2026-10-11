@@ -1293,3 +1293,139 @@ fn invocation_inputs_roundtrip_and_private_payloads_are_never_history_records() 
         .is_err()
     );
 }
+
+#[test]
+fn saved_selections_are_exact_bounded_metadata_and_do_not_restore_producers() {
+    use wes_engine::history::{
+        RestoreIndex, SavedEdge, SavedLineage, SavedMember, SavedPayload, SavedSelection,
+    };
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let saved = SavedSelection {
+        id: "00000000-0000-4000-8000-0000000000a1".into(),
+        name: "snapshot".into(),
+        owner: "fixture".into(),
+        scope: "00000000-0000-4000-8000-0000000000b2".into(),
+        definition: digest.clone(),
+        single: true,
+        alias_shape: Some(wes_core::Shape::Primitive(wes_core::Primitive::Int)),
+        members: vec![SavedMember {
+            name: "total".into(),
+            node: "total-node".into(),
+            run: Some("total-run".into()),
+            revision: 7,
+            port: "data".into(),
+            state: "ready".into(),
+            typing: "Int".into(),
+            operation: "calculation".into(),
+            fields: vec!["value".into()],
+            payload: Some(SavedPayload {
+                handle: "00000000-0000-4000-8000-0000000000c3".into(),
+                digest,
+            }),
+            evidence: None,
+        }],
+        lineage: vec![
+            SavedLineage {
+                node: "total-node".into(),
+                run: Some("total-run".into()),
+                revision: 7,
+                inputs: vec![SavedEdge {
+                    node: "input-node".into(),
+                    run: Some("input-run".into()),
+                    revision: 3,
+                    port: "data".into(),
+                }],
+                origin: None,
+            },
+            SavedLineage {
+                node: "input-node".into(),
+                run: Some("input-run".into()),
+                revision: 3,
+                inputs: vec![],
+                origin: Some(SavedEdge {
+                    node: "parent-node".into(),
+                    run: Some("parent-run".into()),
+                    revision: 2,
+                    port: "data".into(),
+                }),
+            },
+        ],
+    };
+    for entry in [
+        JournalEntry::SaveIntent(saved.clone()),
+        JournalEntry::Saved(saved.clone()),
+    ] {
+        let bytes = encode_journal(&entry, Limits::default()).unwrap();
+        assert_eq!(
+            decode_journal(&bytes, Limits::default()).unwrap().entry,
+            entry
+        );
+        assert!(
+            encode_journal(
+                &entry,
+                Limits {
+                    bytes: bytes.len() - 1,
+                    nodes: 100_000
+                }
+            )
+            .is_err()
+        );
+        let mut unknown: Value = serde_json::from_slice(&bytes).unwrap();
+        unknown["entry"]["value"]["payloadBody"] = json!("never an artifact body");
+        assert!(decode_journal(&serde_json::to_vec(&unknown).unwrap(), Limits::default()).is_err());
+        assert!(
+            RestoreIndex::build(std::slice::from_ref(&entry))
+                .retained
+                .is_empty(),
+            "a snapshot is an independent artifact, never the producer's ready port"
+        );
+        assert!(entry.references_payload(&saved.handles()[0]));
+    }
+    assert!(
+        JournalEntry::SaveIntent(saved.clone())
+            .retained_dataset_handles()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        JournalEntry::Saved(saved.clone())
+            .retained_dataset_handles()
+            .unwrap(),
+        saved.handles()
+    );
+    let mut refused = Vec::new();
+    let mut late = saved.clone();
+    late.lineage[0].inputs[0].revision += 1;
+    refused.push(late);
+    let mut wrong_run = saved.clone();
+    wrong_run.members[0].run = Some("new-run".into());
+    refused.push(wrong_run);
+    let mut cycle = saved.clone();
+    cycle.lineage[1].inputs.push(SavedEdge {
+        node: "total-node".into(),
+        run: Some("total-run".into()),
+        revision: 7,
+        port: "data".into(),
+    });
+    refused.push(cycle);
+    let mut duplicated = saved.clone();
+    duplicated.members.push(duplicated.members[0].clone());
+    duplicated.single = false;
+    refused.push(duplicated);
+    let mut disguised = saved.clone();
+    disguised.alias_shape = Some(wes_core::Shape::Meta(wes_core::MetaType::ViewInstance));
+    refused.push(disguised);
+    let mut stale = saved.clone();
+    stale.members[0].state = "stale".into();
+    refused.push(stale);
+    let mut invented = saved.clone();
+    invented.members[0].operation = "provider_replay".into();
+    refused.push(invented);
+    let mut oversized = saved.clone();
+    oversized.members[0].typing = "x".repeat(64 * 1024 + 1);
+    refused.push(oversized);
+    for refused in refused {
+        assert!(refused.validate().is_err());
+        assert!(encode_journal(&JournalEntry::Saved(refused), Limits::default()).is_err());
+    }
+}

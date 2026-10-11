@@ -7,13 +7,16 @@ use std::{
     io::{self, Read, Write},
     num::NonZeroU64,
     path::Path,
+    sync::{Arc, Weak},
     time::SystemTime,
 };
 use uuid::Uuid;
 use wes_core::Value;
 use wes_engine::storage::{
-    EvictionBatch, LoadedValue, Retention, RetentionUsage, StoreError, ValueHandle, ValueStore,
+    EvictionBatch, LoadedValue, Retention, RetentionUsage, StoreError, ValueHandle, ValueLease,
+    ValuePlacement, ValueStore,
 };
+mod memory;
 
 pub struct FileValues {
     directory: OwnedDirectory,
@@ -24,6 +27,7 @@ pub struct FileValues {
     // successive writes (Linux records equal times), so ties must not fall back to handle order.
     published: HashMap<ValueHandle, u64>,
     next_publication: u64,
+    holds: HashMap<ValueHandle, Weak<()>>,
 }
 impl FileValues {
     /// Opens a private directory. Existing directories are never chmod'ed or recursively cleaned.
@@ -41,6 +45,7 @@ impl FileValues {
             evicted: VecDeque::new(),
             published: HashMap::new(),
             next_publication: 0,
+            holds: HashMap::new(),
         })
     }
     pub fn handles(&self) -> Result<Vec<ValueHandle>, StoreError> {
@@ -51,6 +56,11 @@ impl FileValues {
             .collect::<Vec<_>>();
         handles.sort();
         Ok(handles)
+    }
+    fn held(&self, handle: &ValueHandle) -> bool {
+        self.holds
+            .get(handle)
+            .is_some_and(|owner| owner.strong_count() != 0)
     }
     /// Adopt bytes under their existing identity. It never overwrites a file, including on races.
     pub fn adopt(&mut self, handle: &ValueHandle, encoded: &[u8]) -> Result<(), StoreError> {
@@ -63,7 +73,7 @@ impl FileValues {
         sync: impl FnOnce(&cap_std::fs::File) -> io::Result<()>,
     ) -> Result<(), StoreError> {
         codec::decode_value(encoded, self.limits)
-            .map_err(|e| StoreError::backend("validating adopted bytes", e))?;
+            .map_err(|e| codec_error("validating adopted bytes", e))?;
         if let Some(existing) = self.encoded(handle)? {
             return if existing == encoded {
                 self.confirm_existing(handle, sync)
@@ -220,7 +230,7 @@ impl FileValues {
             if bytes <= u128::from(budget.get()) {
                 break;
             }
-            if file.handle == *newest {
+            if file.handle == *newest || self.held(&file.handle) {
                 continue;
             } // The soft budget never evicts the result just returned.
             match self.release(&file.handle) {
@@ -260,6 +270,13 @@ fn directory_error(error: DirectoryError) -> StoreError {
 fn file_name(handle: &ValueHandle) -> String {
     format!("{handle}.json")
 }
+fn codec_error(operation: &'static str, error: codec::CodecError) -> StoreError {
+    match error {
+        codec::CodecError::Bytes => StoreError::Limit("stored result codec bytes"),
+        codec::CodecError::Work => StoreError::Limit("stored result codec work"),
+        _ => StoreError::backend(operation, error),
+    }
+}
 // The owned file closes on every path before publication or cleanup. Tests inject short writes
 // and sync failures here without replacing the filesystem abstraction with a mock framework.
 fn write_and_sync<W: Write>(
@@ -273,10 +290,13 @@ fn write_and_sync<W: Write>(
 impl ValueStore for FileValues {
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
         let encoded = codec::encode_value(value, self.limits)
-            .map_err(|e| StoreError::backend("encoding a result", e))?;
+            .map_err(|e| codec_error("encoding a result", e))?;
         let handle = ValueHandle::fresh();
         self.adopt(&handle, &encoded)?;
         Ok(handle)
+    }
+    fn has_temporary_file(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        Ok(self.size(handle)?.is_some())
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
         self.encoded(handle)?
@@ -285,7 +305,7 @@ impl ValueStore for FileValues {
                     .map(|decoded| LoadedValue {
                         value: decoded.value,
                     })
-                    .map_err(|e| StoreError::backend("decoding a result", e))
+                    .map_err(|e| codec_error("decoding a result", e))
             })
             .transpose()
     }
@@ -298,20 +318,14 @@ impl ValueStore for FileValues {
             .map_err(|e| StoreError::backend("sizing a result", e))?
             .len();
         if size > self.limits.bytes as u64 {
-            return Err(StoreError::backend(
-                "reading a result",
-                codec::CodecError::Bytes,
-            ));
+            return Err(StoreError::Limit("stored result read bytes"));
         }
         let mut bytes = vec![];
         file.take((self.limits.bytes as u64).saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|e| StoreError::backend("reading a result", e))?;
         if bytes.len() > self.limits.bytes {
-            return Err(StoreError::backend(
-                "reading a result",
-                codec::CodecError::Bytes,
-            ));
+            return Err(StoreError::Limit("stored result read bytes"));
         }
         Ok(Some(bytes))
     }
@@ -325,6 +339,9 @@ impl ValueStore for FileValues {
             .transpose()
     }
     fn release(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self.held(handle) {
+            return Err(StoreError::Limit("active value holds"));
+        }
         // Verify the exact managed target. remove_file itself never follows the final symlink.
         if self.file(handle)?.is_none() {
             return Ok(false);
@@ -333,6 +350,7 @@ impl ValueStore for FileValues {
             .remove_file(file_name(handle))
             .map_err(|e| StoreError::backend("releasing a result", e))?;
         self.published.remove(handle);
+        self.holds.remove(handle);
         self.sync_directory().map_err(|e| StoreError::Released {
             handle: handle.clone(),
             source: Box::new(e),
@@ -347,12 +365,28 @@ impl ValueStore for FileValues {
             more: !self.evicted.is_empty(),
         })
     }
+    fn hold(&mut self, handle: &ValueHandle) -> Result<Option<ValueLease>, StoreError> {
+        if self.size(handle)?.is_none() {
+            return Ok(None);
+        }
+        if let Some(owner) = self.holds.get(handle).and_then(Weak::upgrade) {
+            return Ok(Some(ValueLease::retain(owner)));
+        }
+        self.holds.retain(|_, owner| owner.strong_count() != 0);
+        if self.holds.len() >= wes_budgets::get("values.outputs") as usize {
+            return Err(StoreError::Limit("value holds"));
+        }
+        let owner = Arc::new(());
+        self.holds.insert(handle.clone(), Arc::downgrade(&owner));
+        Ok(Some(ValueLease::retain(owner)))
+    }
 }
 
 /// Live-budget eviction can never remove an archive copy. Both tiers retain the same handle.
 pub struct TieredValues {
     live: FileValues,
     archive: FileValues,
+    memory: memory::MemoryValues,
 }
 impl TieredValues {
     pub fn open(
@@ -365,7 +399,23 @@ impl TieredValues {
         Ok(Self {
             live: FileValues::open(live, limits, durability, live_budget)?,
             archive: FileValues::open(archive, limits, durability, None)?,
+            memory: memory::MemoryValues::new(
+                NonZeroU64::new(wes_budgets::get("storage.bytes")).expect("positive budget"),
+                wes_budgets::get("values.outputs") as usize,
+            ),
         })
+    }
+    /// Explicit cache admission limits; ordinary file publication keeps its existing budget.
+    pub fn with_memory_budget(
+        mut self,
+        bytes: NonZeroU64,
+        values: usize,
+    ) -> Result<Self, StoreError> {
+        if self.memory.handles().next().is_some() || self.memory.has_evictions() {
+            return Err(StoreError::Conflict);
+        }
+        self.memory = memory::MemoryValues::new(bytes, values);
+        Ok(self)
     }
     pub fn archived_handles(&self) -> Result<Vec<ValueHandle>, StoreError> {
         self.archive.handles()
@@ -435,25 +485,66 @@ impl ValueStore for TieredValues {
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
         self.live.store(value)
     }
+    fn store_with_placement(
+        &mut self,
+        value: &Value,
+        placement: ValuePlacement,
+    ) -> Result<ValueHandle, StoreError> {
+        match placement {
+            ValuePlacement::ManagedFile => self.store(value),
+            ValuePlacement::Memory => self.memory.store(value, self.live.limits),
+        }
+    }
+    fn has_temporary_file(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        Ok(self.live.size(handle)?.is_some())
+    }
+    fn hold(&mut self, handle: &ValueHandle) -> Result<Option<ValueLease>, StoreError> {
+        if let Some(lease) = self.memory.hold(handle) {
+            return Ok(Some(lease));
+        }
+        // Both copies belong to this identity. A hold also protects a later archive promotion.
+        let live = self.live.hold(handle)?;
+        let archive = self.archive.hold(handle)?;
+        if live.is_none() && archive.is_none() {
+            Ok(None)
+        } else {
+            Ok(Some(ValueLease::retain((live, archive))))
+        }
+    }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
+        if let Some(bytes) = self.memory.encoded(handle) {
+            return codec::decode_value(&bytes, self.live.limits)
+                .map(|value| Some(LoadedValue { value: value.value }))
+                .map_err(|e| codec_error("decoding a memory result", e));
+        }
         match self.live.read(handle)? {
             Some(value) => Ok(Some(value)),
             None => self.archive.read(handle),
         }
     }
     fn encoded(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
+        if let Some(bytes) = self.memory.encoded(handle) {
+            return Ok(Some(bytes));
+        }
         match self.live.encoded(handle)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.archive.encoded(handle),
         }
     }
     fn size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {
+        if let Some(size) = self.memory.size(handle) {
+            return Ok(Some(size));
+        }
         match self.live.size(handle)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.archive.size(handle),
         }
     }
     fn keep(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if let Some(bytes) = self.memory.encoded(handle) {
+            self.archive.adopt(handle, &bytes)?;
+            return Ok(true);
+        }
         let Some(bytes) = self.live.encoded(handle)? else {
             if self.archive.read(handle)?.is_none() {
                 return Ok(false);
@@ -481,6 +572,10 @@ impl ValueStore for TieredValues {
                 handle: handle.clone(),
                 source: Box::new(source),
             })?;
+        // Active holds remain charged until released; a resident copy is not the last copy.
+        if !self.memory.held(handle) {
+            self.memory.remove(handle);
+        }
         Ok(true)
     }
     fn retention(&self, handle: &ValueHandle) -> Result<Retention, StoreError> {
@@ -501,6 +596,11 @@ impl ValueStore for TieredValues {
     fn retention_usage(&self) -> Result<RetentionUsage, StoreError> {
         let mut entries = std::collections::BTreeMap::new();
         let mut usage = RetentionUsage::default();
+        for (handle, bytes) in self.memory.handles() {
+            usage.memory_bytes += bytes;
+            usage.memory_count += 1;
+            entries.insert(handle.clone(), bytes);
+        }
         for file in self.live.files()? {
             usage.live_bytes += file.bytes;
             entries.insert(file.handle, file.bytes);
@@ -531,12 +631,18 @@ impl ValueStore for TieredValues {
         Ok(usage)
     }
     fn release(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self.memory.held(handle) || self.live.held(handle) || self.archive.held(handle) {
+            return Err(StoreError::Limit("active value holds"));
+        }
         // Validate the exact evidence before changing any bytes. Unknown evidence is
         // allowed only by an explicit, reviewed release; malformed evidence refuses it.
         for reason in [Retention::Automatic, Retention::Protected] {
             self.reason_file(handle, reason)?;
         }
-        let live = self.live.release(handle);
+        self.live.file(handle)?;
+        self.archive.file(handle)?;
+        let memory = self.memory.remove(handle);
+        let live = self.live.release(handle).map(|removed| removed || memory);
         let archive = self.archive.release(handle);
         let removed = released_tiers(handle, live, archive)?;
         let clear = (|| -> Result<(), StoreError> {
@@ -559,7 +665,7 @@ impl ValueStore for TieredValues {
         Ok(removed)
     }
     fn take_evicted(&mut self, maximum: usize) -> Result<EvictionBatch, StoreError> {
-        // Only live may evict. Preserve pending notifications when archive inspection fails.
+        // A last-copy loss is distinct from an eviction backed by the archive.
         let mut gone = vec![];
         let count = self.live.evicted.len().min(maximum);
         for handle in self.live.evicted.iter().take(count) {
@@ -567,10 +673,18 @@ impl ValueStore for TieredValues {
                 gone.push(handle.clone());
             }
         }
+        let mut memory_count = 0;
+        for handle in self.memory.pending_evictions(maximum.saturating_sub(count)) {
+            memory_count += 1;
+            if self.archive.size(handle)?.is_none_or(|size| size == 0) {
+                gone.push(handle.clone());
+            }
+        }
         self.live.evicted.drain(..count);
+        self.memory.drain_evictions(memory_count);
         Ok(EvictionBatch {
             handles: gone,
-            more: !self.live.evicted.is_empty(),
+            more: !self.live.evicted.is_empty() || self.memory.has_evictions(),
         })
     }
 }

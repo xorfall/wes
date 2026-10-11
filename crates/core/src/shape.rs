@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use crate::ModelError;
 
 /// Closed scalar shapes. Unknown is represented separately, not as a coercion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Primitive {
     Text,
     Int,
@@ -24,7 +24,8 @@ impl fmt::Display for Primitive {
 }
 
 /// A record retains declaration order for display, but compares structurally.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecordShape {
     name: String,
     fields: IndexMap<String, Shape>,
@@ -69,7 +70,7 @@ impl PartialEq for RecordShape {
 impl Eq for RecordShape {}
 
 /// Nominal management types cannot be supplied where ordinary data is expected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MetaType {
     DatasetDeletePlan,
     WorkspaceDeletePlan,
@@ -86,7 +87,7 @@ impl fmt::Display for MetaType {
         })
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shape {
     Primitive(Primitive),
     List(Box<Shape>),

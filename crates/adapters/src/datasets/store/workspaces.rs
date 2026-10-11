@@ -76,6 +76,7 @@ impl DatasetStore {
                 self.resolve_committed(prefix, &self.roots, false)?;
             }
             changes.push(ReferenceRootChange {
+                lifetime: wes_engine::storage::DatasetLifetime::Durable,
                 root: identity,
                 kind: catalog::RootKind::Workspace,
                 expected_generation: 0,

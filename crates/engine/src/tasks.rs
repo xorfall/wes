@@ -34,6 +34,8 @@ pub(crate) use query::types::completion_names as type_completion_names;
 pub enum BoundTask {
     /// Immutable native input installed only in an isolated execution scope.
     Input(wes_core::Value),
+    /// Explicit immutable storage read; a saved record grants no provider execution authority.
+    SavedInput(crate::history::SavedSelection),
     Call(BoundCall),
     SourceLaunch(recording::BoundSourceLaunch),
     Describe(crate::describe::BoundDescribe),
@@ -188,6 +190,7 @@ impl BoundTask {
             Self::Call(call) => Some(call),
             Self::SourceLaunch(launch) => Some(&launch.source),
             Self::Input(_)
+            | Self::SavedInput(_)
             | Self::Describe(_)
             | Self::Stream(_)
             | Self::Calculation(_)
@@ -240,6 +243,7 @@ impl BoundTask {
                 bounded: true,
             },
             Self::Input(_)
+            | Self::SavedInput(_)
             | Self::Management(_)
             | Self::ImportPlan(_)
             | Self::Stream(_)
@@ -705,6 +709,29 @@ impl TaskExecutor {
         let values = values.with_policy(&policy);
         let work: ExecutionFuture = match ticket.payload {
             BoundTask::Input(value) => Box::pin(async move { Outcome::Produced(value).into() }),
+            BoundTask::SavedInput(saved) => {
+                let storage = self.storage.clone();
+                Box::pin(async move {
+                    let value = match storage {
+                        Some(worker) => crate::session::saved::load_alias(&worker, &saved).await,
+                        None => Err(crate::session::SessionError::NoStorage),
+                    };
+                    match value {
+                        Ok(Some(value)) => Outcome::Produced(value),
+                        Ok(None) => Outcome::Failed(RuntimeCode::InputFailed.error(
+                            "The saved snapshot has no readable payload; no provider was replayed.",
+                            None,
+                        )),
+                        Err(error) => Outcome::Failed(RuntimeCode::InputFailed.error(
+                            format!(
+                                "Saved snapshot read refused: {error}. No provider was replayed."
+                            ),
+                            None,
+                        )),
+                    }
+                    .into()
+                })
+            }
             BoundTask::View(task) => Box::pin(async move { task.outcome().into() }),
             BoundTask::SourceLaunch(_) => Box::pin(async {
                 Outcome::Failed(RuntimeCode::ExecutionFailed.error(

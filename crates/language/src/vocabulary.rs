@@ -57,6 +57,8 @@ pub enum MetaCommand {
     Stream,
     Fork,
     Sandbox,
+    Transient,
+    Keep,
     Inspect,
     Info,
     List,
@@ -126,6 +128,8 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::Stream,
     MetaCommand::Fork,
     MetaCommand::Sandbox,
+    MetaCommand::Transient,
+    MetaCommand::Keep,
     MetaCommand::Inspect,
     MetaCommand::Info,
     MetaCommand::List,
@@ -247,6 +251,8 @@ impl MetaCommand {
             Self::Stream => "stream",
             Self::Fork => "fork",
             Self::Sandbox => "sandbox",
+            Self::Transient => "transient",
+            Self::Keep => "keep",
             Self::Inspect => "inspect",
             Self::Info => "info",
             Self::List => "list",
@@ -481,6 +487,15 @@ impl MetaCommand {
             }
             Self::Sandbox => {
                 spec.summary = "Retain a named program with memory-only execution. Example: :sandbox { :calc { return 1; } > value } > preview";
+                spec.recorded = false;
+            }
+            Self::Transient => {
+                spec.summary = "Run a named finite analysis with automatic retention off and bounded temporary storage; unsaved data does not reopen. Example: :transient { :calc { return 1; } > value } > study";
+                spec.recorded = false;
+            }
+            Self::Keep => {
+                spec.summary = "Save an exact transient member and its dependencies, or the jointly captured named members of an analysis. Example: :keep $study.value > savedValue or :keep $study > savedStudy";
+                spec.operands = Arity::bounded(1, 1);
                 spec.recorded = false;
             }
             Self::Fork => {

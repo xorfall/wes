@@ -226,7 +226,7 @@ impl Analysis<'_> {
             ));
         }
         match &statement.expression {
-            Expression::Sandbox(_) => Err(rejected(
+            Expression::Sandbox(_) | Expression::Transient(_) => Err(rejected(
                 "SBX002",
                 statement.span,
                 "sandbox definitions require the session owner and cannot be nested in recorded work",

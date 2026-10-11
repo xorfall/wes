@@ -22,6 +22,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RestoreError {
+    #[error("history contains invalid or conflicting saved selection evidence")]
+    Saved,
     #[error("history contains invalid or conflicting invocation input evidence")]
     Invocation,
     #[error("view definitions could not be restored: {0}")]
@@ -255,6 +257,9 @@ pub async fn restore(
     let mut environment_records = IndexMap::new();
     let mut trace_records = IndexMap::new();
     let mut invocation_records = IndexMap::new();
+    let mut saved_intents = std::collections::BTreeMap::new();
+    let mut saved_names = std::collections::BTreeMap::new();
+    let mut saved_commits = std::collections::BTreeSet::new();
     let traced_attempts: IndexSet<_> = history
         .recovery()
         .iter()
@@ -264,6 +269,37 @@ pub async fn restore(
         })
         .collect();
     for (position, entry) in history.journal().iter().enumerate() {
+        if let JournalEntry::SaveIntent(saved) = entry {
+            saved.validate().map_err(|_| RestoreError::Saved)?;
+            if saved_names
+                .insert(saved.name.clone(), saved.id.clone())
+                .is_some_and(|id| id != saved.id)
+            {
+                return Err(RestoreError::Saved);
+            }
+            if let Some(previous) = saved_intents.insert(saved.id.clone(), saved) {
+                if previous != saved {
+                    return Err(RestoreError::Saved);
+                }
+            } else {
+                replay
+                    .restore_save_intent(saved)
+                    .map_err(|_| RestoreError::Saved)?;
+            }
+            continue;
+        }
+        if let JournalEntry::Saved(saved) = entry {
+            if saved_intents.get(&saved.id) != Some(&saved) {
+                return Err(RestoreError::Saved);
+            }
+            if saved_commits.insert(saved.id.clone()) {
+                replay
+                    .restore_saved(saved)
+                    .map_err(|_| RestoreError::Saved)?;
+                replay.confirm_save_intent(saved);
+            }
+            continue;
+        }
         if let JournalEntry::Retired(record) = entry {
             replay.reserve_retired(record)?;
             continue;
@@ -675,6 +711,61 @@ pub async fn restore(
     let mut remaining = 512 * 1024 * 1024;
     for node in nodes {
         check_cancelled(&cancellation)?;
+        let saved = replay
+            .workspace()
+            .runtime()
+            .graph()
+            .node(&node)
+            .and_then(|n| match n.payload() {
+                crate::tasks::BoundTask::SavedInput(saved) => Some(saved.clone()),
+                _ => None,
+            });
+        if let Some(saved) = saved {
+            let loaded = match &storage {
+                Some(storage) => super::saved::load_alias(&storage.worker, &saved).await,
+                None => Err(SessionError::NoStorage),
+            };
+            check_cancelled(&cancellation)?;
+            let state = match loaded {
+                Ok(Some(value)) if value_charge(&value, remaining).is_some() => {
+                    remaining -= value_charge(&value, remaining).expect("checked charge");
+                    report.values += 1;
+                    crate::runtime::RestoredState::Ready(value)
+                }
+                result => {
+                    let kind = match result {
+                        Err(SessionError::NoStorage) => RestoreProblemKind::NoValueStore,
+                        Err(SessionError::Capacity) | Ok(Some(_)) => {
+                            RestoreProblemKind::ValueCapacity
+                        }
+                        Err(SessionError::UnknownValue) | Ok(None) => {
+                            RestoreProblemKind::MissingValue
+                        }
+                        _ => RestoreProblemKind::UnreadableValue,
+                    };
+                    for handle in saved.handles() {
+                        report.problems.push(RestoreProblem {
+                            node: node.clone(),
+                            handle,
+                            kind,
+                        });
+                    }
+                    crate::runtime::RestoredState::StaleBecause(
+                        if kind == RestoreProblemKind::ValueCapacity {
+                            crate::runtime::StaleReason::RestoreCapacity
+                        } else {
+                            crate::runtime::StaleReason::RestoreUnavailable
+                        },
+                    )
+                }
+            };
+            replay.hydrate(
+                &node,
+                state,
+                Some(crate::runtime::RunId::new(format!("saved:{}", saved.id)).expect("saved id")),
+            )?;
+            continue;
+        }
         let mut value = None;
         if let Some(result) = index.retained.get(&node) {
             let loaded = match &storage {

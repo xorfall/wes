@@ -39,9 +39,9 @@ impl Requests {
                         && c.path.first().is_some_and(|n| n.text == "workspace")
                         && c.path.get(1).is_some_and(|n| n.text == "delete")
                 }
-                Expression::Pipeline(stages) | Expression::Sandbox(stages) => {
-                    stages.iter().any(contains)
-                }
+                Expression::Pipeline(stages)
+                | Expression::Sandbox(stages)
+                | Expression::Transient(stages) => stages.iter().any(contains),
                 Expression::Fork(branches) => branches.iter().any(|b| contains(&b.body)),
                 _ => false,
             }

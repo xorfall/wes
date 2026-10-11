@@ -51,6 +51,72 @@ fn value(text: &str) -> Value {
     .unwrap()
 }
 #[tokio::test]
+async fn unsupported_memory_placement_refuses_without_calling_the_backing_store() {
+    let backend = memory();
+    let state = backend.state.clone();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    let memory = worker.clone().with_placement(ValuePlacement::Memory);
+    assert!(matches!(
+        memory
+            .publish(value("payload"), PublicationPolicy::Temporary)
+            .await,
+        Err(StoreError::Limit(_))
+    ));
+    assert_eq!(state.lock().unwrap().calls, 0);
+    let published = worker
+        .publish(value("ordinary"), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(!published.requires_ownership_record);
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn private_memory_holds_do_not_permit_export_and_release_waits_for_the_last_reader() {
+    let backend = memory();
+    let state = backend.state.clone();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    let worker = worker.with_placement(ValuePlacement::Memory);
+    let private = value("private synthetic input").with_provenance(
+        Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
+    );
+    let published = worker
+        .publish(private.clone(), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(!published.requires_ownership_record);
+    assert_eq!(state.lock().unwrap().calls, 0);
+    let lease = worker
+        .hold(published.handle.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let other_reader = lease.clone();
+    assert!(matches!(
+        worker.encoded(published.handle.clone()).await,
+        Err(StoreError::Restricted)
+    ));
+    assert!(worker.retain(published.handle.clone()).await.is_err());
+    assert!(worker.release(published.handle.clone()).await.is_err());
+    drop(lease);
+    assert!(worker.release(published.handle.clone()).await.is_err());
+    assert_eq!(
+        worker
+            .read(published.handle.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .value,
+        private
+    );
+    drop(other_reader);
+    assert!(worker.release(published.handle.clone()).await.unwrap());
+    assert!(worker.read(published.handle).await.unwrap().is_none());
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+#[tokio::test]
 async fn recovery_requires_retention_and_bounds_decoded_replies() {
     let backend = memory();
     let state = backend.state.clone();

@@ -152,7 +152,7 @@ fn admit_statement(statement: &Statement) -> Result<(), &'static str> {
         return Err("Conversation annotations require user authority.");
     }
     match &statement.expression {
-        Expression::Sandbox(statements) => {
+        Expression::Sandbox(statements) | Expression::Transient(statements) => {
             for statement in statements {
                 admit_statement(statement)?;
             }

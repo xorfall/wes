@@ -186,10 +186,9 @@ impl Parser {
             K::Def => Expression::Definition(self.definition()?),
             K::Ref => Expression::Reference(token_name(self.advance())),
             K::Meta
-                if self
-                    .tokens
-                    .get(self.index + 1)
-                    .is_some_and(|t| t.kind == K::Word && t.text == "sandbox") =>
+                if self.tokens.get(self.index + 1).is_some_and(|t| {
+                    t.kind == K::Word && matches!(t.text.as_str(), "sandbox" | "transient")
+                }) =>
             {
                 self.sandbox()?
             }
@@ -228,12 +227,12 @@ impl Parser {
     }
     fn sandbox(&mut self) -> Option<Expression> {
         self.advance();
-        self.advance();
+        let transient = self.advance().text == "transient";
         if self.depth >= 32 || !self.at(K::BraceOpen) {
             self.error(
                 "SBX001",
                 self.peek().span,
-                "sandbox requires a block; nesting is limited to 32",
+                "named scope requires a block; nesting is limited to 32",
             );
             return None;
         }
@@ -251,7 +250,7 @@ impl Parser {
                 self.error(
                     "SBX001",
                     self.peek().span,
-                    "sandbox must close with '}'; at most 1000 statements",
+                    "named scope must close with '}'; at most 1000 statements",
                 );
                 return None;
             }
@@ -260,7 +259,7 @@ impl Parser {
                 self.error(
                     "SBX001",
                     self.peek().span,
-                    "sandbox statements must be separated by a newline",
+                    "scope statements must be separated by a newline",
                 );
                 return None;
             }
@@ -268,10 +267,18 @@ impl Parser {
         self.advance();
         self.depth -= 1;
         if statements.is_empty() {
-            self.error("SBX001", self.previous().span, "sandbox requires a program");
+            self.error(
+                "SBX001",
+                self.previous().span,
+                "named scope requires a program",
+            );
             return None;
         }
-        Some(Expression::Sandbox(statements))
+        Some(if transient {
+            Expression::Transient(statements)
+        } else {
+            Expression::Sandbox(statements)
+        })
     }
     fn fork(&mut self) -> Option<Expression> {
         use crate::{Branch, BranchSelector};

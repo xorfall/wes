@@ -33,6 +33,13 @@ pub(super) async fn change(
     {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
     }
+    let (session, _worker) =
+        match super::read_context::resolve(&current.session, &shared.values, request.headers())
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
     let Ok(node) = NodeId::new(node) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -51,7 +58,7 @@ pub(super) async fn change(
         Action::Start => MountAction::Start,
         Action::Stop => MountAction::Stop,
     };
-    match current.session.view_mount(node, identity, action).await {
+    match session.view_mount(node, identity, action).await {
         Ok(token) => (
             [
                 (header::CONTENT_TYPE, "application/json"),
