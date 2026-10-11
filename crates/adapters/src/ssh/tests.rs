@@ -91,11 +91,11 @@ impl Fixture {
             arguments: argument.into_iter().map(|v| ("args".into(), v)).collect(),
         }
     }
-    fn text_call(&self, text: &str) -> Call {
+    fn argument_call(&self, text: &str) -> Call {
         self.call(Some(
             Value::new(
-                Shape::Primitive(Primitive::Text),
-                Data::Text(text.into()),
+                Shape::List(Box::new(Shape::Primitive(Primitive::Text))),
+                Data::List(vec![Data::Text(text.into())]),
                 Provenance::default(),
             )
             .unwrap(),
@@ -140,7 +140,7 @@ async fn literal_arguments_explicit_environment_and_stable_target_binding() {
     let value = f
         .product
         .invoker()
-        .invoke(f.text_call(argument), CancellationToken::new())
+        .invoke(f.argument_call(argument), CancellationToken::new())
         .await
         .unwrap();
     assert_eq!(
@@ -268,8 +268,8 @@ async fn timeout_and_output_budget_join_client_and_report_uncertain_remote_effec
 async fn private_args_disabled_authority_and_pre_cancel_refuse_without_launch() {
     let f = Fixture::new("exit 0", 5000, "/bin/echo");
     let value = Value::new(
-        Shape::Primitive(Primitive::Text),
-        Data::Text("PRIVATE_SENTINEL".into()),
+        Shape::List(Box::new(Shape::Primitive(Primitive::Text))),
+        Data::List(vec![Data::Text("PRIVATE_SENTINEL".into())]),
         Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
     )
     .unwrap();

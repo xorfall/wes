@@ -45,6 +45,17 @@ pub(super) fn edit(
                 CapturedSource::new("docker/observe/v1", location)?
             } else if matches!(kind.as_str(), "spec" | "openapi") {
                 loader.spec_source(&loader.files, &key)?
+            } else if kind == "provider" {
+                let remote =
+                    driver(&package.targets()[target]).namespace() == ProcessNamespace::Target;
+                let recipe = crate::provider_definition::capture_file(
+                    &loader.files,
+                    location,
+                    remote,
+                    MAX_SOURCE_BYTES,
+                )
+                .map_err(|e| invalid(&e.to_string()))?;
+                CapturedSource::new(recipe.format(), recipe.source())?
             } else if driver(&package.targets()[target]).namespace() == ProcessNamespace::Target {
                 CapturedSource::new("process/target/v1", location)?
             } else {

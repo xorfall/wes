@@ -16,6 +16,12 @@ impl Program {
     pub(crate) fn capture(binding: &Binding) -> Result<Self, &'static str> {
         let source = binding.import().source();
         let (argv, argument) = match (source.format(), source.bytes()) {
+            (crate::provider_definition::FORMAT, captured) => (
+                vec![crate::provider_definition::captured_executable(
+                    captured, true,
+                )?],
+                "args",
+            ),
             ("builtin/v1", "sh") => (vec!["/bin/sh".into(), "-c".into()], "cmd"),
             ("process/target/v1", path)
                 if path.starts_with('/') && !path.contains('\0') && path.len() <= 4096 =>
@@ -32,13 +38,11 @@ impl Program {
     }
     pub(crate) fn capability(&self) -> Capability {
         let mut run = Capability::new(["run"], crate::process::output_shape(), Safety::Unsafe);
-        run.summary =
-            "Finite execution on the bound target; cancellation may leave remote work running"
-                .into();
+        run.summary = "Finite execution on the bound target; process args is List<Text> of literal arguments (at most 1024 argv elements and 1 MiB); shell cmd is Text. Cancellation may leave remote work running".into();
         run.parameters = vec![
             Parameter::new(
                 self.argument,
-                Shape::Primitive(Primitive::Text),
+                crate::process::argument_shape(self.argument == "cmd"),
                 self.argument == "cmd",
             ),
             Parameter::new("timeout", Shape::Primitive(Primitive::Duration), false),
@@ -64,22 +68,14 @@ impl Program {
         }
         let mut argv = self.argv.clone();
         if let Some(value) = call.arguments.get(self.argument) {
-            let Data::Text(text) = value.data() else {
-                return Err("Remote command requires a Text argument");
-            };
-            if text.contains('\0') || text.len() > 1024 * 1024 {
-                return Err("Remote argument exceeds 1 MiB or contains NUL");
-            }
-            argv.push(text.to_string());
+            crate::process::append_arguments(
+                &mut argv,
+                value.data(),
+                self.argument == "cmd",
+                1024 * 1024,
+            )?;
         } else if self.argument == "cmd" {
             return Err("sh run requires cmd: with a POSIX shell command");
-        }
-        if argv
-            .iter()
-            .try_fold(0usize, |size, arg| size.checked_add(arg.len() + 1))
-            .is_none_or(|size| size > 1024 * 1024)
-        {
-            return Err("Remote command exceeds 1 MiB");
         }
         let timeout = match call.arguments.get("timeout") {
             None => Duration::from_millis(binding.import().timeout_ms().unwrap_or(300_000) as u64),

@@ -306,7 +306,7 @@ fn credential_stdin_remains_separate_from_captured_source() {
     use std::{io::Write, process::Stdio};
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("env.yaml"), "version: 1\ntargets: {local: {kind: local}}\nenvironments: {dev: {secretSlots: {key: {required: true}}, secretRefs: {key: qa/file}, imports: {vars: {source: {kind: process, bin: /usr/bin/printenv}, bind: {target: local, output: private, credentials: {QA_SECRET: {secret: key}}}}}}}").unwrap();
-    std::fs::write(root.path().join("private.wes"), "vars run args:QA_SECRET").unwrap();
+    std::fs::write(root.path().join("private.wes"), "vars run args:[QA_SECRET]").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_wes"))
         .current_dir(root.path())
         .args([

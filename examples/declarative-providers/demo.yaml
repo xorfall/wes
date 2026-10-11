@@ -1,0 +1,30 @@
+version: 1
+provider: demo
+backend:
+  kind: process
+  bin: example-echo.bin
+types:
+  DemoRecord:
+    base: Record
+    fields:
+      count: Int
+      label: Text
+operations:
+  - path: [records, echo]
+    summary: Round-trip a typed record through a native synthetic CLI.
+    parameters:
+      - {name: payload, type: DemoRecord}
+    argv:
+      - {parameter: payload, encoding: json}
+    result: {format: json, type: DemoRecord}
+  - path: [messages, echo]
+    summary: Print literal messages with optional repeated labels and a flag.
+    parameters:
+      - {name: messages, type: "List<Text>"}
+      - {name: labels, type: "List<Text>", required: false}
+      - {name: verbose, type: Bool, required: false}
+    argv:
+      - {parameter: messages, encoding: spread}
+      - {parameter: labels, encoding: spread, prefix: [--label]}
+      - {parameter: verbose, encoding: flag, prefix: [--verbose]}
+    result: {format: text}

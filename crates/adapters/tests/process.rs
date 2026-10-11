@@ -207,14 +207,14 @@ async fn binary_streams_and_nonzero_exit_are_preserved_as_a_typed_result() {
 }
 
 #[tokio::test]
-async fn direct_arguments_remain_one_literal_os_argument_and_are_never_shell_programs() {
+async fn single_element_arguments_remain_literal_and_distinguish_empty_from_absent() {
     let fixture = Fixture::new().await;
     let (cap, invoker) = fixture.invoker("arg", "", ProcessConfig::default());
     let text = "two words ; echo NOT_EXECUTED > missing-file $(echo nope) \"quoted\"\nnext";
     let value = invoke(
         cap.clone(),
         &invoker,
-        args([("arg", Data::Text(text.into()))]),
+        args([("arg", Data::List(vec![Data::Text(text.into())]))]),
     )
     .await
     .unwrap();
@@ -232,11 +232,102 @@ async fn direct_arguments_remain_one_literal_os_argument_and_are_never_shell_pro
     let empty = invoke(
         cap,
         &invoker,
-        args([("arg", Data::Text(String::new().into()))]),
+        args([("arg", Data::List(vec![Data::Text(String::new().into())]))]),
     )
     .await
     .unwrap();
     assert_eq!(fields(&empty)["stdout"], Data::Bytes(vec![].into()));
+}
+
+#[tokio::test]
+async fn argument_lists_preserve_order_boundaries_and_shell_metacharacters() {
+    let fixture = Fixture::new().await;
+    let (cap, invoker) = fixture.invoker("argv", "", ProcessConfig::default());
+    let expected = [
+        "api",
+        "two words",
+        "",
+        "quote\" and 'single'",
+        "$(touch SHOULD_NOT_EXIST); $HOME `command` | > *",
+        "ĞğİıŞş 🎉\nnext",
+        "C:\\path with space\\",
+    ];
+    let value = invoke(
+        cap.clone(),
+        &invoker,
+        args([(
+            "arg",
+            Data::List(expected.iter().map(|s| Data::Text((*s).into())).collect()),
+        )]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fields(&value)["stdout"],
+        Data::Bytes(format!("{expected:?}").into_bytes().into())
+    );
+    for arguments in [IndexMap::new(), args([("arg", Data::List(vec![]))])] {
+        let value = invoke(cap.clone(), &invoker, arguments).await.unwrap();
+        assert_eq!(fields(&value)["stdout"], Data::Bytes(b"[]".to_vec().into()));
+    }
+    assert!(!fixture._directory.path().join("SHOULD_NOT_EXIST").exists());
+    assert!(fixture.lock_is_available());
+}
+
+#[tokio::test]
+async fn argument_list_count_and_aggregate_bytes_include_the_fixed_prefix() {
+    let fixture = Fixture::new().await;
+    // Four fixed elements with three separators, followed by two two-byte elements.
+    let prefix_bytes =
+        fixture.executable.len() + "argv".len() + fixture.lock.to_str().unwrap().len() + 3;
+    let (cap, invoker) = fixture.invoker(
+        "argv",
+        "",
+        ProcessConfig {
+            argument_bytes: prefix_bytes + 6,
+            ..ProcessConfig::default()
+        },
+    );
+    let too_large = args([(
+        "arg",
+        Data::List(vec![Data::Text("ab".into()), Data::Text("cde".into())]),
+    )]);
+    assert_eq!(
+        failure(invoke(cap.clone(), &invoker, too_large).await).code(),
+        "PROC001"
+    );
+    assert!(!fixture.lock.exists());
+    let exact = args([(
+        "arg",
+        Data::List(vec![Data::Text("ab".into()), Data::Text("cd".into())]),
+    )]);
+    let value = invoke(cap, &invoker, exact).await.unwrap();
+    assert_eq!(
+        fields(&value)["stdout"],
+        Data::Bytes(br#"["ab", "cd"]"#.to_vec().into())
+    );
+
+    let fixture = Fixture::new().await;
+    let (cap, invoker) = fixture.invoker("argv", "", ProcessConfig::default());
+    // Empty strings still consume argv slots and separators.
+    let excessive = args([("arg", Data::List(vec![Data::Text("".into()); 1021]))]);
+    assert_eq!(
+        failure(invoke(cap.clone(), &invoker, excessive).await).code(),
+        "PROC001"
+    );
+    assert!(!fixture.lock.exists());
+    let exact = vec![String::new(); 1020];
+    let value = invoke(
+        cap,
+        &invoker,
+        args([("arg", Data::List(vec![Data::Text("".into()); 1020]))]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fields(&value)["stdout"],
+        Data::Bytes(format!("{exact:?}").into_bytes().into())
+    );
 }
 
 #[tokio::test]
@@ -355,6 +446,16 @@ async fn invalid_arguments_and_duration_fail_before_launch_and_do_not_echo_input
     let (cap, invoker) = fixture.invoker("arg", "", ProcessConfig::default());
     for arguments in [
         args([("arg", Data::Text("fixture-private\0bad".into()))]),
+        args([("arg", Data::Text("fixture-private".into()))]),
+        args([(
+            "arg",
+            Data::List(vec![Data::Text("fixture-private\0bad".into())]),
+        )]),
+        args([(
+            "arg",
+            Data::List(vec![Data::Text("valid".into()), Data::Int(1)]),
+        )]),
+        args([("arg", Data::List(vec![Data::List(vec![])]))]),
         args([("arg", Data::Int(1))]),
         args([("timeout", Data::Text("fixture-private".into()))]),
         args([("timeout", Data::Duration("PT0S".parse().unwrap()))]),
@@ -421,6 +522,10 @@ fn configuration_limits_and_native_shell_metadata_are_explicit() {
     let cap = description.capabilities().next().unwrap();
     assert_eq!(cap.safety, Safety::Unsafe);
     assert!(cap.parameter("cmd").unwrap().content.is_some());
+    assert_eq!(
+        cap.parameter("cmd").unwrap().shape,
+        Shape::Primitive(wes_core::Primitive::Text)
+    );
     let (direct, _) = process::wrapping("fixture", "tool", ProcessConfig::default()).unwrap();
     assert!(
         direct
@@ -432,6 +537,31 @@ fn configuration_limits_and_native_shell_metadata_are_explicit() {
             .content
             .is_none()
     );
+    assert_eq!(
+        direct
+            .capabilities()
+            .next()
+            .unwrap()
+            .parameter("args")
+            .unwrap()
+            .shape,
+        Shape::List(Box::new(Shape::Primitive(wes_core::Primitive::Text)))
+    );
+}
+
+#[tokio::test]
+async fn shell_programs_refuse_argument_lists() {
+    let (description, invoker) = process::shell(ProcessConfig::default()).unwrap();
+    let cap = description.capabilities().next().unwrap().clone();
+    let error = failure(
+        invoke(
+            cap,
+            &invoker,
+            args([("cmd", Data::List(vec![Data::Text("exit 0".into())]))]),
+        )
+        .await,
+    );
+    assert_eq!(error.code(), "PROC001");
 }
 
 #[tokio::test]

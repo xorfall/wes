@@ -523,6 +523,7 @@
         "spec": "env.source.spec",
         "openapi": "env.source.openapi",
         "process": "env.source.process",
+        "provider": "env.source.provider",
         "docker": "env.source.docker",
         "builtin": "env.source.builtin"
       }
@@ -546,6 +547,13 @@
       "type": "Text",
       "choices": [
         "process"
+      ]
+    },
+    "env.kind.provider": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "provider"
       ]
     },
     "env.kind.builtin": {
@@ -662,6 +670,19 @@
           "required": true
         },
         "bin": {
+          "schema": "text",
+          "required": true
+        }
+      }
+    },
+    "env.source.provider": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "env.kind.provider",
+          "required": true
+        },
+        "file": {
           "schema": "text",
           "required": true
         }

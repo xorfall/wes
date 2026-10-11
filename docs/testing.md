@@ -117,6 +117,7 @@ python3 examples/api-import/readme/check.py
 python3 examples/openapi-import/check.py
 python3 examples/editable-api-draft/check.py
 python3 examples/schema-provenance/check.py
+python3 examples/declarative-providers/check.py --binary target/debug/wes
 python3 examples/api-workflow/check.py
 python3 examples/prometheus-workspace/check.py
 python3 examples/prometheus-workspace/run.py --check
@@ -222,6 +223,19 @@ while Go tests cover extraction, evidence and contract validation. Recorded
 benchmark output is not a fixture: use the performance example generators to
 measure your own build. See the [examples index](../examples/README.md) for
 runnable demos, prerequisites and regression fixtures.
+
+For declarative CLI provider changes, finish the definition/import/execution scope
+before running its synthetic checks:
+
+```sh
+cargo test -p wes-adapters --lib provider_definition --offline --locked -- --test-threads=4
+cargo test -p wes --test declarative_providers --offline --locked -- --test-threads=4
+cargo build -p wes --offline --locked
+python3 examples/declarative-providers/check.py --binary target/debug/wes
+```
+
+These checks use synthetic invokers and a portable native fixture in temporary
+homes.
 
 ## GitHub Actions
 

@@ -169,8 +169,10 @@ pub struct SourceKey {
 }
 impl SourceKey {
     pub fn new(kind: &str, location: &str) -> Result<Self, EnvironmentError> {
-        if !matches!(kind, "spec" | "openapi" | "process" | "docker" | "builtin")
-            || (kind == "builtin" && !matches!(location, "sh" | "http" | "docker"))
+        if !matches!(
+            kind,
+            "spec" | "openapi" | "process" | "provider" | "docker" | "builtin"
+        ) || (kind == "builtin" && !matches!(location, "sh" | "http" | "docker"))
             || (kind == "docker" && !location.starts_with('/'))
             || location.is_empty()
             || location.len() > 4096
@@ -195,6 +197,8 @@ impl SourceKey {
             "name"
         } else if self.kind == "docker" {
             "socket"
+        } else if self.kind == "provider" {
+            "file"
         } else if self.kind == "process" {
             "bin"
         } else if self.location.starts_with("http://") || self.location.starts_with("https://") {

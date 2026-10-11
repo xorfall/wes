@@ -262,7 +262,36 @@ fn source(catalogue: &Catalogue, tool: &str, args: &[String]) -> Result<String, 
             let key = flag
                 .strip_prefix("--")
                 .ok_or_else(|| BridgeReply::error(2, "Expected --parameter VALUE."))?;
-            (key, quote(value)?)
+            let parameter = cap
+                .parameter(key)
+                .ok_or_else(|| BridgeReply::error(2, "Unknown or duplicate parameter."))?;
+            let literal = if parameter.shape
+                == wes_core::Shape::List(Box::new(wes_core::Shape::Primitive(
+                    wes_core::Primitive::Text,
+                ))) {
+                if value.len() > wes_language::structured::MAX_BYTES {
+                    return Err(BridgeReply::error(
+                        2,
+                        "Text list exceeds the CLI literal budget.",
+                    ));
+                }
+                let items: Vec<String> = serde_json::from_str(value)
+                    .map_err(|_| BridgeReply::error(2, "List<Text> parameters require a JSON array of strings, or --wes-ref parameter=name."))?;
+                if items.len() >= wes_language::structured::MAX_NODES {
+                    return Err(BridgeReply::error(
+                        2,
+                        "Text list exceeds the CLI literal budget.",
+                    ));
+                }
+                let quoted = items
+                    .iter()
+                    .map(|item| quote(item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                format!("[{}]", quoted.join(","))
+            } else {
+                quote(value)?
+            };
+            (key, literal)
         };
         if !identifier(key) || cap.parameter(key).is_none() || !seen.insert(key) {
             return Err(BridgeReply::error(2, "Unknown or duplicate parameter."));
@@ -388,7 +417,7 @@ async fn perform(
         .ok_or_else(|| BridgeReply::error(2, "Select an environment in wes first."))?;
     if request.tool == "wes-provider" {
         if request.args.is_empty() || request.args[0] == "--list" || request.args[0] == "--help" {
-            return Ok(json!({"usage":"wesx provider PROVIDER OPERATION --parameter VALUE [--wes-ref parameter=name.field] [--wes-typed]", "providers":catalogue.provider_names().collect::<Vec<_>>(), "values":"wesx value list / get NAME", "scope":"current workspace and current selected environment; native commands win PATH collisions"}).to_string());
+            return Ok(json!({"usage":"wesx provider PROVIDER OPERATION --parameter VALUE [--wes-ref parameter=name.field] [--wes-typed]", "arguments":"List<Text> parameters accept a JSON array of strings; --wes-ref passes an existing typed value", "providers":catalogue.provider_names().collect::<Vec<_>>(), "values":"wesx value list / get NAME", "scope":"current workspace and current selected environment; native commands win PATH collisions"}).to_string());
         }
         request.tool = request.args.remove(0);
     }
@@ -620,6 +649,79 @@ mod tests {
             )
             .unwrap_or_default(),
             "demo echo value:$rates.TRY"
+        );
+    }
+
+    #[test]
+    fn provider_cli_text_lists_remain_data_and_reject_malformed_arrays() {
+        let (description, _) =
+            wes_adapters::process::wrapping("tool", "synthetic", Default::default()).unwrap();
+        let mut catalogue = Catalogue::new();
+        catalogue.register(description);
+        let expected = [
+            "api",
+            "two words",
+            "",
+            "quote\"; $(touch nope) $secret",
+            "ĞğİıŞş",
+        ];
+        let flags = vec![
+            "run".into(),
+            "--args".into(),
+            serde_json::to_string(&expected).unwrap(),
+        ];
+        let text = source(&catalogue, "tool", &flags).unwrap_or_else(|e| panic!("{}", e.stderr));
+        let parsed = wes_language::parse(&wes_language::SourceText::new("argv", &text));
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.script.statements.len(), 1);
+        let wes_language::Expression::Call(call) = &parsed.script.statements[0].expression else {
+            panic!()
+        };
+        let wes_language::Value::Structured(_, wes_language::Structure::List(items)) =
+            &call.arguments[0].value
+        else {
+            panic!()
+        };
+        assert_eq!(
+            items
+                .iter()
+                .map(|v| v.name().text.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for bad in [
+            "api run",
+            "[1]",
+            "[[\"nested\"]]",
+            "[\"x\"] > stolen",
+            "[\"a\\n:remove\"]",
+        ] {
+            assert!(
+                source(
+                    &catalogue,
+                    "tool",
+                    &["run".into(), "--args".into(), bad.into()]
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            source(
+                &catalogue,
+                "tool",
+                &["run".into(), "--args".into(), "[]".into()]
+            )
+            .unwrap_or_default(),
+            "tool run args:[]"
+        );
+        assert_eq!(
+            source(
+                &catalogue,
+                "tool",
+                &["run".into(), "--wes-ref".into(), "args=argv".into()]
+            )
+            .unwrap_or_default(),
+            "tool run args:$argv"
         );
     }
 

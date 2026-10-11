@@ -1,0 +1,10 @@
+version: 1
+package: declarative-provider-demo
+targets:
+  local: {kind: local}
+environments:
+  demo:
+    imports:
+      demo:
+        source: {kind: provider, file: demo.yaml}
+        bind: {target: local}

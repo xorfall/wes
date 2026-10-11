@@ -171,7 +171,7 @@ async fn reconstruction_separates_pure_staleness_from_provider_execution_warning
     };
     let first = run(
         &["--env-file", "env.yaml", "--env", "dev", "--sequential"],
-        "echo run args:first > raw\n:calc { return $raw; } > one\n:calc { return $one; } > two\n:calc { return $two; } > three",
+        "echo run args:[first] > raw\n:calc { return $raw; } > one\n:calc { return $one; } > two\n:calc { return $two; } > three",
     );
     assert!(
         first.status.success(),
@@ -180,7 +180,7 @@ async fn reconstruction_separates_pure_staleness_from_provider_execution_warning
     );
     let changed = run(
         &["--env-file", "env.yaml", "--env", "dev", "--activate-env"],
-        ":change $raw args:changed",
+        ":change $raw args:[changed]",
     );
     assert!(
         changed.status.success(),

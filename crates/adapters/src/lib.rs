@@ -17,6 +17,7 @@ mod input_files;
 pub mod inventory;
 pub mod journal;
 pub mod process;
+pub mod provider_definition;
 pub mod script_files;
 pub mod source_archive;
 mod ssh;

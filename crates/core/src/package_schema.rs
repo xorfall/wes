@@ -528,6 +528,7 @@ fn build() -> Registry {
                 ("spec", "env.source.spec"),
                 ("openapi", "env.source.openapi"),
                 ("process", "env.source.process"),
+                ("provider", "env.source.provider"),
                 ("docker", "env.source.docker"),
                 ("builtin", "env.source.builtin"),
             ],
@@ -536,6 +537,7 @@ fn build() -> Registry {
     d.insert("env.kind.spec", choices(Text, &["spec"]));
     d.insert("env.kind.openapi", choices(Text, &["openapi"]));
     d.insert("env.kind.process", choices(Text, &["process"]));
+    d.insert("env.kind.provider", choices(Text, &["provider"]));
     d.insert("env.kind.docker", choices(Text, &["docker"]));
     d.insert("env.kind.builtin", choices(Text, &["builtin"]));
     d.insert("env.builtin.name", choices(Text, &["sh", "http", "docker"]));
@@ -582,6 +584,10 @@ fn build() -> Registry {
     d.insert(
         "env.source.process",
         object(&[("kind", "env.kind.process", true), ("bin", "text", true)]),
+    );
+    d.insert(
+        "env.source.provider",
+        object(&[("kind", "env.kind.provider", true), ("file", "text", true)]),
     );
     d.insert("env.bind", union(&["env.bind.explicit", "env.bind.auto"]));
     d.insert("env.bind.auto", choices(Text, &["auto"]));

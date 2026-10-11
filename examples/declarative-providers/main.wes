@@ -1,0 +1,3 @@
+:import provider file:demo.yaml as:demo
+demo records echo payload:{count:42,label:"literal arguments"} > record
+demo messages echo messages:["a b","$(literal)"] labels:[first,second] verbose:true > message

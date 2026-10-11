@@ -390,7 +390,7 @@ async fn default_imports_keep_batch_semantics_captured_revisions_and_offline_reo
         listed(&["docker", "echo", "fixture", "http"])
     );
     assert_eq!(
-        field(&value(&session, "echo run args:reopened").await, "stdout"),
+        field(&value(&session, "echo run args:[reopened]").await, "stdout"),
         Data::Bytes(b"reopened\n".to_vec().into())
     );
     assert_eq!(
@@ -427,7 +427,7 @@ async fn explicit_environment_and_clear_never_fall_back_and_reopen_does_not_enab
     accepted(submit(&session, ":env use \"pg-demo\"").await.as_ref());
     assert_eq!(
         field(
-            &value(&session, "pg run args:environment-ok").await,
+            &value(&session, "pg run args:[environment-ok]").await,
             "stdout"
         ),
         Data::Bytes(b"environment-ok\n".to_vec().into())

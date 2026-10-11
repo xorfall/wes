@@ -130,7 +130,7 @@ impl LocalEnvironments {
                 key.kind() != "builtin"
                     && key.source_field() != "url"
                     && !Path::new(key.location()).is_absolute()
-                    && !(!matches!(key.kind(), "spec" | "openapi")
+                    && !(!matches!(key.kind(), "spec" | "openapi" | "provider")
                         && package
                             .definitions()
                             .values()
@@ -159,6 +159,32 @@ impl LocalEnvironments {
                 CapturedSource::new("docker/observe/v1", key.location())?
             } else if matches!(key.kind(), "spec" | "openapi") {
                 self.spec_source(&inputs, &key)?
+            } else if key.kind() == "provider" {
+                let namespaces: std::collections::BTreeSet<_> = package
+                    .definitions()
+                    .values()
+                    .flat_map(|d| d.imports.values().chain(d.overrides.values()))
+                    .filter(|i| i.source == key)
+                    .map(|i| {
+                        package
+                            .targets()
+                            .get(&i.target)
+                            .is_some_and(|t| driver(t).namespace() == ProcessNamespace::Target)
+                    })
+                    .collect();
+                if namespaces.len() != 1 {
+                    return Err(invalid(
+                        "one provider definition cannot mix host and target executable namespaces",
+                    ));
+                }
+                let recipe = crate::provider_definition::capture_file(
+                    &inputs,
+                    key.location(),
+                    namespaces.contains(&true),
+                    wes_core::environments::MAX_SOURCE_BYTES,
+                )
+                .map_err(|e| invalid(&e.to_string()))?;
+                CapturedSource::new(recipe.format(), recipe.source())?
             } else if package
                 .definitions()
                 .values()
@@ -336,6 +362,10 @@ impl EnvironmentLoader for LocalEnvironments {
     }
     fn build(&self, alias: &str, binding: &Binding) -> Result<ImportProduct, EnvironmentError> {
         let import = binding.import();
+        if import.source().format() == crate::provider_definition::FORMAT {
+            return crate::provider_definition::build(alias, binding, self.authority.clone())
+                .map_err(|e| invalid(&e.to_string()));
+        }
         if import.source().format() == "builtin/v1" {
             return builtin::build(
                 alias,

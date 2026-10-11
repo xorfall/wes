@@ -19,7 +19,7 @@ async fn ssh_execution_edit_refresh_and_restoration_use_captured_target_without_
     f.install().await;
     assert!(!count.exists());
     f.submit("one", ":env use \"qa\"").await;
-    f.submit("one", "echo run args:original > first").await;
+    f.submit("one", "echo run args:[\"two words\",\"\",\"quote's; $(touch SHOULD_NOT_EXIST) $HOME\",\"ĞğİıŞş\"] > first").await;
     f.submit("one", ":env rename \"qa\" to:renamed").await;
     f.submit("one", ":env use \"renamed\"").await;
     // Definition editing must preserve SSH fields and the target namespace.
@@ -29,10 +29,15 @@ async fn ssh_execution_edit_refresh_and_restoration_use_captured_target_without_
     )
     .await;
     f.submit("one", ":env use \"renamed\"").await;
-    f.submit("one", "vars run args:QA_REMOTE > variable").await;
+    f.submit("one", "vars run args:[QA_REMOTE] > variable")
+        .await;
     assert_eq!(stdout(&f.value("variable").await), b"captured\n");
     f.submit("one", ":refresh $first").await;
-    assert_eq!(stdout(&f.value("first").await), b"original\n");
+    assert_eq!(
+        stdout(&f.value("first").await),
+        "two words  quote's; $(touch SHOULD_NOT_EXIST) $HOME ĞğİıŞş\n".as_bytes()
+    );
+    assert!(!f.root.path().join("SHOULD_NOT_EXIST").exists());
     assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 3);
     let captured = f.handle.checkpoint().await.unwrap();
     let mut copy = wes_engine::history::HistoryCapture::new(Default::default());

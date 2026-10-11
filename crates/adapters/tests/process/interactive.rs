@@ -74,6 +74,27 @@ async fn interactive_prompt_precedes_result_and_input_eof_preserves_raw_streams_
 }
 
 #[tokio::test]
+async fn interactive_argument_lists_use_the_same_literal_argv_contract() {
+    let fixture = Fixture::new().await;
+    let (cap, invoker) = fixture.invoker("argv", "", ProcessConfig::default());
+    let expected = ["two words", "", "quoted\"; $HOME", "ĞğİıŞş"];
+    let (_, task) = start(
+        cap,
+        &invoker,
+        args([(
+            "arg",
+            Data::List(expected.iter().map(|s| Data::Text((*s).into())).collect()),
+        )]),
+    );
+    let value = joined(task).await.unwrap();
+    assert_eq!(
+        fields(&value)["stdout"],
+        Data::Bytes(format!("{expected:?}").into_bytes().into())
+    );
+    assert!(fixture.lock_is_available());
+}
+
+#[tokio::test]
 async fn interactive_large_stdin_does_not_block_either_output_pipe_and_live_loss_is_explicit() {
     let fixture = Fixture::new().await;
     let (cap, invoker) = fixture.invoker("duplex", "", ProcessConfig::default());
