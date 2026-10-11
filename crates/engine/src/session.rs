@@ -45,6 +45,7 @@ mod checkpoint;
 mod identity;
 mod repeat;
 pub mod retirement;
+mod selection;
 use checkpoint::Checkpoints;
 pub use checkpoint::{SessionCheckpoint, SessionPause};
 mod log;
@@ -189,6 +190,11 @@ struct Submission<T> {
     credit: OwnedSemaphorePermit,
 }
 enum Control {
+    SelectionTemplate(
+        String,
+        Option<wes_core::environments::EnvironmentContext>,
+        oneshot::Sender<Result<Option<NodeId>, SessionError>>,
+    ),
     ResolveManagement {
         input: SourceInput,
         reference: String,
@@ -988,6 +994,8 @@ fn spawn_owned(
         value_updates: values.as_ref().map(SessionValues::updates),
     };
     let actor = Actor {
+        first_activation: None,
+        selection_pending: Default::default(),
         dataset_access: values.as_ref().map(|v| v.worker().dataset_access()),
         import_plans: Default::default(),
         active_import: None,
@@ -1037,6 +1045,8 @@ enum Admission {
     Recorded(Result<PreparedSource, SessionError>),
 }
 struct Actor {
+    first_activation: Option<crate::providers::BoundCall>,
+    selection_pending: std::collections::BTreeMap<NodeId, selection::Pending>,
     dataset_access: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetAccess>>,
     import_plans: import_plans::Plans,
     active_import: Option<import_plans::FrozenImport>,
@@ -1096,6 +1106,7 @@ impl Actor {
             self.recording_failed = true;
         }
         loop {
+            self.drain_activations();
             // Cancellation/removal can revoke a deferred run while a checkpoint is settling. Ack
             // that update promptly so its worker can join; otherwise an idle barrier could deadlock.
             let deferred = std::mem::take(&mut self.deferred_windows);
@@ -1464,6 +1475,13 @@ impl Actor {
                     self.finish_active(Err(SessionError::RepeatRefused("An environment plan claimed an output name while this declaration was preparing. Retry with a fresh name.")));
                     return;
                 }
+                self.first_activation = match self.prepare_first_activation(&prepared) {
+                    Ok(captured) => captured,
+                    Err(error) => {
+                        self.finish_active(Err(error));
+                        return;
+                    }
+                };
                 self.reserved_output_names = names;
                 // Charge the prepared success notices before recording or committing effects.
                 let reserve = reply_reservation(&prepared);
@@ -1591,6 +1609,32 @@ impl Actor {
                     .diagnostics
                     .sort_by_key(|d| d.span.start());
                 self.capture_repeat_definition(&result);
+                if let Some(captured) = self.first_activation.take() {
+                    let node = &result.nodes[0];
+                    let call = self
+                        .workspace
+                        .runtime()
+                        .graph()
+                        .node(node)
+                        .and_then(|node| node.payload().call())
+                        .expect("prepared selection call")
+                        .clone()
+                        .with_captured_inputs(&captured);
+                    if call.validate_captured().is_err() {
+                        self.finish_active(Err(SessionError::Authority));
+                        return;
+                    }
+                    match self.workspace.invoke_captured(node, call, self.io.now()) {
+                        Ok(effects) => {
+                            result.repeated_run = self.workspace.runtime().run_of(node).cloned();
+                            self.effects(effects);
+                        }
+                        Err(_) => {
+                            self.finish_active(Err(SessionError::Commit));
+                            return;
+                        }
+                    }
+                }
                 self.finish_active(Ok(Arc::new(result)));
                 self.effects(applied.effects);
                 let effects = self.workspace.start(self.io.now());
@@ -1606,6 +1650,7 @@ impl Actor {
         }
     }
     fn finish_active(&mut self, reply: SubmissionReply) {
+        self.first_activation = None;
         self.active_import = None;
         self.reserved_output_names.clear();
         if let Some(cell) = self.active.take() {
@@ -1614,6 +1659,13 @@ impl Actor {
     }
     fn control(&mut self, control: Control) {
         match control {
+            Control::SelectionTemplate(text, context, reply) => {
+                let result = self
+                    .workspace
+                    .selection_template(&text, context)
+                    .map_err(SessionError::AdmissionRefused);
+                let _ = reply.send(result);
+            }
             Control::StopWorkspace {
                 cells,
                 environments,
@@ -1775,7 +1827,13 @@ impl Actor {
                     .and_then(|nodes| self.cancel_actor(&actor, &nodes));
                 let _ = reply.send(result);
             }
-            Control::Repeat(submission) => self.repeat(*submission),
+            Control::Repeat(submission) => {
+                if submission.source.selection().is_some() {
+                    self.activate_selection(*submission);
+                } else {
+                    self.repeat(*submission);
+                }
+            }
             Control::Environments(request) => self.environment_request(*request),
             Control::Input {
                 node,
@@ -1797,6 +1855,7 @@ impl Actor {
                 } else if self.workspace.runtime().graph().node(&node).is_none() {
                     Err(SessionError::UnknownNode)
                 } else {
+                    self.cancel_activations(std::slice::from_ref(&node));
                     let effects = self.workspace.cancel(&node, self.io.now());
                     self.effects(effects);
                     Ok(())
@@ -1810,6 +1869,7 @@ impl Actor {
                     self.preparation_token.cancel();
                     Ok(())
                 } else if let Ok(nodes) = self.cells.nodes(&origin) {
+                    self.cancel_activations(&nodes);
                     match self.workspace.cancel_nodes(&nodes, self.io.now()) {
                         Ok(effects) => {
                             self.effects(effects);
@@ -2059,6 +2119,8 @@ impl Actor {
         self.io.effects(effects);
     }
     fn close(&mut self) {
+        let pending = self.selection_pending.keys().cloned().collect::<Vec<_>>();
+        self.cancel_activations(&pending);
         self.import_plans.clear();
         self.workspace.views.stop_queries();
         self.view_queries.stop();
@@ -2216,6 +2278,11 @@ impl Actor {
                         }
                         match self.workspace.apply_control(control, self.io.now()) {
                             Ok(applied) => {
+                                if applied.receipt.operation == "cancel" {
+                                    if let Some(node) = &applied.receipt.node {
+                                        self.cancel_activations(std::slice::from_ref(node));
+                                    }
+                                }
                                 result.receipts.push(applied.receipt);
                                 for node in targets {
                                     self.execution_principals.insert(
@@ -2359,6 +2426,11 @@ impl Actor {
             if error.code() == wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN {
                 self.remote_uncertain
                     .store(true, std::sync::atomic::Ordering::Release);
+                if let Some(pending) = self.selection_pending.remove(run.node()) {
+                    self.finish_cell(pending.input.cell(), Err(SessionError::RepeatRefused("Pending activation stopped: the previous external execution outcome is unknown.")));
+                    let effects = self.workspace.cancel(run.node(), self.io.now());
+                    self.effects(effects);
+                }
             }
             self.log.capture(log_time().and_then(|at| {
                 PreparedLog::notice(

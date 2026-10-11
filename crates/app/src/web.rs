@@ -239,6 +239,10 @@ pub async fn listen(mut config: Config) -> io::Result<Server> {
         .route("/language/calc", get(language::calc))
         .route("/language/yaml", get(language::yaml))
         .route("/language/views", get(language::views))
+        .route(
+            "/language/selection-template",
+            post(language::selection_template),
+        )
         .route("/view-packages/{digest}", get(view_packages::read))
         .route("/presentations", get(presentations::read))
         .route("/fonts", get(fonts::read))
@@ -655,6 +659,7 @@ enum Command {
         run: String,
     },
     Submit {
+        selection: Option<SelectionInput>,
         #[serde(default)]
         document: Option<DocumentInput>,
         revision_of: Option<String>,
@@ -830,6 +835,20 @@ async fn submit(Scoped(shared): Scoped, request: Request) -> Response {
         Ok(c) => c,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid request").into_response(),
     };
+    let selection_views = if matches!(
+        &command,
+        Command::Submit {
+            selection: Some(SelectionInput::Rendered { .. }),
+            ..
+        }
+    ) {
+        match current.session.view_catalogue().await {
+            Ok(views) => Some(views),
+            Err(_) => return StatusCode::FORBIDDEN.into_response(),
+        }
+    } else {
+        None
+    };
     if current.session.check_retirement_access().await.is_err() {
         return services::management_error(crate::retention::ManagementError::Retiring);
     }
@@ -931,6 +950,7 @@ async fn submit(Scoped(shared): Scoped, request: Request) -> Response {
         }
         Command::CancelWork { origin } => current.session.cancel_work(origin).await,
         Command::Submit {
+            selection,
             document,
             revision_of,
             from,
@@ -974,6 +994,13 @@ async fn submit(Scoped(shared): Scoped, request: Request) -> Response {
                 };
                 let input = match revision_of {
                     Some(origin) if !console => input.with_revision(origin)?,
+                    Some(_) => return Err(wes_engine::source::SourceError::Identity),
+                    None => input,
+                };
+                let input = match selection {
+                    Some(selection) if !console => {
+                        input.with_selection(selection.native(selection_views.as_ref())?)?
+                    }
                     Some(_) => return Err(wes_engine::source::SourceError::Identity),
                     None => input,
                 };
@@ -1235,4 +1262,95 @@ async fn site_file(State(shared): State<Shared>, request: Request) -> Response {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
     shared.site.response(request.uri().path())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+enum SelectionInput {
+    Rendered {
+        source: String,
+        run: String,
+        view: String,
+        artifact: String,
+        value: serde_json::Value,
+    },
+    Row {
+        source: String,
+        run: String,
+        row: usize,
+    },
+    View {
+        source: String,
+        identity: String,
+        revision: String,
+        port: String,
+    },
+}
+impl SelectionInput {
+    fn native(
+        self,
+        views: Option<&wes_views::Catalogue>,
+    ) -> Result<wes_engine::selection::Selection, wes_engine::source::SourceError> {
+        use wes_engine::{selection::Selection, source::SourceError};
+        Ok(match self {
+            Self::Rendered {
+                source,
+                run,
+                view,
+                artifact,
+                value,
+            } => {
+                let package = &views
+                    .and_then(|views| views.artifact(&artifact))
+                    .ok_or(SourceError::Identity)?
+                    .package;
+                if package.manifest.id != view {
+                    return Err(SourceError::Identity);
+                }
+                let port = package
+                    .manifest
+                    .outputs
+                    .get("selected")
+                    .or_else(|| package.manifest.outputs.get("selection"))
+                    .filter(|port| port.shared && port.mode == wes_views::Mode::State)
+                    .ok_or(SourceError::Identity)?;
+                let contract = package
+                    .contracts
+                    .resolve(&port.r#type)
+                    .map_err(|_| SourceError::Identity)?;
+                let value = wes_adapters::codec::decode_json_for_contract(
+                    &serde_json::to_vec(&value).map_err(|_| SourceError::Identity)?,
+                    wes_adapters::codec::Limits {
+                        bytes: 128 * 1024,
+                        nodes: 10000,
+                    },
+                    &contract,
+                )
+                .map_err(|_| SourceError::Identity)?;
+                Selection::Rendered {
+                    source: NodeId::new(source).map_err(|_| SourceError::Identity)?,
+                    run: wes_engine::runtime::RunId::new(run).map_err(|_| SourceError::Identity)?,
+                    view,
+                    artifact,
+                    value,
+                }
+            }
+            Self::Row { source, run, row } => Selection::Row {
+                source: NodeId::new(source).map_err(|_| SourceError::Identity)?,
+                run: wes_engine::runtime::RunId::new(run).map_err(|_| SourceError::Identity)?,
+                row,
+            },
+            Self::View {
+                source,
+                identity,
+                revision,
+                port,
+            } => Selection::View {
+                source: NodeId::new(source).map_err(|_| SourceError::Identity)?,
+                identity,
+                revision: revision.parse().map_err(|_| SourceError::Identity)?,
+                port,
+            },
+        })
+    }
 }

@@ -1,3 +1,4 @@
+import { beforeEach } from "vitest";
 vi.mock("./workspace-events", () => ({ WorkspaceEvents: function(path: string) { return new EventSource(path); } }));
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Engine } from "./engine";
@@ -791,3 +792,5 @@ describe("view workspace identity", () => {
     expect(seen).toEqual([]);
   });
 });
+
+beforeEach(() => { vi.spyOn(Engine.prototype, "selectionTemplate").mockResolvedValue(undefined); });

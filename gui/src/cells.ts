@@ -22,6 +22,7 @@ import type { Diagnostic } from "./protocol";
 import { EngineRefusal } from "./engine-diagnostics";
 
 export type CellState =
+  | "waiting"
   /** Sent, and the engine said what it made. */
   | "running"
   /** Sent, and the engine never answered. Nobody knows whether it arrived. */
@@ -30,6 +31,7 @@ export type CellState =
   | "answered";
 
 export interface Cell {
+  readonly selectionSource?: string;
   readonly id: string;
   readonly text: string;
   readonly receipts?: readonly { readonly summary: string }[];
@@ -168,11 +170,12 @@ export function planned(cells: readonly Cell[], event: Extract<import("./protoco
   const accepted = event.revisionOf ? event.revisionAccepted === true : !event.failure;
   const definition = event.repeatOf ?? (accepted ? event.cell : undefined);
   if (!found) return [...cells, { ...newCell(event.text), id: root, workRoot: root, lastRun: event.cell,
-    originAttempt: definition, revisionOf: event.revisionOf ?? undefined,
+    selectionSource: event.selectionSource ?? undefined, originAttempt: definition, revisionOf: event.revisionOf ?? undefined,
     revisionText: event.revisionOf ? event.text : undefined, acknowledgeEffects: event.acknowledgeEffects,
     attempts: [event.cell], nodes: event.nodes, state: "answered", receipts: event.receipts ?? undefined, restored: event.restored, diagnostics: event.diagnostics ?? [], document: event.document ?? undefined }];
   if (found.lastRun !== event.cell && (found.attempts?.includes(event.cell) || (!event.repeatOf && !event.revisionOf))) return cells;
   return cells.map(cell => cell !== found ? cell : { ...cell, workRoot: root, lastRun: event.cell,
+    selectionSource: event.selectionSource ?? cell.selectionSource,
     text: accepted ? event.text : cell.text,
     document: event.document ?? cell.document,
     receipts: event.receipts ?? undefined,

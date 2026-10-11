@@ -1,3 +1,5 @@
+import { InstanceInteractionHost } from "../../value-views/interactive";
+import { renderedSelectionHost } from "../../value-views/rendered-selection";
 import { LogView } from "./LogView";
 import { logShape } from "./log-identity";
 import { typedJsonSummary } from "./JsonTree";
@@ -54,6 +56,7 @@ function locale(): { locale: string; timeZone: string } {
 }
 
 export interface ValueBlockProps {
+  readonly selectionSource?: { readonly node: string; readonly run: string };
   readonly collapsed?: boolean;
   readonly instanceDisplay?:InstanceDisplay;
   readonly engine?: Engine;
@@ -93,6 +96,7 @@ function DataValueBlock(props: ValueBlockProps) {
   useSyncExternalStore(datasetWithdrawals.subscribe, datasetWithdrawals.snapshot, datasetWithdrawals.snapshot);
   const handle = stored?.handle, generation = stored?.generation;
   const source = useMemo(() => engine && handle !== undefined && generation ? { engine, handle, generation } : undefined, [engine, handle, generation]);
+  const selectionHost = useMemo(() => engine && props.selectionSource ? renderedSelectionHost(engine.selections, props.selectionSource) : undefined, [engine, props.selectionSource?.node, props.selectionSource?.run]);
   const name = props.name;
   const host = useMemo(() => ({ ...(source ? { source } : {}), ...(name ? { name } : {}), mode, collapsed }), [source, name, mode, collapsed]);
   const frame = useRef<HTMLDivElement>(null);
@@ -105,7 +109,7 @@ function DataValueBlock(props: ValueBlockProps) {
     {withdrawn ? <WithdrawnBlock height={height.current} />
       : <DatasetHostContext.Provider value={host}>{isDeletePlan(props.value)
         ? <div className="value-block"><DeletePlanReview value={props.value} {...(name ? { name } : {})} collapsed={collapsed} /></div>
-        : <PresentedValueBlock {...props} />}</DatasetHostContext.Provider>}
+        : <InstanceInteractionHost.Provider value={selectionHost}><PresentedValueBlock {...props} /></InstanceInteractionHost.Provider>}</DatasetHostContext.Provider>}
   </div>;
 }
 
@@ -116,7 +120,7 @@ function WithdrawnBlock({ height }: { readonly height: number }) {
   </div>;
 }
 
-function PresentedValueBlock({ value, cacheKey, bindingKey, collapsed = false, facts = NO_FACTS, mode, lines = 6, inCell = true }: ValueBlockProps) {
+function PresentedValueBlock({ engine, selectionSource, value, cacheKey, bindingKey, collapsed = false, facts = NO_FACTS, mode, lines = 6, inCell = true }: ValueBlockProps) {
   const registry = useRegistry();
   const modules = useSyncExternalStore(valueViewModules.subscribe, valueViewModules.get, valueViewModules.get);
   const box = useRef<HTMLDivElement>(null);
@@ -169,7 +173,7 @@ function PresentedValueBlock({ value, cacheKey, bindingKey, collapsed = false, f
     {collapsed && summary}
     <div className="value-block-body" hidden={collapsed}>
     {grownByHand && <button className="cell-action" onClick={() => {setGrown(false);setRows(pageSize());setOpen(new Set());setClosed(new Set());setShown(new Map());setPages(new Map());}}>back to preview</button>}
-    <Presented key={bindingKey ?? cacheKey} node={presentation.root} onSort={(path,column)=>setSorts(was=>new Map(was).set(path,{column,descending:was.get(path)?.column===column && !was.get(path)?.descending}))} onToggle={toggle} onPage={(path, page) => setPages(was => new Map(was).set(path, Math.max(0, page)))}
+    <Presented onActivateRow={selectionSource && engine ? row => engine.selections.activate({ kind: "row", source: selectionSource.node, run: selectionSource.run, row }) : undefined} key={bindingKey ?? cacheKey} node={presentation.root} onSort={(path,column)=>setSorts(was=>new Map(was).set(path,{column,descending:was.get(path)?.column===column && !was.get(path)?.descending}))} onToggle={toggle} onPage={(path, page) => setPages(was => new Map(was).set(path, Math.max(0, page)))}
       onShowRows={(path, count) => setShown(was => new Map(was).set(path, count))}
       onFilter={(path, text) => {
         setFilters(was => { const next = new Map(was); if (text) next.set(path, text); else next.delete(path); return next; });

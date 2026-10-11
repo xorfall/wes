@@ -17,6 +17,7 @@ export interface SharedCommitResult {
   readonly problem?:string;
 }
 export interface StateTransport {
+  activate?(state: SharedState): void;
   settled?(ready:boolean):void;
   watch(listener:(sample:FrameSample<SharedState>)=>void):()=>void;
   commit(edit:SharedCommit,signal:AbortSignal):Promise<SharedCommitResult>;
@@ -27,7 +28,7 @@ export function attachSharedState(module:ValueViewModule, controller:SharedInter
   const definition=module.definition!, fields=definition.interaction?.sharedFields??[];
   if(!fields.length)return ()=>{};
   const signal=new AbortController();
-  type Pending=Pick<SharedCommit,"fields"|"outputs"|"events">;
+  type Pending=Pick<SharedCommit,"fields"|"outputs"|"events"> & { activation?: boolean };
   let current:SharedState|undefined, pending:Pending|undefined, busy=false, blocked:string|undefined;
   const events:Pending[]=[];
   const report=()=>transport.settled?.(!!current && !busy && !pending && !events.length && !blocked && !signal.signal.aborted);
@@ -54,7 +55,8 @@ export function attachSharedState(module:ValueViewModule, controller:SharedInter
     timer=undefined;
     if(busy||(!pending&&!events.length)||!current||signal.signal.aborted)return;
     const submitted=events.shift()??pending!;if(!events.length && submitted===pending)pending=undefined;busy=true;report();
-    void transport.commit({...current,...submitted},signal.signal).then(result=>{
+    const { activation, ...edit } = submitted;
+    void transport.commit({...current,...edit},signal.signal).then(result=>{
       if(signal.signal.aborted)return;
       if(result.outcome==="rejected"){
         const lost=!!submitted.events?.length || events.length>0;
@@ -70,21 +72,23 @@ export function attachSharedState(module:ValueViewModule, controller:SharedInter
           controller.problem(`${problem}${lost?" View events were rejected and were not replayed.":""}`);
         }
       }
-      else if(!pending&&!events.length)adopt(result.state);
-      else current=result.state;
+      else {
+        if(!pending&&!events.length)adopt(result.state); else current=result.state;
+        if(activation) transport.activate?.(result.state);
+      }
     }).catch(()=>{
       if(signal.signal.aborted)return;
       events.length=0;pending=undefined;current=undefined;blocked="View update was not confirmed and was not replayed. Reopen the view to reconnect.";controller.problem(blocked);
     }).finally(()=>{busy=false;report();if((pending||events.length)&&!signal.signal.aborted)timer=setTimeout(flush,events.length?0:50);});
   };
-  const stopIntercept=controller.intercept((previous,next,event)=>{
+  const stopIntercept=controller.intercept((previous,next,event,activation)=>{
     const emitted=module.outputEvents?.(previous,event,next)??[];
-    if(!emitted.length && fields.every(name=>Object.is((previous as Record<string,unknown>)[name],(next as Record<string,unknown>)[name])))return true;
+    if(!activation && !emitted.length && fields.every(name=>Object.is((previous as Record<string,unknown>)[name],(next as Record<string,unknown>)[name])))return true;
     if(blocked){controller.problem(blocked);return false;}
     if(!current){controller.problem("Connecting shared selection; try again shortly.");return false;}
-    if(emitted.length){
+    if(emitted.length || activation){
       if(events.length>=16){blocked="View event queue is full; this event was rejected. Reopen the view to reconnect.";report();controller.problem(blocked);return false;}
-      const item={...snapshot(next),events:emitted};
+      const item={...snapshot(next),events:emitted,activation};
       if(new TextEncoder().encode(stringifyExactJson(item)).length>12000){controller.problem("View event exceeds its message budget; this event was rejected.");return false;}
       events.push(item);pending=undefined;
     }else pending=snapshot(next);

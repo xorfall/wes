@@ -5,6 +5,7 @@ import { Cell, describeDependents, FOLD_ROWS, type CellActions, type CellBlock, 
 import { MonoLine, lineText } from "./MonoLine";
 import { ViewHost } from "./ViewHost";
 import { ResultType } from "./ResultType";
+import { TableGrid } from "./render/TableGrid";
 const identity=(id:string)=>({id,label:`$${id}`,glyph:"ready" as const});
 const block=(id:string,hasValue=true):CellBlock=>({key:id,identity:identity(id),open:true,hasValue,content:<span>{id} value</span>});
 const props:CellProps={theme:"keys",state:"default",label:"c",rows:[{segments:[{text:"synthetic > result"}],nodes:[identity("result")]}],verdict:[{segments:[{text:"ok"}],keep:true}],time:"09:14",blocks:[block("result")]};
@@ -150,6 +151,22 @@ describe("Ledger cell contract",()=>{
  });
  it("copies and peeks without executing a command",()=>{
   const peek=vi.fn(),repeat=vi.fn(),tree=draw({actions:{peek,repeat}});act(()=>tree.root.findByProps({className:"cell-source"}).props.onClick({metaKey:true,button:0,preventDefault(){},stopPropagation(){}}));expect(peek).toHaveBeenCalledWith("source");expect(repeat).not.toHaveBeenCalled();act(()=>tree.unmount());
+ });
+ it("leaves table Cmd-click to Peek and uses Shift-click for row activation",()=>{
+  const peek=vi.fn(),activate=vi.fn(),repeat=vi.fn();
+  const content=<TableGrid columns={[{name:"key"}]} rows={[[[{text:"first"}]],[[{text:"second"}]]]} onActivate={activate}/>;
+  const tree=draw({blocks:[{...block("result"),content}],actions:{peek,repeat}});
+  const row=tree.root.findAll(node=>node.type==="tr" && !!node.props.onClick)[1]!;
+  const frame=tree.root.findByProps({"data-node":"result"});
+  const click=(extra:Record<string,boolean>={})=>({button:0,shiftKey:false,metaKey:false,ctrlKey:false,altKey:false,isTrusted:true,defaultPrevented:false,target:{closest:()=>null},preventDefault:vi.fn(),...extra});
+  // Deliver the same bubbling event to the row and its result frame.
+  const command=click({metaKey:true});
+  act(()=>{row.props.onClick(command);frame.props.onClick(command);});
+  expect(peek).toHaveBeenCalledWith("value","result");expect(activate).not.toHaveBeenCalled();
+  const shift=click({shiftKey:true});
+  act(()=>{row.props.onClick(shift);frame.props.onClick(shift);});
+  expect(activate).toHaveBeenCalledExactlyOnceWith(1);expect(peek).toHaveBeenCalledOnce();
+  expect(repeat).not.toHaveBeenCalled();act(()=>tree.unmount());
  });
  it("describes a bounded list of dependents",()=>{expect(describeDependents(["$a"])).toBe("1 dependent: $a");expect(describeDependents(["a","b","c","d"])).toBe("4 dependents");});
 });

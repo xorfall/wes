@@ -1,3 +1,4 @@
+import { SelectionActivations } from "./selection-activations";
 import { withValidMeta } from "./value-meta";
 import { validDisplayMetadata, DisplayReadError, liveReader, type DisplayRead, type DisplayMetadata } from "./live-view-reader";
 import {ValuePackages} from "./value-views/external/discovery";
@@ -26,7 +27,7 @@ import { DatasetReadError, datasetFailure, datasetQuery, decodeDatasetHead, deco
 import type { DatasetReference } from "./presentation/dataset";
 import type { ViewDatasetBinding } from "./value-views/view-datasets";
 import { workspaceHeaders, workspaceName } from "./workspace-binding";
-import type { Event, Request, StoredValue, Suggested, SavedHistoryPage } from "./protocol";
+import type { EnvironmentContext, Event, Request, StoredValue, Suggested, SavedHistoryPage } from "./protocol";
 
 export type Connection = "connecting" | "connected" | "reconnecting";
 /** Stored handles remembered per node for access notices: current plus a few recent runs. */
@@ -192,11 +193,30 @@ export class Engine {
     if (captured && captured.generation !== this.generation) throw new Error("Session changed while composing; explicitly review the draft context before submitting.");
     if (captured && !captured.context && this.environmentContext()) throw new Error("Environment definitions were installed while composing; explicitly review the draft context.");
   }
+  readonly selections = new SelectionActivations(async (cell, text, selection, context, origin) => {
+    if (this.sourceAttempts.has(cell)) throw new Error("This activation identity is already in use; reconcile its original request.");
+    if (this.sourceAttempts.size >= 10_000) throw new Error("Submission history is full.");
+    const request: Extract<Request, { request: "submit" }> = { request: "submit", cell, text, selection, client: this.client, environments: context,
+      ...(origin ? { repeat: origin, acknowledge_effects: true } : {}) };
+    this.sourceAttempts.set(cell, request);
+    await this.send(request);
+  });
+  async selectionTemplate(text: string, environments?: EnvironmentContext): Promise<string | undefined> {
+    const generation = this.generation;
+    const response = await fetch("/language/selection-template", { method: "POST", headers: this.headers({ "Content-Type": "application/json", ...(generation ? { "X-Wes-Session": generation } : {}) }), body: JSON.stringify({ text, environments }) });
+    if (!response.ok) throw new Error(await response.text());
+    const result = await readExactJson(response) as { source?: string | null; generation: string };
+    if (generation !== this.generation || result.generation !== generation) throw new Error("Workspace changed while preparing the selection command.");
+    return result.source ?? undefined;
+  }
   async submitComposed(cell: string, text: string, scope = "default", retainDraft = false): Promise<void> {
     this.checkComposition(scope);
     const captured = this.compositions.get(scope);
     if (!retainDraft) this.compositions.delete(scope);
-    await this.submit(cell, text, captured?.context ?? this.environmentContext());
+    const context = captured?.context ?? this.environmentContext();
+    const source = await this.selectionTemplate(text, context);
+    if (source) { this.selections.wait(cell, text, source, context); return; }
+    await this.submit(cell, text, context);
   }
   /** A lost reply is retried with the exact original intent and attempt id. */
   async retrySubmission(cell: string): Promise<void> {
@@ -219,6 +239,7 @@ export class Engine {
       try {
         const event = decodeEvent(parseExactJson(message.data));
         const previousGeneration = this.generation;
+        this.selections.observe(event);
         if (event.event === "session") {
           for (const waiter of this.documentWaiters.values()) if (waiter.generation !== event.generation) waiter.reject(new Error("Workspace changed while submitting the document; inspect its original workspace before retrying."));
         }
@@ -349,7 +370,7 @@ export class Engine {
     await this.send(request);
   }
 
-  async cancelWork(origin: string): Promise<void> { await this.send({ request: "cancel-work", origin }); }
+  async cancelWork(origin: string): Promise<void> { if (this.selections.cancel(origin)) return; await this.send({ request: "cancel-work", origin }); }
 
   /** Stops a node's work. */
   async cancel(node: string): Promise<void> {

@@ -486,7 +486,28 @@ impl Analysis<'_> {
                     }));
                 };
                 let (task, typing) = match node.task {
-                    Task::Invoke(invocation) => {
+                    Task::Invoke(mut invocation) => {
+                        for input in invocation.inputs.values_mut() {
+                            self.bind_selection(input);
+                        }
+                        let selections: std::collections::BTreeSet<_> = invocation
+                            .inputs
+                            .values()
+                            .flat_map(plan::Input::selection_sources)
+                            .map(|s| s.node.clone())
+                            .collect();
+                        if !selections.is_empty()
+                            && (selections.len() != 1
+                                || self.pipe_input.is_some()
+                                || invocation.capability.streaming
+                                || invocation.interactive)
+                        {
+                            return Err(rejected(
+                                "SEL001",
+                                statement.span,
+                                "Selection activation requires one selection source and a finite standalone provider call.",
+                            ));
+                        }
                         let typing =
                             Arc::new(invocation.predicted_typing(|node| self.data_typing(node)));
                         let call = if invocation.capability.streaming {
@@ -976,11 +997,16 @@ impl Analysis<'_> {
                 )
                 .map_err(|e| WorkspaceError::Runtime(e.into()))?,
         };
+        let selection_bound = task
+            .call()
+            .is_some_and(|call| !call.selection_sources().is_empty());
         Ok(Preparation::Change(self.change(
             Change::Node {
                 node: id,
                 task,
-                admission: if statement.annotations.iter().any(|a| a.name.text == "hold") {
+                admission: if statement.annotations.iter().any(|a| a.name.text == "hold")
+                    || selection_bound
+                {
                     super::Installation::Held
                 } else {
                     super::Installation::Live
@@ -1040,6 +1066,15 @@ impl Analysis<'_> {
             if let Some(output) = self.resolve(name.text.split('.').next().expect("reference root"))
             {
                 let fields: Vec<String> = name.text.split('.').skip(1).map(str::to_owned).collect();
+                if fields.first().is_some_and(|field| field == "selected")
+                    && let Some(mut typing) = self.selection_typing(&output)
+                {
+                    if let Some(shape) = crate::plan::field_shape(&typing.shape, &fields[1..]) {
+                        typing.shape = shape;
+                        environment.bindings.insert(name.text.clone(), typing);
+                    }
+                    continue;
+                }
                 if let Some(mut typing) = self.typing(&output)
                     && let Some(shape) = crate::plan::field_shape(&typing.shape, &fields)
                 {
@@ -1086,5 +1121,52 @@ impl Analysis<'_> {
             }
         }
         environment
+    }
+
+    fn selection_typing(&self, output: &OutputRef) -> Option<Typing> {
+        if output.port != OutputPort::Data {
+            return None;
+        }
+        let mut typing = self.typing(output)?;
+        typing.shape = match typing.shape {
+            Shape::List(item) => *item,
+            Shape::Unknown => Shape::Unknown,
+            Shape::Meta(wes_core::MetaType::ViewInstance) => {
+                let BoundTask::View(view) = self.graph.node(&output.node)?.payload() else {
+                    return None;
+                };
+                view.selection_shape(self.views)?
+            }
+            shape @ Shape::Record(_) => crate::selection::selected_shape(
+                crate::selection::rendered_package(&shape, self.views)?,
+            )?,
+            _ => return None,
+        };
+        Some(typing)
+    }
+
+    fn bind_selection(&self, input: &mut plan::Input) {
+        match input {
+            plan::Input::FieldPath { output, fields }
+                if fields.first().is_some_and(|field| field == "selected") =>
+            {
+                if let Some(typing) = self.selection_typing(output)
+                    && let Some(shape) = plan::field_shape(&typing.shape, &fields[1..])
+                {
+                    *input = plan::Input::Selection {
+                        source: output.clone(),
+                        fields: fields[1..].to_vec(),
+                        shape,
+                    };
+                }
+            }
+            plan::Input::Record(fields) => fields
+                .values_mut()
+                .for_each(|input| self.bind_selection(input)),
+            plan::Input::List { items, .. } => items
+                .iter_mut()
+                .for_each(|input| self.bind_selection(input)),
+            _ => (),
+        }
     }
 }

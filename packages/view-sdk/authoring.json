@@ -12,7 +12,7 @@
     "view.css": "Optional author styles. Import from the renderer to include them in the artifact.",
     "contract.ts": "Generated before TypeScript checking. Input, Outputs, State, Event and EventOutputs types come from Wes contracts."
   },
-  "execution": "Compilation never evaluates source. Views receive inputs, committed state and emit; they never own commands or source streams.",
+  "execution": "Compilation never evaluates source. Views receive inputs, committed state, emit(event) and activate(event). They never own commands or source streams; the host executes only commands explicitly bound by the user.",
   "runtimeLimits": {
     "inputBytes": 1048576,
     "drawingsPerSecond": 10,
@@ -90,5 +90,11 @@
     "limits": "At most two pending reads per drawing, 100 rows and 1 MiB per reply. Ordinals, counts and sizes are exact decimal strings. Read one needed page; do not collect the entire Dataset on render.",
     "identity": "Each read binds the exact committed snapshot and drawn input revisions. New input, session, withdrawal or closure aborts pending reads. Handle changed/withdrawn/unavailable explicitly and discard obsolete page copies. Dataset element patterns are validated only by the native store under its frozen schema digest; the browser must not execute them as JavaScript regexes. Ordinary input and writable port patterns still require an adapter.",
     "authority": "Read-only MessagePort capability, no fetch, filesystem, arbitrary Dataset IDs, commands, refresh, recording, stop, resume or deletion. Read following and recording are separate operations."
+  },
+  "selection": {
+    "declaration": "Declare one shared state output named selected (preferred) or selection with the payload contract. Option<T> supports an empty selection; $result.selected has payload type T during activation. Inspect a source with :inspect.",
+    "activation": "Call activate(event) from the authored interaction, for example onClick. It reduces and validates the event like emit, then activates user-bound commands with the resulting selection. Repeated clicks may activate the same value again. emit(event), clearing, initialization, remote adoption and drawing do not activate commands.",
+    "binding": "Users write a finite provider command with arguments such as key:$result.selected.key. Enter creates a waiting GUI cell. A later activation captures typed inputs for one execution without editing the command. Native table activation uses Shift-click on a row; ordinary click selects locally and Command-click opens Peek. Inline nominal View results and workspace View instances use the same authored API.",
+    "limits": "One finite provider command and one selection source per binding. The source version, declared output contract, ownership, environment and invocation authority are checked by the host. Nested inline renderers do not activate their containing result."
   }
 }

@@ -358,6 +358,7 @@ impl Attempt {
 }
 #[derive(Clone, Debug)]
 struct Entry {
+    invocation_pending: bool,
     progress: Option<crate::driver::progress::ExecutionProgress>,
     // Independent of graph presentation state: only admitted execution acknowledges this pause.
     automatic_pause: Option<StaleReason>,
@@ -451,6 +452,7 @@ impl Entry {
             display_revision: 0,
             stream_counts: None,
             evidence: None,
+            invocation_pending: false,
             progress: None,
             actual_typing: None,
             error: None,
@@ -496,6 +498,9 @@ pub struct Runtime<T> {
     graph: DependencyGraph<T>,
     entries: IndexMap<NodeId, Entry>,
     leases: IndexMap<NodeId, Lease>,
+    /// Last explicitly admitted invocation payload, separate from the authored definition.
+    /// Session admission owns pending requests and validates them before installing one here.
+    invocation_payloads: IndexMap<NodeId, (T, wes_core::flow::FlowPolicy)>,
     // At most 1024 charged private values; summing this bounded map avoids walking the graph.
     private_charges: IndexMap<NodeId, u64>,
     ordered: IndexMap<NodeId, OrderedPipeline>,
@@ -516,6 +521,7 @@ impl<T: Clone> Runtime<T> {
             graph: DependencyGraph::new(),
             entries: IndexMap::new(),
             leases: IndexMap::new(),
+            invocation_payloads: IndexMap::new(),
             private_charges: IndexMap::new(),
             ordered: IndexMap::new(),
             stream_budget: Default::default(),
@@ -818,9 +824,11 @@ impl<T: Clone> Runtime<T> {
             .is_some_and(|entry| entry.creation_complete)
     }
     pub fn inputs_captured(&self, node: &NodeId) -> bool {
-        self.entries
-            .get(node)
-            .is_some_and(|entry| entry.inputs_captured)
+        self.invocation_payloads.contains_key(node)
+            || self
+                .entries
+                .get(node)
+                .is_some_and(|entry| entry.inputs_captured)
     }
     /// Currency propagation differs from structural ownership/control reachability.
     fn currency_downstream(&self, root: &NodeId) -> Result<IndexSet<NodeId>, GraphError> {
@@ -902,6 +910,7 @@ impl<T: Clone> Runtime<T> {
     ) -> Result<(), RuntimeError> {
         self.open()?;
         self.require_held(node)?;
+        self.invocation_payloads.shift_remove(node);
         self.graph.replace_payload(node, payload)?;
         self.entries.get_mut(node).expect("held entry").traits = traits;
         Ok(())
@@ -1444,6 +1453,10 @@ impl<T: Clone> Runtime<T> {
         )
     }
     fn cancel_with(&mut self, node: &NodeId, error: ErrorValue, now: Duration) -> Vec<Effect<T>> {
+        let cancelled_invocation = self
+            .entries
+            .get_mut(node)
+            .is_some_and(|entry| std::mem::take(&mut entry.invocation_pending));
         if let Some(root) = self.ordered_root(node) {
             if self
                 .entries
@@ -1457,7 +1470,8 @@ impl<T: Clone> Runtime<T> {
         }
         self.preserve_stopped_stream(node);
         let waiting_request = self.entries.get_mut(node).is_some_and(|entry| {
-            let waiting = entry.explicitly_requested && entry.active.is_none();
+            let waiting =
+                cancelled_invocation || entry.explicitly_requested && entry.active.is_none();
             entry.refresh_pending = false;
             entry.explicitly_requested = false;
             waiting
@@ -1604,6 +1618,13 @@ impl<T: Clone> Runtime<T> {
         if self
             .entries
             .get(node)
+            .is_some_and(|entry| entry.invocation_pending)
+        {
+            return Err(RuntimeError::Busy(node.clone()));
+        }
+        if self
+            .entries
+            .get(node)
             .is_some_and(|e| e.ordered_root.is_some())
         {
             return Err(RuntimeError::Busy(node.clone()));
@@ -1637,6 +1658,62 @@ impl<T: Clone> Runtime<T> {
         )?;
         effects.extend(self.schedule(vec![node.clone()], true, now));
         Ok(effects)
+    }
+    pub fn invocation_payload(&self, node: &NodeId) -> Option<&T> {
+        self.invocation_payloads
+            .get(node)
+            .map(|(payload, _)| payload)
+    }
+    pub(crate) fn forget_invocation_payload(&mut self, node: &NodeId) {
+        self.invocation_payloads.shift_remove(node);
+    }
+    pub(crate) fn restore_invocation_payload(
+        &mut self,
+        node: NodeId,
+        payload: T,
+        policy: wes_core::flow::FlowPolicy,
+    ) {
+        self.invocation_payloads.insert(node, (payload, policy));
+    }
+    /// Revoke publication while a session-owned immutable replacement awaits physical exit.
+    /// Do not schedule here: only the request owner may revalidate and start the replacement.
+    pub(crate) fn supersede(&mut self, node: &NodeId) -> Result<Vec<Effect<T>>, RuntimeError> {
+        self.open()?;
+        let (_, effects) = self.mark_stale(
+            node,
+            StaleReason::InvocationPending,
+            StaleReason::DependencyRefreshed,
+        )?;
+        self.entries
+            .get_mut(node)
+            .expect("marked entry")
+            .invocation_pending = true;
+        Ok(effects)
+    }
+    /// Admit concrete inputs for one finite invocation without rewriting the graph definition.
+    /// The caller owns validation and must wait for the prior physical execution to exit.
+    pub fn refresh_with_payload(
+        &mut self,
+        node: &NodeId,
+        payload: T,
+        policy: wes_core::flow::FlowPolicy,
+        now: Duration,
+    ) -> Result<Vec<Effect<T>>, RuntimeError> {
+        self.open()?;
+        self.check_construction_refresh(node)?;
+        if self.leases.contains_key(node)
+            || self.ordered_root(node).is_some()
+            || self.is_streaming(node)
+        {
+            return Err(RuntimeError::Busy(node.clone()));
+        }
+        self.entries
+            .get_mut(node)
+            .expect("checked entry")
+            .invocation_pending = false;
+        self.invocation_payloads
+            .insert(node.clone(), (payload, policy));
+        self.refresh(node, now)
     }
     /// Atomically admit one explicit finite refresh for the root and its current
     /// dependent closure. This does not change policy, executor traits or identity.
@@ -1817,7 +1894,10 @@ impl<T: Clone> Runtime<T> {
     ) -> Result<Vec<Effect<T>>, RuntimeError> {
         self.open()?;
         self.graph.replace_payload(node, payload)?;
-        self.entries.get_mut(node).expect("graph entry").traits = traits;
+        self.invocation_payloads.shift_remove(node);
+        let entry = self.entries.get_mut(node).expect("graph entry");
+        entry.traits = traits;
+        entry.invocation_pending = false;
         self.invalidate(node, now)
     }
     /// Structural replay has no live cancellation or observation transitions.
@@ -1874,6 +1954,8 @@ impl<T: Clone> Runtime<T> {
             !removed.contains(root) && !group.stages.is_empty()
         });
         self.entries.retain(|id, _| !removed.contains(id));
+        self.invocation_payloads
+            .retain(|id, _| !removed.contains(id));
         self.private_charges.retain(|id, _| !removed.contains(id));
         Ok(())
     }
@@ -1997,6 +2079,10 @@ impl<T: Clone> Runtime<T> {
                 continue;
             };
             let entry = &self.entries[&id];
+            if entry.invocation_pending {
+                continue;
+            }
+            let captured_invocation = self.invocation_payloads.contains_key(&id);
             if !self.pipeline_predecessor_finished(&id) {
                 continue;
             }
@@ -2017,7 +2103,8 @@ impl<T: Clone> Runtime<T> {
             {
                 continue;
             }
-            if matches!(node.state(), NodeState::Pending | NodeState::Stale) {
+            if !captured_invocation && matches!(node.state(), NodeState::Pending | NodeState::Stale)
+            {
                 if let Some(output) = &entry.activation {
                     match self.ordered_output(&id, output) {
                         OutputState::Pending => continue,
@@ -2109,28 +2196,32 @@ impl<T: Clone> Runtime<T> {
             if !may_start || self.leases.contains_key(&id) || node.state() == NodeState::Running {
                 continue;
             }
-            let inputs = node
-                .dependencies()
-                .iter()
-                .map(|(node, port)| {
-                    match self.ordered_output(
-                        &id,
-                        &OutputRef {
-                            node: node.clone(),
-                            port: *port,
-                        },
-                    ) {
-                        OutputState::Available(value) => Some((node.clone(), value)),
-                        _ => None,
-                    }
-                })
-                .collect::<Option<IndexMap<_, _>>>();
+            let inputs = if captured_invocation {
+                Some(IndexMap::new())
+            } else {
+                node.dependencies()
+                    .iter()
+                    .map(|(node, port)| {
+                        match self.ordered_output(
+                            &id,
+                            &OutputRef {
+                                node: node.clone(),
+                                port: *port,
+                            },
+                        ) {
+                            OutputState::Available(value) => Some((node.clone(), value)),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Option<IndexMap<_, _>>>()
+            };
             let Some(inputs) = inputs else {
                 continue;
             };
             let input_origins = node
                 .dependencies()
                 .iter()
+                .filter(|_| !captured_invocation)
                 .filter_map(|(id, port)| {
                     let run = if *port == OutputPort::Data {
                         self.value_run(id)
@@ -2149,18 +2240,24 @@ impl<T: Clone> Runtime<T> {
                     })
                 })
                 .collect();
-            let payload = node.payload().clone();
+            let payload = self
+                .invocation_payload(&id)
+                .unwrap_or_else(|| node.payload())
+                .clone();
             let entry = self.entries.get_mut(&id).expect("graph entry");
             let run = Run {
                 node: id.clone(),
                 id: RunId::fresh(),
             };
             let attempt = Attempt {
-                flow: inputs
-                    .values()
-                    .fold(wes_core::flow::FlowPolicy::default(), |policy, value| {
-                        policy.join(value.provenance().policy())
-                    }),
+                flow: inputs.values().fold(
+                    self.invocation_payloads
+                        .get(&id)
+                        .map_or_else(wes_core::flow::FlowPolicy::default, |(_, policy)| {
+                            policy.clone()
+                        }),
+                    |policy, value| policy.join(value.provenance().policy()),
+                ),
                 run: run.clone(),
                 started: now,
                 budget: entry

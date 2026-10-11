@@ -22,6 +22,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RestoreError {
+    #[error("history contains invalid or conflicting invocation input evidence")]
+    Invocation,
     #[error("view definitions could not be restored: {0}")]
     Views(String),
     #[error("history contains invalid live snapshot evidence")]
@@ -252,6 +254,7 @@ pub async fn restore(
     let mut remaining_changes = 1_000_000usize;
     let mut environment_records = IndexMap::new();
     let mut trace_records = IndexMap::new();
+    let mut invocation_records = IndexMap::new();
     let traced_attempts: IndexSet<_> = history
         .recovery()
         .iter()
@@ -284,6 +287,24 @@ pub async fn restore(
             check_cancelled(&cancellation)?;
             environment_records.insert(record.id(), record);
             report.environments += 1;
+            continue;
+        }
+        if let JournalEntry::Invocation(record) = entry {
+            if let Some(previous) = invocation_records.insert(record.run.clone(), record) {
+                if previous != record {
+                    return Err(RestoreError::Invocation);
+                }
+                continue;
+            }
+            if !commands
+                .get(record.cell.as_str())
+                .is_some_and(|command| command.nodes.contains(&record.node))
+            {
+                return Err(RestoreError::Invocation);
+            }
+            replay
+                .restore_invocation(record)
+                .map_err(|_| RestoreError::Invocation)?;
             continue;
         }
         if let JournalEntry::Trace(record) = entry {

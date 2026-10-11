@@ -156,7 +156,11 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
       if(message.base!==controller.committedRevision())return false;
       const previousState=nextState,previousOutputs=lastOutputs,previousEvents=lastEvents;
       nextState=candidate;lastOutputs=message.outputs;lastEvents=events;
-      const accepted=controller.emit(event);
+      const activation = message.kind === "activate";
+      if (activation && !["selected", "selection"].some(name => {
+        const output = asset.definition.outputs[name]; return output?.shared && output.mode === "state";
+      })) throw new Error("View has no declared selection output");
+      const accepted=controller.emit(event, activation);
       if(!accepted){nextState=previousState;lastOutputs=previousOutputs;lastEvents=previousEvents;}
       return accepted;
     };
@@ -190,7 +194,7 @@ function ExternalCanvas({model:raw,renderChild,module,asset,mirror}:ViewComponen
             attachShared();setSession({controller,apply:applyEvent});sync();
           }
           observed.ready();
-        }else if(message.kind==="event"){
+        }else if(message.kind==="event" || message.kind==="activate"){
           const accepted=mirror ? mirror.apply(message) : applyEvent(message);
           if(!controller)throw new Error("Unexpected event before readiness");
           send({kind:"event-reply",accepted,state:controller.committed(),revision:controller.committedRevision()});

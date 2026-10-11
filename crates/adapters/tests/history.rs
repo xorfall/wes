@@ -1251,3 +1251,45 @@ fn applied_import_origin_and_frozen_scalar_provenance_round_trip_without_authori
         assert!(decode_journal(&serde_json::to_vec(&invalid).unwrap(), Limits::default()).is_err());
     }
 }
+
+#[test]
+fn invocation_inputs_roundtrip_and_private_payloads_are_never_history_records() {
+    let argument = wes_core::Value::new(
+        wes_core::Shape::Unknown,
+        wes_core::Data::Record([("value".into(), wes_core::Data::Int(19))].into()),
+        wes_core::Provenance::default(),
+    )
+    .unwrap();
+    let record = wes_engine::selection::InvocationRecord {
+        node: NodeId::new("target").unwrap(),
+        run: RunId::new("attempt").unwrap(),
+        cell: "original".into(),
+        request: "activation".into(),
+        arguments: Some(argument.clone()),
+    };
+    for arguments in [Some(argument.clone()), None] {
+        let entry = JournalEntry::Invocation(wes_engine::selection::InvocationRecord {
+            arguments,
+            ..record.clone()
+        });
+        let bytes = encode_journal(&entry, Limits::default()).unwrap();
+        assert_eq!(
+            decode_journal(&bytes, Limits::default()).unwrap().entry,
+            entry
+        );
+    }
+    let private = argument.with_provenance(
+        wes_core::Provenance::default()
+            .with_policy(&wes_core::flow::FlowPolicy::default().private()),
+    );
+    assert!(
+        encode_journal(
+            &JournalEntry::Invocation(wes_engine::selection::InvocationRecord {
+                arguments: Some(private),
+                ..record
+            }),
+            Limits::default()
+        )
+        .is_err()
+    );
+}

@@ -250,6 +250,7 @@ export type Event =
     }
   | {
       readonly event: "planned";
+      readonly selectionSource?: string | null;
       readonly receipts?: readonly { readonly summary: string }[] | null;
       readonly restored?: boolean;
       readonly workOf?: string | null;
@@ -451,7 +452,7 @@ export type Request =
   | { readonly request: "environmentrevoke"; readonly environment: string; readonly revision: string; readonly provider: string }
   | { readonly request: "environmenttransfer"; readonly origin: string; readonly destination: string; readonly revision: string; readonly seconds: number }
   /** `cell` names one attempt at running a cell, not the cell — re-running it is a new attempt. */
-  | { readonly request: "submit"; readonly console?: boolean; readonly cell: string; readonly text: string; readonly document?: { readonly source: string }; readonly client: string; readonly environments?: EnvironmentContext; readonly revision_of?: string; readonly repeat?: string; readonly acknowledge_effects?: boolean; readonly from?: string }
+  | { readonly request: "submit"; readonly selection?: SelectionInput; readonly console?: boolean; readonly cell: string; readonly text: string; readonly document?: { readonly source: string }; readonly client: string; readonly environments?: EnvironmentContext; readonly revision_of?: string; readonly repeat?: string; readonly acknowledge_effects?: boolean; readonly from?: string }
   | { readonly request: "release-preview"; readonly handle: string; readonly client: string }
   | { readonly request: "release"; readonly token: string; readonly client: string }
   | { readonly request: "cancel-work"; readonly origin: string }
@@ -571,8 +572,15 @@ export interface WorkHistory {
   readonly runs: readonly WorkRun[]; readonly unconfirmedWrites: string;
 }
 export interface WorkRunDetail {
+  readonly invocation?: { readonly request: string; readonly arguments: StoredValue | null; readonly withheld: boolean } | null;
   readonly canProtect: boolean;
   readonly error: Pick<ErrorRecord, "code" | "message" | "issues" | "locations"> | null;
   readonly run: WorkRun; readonly definition: { readonly text: string; readonly [field: string]: unknown };
   readonly trace: StoredValue | null; readonly contextNote: string; readonly traceNote: string;
 }
+
+/** Exact native source locator; values never interpolate into source text. */
+export type SelectionInput =
+  | { readonly kind:"rendered"; readonly source:string; readonly run:string; readonly view:string; readonly artifact:string; readonly value:unknown }
+  | { readonly kind: "row"; readonly source: string; readonly run: string; readonly row: number }
+  | { readonly kind: "view"; readonly source: string; readonly identity: string; readonly revision: string; readonly port: string };

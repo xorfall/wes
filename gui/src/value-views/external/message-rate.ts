@@ -3,7 +3,7 @@ import authoring from "@wes/view-sdk/authoring.json";
 export class MessageRate {
   private readonly lanes=new Map<string,{tokens:number;last:number}>();
   take(kind:unknown,now:number){
-    const key=kind==="event"?"interaction":"control",rate=authoring.runtimeLimits.eventsPerSecond;
+    const key=(kind==="event"||kind==="activate")?"interaction":"control",rate=authoring.runtimeLimits.eventsPerSecond;
     const lane=this.lanes.get(key)??{tokens:rate,last:now};
     lane.tokens=Math.min(rate,lane.tokens+Math.max(0,now-lane.last)*rate/1000);lane.last=now;
     this.lanes.set(key,lane);

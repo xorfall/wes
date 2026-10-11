@@ -20,8 +20,8 @@ export function localPackage<I,O,S,E,EO>(name:string, source:ViewRenderer<I,O,S,
   return vi.spyOn(shipped,"Component").mockImplementation(props=>{
     const model=props.model as {input:unknown;identity?:string;path:string;mode:"window";coordinated?:boolean;slots:Record<string,PresentationNode[]>};
     const Component=renderer.Component;
-    const draw=(state:unknown,revision:number,emit:(event:unknown)=>void)=><Component input={model.input} state={state} revision={revision} emit={emit}
+    const draw=(state:unknown,revision:number,emit:(event:unknown)=>void,activate:(event:unknown)=>void)=><Component input={model.input} state={state} revision={revision} emit={emit} activate={activate}
       context={{mode:model.mode,instance:model.identity??null,coordinated:model.coordinated}} slots={Object.fromEntries(Object.entries(model.slots).map(([name,nodes])=>[name,nodes.map(node=>props.renderChild(node))]))}/>;
-    return protocol?<InteractiveModule module={module} model={model} path={model.path} render={port=>draw(port.state,port.revision,port.emit)}/>:draw(undefined,0,()=>{});
+    return protocol?<InteractiveModule module={module} model={model} path={model.path} render={port=>draw(port.state,port.revision,port.emit,port.activate)}/>:draw(undefined,0,()=>{},()=>{});
   });
 }

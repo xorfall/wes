@@ -144,6 +144,14 @@ fn detail(image: &HistoryImage, run: &Run) -> Result<Value, Error> {
                 })
         })
         .transpose()?;
+    let invocation = image.journal().iter().find_map(|entry| match entry {
+        JournalEntry::Invocation(record) if record.node.as_str() == run.node && record.run.as_str() == run.run => Some(record),
+        _ => None,
+    }).map(|record| {
+        let arguments = record.arguments.as_ref().map(|value| encode_display_value(value, Limits::default()).map_err(|_| Error::EvidenceMissing)
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|_| Error::EvidenceMissing))).transpose()?;
+        Ok::<_, Error>(json!({"request":record.request,"arguments":arguments,"withheld":record.arguments.is_none()}))
+    }).transpose()?;
     let error = image
         .journal()
         .iter()
@@ -161,7 +169,7 @@ fn detail(image: &HistoryImage, run: &Run) -> Result<Value, Error> {
                 "code":issue.code,"message":issue.message})).collect::<Vec<_>>() })
         });
     Ok(
-        json!({"run":run,"definition":definition["entry"],"trace":trace,"error":error,
+        json!({"run":run,"definition":definition["entry"],"invocation":invocation,"trace":trace,"error":error,
         "contextNote":"Captured source references and environment revisions. Evaluated historical input payloads and old name resolution are not reconstructed.",
         "traceNote":if trace.is_some() {"Recorded trace for this run."} else {"No recorded trace for this run; it cannot be recovered by protecting the result."}}),
     )

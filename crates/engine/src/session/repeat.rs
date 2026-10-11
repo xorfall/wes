@@ -3,8 +3,8 @@ use super::*;
 use crate::{graph::OutputRef, runtime::OutputState};
 
 pub(super) struct Definition {
-    nodes: Vec<(NodeId, Arc<()>)>,
-    context: Option<wes_core::environments::EnvironmentContext>,
+    pub(super) nodes: Vec<(NodeId, Arc<()>)>,
+    pub(super) context: Option<wes_core::environments::EnvironmentContext>,
 }
 
 impl Definition {

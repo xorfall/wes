@@ -311,6 +311,7 @@ pub struct BoundCall {
 }
 #[derive(Clone, Default)]
 struct CallContext {
+    invocation_request: Option<String>,
     source_definition: Option<Arc<()>>,
     stream_budget: Option<crate::streams::delivery::Budget>,
     recording_schema: Option<wes_core::contracts::ResolvedContractBundle>,
@@ -320,6 +321,179 @@ struct CallContext {
     traces: Option<crate::trace::Traces>,
 }
 impl BoundCall {
+    pub fn selection_sources(&self) -> Vec<&crate::graph::OutputRef> {
+        self.invocation
+            .inputs
+            .values()
+            .flat_map(Input::selection_sources)
+            .collect()
+    }
+
+    pub(crate) fn capture_selection(
+        &self,
+        source: &crate::graph::OutputRef,
+        selected: &Value,
+        inputs: &IndexMap<NodeId, Value>,
+    ) -> Result<Self, InvocationError> {
+        let mut captured = self.clone();
+        captured.invocation.inputs = self
+            .invocation
+            .inputs
+            .iter()
+            .map(|(name, input)| {
+                input
+                    .capture_selection(source, selected, inputs)
+                    .map(|input| (name.clone(), input))
+                    .map_err(|error| {
+                        InvocationError::Failed(error.error(RuntimeCode::InputFailed, name))
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let (arguments, _) = prepare(
+            &captured.invocation,
+            &IndexMap::new(),
+            &CancellationToken::new(),
+        )?;
+        for parameter in &captured.invocation.capability.parameters {
+            if let Some(value) = arguments.get(&parameter.name)
+                && !value.shape().is_assignable_to(&parameter.shape)
+            {
+                return Err(InvocationError::Failed(RuntimeCode::InputFailed.error(
+                    format!(
+                        "Selection argument '{}:' requires {}.",
+                        parameter.name, parameter.shape
+                    ),
+                    None,
+                )));
+            }
+        }
+        captured.invocation.inputs = arguments
+            .into_iter()
+            .map(|(name, value)| (name, Input::Literal(value)))
+            .collect();
+        let total = captured
+            .invocation
+            .inputs
+            .values()
+            .filter_map(|input| match input {
+                Input::Literal(value) => Some(value),
+                _ => None,
+            })
+            .try_fold(0u64, |used, value| {
+                crate::value_size::value_charge(value, 128 * 1024)
+                    .and_then(|size| used.checked_add(size))
+                    .filter(|size| *size <= 128 * 1024)
+            });
+        if total.is_none() {
+            return Err(InvocationError::Failed(RuntimeCode::InputFailed.error(
+                "Captured invocation inputs exceed their byte budget.",
+                None,
+            )));
+        }
+        Ok(captured)
+    }
+    pub(crate) fn set_invocation_request(&mut self, request: String) {
+        self.context.invocation_request = Some(request);
+    }
+    pub(crate) fn invocation_record(
+        &self,
+        run: &Run,
+    ) -> Option<crate::selection::InvocationRecord> {
+        let request = self.context.invocation_request.clone()?;
+        let arguments = self
+            .invocation
+            .inputs
+            .iter()
+            .map(|(name, input)| match input {
+                Input::Literal(value) => Some((name.clone(), value.clone())),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let arguments =
+            crate::trace::record("InvocationArguments", arguments, Provenance::default());
+        let public = !arguments.provenance().policy().is_private()
+            && !arguments.provenance().policy().is_unknown();
+        Some(crate::selection::InvocationRecord {
+            node: run.node().clone(),
+            run: run.id().clone(),
+            cell: self
+                .context
+                .admission
+                .as_ref()
+                .map_or_else(|| request.clone(), |a| a.cell().to_owned()),
+            request,
+            arguments: public.then_some(arguments),
+        })
+    }
+    pub(crate) fn captured_policy(&self) -> wes_core::flow::FlowPolicy {
+        self.invocation
+            .inputs
+            .values()
+            .flat_map(Input::literal_values)
+            .fold(wes_core::flow::FlowPolicy::default(), |policy, value| {
+                policy.join(value.provenance().policy())
+            })
+    }
+    pub(crate) fn restore_arguments(
+        mut self,
+        record: &crate::selection::InvocationRecord,
+    ) -> Option<Self> {
+        if self
+            .context
+            .admission
+            .as_ref()
+            .is_some_and(|admission| admission.cell() != record.cell)
+            || self.selection_sources().is_empty()
+        {
+            return None;
+        }
+        let value = record.arguments.as_ref()?;
+        let Shape::Record(shape) = value.shape() else {
+            return None;
+        };
+        let wes_core::Data::Record(data) = value.data() else {
+            return None;
+        };
+        if data.len() != self.invocation.inputs.len()
+            || data
+                .keys()
+                .any(|key| !self.invocation.inputs.contains_key(key))
+        {
+            return None;
+        }
+        self.invocation.inputs = data
+            .iter()
+            .map(|(key, data)| {
+                let shape = shape.fields().find(|(name, _)| *name == key)?.1.clone();
+                let value = Value::new(shape, data.clone(), value.provenance().clone()).ok()?;
+                Some((key.clone(), Input::Literal(value)))
+            })
+            .collect::<Option<_>>()?;
+        prepare(
+            &self.invocation,
+            &IndexMap::new(),
+            &CancellationToken::new(),
+        )
+        .ok()?;
+        self.context.invocation_request = Some(record.request.clone());
+        Some(self)
+    }
+    pub(crate) fn validate_captured(&self) -> Result<(), InvocationError> {
+        let (_, provenance) = prepare(
+            &self.invocation,
+            &IndexMap::new(),
+            &CancellationToken::new(),
+        )?;
+        self.require_dispatch(&provenance).map_err(|denied| {
+            InvocationError::Failed(RuntimeCode::InputFailed.error(denied.message(), None))
+        })
+    }
+    pub(crate) fn with_captured_inputs(mut self, captured: &Self) -> Self {
+        self.invocation.inputs = captured.invocation.inputs.clone();
+        self.context.authority = captured.context.authority.clone();
+        self.context.invocation_request = captured.context.invocation_request.clone();
+        self
+    }
     pub(crate) fn set_source_definition(&mut self, definition: Arc<()>) {
         self.context.source_definition = Some(definition);
     }
@@ -856,15 +1030,7 @@ fn prepare(
     // and projections may differ from preparation metadata. Validate every referenced value after
     // explicit contract guards refine it, before lifecycle admission or provider execution.
     for parameter in &invocation.capability.parameters {
-        if matches!(
-            invocation.inputs.get(&parameter.name),
-            Some(
-                Input::FromNode(_)
-                    | Input::FieldPath { .. }
-                    | Input::Record(_)
-                    | Input::List { .. }
-            )
-        ) && let Some(value) = arguments.get(&parameter.name)
+        if let Some(value) = arguments.get(&parameter.name)
             && !value.shape().is_assignable_to(&parameter.shape)
         {
             return Err(InvocationError::Failed(RuntimeCode::ExecutionFailed.error(

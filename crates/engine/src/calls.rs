@@ -180,6 +180,23 @@ impl CallJournal {
         .await
     }
 
+    pub(crate) async fn record_invocation(
+        &self,
+        admission: &AdmittedCommand,
+        run: &Run,
+        record: crate::selection::InvocationRecord,
+    ) -> Result<(), CallJournalError> {
+        self.authorize(admission, run).await?;
+        if !record.validate()
+            || record.node != *run.node()
+            || record.run != *run.id()
+            || record.cell != admission.cell()
+        {
+            return Err(CallJournalError::Unadmitted);
+        }
+        self.append(Record::Journal(JournalEntry::Invocation(record)))
+            .await
+    }
     pub(crate) async fn record_trace(
         &self,
         record: crate::trace::TraceRecord,

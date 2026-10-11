@@ -327,6 +327,7 @@ pub struct Applied {
 }
 
 mod observation;
+mod selection;
 
 pub struct Workspace {
     pub(crate) recordings: crate::eventlog::owner::Owner,
@@ -1001,6 +1002,7 @@ impl Workspace {
                 Input::FromNode(output) => Ok(output.clone()),
                 Input::Literal(_)
                 | Input::FieldPath { .. }
+                | Input::Selection { .. }
                 | Input::Record(_)
                 | Input::List { .. } => Err(invalid()),
             })
@@ -1198,6 +1200,25 @@ impl Workspace {
             self.update_execution_progress(run, progress);
         }
         self.complete(run, report.outcome, now)
+    }
+    pub(crate) fn supersede_invocation(
+        &mut self,
+        node: &NodeId,
+    ) -> Result<Vec<Effect<BoundTask>>, RuntimeError> {
+        self.runtime.supersede(node)
+    }
+    pub(crate) fn invoke_captured(
+        &mut self,
+        node: &NodeId,
+        call: crate::providers::BoundCall,
+        now: Duration,
+    ) -> Result<Vec<Effect<BoundTask>>, RuntimeError> {
+        self.runtime.refresh_with_payload(
+            node,
+            BoundTask::Call(call.clone()),
+            call.captured_policy(),
+            now,
+        )
     }
     pub fn cancel(&mut self, node: &NodeId, now: Duration) -> Vec<Effect<BoundTask>> {
         self.views.cancel_origins(std::slice::from_ref(node));

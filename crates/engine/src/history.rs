@@ -330,6 +330,7 @@ impl DiagnosticRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalEntry {
+    Invocation(crate::selection::InvocationRecord),
     Views(crate::views::ViewRecord),
     Snapshot(LiveSnapshot),
     /// Explicit retention of one immutable execution's existing result, trace and declaration evidence.
@@ -791,6 +792,7 @@ impl<'a> RestoreIndex<'a> {
                 | JournalEntry::Retired(_)
                 | JournalEntry::Requested(_)
                 | JournalEntry::Submitted(_)
+                | JournalEntry::Invocation(_)
                 | JournalEntry::Trace(_)
                 | JournalEntry::Result(_)
                 | JournalEntry::Noticed(_)

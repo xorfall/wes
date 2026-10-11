@@ -17,6 +17,10 @@ export interface ViewProps<Input, State, Event> {
   readonly state: ReadonlyData<State>;
   readonly revision: number;
   readonly emit: (event: Event) => void;
+  /** Commit this event and activate the declared shared selected/selection output.
+   * Call from the View’s chosen interaction, e.g. a span’s onClick. The renderer
+   * cannot choose a command; only user-authored host bindings can execute. */
+  readonly activate: (event: Event) => void;
   readonly slots: Readonly<Record<string, readonly ReactNode[]>>;
   readonly context: {readonly mode: "preview" | "expanded" | "window"; readonly instance: string | null;readonly allocation?:ViewAllocation; readonly coordinated?: boolean; readonly inspectionOnly?: boolean; readonly inspectionActive?: boolean;
     /** True while the reader's focus is inside this View; a selection may stay but read as inactive. */

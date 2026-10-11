@@ -31,13 +31,13 @@ it("validates shape, intervals, sorting, stable IDs, units and record limits",()
 it("renders gaps, times and inspection using only SDK input and context; identity belongs to the instance",()=>{
   const input=data(),model=prepareTimeline(input,false,context.instance);
   expect(model.id).toBe("stable-instance");expect(input.id).not.toBe("stable-instance");
-  const html=renderToStaticMarkup(<timeline.Component input={input} state={timeline.initial!(input)} revision={0} emit={()=>{}} slots={{}} context={context}/>);
+  const html=renderToStaticMarkup(<timeline.Component input={input} state={timeline.initial!(input)} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={context}/>);
   expect(html).toContain("timeline-svg");expect(html).toContain("gaps break the line");expect(html).toContain("08:00");
   expect(html).toContain("timeline-inspection");
 });
 it("keeps keyboard selection, selected record outputs and events separate from hover",()=>{
   const input=data(),initial=timeline.initial!(input),events:unknown[]=[];
-  function Harness(){const [state,setState]=useState(initial);return <timeline.Component input={input} state={state} revision={0} emit={event=>{events.push(event);setState(previous=>timeline.reduce!(previous,event));}} slots={{}} context={context}/>;}
+  function Harness(){const [state,setState]=useState(initial);return <timeline.Component input={input} state={state} activate={()=>{}} revision={0} emit={event=>{events.push(event);setState(previous=>timeline.reduce!(previous,event));}} slots={{}} context={context}/>;}
   let tree!:ReturnType<typeof create>;act(()=>{tree=create(<Harness/>);});
   act(()=>tree.root.findByProps({className:"timeline-svg"}).props.onKeyDown({key:"ArrowRight",shiftKey:true,preventDefault(){},stopPropagation(){}}));
   expect(tree.root.findAllByProps({className:"timeline-selection"})).toHaveLength(1);
@@ -53,7 +53,7 @@ it("keeps keyboard selection, selected record outputs and events separate from h
 it("shows compact coordinated plots with explicit inspection instead of duplicate standalone controls",()=>{
   const input=data();
   let tree!:ReturnType<typeof create>;
-  act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} revision={0} emit={()=>{}} slots={{}} context={{...context,coordinated:true}}/>);});
+  act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={{...context,coordinated:true}}/>);});
   expect(tree.root.findAllByProps({className:"timeline-toolbar"})).toHaveLength(0);
   expect(tree.root.findAllByProps({className:"timeline-inspection"})).toHaveLength(0);
   expect(tree.root.findAllByProps({className:"timeline-svg"})).toHaveLength(1);
@@ -68,7 +68,7 @@ it("clusters colliding events without inventing records and selects through the 
  const input=data(),start=nanos(input.events[0]!.at)!;
  input.events=Array.from({length:29},(_,index)=>({id:`event-${index}`,at:instant(start+BigInt(index)),label:index%2?"retry":"failure",detail:`synthetic event ${index}`}));
  const events:unknown[]=[];let tree!:ReturnType<typeof create>;
- act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} revision={0} emit={event=>events.push(event)} slots={{}} context={context}/>);});
+ act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} activate={()=>{}} revision={0} emit={event=>events.push(event)} slots={{}} context={context}/>);});
  const markers=tree.root.findAllByProps({className:"timeline-marker"});expect(markers).toHaveLength(1);
  expect(markers[0]!.props["aria-label"]).toContain("29 events · failure: 15 · retry: 14");
  act(()=>markers[0]!.props.onKeyDown({key:"Enter",preventDefault(){},stopPropagation(){}}));
@@ -79,7 +79,7 @@ it("clusters colliding events without inventing records and selects through the 
 });
 it("keeps coordinated preview to a sparkline strip and cancels a drag without committing effects",()=>{
  const input=data(),events:unknown[]=[];let tree!:ReturnType<typeof create>;
- act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} revision={0} emit={event=>events.push(event)} slots={{}} context={{...context,mode:"preview",coordinated:true}}/>);});
+ act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} activate={()=>{}} revision={0} emit={event=>events.push(event)} slots={{}} context={{...context,mode:"preview",coordinated:true}}/>);});
  const plot=tree.root.findByProps({className:"timeline-svg"});expect(plot.props.height).toBe(24);
  const target={getBoundingClientRect:()=>({left:0,width:1000}),focus(){},setPointerCapture(){}};
  act(()=>plot.props.onPointerDown({currentTarget:target,clientX:400,button:0,pointerId:3}));
@@ -89,7 +89,7 @@ it("keeps coordinated preview to a sparkline strip and cancels a drag without co
 });
 it("opens the host outlet for coordinated inspection without inserting a member detail row",()=>{
  const input=data(),inspect=()=>{calls++;};let calls=0;let tree!:ReturnType<typeof create>;
- act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} revision={0} emit={()=>{}} slots={{}} context={{...context,coordinated:true,inspect,inspectionActive:true}}/>);});
+ act(()=>{tree=create(<timeline.Component input={input} state={timeline.initial!(input)} activate={()=>{}} revision={0} emit={()=>{}} slots={{}} context={{...context,coordinated:true,inspect,inspectionActive:true}}/>);});
  const button=tree.root.findAllByType("button").find(b=>b.props["aria-label"]?.startsWith("Inspect "))!;
  expect(button.props["aria-expanded"]).toBe(true);act(()=>button.props.onClick());expect(calls).toBe(1);
  expect(tree.root.findAllByProps({className:"timeline-inspection"})).toHaveLength(0);

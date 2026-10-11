@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { beyond, TableGrid } from "./TableGrid";
 
@@ -89,4 +89,25 @@ describe("declared table decoration", () => {
     expect(keys[2]!.children).toEqual(["worker"]);
     act(() => tree.unmount());
   });
+});
+
+it("activates a row only on trusted Shift-click while ordinary selection stays local",()=>{
+  const selected:number[]=[],activated:number[]=[];let tree!:ReactTestRenderer;
+  act(()=>{tree=create(<TableGrid columns={columns} rows={rows} onSelect={row=>selected.push(row)} onActivate={row=>activated.push(row)}/>);});
+  const row=tree.root.findAll(node=>node.type==="tr" && !!node.props.onClick)[1]!;
+  const click=(extra:Record<string,unknown>={})=>({button:0,shiftKey:false,metaKey:false,ctrlKey:false,altKey:false,isTrusted:true,defaultPrevented:false,target:{closest:()=>null},preventDefault:vi.fn(),...extra});
+  const plain=click(),command=click({metaKey:true});
+  act(()=>row.props.onClick(plain));
+  act(()=>row.props.onClick(command));
+  for(const extra of [{isTrusted:false},{metaKey:true},{ctrlKey:true},{altKey:true},{button:1},{button:2},{defaultPrevented:true},{target:{closest:()=>({tagName:"BUTTON"})}}]) {
+    act(()=>row.props.onClick(click({shiftKey:true,...extra})));
+  }
+  expect(activated).toEqual([]);
+  expect(plain.preventDefault).not.toHaveBeenCalled();expect(command.preventDefault).not.toHaveBeenCalled();
+  const activation=click({shiftKey:true});
+  act(()=>row.props.onClick(activation));
+  expect(selected).toEqual(Array(11).fill(1));expect(activated).toEqual([1]);
+  expect(activation.preventDefault).toHaveBeenCalledOnce();
+  expect(row.props.title).toBe("Shift-click to activate this row");
+  act(()=>tree.unmount());
 });

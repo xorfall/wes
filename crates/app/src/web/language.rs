@@ -172,3 +172,43 @@ mod yaml_tests {
         assert!(registry.validate("env.package", &invalid).is_err());
     }
 }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SelectionDraft {
+    text: String,
+    environments: Option<super::EnvironmentContext>,
+}
+pub(super) async fn selection_template(
+    super::workspaces::Scoped(shared): super::workspaces::Scoped,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(current) = shared.application.current() else {
+        return axum::http::StatusCode::GONE.into_response();
+    };
+    let draft: SelectionDraft = match serde_json::from_slice(&body) {
+        Ok(draft) => draft,
+        Err(_) => return axum::http::StatusCode::BAD_REQUEST.into_response(),
+    };
+    let context = match draft
+        .environments
+        .map(|context| {
+            Ok::<_, ()>(wes_core::environments::EnvironmentContext {
+                selected: context.selected,
+                revisions: context
+                    .revisions
+                    .into_iter()
+                    .map(|(name, revision)| Ok((name, revision.parse().map_err(|_| ())?)))
+                    .collect::<Result<_, ()>>()?,
+            })
+        })
+        .transpose()
+    {
+        Ok(context) => context,
+        Err(()) => return axum::http::StatusCode::BAD_REQUEST.into_response(),
+    };
+    match current.session.selection_template_in(draft.text, context).await {
+        Ok(source) => ([(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-store")], json!({"source": source.map(|id| id.to_string()), "generation": current.generation.to_string()}).to_string()).into_response(),
+        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
+}

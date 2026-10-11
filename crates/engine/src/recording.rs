@@ -617,6 +617,19 @@ pub(crate) fn record_charge(record: &Record) -> u64 {
                     .saturating_mul(6),
             );
         }
+        Record::Journal(JournalEntry::Invocation(record)) => {
+            add(&mut size, record.node.as_str());
+            add(&mut size, record.run.as_str());
+            add(&mut size, &record.cell);
+            add(&mut size, &record.request);
+            if let Some(value) = &record.arguments {
+                size = size.saturating_add(
+                    crate::value_size::value_charge(value, u64::MAX)
+                        .unwrap_or(u64::MAX)
+                        .saturating_mul(6),
+                );
+            }
+        }
         Record::Journal(JournalEntry::Trace(record)) => {
             size = size.saturating_add(
                 crate::value_size::value_charge(&record.value, u64::MAX).unwrap_or(u64::MAX),

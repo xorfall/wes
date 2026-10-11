@@ -54,6 +54,7 @@ export class ResultDemand {
 }
 
 export interface ResultObservation {
+  readonly run?: string;
   readonly value: StoredValue;
   readonly handle: string;
   readonly state: "current" | "updating" | "stale";
@@ -80,12 +81,13 @@ export class ResultObservations {
         || JSON.stringify(previous.node.environment) !== JSON.stringify(node.environment))) this.last.delete(node.id);
       const staleReason = node.state === "stale" ? node.staleReason?.message ?? "The result is no longer current." : undefined;
       if (value && node.handle && !node.doubt) {
-        result.set(node.id, { value, handle: node.handle, state: staleReason ? "stale" : node.state === "pending" || node.state === "running" || node.publication?.state === "pending" ? "updating" : "current", staleReason });
-        if (permitted) this.last.set(node.id, { node, value, handle: node.handle });
+        const run = node.publication?.handle === node.handle ? node.publication.run ?? undefined : previous?.handle === node.handle ? previous.node.run : node.state === "ready" ? node.run : undefined;
+        result.set(node.id, { value, run, handle: node.handle, state: staleReason ? "stale" : node.state === "pending" || node.state === "running" || node.publication?.state === "pending" ? "updating" : "current", staleReason });
+        if (permitted) this.last.set(node.id, { node: {...node, run}, value, handle: node.handle });
       } else {
         const last = this.last.get(node.id);
         const replacing = node.state === "stale" || node.handle !== undefined || node.publication?.state === "pending" || node.state === "pending" || node.state === "running";
-        if (last && replacing) result.set(node.id, { value: last.value, handle: last.handle, state: staleReason ? "stale" : "updating", staleReason,
+        if (last && replacing) result.set(node.id, { run: last.node.run, value: last.value, handle: last.handle, state: staleReason ? "stale" : "updating", staleReason,
           problem: node.handle ? reads.get(node.handle)?.problem : undefined, withdrawn: node.handle ? reads.get(node.handle)?.withdrawn === true : false });
         else this.last.delete(node.id);
       }

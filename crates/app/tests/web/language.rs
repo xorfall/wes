@@ -140,3 +140,64 @@ async fn view_catalogue_matches_generated_client_contracts() {
     assert_eq!(actual, wes::web::language::published_views());
     fixture.close().await;
 }
+
+#[tokio::test]
+async fn selection_template_is_read_only_and_activation_transport_preserves_one_node() {
+    let fixture = Fixture::new().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "rows",
+                ":calc pure { return [{value:'first'}, {value:'last'}]; } > rows"
+            )
+            .await,
+        202
+    );
+    events.until("ready").await;
+    let session = fixture.app.current().unwrap().session;
+    session.wait_idle().await.unwrap();
+    let snapshot = session.snapshot().await.unwrap();
+    let source = &snapshot.names["rows"].node;
+    let run = &snapshot.execution.runs[source];
+    let text = "catalog echo value:$rows.selected.value > detail";
+    let response = fixture
+        .client
+        .post(fixture.url("/language/selection-template"))
+        .header("Content-Type", "application/json")
+        .header("X-Wes-Session", &generation)
+        .body(json!({"text":text}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let analysis: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    assert_eq!(analysis["source"], source.as_str());
+    assert_eq!(analysis["generation"], generation);
+    assert_eq!(session.snapshot().await.unwrap().execution.graph.len(), 1);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    let selection = json!({"kind":"row","source":source.as_str(),"run":run.as_str(),"row":1});
+    let request = json!({"request":"submit","client":"web-fixture","cell":"select","text":text,"selection":selection});
+    assert_eq!(
+        fixture.post(&generation, request.clone()).await.status(),
+        202
+    );
+    let planned = loop {
+        let event = events.until("planned").await;
+        if event["cell"] == "select" {
+            break event;
+        }
+    };
+    assert_eq!(planned["selectionSource"], source.as_str());
+    session.wait_idle().await.unwrap();
+    assert_eq!(fixture.post(&generation, request).await.status(), 202);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.post(&generation,json!({"request":"submit","client":"web-fixture","cell":"again","text":text,"selection":selection,"repeat":"select","acknowledge_effects":true})).await.status(),202);
+    session.wait_idle().await.unwrap();
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(session.snapshot().await.unwrap().execution.graph.len(), 2);
+    drop(events);
+    fixture.close().await;
+}

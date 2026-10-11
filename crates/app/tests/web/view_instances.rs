@@ -1676,3 +1676,90 @@ async fn install_range_summary(fixture: &Fixture, generation: &str) {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn rendered_and_native_views_activate_declared_selection_with_source_revision_checks() {
+    let fixture = Fixture::new().await;
+    let mut events = fixture.stream().await;
+    let generation = events.generation().await;
+    let session = fixture.app.current().unwrap().session;
+    let source = r#":package load source:"types: {TimelineGroup: {base: Record, fields: {view: Text, title: Text, range: Interval}}}"
+:def chartInput() -> TimelineGroup as :calc pure { return {view:'timeline-group',title:'Synthetic range',range:interval(instant('2031-01-01T00:00:00Z'),instant('2031-01-01T01:00:00Z'))}; }
+chartInput > chartData"#;
+    assert_eq!(fixture.source(&generation, "setup", source).await, 202);
+    events.until("planned").await;
+    session.wait_idle().await.unwrap();
+    assert_eq!(
+        fixture
+            .source(
+                &generation,
+                "create-view",
+                ":view create TimelineGroup input:$chartData > chart"
+            )
+            .await,
+        202
+    );
+    session.wait_idle().await.unwrap();
+    let state = session.snapshot().await.unwrap();
+    assert!(
+        state.names.contains_key("chartData"),
+        "{:?}",
+        session.observe().await.unwrap().cells
+    );
+    let source = &state.names["chartData"].node;
+    let run = &state.execution.runs[source];
+    let catalogue = session.view_catalogue().await.unwrap();
+    let package = &catalogue["TimelineGroup"];
+    let selected = "2031-01-01T00:10:00Z/2031-01-01T00:20:00Z";
+    let selection = json!({"kind":"rendered","source":source.as_str(),"run":run.as_str(),"view":package.manifest.id,"artifact":package.artifact,"value":selected});
+    let template = "catalog echo value:$chartData.selected > inlineDetail";
+    assert_eq!(
+        session.selection_template(template.into()).await.unwrap(),
+        Some(source.clone())
+    );
+    let request = json!({"request":"submit","client":"web-fixture","cell":"inline","text":template,"selection":selection});
+    assert_eq!(
+        fixture.post(&generation, request.clone()).await.status(),
+        202
+    );
+    session.wait_idle().await.unwrap();
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    let mut wrong = request;
+    wrong["cell"] = json!("wrong");
+    wrong["text"] = json!("catalog echo value:$chartData.selected > wrong");
+    wrong["selection"]["run"] = json!("obsolete");
+    assert_eq!(fixture.post(&generation, wrong).await.status(), 400);
+    session.wait_idle().await.unwrap();
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    let chart = state.names["chart"].node.clone();
+    let frame = session
+        .view_frame(chart.clone())
+        .await
+        .unwrap_or_else(|error| panic!("{error}; {:?}", state.execution.errors));
+    let owner = &frame.instances[0];
+    let interaction = fixture.url(&format!("/view-interaction/{chart}/{}", owner.identity));
+    let edit = json!({"owner":chart.as_str(),"identity":owner.identity.as_ref(),"definitionRevision":"0","revision":"0",
+       "fields":{"viewport":{"start":"2031-01-01T00:00:00Z","end":"2031-01-01T01:00:00Z"},"selection":{"start":"2031-01-01T00:10:00Z","end":"2031-01-01T00:20:00Z"},"selectedItem":null},"outputs":{"selection":selected,"selectedItem":null}});
+    let response = fixture
+        .client
+        .put(interaction)
+        .header("X-Wes-Session", &generation)
+        .header("Content-Type", "application/json")
+        .body(edit.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let shared: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    let selection = json!({"kind":"view","source":chart.as_str(),"identity":owner.identity.as_ref(),"revision":shared["revision"],"port":"selection"});
+    assert_eq!(fixture.post(&generation,json!({"request":"submit","client":"web-fixture","cell":"native","text":"catalog echo value:$chart.selected > nativeDetail","selection":selection})).await.status(),202);
+    session.wait_idle().await.unwrap();
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 2);
+    let result = session.snapshot().await.unwrap();
+    assert_eq!(
+        result.execution.values[&result.names["inlineDetail"].node].data(),
+        result.execution.values[&result.names["nativeDetail"].node].data()
+    );
+    drop(events);
+    fixture.close().await;
+}

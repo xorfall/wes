@@ -1,3 +1,5 @@
+import { selectionSource } from "../selection-source";
+import type { ValueBlockProps } from "../render/ValueBlock";
 import { valueViewModules } from "../../value-views/registry";
 /**
  * `/open` shares one stored value across the result, readable JSON, run metadata — and every view
@@ -148,7 +150,7 @@ export function OpenScreen({ top, subject: given, tab, onTab, json, viewing, val
         <LocalReconciliationControls node={viewing?.node} />
         {withdrawn ? <p className="mono-warn" role="status">{WITHDRAWN_TITLE}</p> : <Drawn tab={showing} key={showing}>
           {showing !== "details" && readStatus}
-          {showing === "result" && (live ?? <OpenResult value={value} engine={viewing?.engine} stored={viewing?.stored} name={viewing?.node?.name} />)}
+          {showing === "result" && (live ?? <OpenResult source={selectionSource(viewing?.node)} value={value} engine={viewing?.engine} stored={viewing?.stored} name={viewing?.node?.name} />)}
           {showing === "json" && (value ? <ReadableJson value={value} /> : <pre className="inspection-text open-json" tabIndex={0}>{json ?? ""}</pre>)}
           {view && viewing && <view.Draw subject={viewing} />}
           {showing === "details" && <ScanReceiptDetails value={value} open {...(viewing?.node ? { node: viewing.node } : {})} />}
@@ -169,10 +171,10 @@ function withdrawnSubject(node: ViewSubject["node"]): Segment[] {
 }
 
 /** The result, as the result: the table it is, and the whole value under a disclosure. */
-function OpenResult({ value, engine, stored, name }: Pick<OpenProps, "value"> & {engine?: import("../../engine").Engine; stored?: StoredIdentity; name?: string}) {
+function OpenResult({ value, engine, stored, name, source }: Pick<OpenProps, "value"> & {source?:ValueBlockProps["selectionSource"];engine?: import("../../engine").Engine; stored?: StoredIdentity; name?: string}) {
   const [complete, setComplete] = useState(false);
   return <>
-    {value && <ValueView engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} />}
+    {value && <ValueView selectionSource={source} engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} />}
     {value && <details onToggle={event => setComplete(event.currentTarget.open)}><summary>complete value</summary>{complete && <ReadableJson value={value} />}</details>}
   </>;
 }

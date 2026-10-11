@@ -188,6 +188,10 @@ function RunDetail({ engine, cell, run, current, nodeName, attempts, onBack, onP
       {protection === "uncertain" && <div className="history-notice" role="status">Protection is unconfirmed. The result may already be protected.
         <button className="cell-action" disabled={reading} onClick={() => setRevision(n => n + 1)}>check protection</button>
       </div>}
+      {detail.invocation && <details className="history-disclosure" open><summary>Invocation inputs</summary>
+        <p>Activation {detail.invocation.request}</p>
+        {detail.invocation.arguments ? <ValueView value={detail.invocation.arguments} cacheKey={`history-inputs:${run.node}:${run.run}`} /> : <p>Restricted inputs were withheld from public history.</p>}
+      </details>}
       <details className="history-disclosure"><summary>Recorded definition</summary>
         <pre aria-label="Recorded source">{detail.definition.text}</pre>
         {definition && <p className="history-metadata">Definition {definition.id}{definition.revisionOf ? ` · revision of ${definition.revisionOf}` : ""}</p>}

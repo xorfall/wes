@@ -292,6 +292,7 @@ impl Actor {
                     .map_err(SessionError::from_access)?;
             }
         }
+        self.cancel_activations(nodes);
         let effects = self
             .workspace
             .cancel_nodes(nodes, self.io.now())

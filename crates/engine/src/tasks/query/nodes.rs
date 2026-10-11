@@ -22,6 +22,9 @@ enum TaskLabel {
 }
 #[derive(Clone, Debug)]
 pub(super) struct NodeDescription {
+    selected_type: Option<String>,
+    selection_sources: Vec<String>,
+    last_arguments: Option<Data>,
     captured_bindings: Vec<String>,
     stale_reason: Option<crate::runtime::StaleReason>,
     update_pending: bool,
@@ -148,7 +151,63 @@ pub(super) fn capture_nodes(
             .into_iter()
             .map(|text| charge.copy(&text))
             .collect::<Result<_, _>>()?;
+        let selected_type = match workspace.data_typing_handle(node.id()).map(|t| &t.shape) {
+            Some(wes_core::Shape::List(item)) => Some(item.to_string()),
+            Some(wes_core::Shape::Meta(wes_core::MetaType::ViewInstance)) => match node.payload() {
+                BoundTask::View(view) => view
+                    .selection_shape(workspace.view_catalogue())
+                    .map(|s| s.to_string()),
+                _ => None,
+            },
+            Some(shape @ wes_core::Shape::Record(_)) => {
+                crate::selection::rendered_package(shape, workspace.view_catalogue())
+                    .and_then(crate::selection::selected_shape)
+                    .map(|shape| shape.to_string())
+            }
+            _ => None,
+        };
+        let selection_sources = node
+            .payload()
+            .call()
+            .map(|call| {
+                call.selection_sources()
+                    .iter()
+                    .map(|source| source.node.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let last_arguments = if selected.is_some() {
+            workspace
+                .runtime()
+                .invocation_payload(node.id())
+                .and_then(|task| task.call())
+                .map(|call| {
+                    Data::Record(
+                        call.invocation()
+                            .inputs
+                            .iter()
+                            .map(|(name, input)| {
+                                let data = match input {
+                                    crate::plan::Input::Literal(value)
+                                        if !value.provenance().policy().is_private()
+                                            && !value.provenance().policy().is_unknown() =>
+                                    {
+                                        value.data().clone()
+                                    }
+                                    _ => Data::Text("[withheld]".into()),
+                                };
+                                (name.clone(), data)
+                            })
+                            .collect(),
+                    )
+                })
+        } else {
+            None
+        };
         rows.push(NodeDescription {
+            selected_type,
+            selection_sources,
+            last_arguments,
             progress: workspace.runtime().execution_progress(node.id()).cloned(),
             captured_bindings,
             view: if selected.is_some() {
@@ -281,6 +340,34 @@ impl NodeDescription {
         ]) else {
             unreachable!()
         };
+        if let Some(shape) = &self.selected_type {
+            fields.insert("selectedType".into(), budget.text(shape)?);
+        }
+        if !self.selection_sources.is_empty() {
+            fields.insert(
+                "selectionSources".into(),
+                Data::List(
+                    self.selection_sources
+                        .iter()
+                        .map(|source| budget.text(source))
+                        .collect::<Result<_, _>>()?,
+                ),
+            );
+            fields.insert(
+                "activation".into(),
+                budget.text("explicit selection; current selection is presentation state")?,
+            );
+        }
+        if let Some(arguments) = &self.last_arguments {
+            let charge = crate::value_size::data_charge(arguments, max_bytes() as u64)
+                .ok_or(Failure::Limit)? as usize;
+            budget.bytes = budget
+                .bytes
+                .checked_add(charge)
+                .filter(|bytes| *bytes <= max_bytes())
+                .ok_or(Failure::Limit)?;
+            fields.insert("lastInvocationArguments".into(), arguments.clone());
+        }
         if !self.captured_bindings.is_empty() {
             fields.insert(
                 "capturedBindings".into(),
