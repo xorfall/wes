@@ -73,6 +73,16 @@ impl State {
         self.admit_allocations(allocations)
     }
     fn admit_allocations(&mut self, allocations: Vec<Allocation>) -> Result<(), StoreError> {
+        // An immutable allocation already charged under a live witness needs no new
+        // admission. Reaping the whole registry for every such value makes cache
+        // maintenance quadratic and can starve publication progress under load.
+        if allocations.iter().all(|allocation| {
+            self.allocations
+                .get(&allocation.key())
+                .is_some_and(|known| known.alive() && known.bytes() == allocation.bytes())
+        }) {
+            return Ok(());
+        }
         let used = self.used();
         let mut incoming = BTreeMap::new();
         for allocation in allocations {
@@ -115,5 +125,51 @@ impl Reservation {
 impl Drop for Reservation {
     fn drop(&mut self) {
         self.memory.0.lock().expect("resident memory").reserved -= self.bytes;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wes_core::{Data, Primitive, Provenance, Shape};
+
+    #[test]
+    fn shared_readmission_preserves_full_reservations_and_last_owner_accounting() {
+        let value = Value::new(
+            Shape::Primitive(Primitive::Text),
+            Data::Text("synthetic shared allocation".into()),
+            Provenance::default(),
+        )
+        .unwrap();
+        let charge = value
+            .allocations(64)
+            .unwrap()
+            .iter()
+            .map(|allocation| allocation.bytes() + 96)
+            .sum::<u64>();
+        let memory = ResidentMemory::new(charge + 1024, 64);
+        memory.admit(&value).unwrap();
+        let alias = value.clone();
+        let reservation = memory.reserve(1024).unwrap();
+        memory.admit(&alias).unwrap();
+        assert_eq!(memory.used(), charge + 1024);
+
+        let other = Value::new(
+            Shape::Primitive(Primitive::Int),
+            Data::Int(7),
+            Provenance::default(),
+        )
+        .unwrap();
+        assert!(matches!(memory.admit(&other), Err(StoreError::Limit(_))));
+        drop(value);
+        assert_eq!(memory.used(), charge + 1024);
+        drop(alias);
+        assert_eq!(memory.used(), 1024);
+        drop(reservation);
+        assert_eq!(memory.used(), 0);
+        memory.admit(&other).unwrap();
+        assert!(memory.used() > 0);
+        drop(other);
+        assert_eq!(memory.used(), 0);
     }
 }
