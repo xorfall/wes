@@ -53,6 +53,7 @@ const PARAMETERS: Record<string, readonly string[]> = {
   "iter-use": ["fn"],
   "iter-checked": ["type"],
   "parse-json": ["type"],
+  "decode-json": ["type"],
 };
 
 /**

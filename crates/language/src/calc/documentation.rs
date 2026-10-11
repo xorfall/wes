@@ -286,6 +286,12 @@ impl Operation {
                 "Parse JSON, optionally validating against a named contract.",
                 "parseJson('{\"status\":200}')",
             ),
+            DecodeJson => (
+                &[("input", "Text | Bytes"), ("contract", "Text")],
+                "{ok:Bool,value:Option<T>,error:Option<{code:Text,message:Text,line:Option<Int>,column:Option<Int>}>}",
+                "Decode JSON as a result value; invalid input produces a bounded diagnostic.",
+                "decodeJson('{\"status\":200}').ok",
+            ),
             HttpStatus => (
                 &[("status", "Int | Text")],
                 "HttpStatusDefinition",
@@ -496,6 +502,9 @@ impl Operation {
             }
             ParseJson => {
                 "Numbers are exact. Without a contract the result is structurally inferred; no implicit nominal contract is attached. The optional contract name must be literal Text."
+            }
+            DecodeJson => {
+                "The optional contract name is literal Text captured at planning. Success has some(value), including JSON null; failure has no value and a fixed diagnostic that never echoes input. Limits, cancellation and unavailable services still fail the calculation. Pure derivation preserves source policy."
             }
             _ => {
                 "No implicit coercion. Existing calculation work, memory and cancellation limits apply."

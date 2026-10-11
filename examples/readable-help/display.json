@@ -587,6 +587,7 @@
           "httpCatalogue",
           "httpAnalysis",
           "parseJson",
+          "decodeJson",
           "regexTest",
           "stripAnsi",
           "check",
