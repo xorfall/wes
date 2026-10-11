@@ -98,7 +98,13 @@ impl FileValues {
         let file = self
             .directory
             .open_with(binary(handle), &options)
-            .map_err(|e| StoreError::backend("opening segmented payload", e))?;
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    StoreError::MissingValue
+                } else {
+                    StoreError::backend("opening segmented payload", e)
+                }
+            })?;
         if !file
             .metadata()
             .map_err(|e| StoreError::backend("checking segmented payload", e))?
@@ -153,16 +159,16 @@ impl FileValues {
         if bytes.len() > metadata_limit() {
             return Err(StoreError::Limit("snapshot metadata"));
         }
-        let m: Manifest = serde_json::from_slice(&bytes).map_err(|_| StoreError::Conflict)?;
+        let m: Manifest = serde_json::from_slice(&bytes).map_err(|_| StoreError::Corrupt)?;
         if m.format != "wes.segmented"
             || m.version != 1
             || m.leaves.is_empty()
             || m.leaves.len() > 16
         {
-            return Err(StoreError::Conflict);
+            return Err(StoreError::Corrupt);
         }
         let shell = codec::decode_value(m.shell.as_bytes(), self.limits)
-            .map_err(|e| codec_error("decoding snapshot contract", e))?
+            .map_err(stored_decode_error)?
             .value;
         if !shell.data().is_inline()
             || shell.shape().contains_meta()
@@ -176,10 +182,10 @@ impl FileValues {
         let mut nodes = 0usize;
         for leaf in &m.leaves {
             if leaf.fields.len() > 128 || !paths.insert(leaf.fields.clone()) {
-                return Err(StoreError::Conflict);
+                return Err(StoreError::Corrupt);
             }
             let selected = wes_engine::plan::project_value(&shell, &leaf.fields)
-                .map_err(|_| StoreError::Conflict)?;
+                .map_err(|_| StoreError::Corrupt)?;
             let expected = Shape::Primitive(if leaf.text {
                 Primitive::Text
             } else {
@@ -189,7 +195,7 @@ impl FileValues {
                 || !matches!(selected.data(), Data::Text(s) if s.is_empty())
                     && !matches!(selected.data(),Data::Bytes(b) if b.is_empty())
             {
-                return Err(StoreError::Conflict);
+                return Err(StoreError::Corrupt);
             }
             let mut total = 0u64;
             for (index, c) in leaf.chunks.iter().enumerate() {
@@ -204,24 +210,24 @@ impl FileValues {
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                 {
-                    return Err(StoreError::Conflict);
+                    return Err(StoreError::Corrupt);
                 }
                 total = total
                     .checked_add(c.bytes.into())
-                    .ok_or(StoreError::Conflict)?;
+                    .ok_or(StoreError::Corrupt)?;
                 offsets.push((c.offset, u64::from(c.bytes)));
             }
             if total != leaf.bytes {
-                return Err(StoreError::Conflict);
+                return Err(StoreError::Corrupt);
             }
         }
         offsets.sort_unstable();
         let mut end = 0u64;
         for (offset, length) in offsets {
             if offset != end {
-                return Err(StoreError::Conflict);
+                return Err(StoreError::Corrupt);
             }
-            end = end.checked_add(length).ok_or(StoreError::Conflict)?;
+            end = end.checked_add(length).ok_or(StoreError::Corrupt)?;
         }
         if end != m.total
             || self
@@ -231,7 +237,7 @@ impl FileValues {
                 .len()
                 != m.total
         {
-            return Err(StoreError::Conflict);
+            return Err(StoreError::Corrupt);
         }
         let charge = (bytes.len() as u64)
             .saturating_mul(8)
@@ -303,10 +309,15 @@ impl FileValues {
         file.seek(SeekFrom::Start(chunk.offset))
             .map_err(|e| StoreError::backend("seeking snapshot chunk", e))?;
         let mut bytes = vec![0; chunk.bytes as usize];
-        file.read_exact(&mut bytes)
-            .map_err(|e| StoreError::backend("reading snapshot chunk", e))?;
+        file.read_exact(&mut bytes).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                StoreError::Corrupt
+            } else {
+                StoreError::backend("reading snapshot chunk", e)
+            }
+        })?;
         if hash(&bytes) != chunk.digest {
-            return Err(StoreError::Conflict);
+            return Err(StoreError::Corrupt);
         }
         Ok(bytes)
     }
@@ -329,7 +340,9 @@ impl FileValues {
             .find(|l| l.fields == snapshot.selection)
             .ok_or(StoreError::NonMaterialized)?;
         if from > leaf.bytes || maximum == 0 || maximum > CHUNK_BYTES {
-            return Err(StoreError::Conflict);
+            return Err(StoreError::SourceRange(
+                "range is outside the sealed source or page bound",
+            ));
         }
         let mut file = self.binary_file(&snapshot.handle, false)?;
         let end = from.saturating_add(maximum as u64).min(leaf.bytes);
@@ -387,7 +400,7 @@ impl FileValues {
             let value = if leaf.text {
                 Data::Text(
                     String::from_utf8(bytes)
-                        .map_err(|_| StoreError::Conflict)?
+                        .map_err(|_| StoreError::Corrupt)?
                         .into(),
                 )
             } else {
@@ -400,7 +413,7 @@ impl FileValues {
             data,
             selected.provenance().clone(),
         )
-        .map_err(|_| StoreError::Conflict)?
+        .map_err(|_| StoreError::Corrupt)?
         .with_metadata(selected.metadata().cloned());
         Ok(Some(LoadedValue { value }))
     }

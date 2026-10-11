@@ -90,7 +90,7 @@ impl<T: Clone> RuntimeInput<T> {
                 if !enter.ticket.deferred_inputs.is_empty() {
                     let _ = enter
                         .reply
-                        .send(Err(crate::runtime::RuntimeCode::ResultUnavailable.error(
+                        .send(Err(crate::runtime::RuntimeCode::ResultClosed.error(
                             "Stored inputs require guarded preparation by the owning session.",
                             None,
                         )));

@@ -9,6 +9,7 @@ mod analysis_budget;
 mod analysis_coverage;
 pub mod datasets;
 mod private;
+mod read_failure;
 mod residency;
 mod scope;
 mod snapshot;
@@ -16,6 +17,7 @@ pub use acquisition::{
     AcquiredFuture, AcquiredOutput, Acquisition, AcquisitionContext, CHUNK_BYTES, LeafSelection,
     SnapshotFinalizer, SnapshotMember, SourceRange, acquisition_error,
 };
+pub use read_failure::ReadFailureKind;
 pub use residency::ResidentMemory;
 pub use scope::{DatasetLifetime, TransientScope, TransientScopeWitness};
 pub use snapshot::{SnapshotDescriptor, StoredSnapshot};
@@ -84,6 +86,8 @@ pub enum StoreError {
     NotRegular,
     #[error("the handle already contains different data")]
     Conflict,
+    #[error("stored result validation failed")]
+    Corrupt,
     #[error("this storage owner has no dataset capability")]
     DatasetUnavailable,
     #[error("the dataset descriptor is unavailable or belongs to another home")]

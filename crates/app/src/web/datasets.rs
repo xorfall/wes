@@ -61,7 +61,7 @@ pub(super) async fn read(
             .await
         {
             Ok(context) => context,
-            Err(response) => return response,
+            Err(failure) => return failure.response(),
         };
     if request.headers().contains_key("X-Wes-Scope") && (input.head || input.extent.is_some()) {
         return error_response(Error::Invalid);
@@ -198,15 +198,27 @@ pub(super) fn error_response(error: Error) -> Response {
         Error::Storage(wes_engine::storage::StoreError::DatasetWithdrawn) => {
             (StatusCode::GONE, "DATASET_WITHDRAWN")
         }
-        Error::Storage(wes_engine::storage::StoreError::DatasetMissing) => {
-            (StatusCode::NOT_FOUND, "DATASET_MISSING")
+        Error::Storage(error) => {
+            use wes_engine::storage::ReadFailureKind::*;
+            let kind = error.read_failure_kind();
+            let code = match kind {
+                Capacity => "DATASET_READ_LIMIT",
+                Forbidden => "DATASET_ACCESS_REFUSED",
+                Withdrawn => "DATASET_WITHDRAWN",
+                Stale => "DATASET_CONTINUITY_CHANGED",
+                Unavailable => "DATASET_MISSING",
+                Closed => "DATASET_OWNER_UNAVAILABLE",
+                Corrupt => "DATASET_CORRUPT",
+                Uncertain => "DATASET_READ_UNCONFIRMED",
+                Failed => "DATASET_READ_FAILED",
+            };
+            return failure(
+                super::value_errors::read_status(kind),
+                code,
+                &error.read_message(),
+                false,
+            );
         }
-        Error::Storage(
-            wes_engine::storage::StoreError::Limit(_)
-            | wes_engine::storage::StoreError::DatasetRowCharge { .. }
-            | wes_engine::storage::StoreError::DatasetRowBytes { .. },
-        ) => (StatusCode::PAYLOAD_TOO_LARGE, "DATASET_READ_LIMIT"),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DATASET_READ_FAILED"),
     };
     failure(status, code, &error.to_string(), false)
 }

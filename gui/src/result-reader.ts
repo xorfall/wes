@@ -3,12 +3,14 @@ import { readExactJson, stringifyExactJson } from "./exact-json";
 import type { StoredValue } from "./protocol";
 import { withValidMeta } from "./value-meta";
 import { workspaceHeaders } from "./workspace-binding";
+import { resultFailure } from "./result-failure";
 
 export interface ValueReadProblem {
   code: string; message: string; retryable: boolean; retryAfterMs?: number | null;
   context: { operation: "read-value"; handle: string | null };
 }
 export class ResultReadError extends Error {
+  get kind() { return resultFailure(this.problem?.code)?.kind; }
   constructor(readonly status: number, readonly problem?: ValueReadProblem) {
     super(problem ? `${problem.code}: ${problem.message}` : `Result read failed (HTTP ${status}); the server supplied no structured explanation.`);
     this.name = "ResultReadError";

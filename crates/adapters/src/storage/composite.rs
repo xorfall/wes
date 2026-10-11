@@ -88,16 +88,16 @@ impl FileValues {
         if bytes.len() as u64 > maximum {
             return Err(StoreError::Limit("record snapshot metadata"));
         }
-        let root: Composite = serde_json::from_slice(&bytes).map_err(|_| StoreError::Conflict)?;
+        let root: Composite = serde_json::from_slice(&bytes).map_err(|_| StoreError::Corrupt)?;
         if root.format != "wes.composite"
             || root.version != 1
             || root.members.len() > wes_budgets::get("values.outputs") as usize
         {
-            return Err(StoreError::Conflict);
+            return Err(StoreError::Corrupt);
         }
         let mut names = std::collections::BTreeSet::new();
         for m in &root.members {
-            let h = ValueHandle::new(&m.handle)?;
+            let h = ValueHandle::new(&m.handle).map_err(|_| StoreError::Corrupt)?;
             if &h == handle
                 || m.name.is_empty()
                 || m.name.len() > 1024
@@ -110,7 +110,7 @@ impl FileValues {
                             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                 })
             {
-                return Err(StoreError::Conflict);
+                return Err(StoreError::Corrupt);
             }
         }
         Ok(Some((root, bytes)))

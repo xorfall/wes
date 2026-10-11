@@ -47,6 +47,15 @@ must be submitted separately. Use summary results unless the bodies are needed.
 wait_ms is bounded to 1000 and does not wait for a stream to terminate. A settled
 request can contain failures; examine diagnostics and node states. Information
 and warning diagnostics alone do not mean failure.
+Sequential step indices are zero-based. waiting_for_predecessor with waitingForStep
+means a known live earlier step must finish successfully; this step has not been
+submitted. admission_pending describes the current step's admission, not a lost
+history record. not_admitted with workflowStatus means the workflow stopped before
+that step started. Missing/restored evidence remains unavailable or interrupted;
+none of these statuses authorizes replay or automatic resumption.
+Type/template info notices confirm committed installation or registration; they
+do not run the definition. Use the permitted subject and :list types/templates
+for declaration details rather than inferring them from a generic info code.
 
 Retry safety: after a lost execute reply, keep the same request_id, source,
 workspace, context, reactive and sequential settings. Never retry an uncertain external effect with a new

@@ -138,7 +138,29 @@ it("keeps a labelled previous page while readers are busy, and clears everything
   act(() => tree.unmount());
 });
 
-it("treats refused access like withdrawal and a missing result as distinct from corruption", async () => {
+it.each([
+  ["closed", "DATASET_OWNER_UNAVAILABLE", 503, "Reconnect to the owning session"],
+  ["corrupt", "DATASET_CORRUPT", 500, "Inspect application diagnostics or another retained copy"],
+  ["uncertain", "DATASET_READ_UNCONFIRMED", 409, "Do not automatically repeat Keep"],
+] as const)("preserves the previous page on %s with guidance and no automatic work", async (kind, code, status, guidance) => {
+  const { engine, calls } = fakeEngine();
+  const submit = vi.fn();
+  Object.assign(engine, { submit });
+  const tree = mount(rootValue, engine, `g-${kind}`, `stored-${kind}`);
+  calls[0]!.resolve(page(reference(), "0", 100)); await flush();
+  act(() => button(tree, "next ›").props.onClick());
+  calls[1]!.reject(new DatasetReadError(kind, status, code, "Synthetic storage refusal", false)); await flush();
+  expect(text(tree)).toContain("previous page shown");
+  expect(text(tree)).toContain("synthetic 3");
+  expect(text(tree)).toContain(guidance);
+  expect(text(tree)).not.toContain("stored result unavailable");
+  expect(button(tree, "read again")).toBeUndefined();
+  expect(calls).toHaveLength(2);
+  expect(submit).not.toHaveBeenCalled();
+  act(() => tree.unmount());
+});
+
+it("treats refused access like withdrawal and a missing result as distinct from read failure", async () => {
   const { engine, calls } = fakeEngine();
   const refused = mount(rootValue, engine, "g-refused", "stored-refused");
   calls[0]!.reject(new DatasetReadError("withdrawn", 403, "DATASET_ACCESS_REFUSED", "Access withdrawn", false)); await flush();

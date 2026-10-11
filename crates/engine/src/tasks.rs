@@ -759,10 +759,24 @@ impl TaskExecutor {
                 Box::pin(async move {
                     match storage {
                         Some(storage) => match storage.materialize(snapshot).await {
-                            Ok((loaded, hold)) => { let mut report: crate::driver::ExecutionReport = Outcome::Produced(loaded.value).into(); report.holds.push(crate::driver::ExecutionHold::retain(hold)); report }
-                            Err(error) => Outcome::Failed(if matches!(error, crate::storage::StoreError::Limit(_)) { RuntimeCode::ResultCapacity } else { RuntimeCode::ResultUnavailable }.error(format!("Stored input read refused: {error}. No source was replayed."), None)).into(),
+                            Ok((loaded, hold)) => {
+                                let mut report: crate::driver::ExecutionReport =
+                                    Outcome::Produced(loaded.value).into();
+                                report
+                                    .holds
+                                    .push(crate::driver::ExecutionHold::retain(hold));
+                                report
+                            }
+                            Err(error) => {
+                                Outcome::Failed(error.read_error("Stored input read refused"))
+                                    .into()
+                            }
                         },
-                        None => Outcome::Failed(RuntimeCode::ResultUnavailable.error("Stored input requires the owning storage worker.", None)).into(),
+                        None => Outcome::Failed(
+                            crate::storage::StoreError::Closed
+                                .read_error("Stored input requires the owning storage worker"),
+                        )
+                        .into(),
                     }
                 })
             }
@@ -775,16 +789,13 @@ impl TaskExecutor {
                     };
                     match value {
                         Ok(Some(value)) => Outcome::Produced(value),
-                        Ok(None) => Outcome::Failed(RuntimeCode::InputFailed.error(
+                        Ok(None) => Outcome::Failed(RuntimeCode::ResultUnavailable.error(
                             "The saved snapshot has no readable payload; no provider was replayed.",
                             None,
                         )),
-                        Err(error) => Outcome::Failed(RuntimeCode::InputFailed.error(
-                            format!(
-                                "Saved snapshot read refused: {error}. No provider was replayed."
-                            ),
-                            None,
-                        )),
+                        Err(error) => {
+                            Outcome::Failed(error.read_error("Saved snapshot read refused"))
+                        }
                     }
                     .into()
                 })

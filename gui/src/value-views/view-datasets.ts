@@ -53,7 +53,7 @@ export function frameBindings(frame: ViewFrame, rootInstance: string, engine: En
   };
 }
 
-export type DatasetErrorCode = "unavailable" | "busy" | "changed" | "withdrawn" | "limit" | "invalid" | "failed";
+export type DatasetErrorCode = "unavailable" | "busy" | "changed" | "withdrawn" | "limit" | "invalid" | "failed" | "closed" | "corrupt" | "uncertain";
 
 /** Where a drawing's reads go: one of the two real sources, or none. */
 export type DatasetRoute =
@@ -130,6 +130,9 @@ function code(error: unknown): DatasetErrorCode {
     case "invalid": return "invalid";
     case "missing": return "unavailable";
     case "failed": return "failed";
+    case "closed": return "closed";
+    case "corrupt": return "corrupt";
+    case "uncertain": return "uncertain";
     // A View reads only its frozen input; a host continuity refusal is an ordinary bounded,
     // non-retryable read failure there, never a workspace change.
     case "continuity": return "failed";

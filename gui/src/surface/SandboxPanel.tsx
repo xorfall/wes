@@ -3,6 +3,8 @@ import type { Engine, SandboxObservation, ScopeResultSource } from "../engine";
 import { isNumeric, numericText } from "../exact-json";
 import type { StoredValue } from "../protocol";
 import { ValueView } from "../views/Result";
+import { StorageError } from "../storage-error";
+import { resultFailure } from "../result-failure";
 
 /** The fields of a backend-generated full observation and of each of its member rows. */
 const OBSERVATION_FIELDS = ["kind", "members", "persistence", "state"];
@@ -141,21 +143,26 @@ export function SandboxPanel({ engine, opened, onClose }: {
   engine: Engine; opened: SandboxObservation; onClose: () => void;
 }) {
   const [current, setCurrent] = useState(opened);
-  const [trouble, setTrouble] = useState<string>();
+  const [trouble, setTrouble] = useState<{ readonly message: string; readonly code?: string }>();
   useEffect(() => {
     setCurrent(opened); setTrouble(undefined);
     if (!opened.reference) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
+      let withdrawn = false;
       try {
         if (typeof document !== "undefined" && document.hidden) return;
         const next = await engine.readSandbox(opened.reference!, opened.inspect === true, opened.generation, controller.signal);
         if (!controller.signal.aborted) { setCurrent(next); setTrouble(undefined); }
       } catch (error) {
-        if (!controller.signal.aborted) setTrouble(error instanceof Error ? error.message : "Sandbox observation unavailable.");
+        if (!controller.signal.aborted) {
+          const code = error instanceof StorageError ? error.code : undefined;
+          withdrawn = code === "ANALYSIS_ACCESS_WITHDRAWN";
+          setTrouble({ message: error instanceof Error ? error.message : "Analysis observation unavailable.", code });
+        }
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(read, 1000);
+        if (!controller.signal.aborted && !withdrawn) timer = setTimeout(read, 1000);
       }
     };
     timer = setTimeout(read, 1000);
@@ -168,6 +175,8 @@ export function SandboxPanel({ engine, opened, onClose }: {
   const label=current.kind==="transient"?"Transient analysis":current.kind==="saved"?"Saved snapshot":"Sandbox";
   const persistence=current.kind==="transient"?"temporary RAM and disk · auto-Keep off":current.kind==="saved"?(state==="unconfirmed"?"Keep unconfirmed":"retained snapshot"):"results in memory";
   const source=current.sources?.[""];
+  const withdrawn = trouble?.code === "ANALYSIS_ACCESS_WITHDRAWN";
+  const failure = resultFailure(trouble?.code);
   return <section role="dialog" aria-label={`${label} ${opened.name}`} aria-modal="true" className="sandbox-panel" onKeyDown={event => {
     if (event.key === "Escape") { event.stopPropagation(); onClose(); }
   }}>
@@ -175,8 +184,9 @@ export function SandboxPanel({ engine, opened, onClose }: {
       <button type="button" autoFocus onClick={onClose}>close</button></header>
     <div className="sandbox-panel-body">
       {source?.evidence && <p className="cell-quiet">{source.evidence==="incomplete"?"Incomplete captured evidence; saving it did not complete the producing run.":"Captured stopped observation; reading it does not restart the source."}</p>}
-      {trouble && <p role="alert">{trouble} Previous observation is shown.</p>}
-      {members ? <SandboxMembers members={members} inspect={inspect} engine={engine} keyPrefix={keyPrefix} provenance={current.value.provenance} generation={current.generation} readScope={current.scope??undefined} />
+      {trouble && <p role="alert">{trouble.message} {withdrawn ? "Access withdrawn." : "Previous observation is shown."}</p>}
+      {failure && <p className="cell-quiet">{failure.next}</p>}
+      {withdrawn ? null : members ? <SandboxMembers members={members} inspect={inspect} engine={engine} keyPrefix={keyPrefix} provenance={current.value.provenance} generation={current.generation} readScope={current.scope??undefined} />
         : <div className="sandbox-member-view"><ValueView engine={engine} value={current.value} cacheKey={keyPrefix} readScope={current.scope??undefined} stored={source?.handle?{handle:source.handle,generation:current.generation,scope:source.scope??undefined,select:source.select}:undefined} /></div>}
       {current.kind!=="saved" && <p className="cell-quiet">Providers use their real configured targets. Isolation applies to results, not machine or service effects.</p>}
       {current.kind==="transient" && <p className="cell-quiet"><code>{`:keep $${opened.name}.member > saved_result`}</code> saves one result and its required data dependencies. <code>{`:keep $${opened.name} > saved_analysis`}</code> saves the captured members and their states. Unsaved values do not return after reopening.</p>}

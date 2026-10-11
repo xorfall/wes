@@ -41,6 +41,7 @@ import { registryStore } from "../../presentation/registry-store";
 import { ComposeContext, freshName, inspectCommand, planDeleteCommand, retentionCommand, selectionExpression, snapshotCommand } from "../dataset-management";
 import "../dataset-management.css";
 import { TERMINATION_TEXT } from "../recording-terms";
+import { resultFailure } from "../../result-failure";
 import "./dataset.css";
 
 /** Rows one read asks for, and rows the fixed row area shows before it scrolls, per tier. */
@@ -342,7 +343,7 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
     <MonoLine segments={statusLine(state, stale, targetProblem, stream)} className="value-line dataset-status" />
     {/* Only an explicit press reads again, and only after busy, limit or read failures; withdrawn and missing stay as they are.
         The same line offers a capture only when no read failed this way, so the two never compete for it. */}
-    <div className="dataset-recovery">{state.kind === "failed" && (state.error.kind === "busy" || state.error.kind === "limit" || state.error.kind === "failed") ? (state.error.kind === "limit" && limit > DATASET_PAGE_MIN
+    <div className="dataset-recovery">{state.kind === "failed" && resultFailure(state.error.code) && <p className="cell-quiet">{resultFailure(state.error.code)!.next}</p>}{state.kind === "failed" && ["closed", "corrupt", "uncertain"].includes(state.error.kind) ? null : state.kind === "failed" && (state.error.kind === "busy" || state.error.kind === "limit" || state.error.kind === "failed") ? (state.error.kind === "limit" && limit > DATASET_PAGE_MIN
         ? <button type="button" className="cell-action" onClick={() => setLimit(was => Math.max(DATASET_PAGE_MIN, Math.floor(was / 2)))}>read {Math.max(DATASET_PAGE_MIN, Math.floor(limit / 2))} rows per page</button>
         : <button type="button" className="cell-action" onClick={() => setAttempt(n => n + 1)}>read again</button>)
       : capture && composer && <>

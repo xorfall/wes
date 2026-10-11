@@ -726,7 +726,12 @@ pub async fn restore(
                 None => Err(SessionError::NoStorage),
             };
             check_cancelled(&cancellation)?;
-            let stored = if matches!(&loaded, Err(SessionError::Capacity)) {
+            let stored = if loaded
+                .as_ref()
+                .err()
+                .and_then(SessionError::read_failure_kind)
+                == Some(crate::storage::ReadFailureKind::Capacity)
+            {
                 match &storage {
                     Some(storage) => {
                         match super::saved::stored_alias(&storage.worker, &saved).await {
@@ -755,8 +760,18 @@ pub async fn restore(
                 (result, _) => {
                     let kind = match result {
                         Err(SessionError::NoStorage) => RestoreProblemKind::NoValueStore,
-                        Err(SessionError::Capacity) | Ok(Some(_)) => {
+                        Err(ref error)
+                            if error.read_failure_kind()
+                                == Some(crate::storage::ReadFailureKind::Capacity) =>
+                        {
                             RestoreProblemKind::ValueCapacity
+                        }
+                        Ok(Some(_)) => RestoreProblemKind::ValueCapacity,
+                        Err(ref error)
+                            if error.read_failure_kind()
+                                == Some(crate::storage::ReadFailureKind::Unavailable) =>
+                        {
+                            RestoreProblemKind::MissingValue
                         }
                         Err(SessionError::UnknownValue) | Ok(None) => {
                             RestoreProblemKind::MissingValue

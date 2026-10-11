@@ -88,7 +88,7 @@ pub(super) async fn dataset(
             .await
         {
             Ok(context) => context,
-            Err(response) => return response,
+            Err(failure) => return failure.response(),
         };
     let frame = match session.view_frame(node.clone()).await {
         Ok(frame)
@@ -218,7 +218,7 @@ pub(super) async fn read(
             .await
         {
             Ok(context) => context,
-            Err(response) => return response,
+            Err(failure) => return failure.response(),
         };
     let previous = request
         .headers()

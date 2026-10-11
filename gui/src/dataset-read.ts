@@ -172,7 +172,10 @@ export type DatasetFailureKind =
   /** A refused request or a reply that does not decode. */
   | "invalid"
   /** The server failed to read stored data. */
-  | "failed";
+  | "failed"
+  | "closed"
+  | "corrupt"
+  | "uncertain";
 
 export class DatasetReadError extends Error {
   constructor(readonly kind: DatasetFailureKind, readonly status: number, readonly code: string, message: string, readonly retryable: boolean) {
@@ -506,6 +509,7 @@ const FAILURES: Readonly<Record<string, DatasetFailureKind>> = {
   DATASET_CONTINUITY_CHANGED: "continuity",
   DATASET_INVALID: "invalid",
   DATASET_READ_FAILED: "failed", DATASET_ENCODING_FAILED: "failed",
+  DATASET_OWNER_UNAVAILABLE: "closed", DATASET_CORRUPT: "corrupt", DATASET_READ_UNCONFIRMED: "uncertain",
 };
 
 /** The failure a refused read reports. Withdrawal and access refusal are recognised by status as well as code. */

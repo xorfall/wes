@@ -29,6 +29,17 @@ function frame(){
   return {receive,sent,datasets:()=>seen,port};
 }
 const render=(epoch:number,datasets=true,input:unknown={title:"synthetic"})=>({kind:"render",input,sequence:epoch+1,context:{mode:"window",instance:"leaf",datasets,datasetEpoch:epoch}});
+it.each(["closed", "corrupt", "uncertain"] as const)("preserves %s in the SDK without exposing backend details", async code => {
+  const {receive, sent, datasets} = frame();
+  receive(render(0));
+  const reading = datasets()!.page("/events");
+  receive({kind:"dataset-reply", request:1, ok:false, error:code, detail:"PRIVATE_BACKEND"});
+  const error = await reading.catch(error => error);
+  expect(error).toBeInstanceOf(ViewDatasetError);
+  expect(error.code).toBe(code);
+  expect(error.message).not.toContain("PRIVATE_BACKEND");
+  expect(sent()).toHaveLength(1);
+});
 
 it("offers datasets only when the host can read them, and says so explicitly otherwise",()=>{
   const {receive,datasets}=frame();

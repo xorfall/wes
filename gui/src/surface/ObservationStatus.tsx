@@ -1,4 +1,5 @@
 import type { ResultObservation } from "./results";
+import { resultFailure } from "../result-failure";
 
 /**
  * Observation status of a displayed value; changes never replace the value it describes.
@@ -9,10 +10,12 @@ import type { ResultObservation } from "./results";
  */
 export function ObservationStatus({ observation, onRetry, inline = false }: { observation?: ResultObservation; onRetry?: () => void; inline?: boolean }) {
   const pending = observation !== undefined && observation.state !== "current";
+  const failure = resultFailure(observation?.problemCode);
   const label = observation?.state === "stale" ? "Stale · previous result" : "Updating · previous result";
   return <span className={`result-observation-status${inline ? " result-observation-status-inline" : ""}`} role="status" aria-description={observation?.problem ?? observation?.staleReason}
     aria-hidden={!pending} data-state={pending ? observation.problem ? "problem" : observation.state : "current"}>
     <span className="result-observation-label">{pending ? observation.problem ? `Previous result · ${observation.problem}` : label : ""}</span>
-    {pending && observation.problem && !observation.withdrawn && onRetry && <button type="button" className="cell-action" onClick={onRetry}>retry reading result</button>}
+    {pending && observation.problem && !observation.withdrawn && failure && <span className="result-observation-guidance">{failure.next}</span>}
+    {pending && observation.problem && !observation.withdrawn && failure?.canReadAgain !== false && onRetry && <button type="button" className="cell-action" onClick={onRetry}>retry reading result</button>}
   </span>;
 }

@@ -252,7 +252,10 @@ impl Sandboxes {
                                 );
                             }
                         }
-                        Err(SessionError::Capacity) => {
+                        Err(error)
+                            if error.read_failure_kind()
+                                == Some(crate::storage::ReadFailureKind::Capacity) =>
+                        {
                             row.insert(
                                 "availability".into(),
                                 text("stored; decoded capacity required"),
