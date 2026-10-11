@@ -18,6 +18,7 @@ use wes_adapters::{
     inventory::FileInventory,
     journal::Durability,
     process::{ProcessConfig, TerminalHandover, shell},
+    provider_definition::ProviderImporter,
     storage::TieredValues,
     type_sources::FileTypeSources,
 };
@@ -150,7 +151,7 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
         Durability::File
     };
     let wiring_base = base.clone();
-    let (values, datasets, reader, spec, process, credentials) =
+    let (values, datasets, reader, spec, process, provider, credentials) =
         tokio::task::spawn_blocking(move || {
             let credentials = Arc::new(MemoryCredentials::new(CredentialLimits::default()));
             Ok::<_, Error>((
@@ -164,7 +165,7 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
                 Arc::new(
                     SpecImporter::new(&wiring_base, credentials.clone(), HttpConfig::default())?
                         .with_documents(spec_documents)
-                        .with_archive(spec_sources),
+                        .with_archive(spec_sources.clone()),
                 ),
                 Arc::new({
                     let importer = ProcessImporter::new(&wiring_base, ProcessConfig::default())?;
@@ -173,6 +174,10 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
                         None => importer,
                     }
                 }),
+                Arc::new(
+                    ProviderImporter::new(&wiring_base, ProcessConfig::default())?
+                        .with_archive(spec_sources),
+                ),
                 credentials,
             ))
         })
@@ -237,6 +242,7 @@ pub async fn launch(options: RuntimeOptions) -> Result<LaunchedRuntime, Error> {
                 Arc::new(OpenApiImporter::new(spec.clone(), openapi_compiler.clone())),
             )?;
             workspace.register_importer("process".into(), process.clone())?;
+            workspace.register_importer("provider".into(), provider.clone())?;
             workspace.register_importer(
                 "docker".into(),
                 Arc::new(wes_adapters::docker::DockerImporter),

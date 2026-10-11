@@ -384,7 +384,7 @@ fn private_sandbox_member_is_withheld_without_failing_the_workflow() {
     std::fs::write(root.path().join("env.yaml"), "version: 1\ntargets: {local: {kind: local}}\nenvironments: {dev: {secretSlots: {key: {required: true}}, secretRefs: {key: qa/sandbox}, imports: {vars: {source: {kind: process, bin: /usr/bin/printenv}, bind: {target: local, output: private, credentials: {QA_SECRET: {secret: key}}}}}}}").unwrap();
     let mut child=Command::new(env!("CARGO_BIN_EXE_wes")).current_dir(root.path()).args([
         "--home","home","--env-file","env.yaml","--env","dev","--credentials-stdin","--grant-provider","vars","--sequential","--command",
-        ":sandbox { vars run args:QA_SECRET > secret } > preview\n:read $preview.secret\n:calc { return 42; }"
+        ":sandbox { vars run args:[QA_SECRET] > secret } > preview\n:read $preview.secret\n:calc { return 42; }"
     ]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     child
         .stdin

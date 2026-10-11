@@ -77,6 +77,7 @@ fn main() {
                     .map_or(b"absent".as_slice(), |arg| arg.as_bytes()),
             )
             .unwrap(),
+        "argv" => print!("{:?}", &args[4..]),
         "flood" => {
             let writer = std::thread::spawn(|| {
                 std::io::stdout()

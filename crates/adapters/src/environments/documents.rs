@@ -67,7 +67,7 @@ fn insert_import(
             CapturedSource::new(recipe.format(), recipe.source())?,
             json!({"source":{"kind":"process","bin":recipe.source()},"bind":{"target":"local"}}),
         ),
-        "spec" | "openapi" => {
+        "spec" | "openapi" | "provider" => {
             let location = if let Some(url) = text("url") {
                 url.to_owned()
             } else {

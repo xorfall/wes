@@ -1,2 +1,2 @@
 :import process bin:./example-echo.bin as:echo
-echo run args:import-ok
+echo run args:[import-ok]

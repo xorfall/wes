@@ -151,12 +151,12 @@ async fn retirement_preserves_old_work_delete_checks_references_and_never_restor
     );
     f.install().await;
     f.submit("one", ":env use \"dev\"").await;
-    f.submit("one", "echo run args:retained > old").await;
+    f.submit("one", "echo run args:[retained] > old").await;
     f.submit("one", ":env retire \"dev\"").await;
     let failed = f
         .handle
         .submit(
-            SourceInput::new("new-retired".into(), "echo run args:new".into())
+            SourceInput::new("new-retired".into(), "echo run args:[new]".into())
                 .unwrap()
                 .with_client("one".into())
                 .unwrap(),
@@ -296,7 +296,7 @@ async fn process_secret_delivery_is_scoped_rotatable_and_absent_from_disk_artifa
         })
         .await
         .unwrap();
-    f.submit("one", "vars run args:QA_SECRET > denied").await;
+    f.submit("one", "vars run args:[QA_SECRET] > denied").await;
     let snapshot = f.handle.snapshot().await.unwrap();
     assert!(
         snapshot
@@ -314,7 +314,7 @@ async fn process_secret_delivery_is_scoped_rotatable_and_absent_from_disk_artifa
         })
         .await
         .unwrap();
-    f.submit("one", "vars run args:QA_SECRET > first").await;
+    f.submit("one", "vars run args:[QA_SECRET] > first").await;
     assert_eq!(
         stdout(&f.value("first").await),
         b"qa-engine-supplied-secret-one\n"
@@ -328,12 +328,12 @@ async fn process_secret_delivery_is_scoped_rotatable_and_absent_from_disk_artifa
         })
         .await
         .unwrap();
-    f.submit("one", "vars run args:QA_SECRET > second").await;
+    f.submit("one", "vars run args:[QA_SECRET] > second").await;
     assert_eq!(
         stdout(&f.value("second").await),
         b"qa-engine-supplied-secret-two\n"
     );
-    f.submit("one", "vars run args:HOME > ambient").await;
+    f.submit("one", "vars run args:[HOME] > ambient").await;
     assert!(stdout(&f.value("ambient").await).is_empty());
     f.handle
         .environment_authority(EnvironmentAuthorityCommand::Revoke {
@@ -404,15 +404,15 @@ async fn panes_explicit_selectors_updates_and_refresh_keep_captured_bindings() {
     f.submit("one", ":env use \"dev\"").await;
     f.submit("two", ":env use \"prod\"").await;
     let (a, b) = tokio::join!(
-        f.submit("one", "echo run args:dev > a"),
-        f.submit("two", "echo run args:prod > b")
+        f.submit("one", "echo run args:[dev] > a"),
+        f.submit("two", "echo run args:[prod] > b")
     );
     assert_eq!(a.nodes.len(), 1);
     assert_eq!(b.nodes.len(), 1);
     assert_eq!(stdout(&f.value("a").await), b"dev\n");
     assert_eq!(stdout(&f.value("b").await), b"prod\n");
     let before = f.value("a").await.provenance().policy().clone();
-    f.submit("one", "@env{prod} echo run args:explicit > explicit")
+    f.submit("one", "@env{prod} echo run args:[explicit] > explicit")
         .await;
     assert_ne!(
         f.value("explicit").await.provenance().policy().origins(),
@@ -427,7 +427,7 @@ async fn panes_explicit_selectors_updates_and_refresh_keep_captured_bindings() {
     let rejected = f
         .handle
         .submit(
-            SourceInput::new("stale".into(), "echo run args:no".into())
+            SourceInput::new("stale".into(), "echo run args:[no]".into())
                 .unwrap()
                 .with_client("one".into())
                 .unwrap(),
@@ -613,7 +613,7 @@ async fn protected_descendants_block_short_edits_and_rename_keeps_runtime_identi
     assert!(denied.is_err());
     assert_eq!(f.handle.environment_revisions().await.unwrap(), old);
     f.submit("one", ":env use \"dev\"").await;
-    f.submit("one", "echo run args:old > existing").await;
+    f.submit("one", "echo run args:[old] > existing").await;
     f.submit("one", ":env disable \"dev\"").await;
     f.submit("one", ":env rename \"dev\" to:development").await;
     assert!(!f.handle.observe().await.unwrap().environment_enabled["development"]);
@@ -639,7 +639,7 @@ async fn private_outputs_derived_values_and_errors_use_memory_not_retained_files
     ));
     f.install().await;
     f.submit("one", ":env use \"dev\"").await;
-    f.submit("one", "echo run args:qa-private-sentinel > secret_output")
+    f.submit("one", "echo run args:[qa-private-sentinel] > secret_output")
         .await;
     f.submit("one", ":calc { return $secret_output; } > derived")
         .await;
@@ -681,11 +681,11 @@ async fn transfer_gate_cannot_be_bypassed_by_calc_literal_arguments() {
     f.submit("one", ":env use \"dev\"").await;
     f.submit(
         "one",
-        ":calc { return call('echo',['run'],{args:'from-dev'}); } > source",
+        ":calc { return call('echo',['run'],{args:['from-dev']}); } > source",
     )
     .await;
     f.submit("one", ":env use \"prod\"").await;
-    f.submit("one", ":calc { let x=$source; return call('echo',['run'],{args:'even-control-dependence'}); } > refused").await;
+    f.submit("one", ":calc { let x=$source; return call('echo',['run'],{args:['even-control-dependence']}); } > refused").await;
     let snapshot = f.handle.snapshot().await.unwrap();
     assert!(
         snapshot
@@ -705,7 +705,7 @@ async fn transfer_gate_cannot_be_bypassed_by_calc_literal_arguments() {
         .unwrap();
     f.submit(
         "one",
-        ":calc { let x=$source; return call('echo',['run'],{args:'allowed'}); } > allowed",
+        ":calc { let x=$source; return call('echo',['run'],{args:['allowed']}); } > allowed",
     )
     .await;
     assert_eq!(stdout(&f.value("allowed").await), b"allowed\n");
@@ -726,7 +726,7 @@ async fn export_is_captured_portable_evidence_and_replay_is_held_with_no_authori
     let f = Fixture::new(simple());
     f.install().await;
     f.submit("one", ":env use \"dev\"").await;
-    f.submit("one", "echo run args:held > original").await;
+    f.submit("one", "echo run args:[held] > original").await;
     f.submit("one", ":env export file:captured.lock.json").await;
     let loader = LocalEnvironments::new(f.root.path()).unwrap();
     let records = loader.read_lock("captured.lock.json").unwrap();

@@ -84,13 +84,19 @@ impl TargetDriver for Local {
     ) -> Result<ImportProduct, &'static str> {
         let import = binding.import();
         self.validate(import.target())?;
-        if import.source().format() != "process/path/v1"
-            || !Path::new(import.source().bytes()).is_absolute()
-            || import.endpoint().is_some()
+        let executable = if import.source().format() == crate::provider_definition::FORMAT {
+            crate::provider_definition::captured_executable(import.source().bytes(), false)?
+        } else if import.source().format() == "process/path/v1"
+            && Path::new(import.source().bytes()).is_absolute()
         {
+            import.source().bytes().to_owned()
+        } else {
             return Err(
                 "Local process bindings require a captured host executable and no endpoint override",
             );
+        };
+        if import.endpoint().is_some() {
+            return Err("Local process bindings cannot override an HTTP endpoint");
         }
         let credentials = authority
             .credentials(binding, alias)
@@ -99,9 +105,8 @@ impl TargetDriver for Local {
         if let Some(ms) = import.timeout_ms() {
             config.timeout = Duration::from_millis(ms as u64);
         }
-        let (description, invoker) =
-            crate::process::wrapping(alias, import.source().bytes(), config)
-                .map_err(|_| "Invalid captured process binding")?;
+        let (description, invoker) = crate::process::wrapping(alias, executable, config)
+            .map_err(|_| "Invalid captured process binding")?;
         let invoker = invoker
             .managed(
                 import.target(),

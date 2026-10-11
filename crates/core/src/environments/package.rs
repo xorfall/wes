@@ -323,6 +323,15 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
                 }
                 location
             }
+            "provider" => {
+                if s.contains_key("url") || s.contains_key("bin") {
+                    return Err(error(
+                        "ENV001",
+                        "provider definitions require file, not url or bin",
+                    ));
+                }
+                text(required(s, "file")?)?
+            }
             "process" => text(required(s, "bin")?)?,
             "docker" => text(required(s, "socket")?)?,
             "builtin" => text(required(s, "name")?)?,
@@ -414,7 +423,7 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
         }
         let endpoint = bind.get("endpoint").map(setting).transpose()?;
         let timeout_ms = bind.get("timeout_ms").map(setting).transpose()?;
-        if kind == "process" && endpoint.is_some() {
+        if matches!(kind, "process" | "provider") && endpoint.is_some() {
             return Err(error(
                 "ENV001",
                 "process imports cannot bind an HTTP endpoint",

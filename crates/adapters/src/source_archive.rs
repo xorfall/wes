@@ -6,6 +6,7 @@ pub enum SourceKind {
     Spec,
     Types,
     Environments,
+    Provider,
 }
 
 /// Blocking, called on the joined input worker. Persist these exact bytes or refuse capture.

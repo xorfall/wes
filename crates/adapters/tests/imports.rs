@@ -480,6 +480,10 @@ async fn process_import_records_a_location_without_launch_and_replay_does_not_st
         .unwrap();
     assert_eq!(capability.path, ["run"]);
     assert_eq!(capability.result, wes_adapters::process::output_shape());
+    assert_eq!(
+        capability.parameter("args").unwrap().shape,
+        Shape::List(Box::new(Shape::Primitive(wes_core::Primitive::Text)))
+    );
     assert!(!file.exists());
     assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
 }

@@ -11,6 +11,52 @@ call that service. Environments bind contracts to endpoints and execution target
 The chosen authentication method and credential availability are separate from the
 provider definition. Use the environment UI to configure access deliberately.
 
+Declarative CLI providers load with `:import provider file:"tool.yaml" as:tool`.
+Their version 1 YAML defines a `process` backend with an explicit `bin`, local
+type contracts and operations with hierarchical `path` lists.
+
+Each parameter declares `name`, `type` and optional `required` (default `true`).
+An operation's `argv` contains literal strings or explicit parameter mappings.
+The default `scalar` encoding converts a declared scalar to one literal argument.
+`spread` emits list elements separately; its optional `prefix` list precedes
+each element. `flag` requires Bool and emits only the prefix when true. Missing
+optional values, empty spread lists and false flags emit no prefix. An explicit
+Option none also omits scalar/spread/flag mappings. `json` encodes materialized
+data as one JSON argument, preserving an explicit Option none as JSON null.
+No shell splitting, interpolation or executable selection from runtime arguments
+occurs. Type constraints, argv counts and byte limits are checked before launch.
+
+Result `format` is `json`, `text`, `bytes` or `process`. JSON requires a `type`;
+text and bytes default to their matching scalar types and can declare constrained
+aliases. Process returns the fixed `ProcessOutput` record. Successful decoded
+values carry the captured contract, including temporal and nullable fields.
+All formats first enforce `success_codes`, which defaults to `[0]`. A failed exit
+produces `PRV003` with a bounded stderr excerpt, without decoding stdout or
+retrying. Argument mapping errors use `PRV001`; invalid backend outputs use
+`PRV002`; decoding/contract errors use `PRV004`. Private-output restrictions also
+apply to failures. Remote unknown-outcome errors propagate unchanged.
+
+The backend uses the existing native process drivers; it does not inherit an
+existing provider alias's grants. All CLI operations remain `UNSAFE`. Environment
+imports use `source: {kind: provider, file: tool.yaml}` with an explicit target.
+Host binaries resolve relative to the definition file's directory; Docker/SSH
+binaries require absolute paths in the target namespace. The definition file is
+always a host input. A definition cannot mix host and target namespaces. Working
+directories, explicit environment variables, credentials and cancellation retain
+the bound driver's rules. Local, Docker and SSH execution support finite calls;
+this version does not declare streams, interactions or provider-to-provider calls.
+
+After editing the YAML, explicitly reimport with `replace:true`, or plan and apply
+an updated environment package. The environment revision changes atomically.
+Existing results and work keep their captured definition; refresh across an
+incompatible revision is refused. Explicit environment selections must acknowledge
+the updated revision with `:env use "name"` before new calls use it. Reopening
+rebuilds from frozen input evidence without rereading the YAML, probing an
+executable or replaying a command. Executable bytes are not archived: an explicit
+later launch still uses the binary currently at the captured path. The
+[offline example](../examples/declarative-providers/) demonstrates multiple
+operations and both direct and managed imports without GitHub access.
+
 Imported-operation parameters and typed `:def` parameters expose choices from
 their declared scalar enum contracts. Text members keep their exact text; int,
 decimal and bool members keep exact scalar spelling, including decimal scale.

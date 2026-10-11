@@ -890,7 +890,7 @@ impl Actor {
                 );
             }
             let kind = call.path[1].text.as_str();
-            if !matches!(kind, "spec" | "openapi" | "process" | "docker") {
+            if !matches!(kind, "spec" | "openapi" | "process" | "provider" | "docker") {
                 return Err("unsupported managed import kind");
             }
             let mut args = BTreeMap::new();
@@ -928,7 +928,7 @@ impl Actor {
             if current.is_retired() {
                 return Err("retired environment cannot receive imports");
             }
-            if args.contains_key(if matches!(kind, "spec" | "openapi") {
+            if args.contains_key(if matches!(kind, "spec" | "openapi" | "provider") {
                 "bin"
             } else {
                 "file"
@@ -946,6 +946,11 @@ impl Actor {
                     return Err("Docker observation requires socket:, not file/url/bin/endpoint");
                 }
                 "socket"
+            } else if kind == "provider" {
+                if args.contains_key("url") || args.contains_key("endpoint") {
+                    return Err("provider definitions require file:, not url: or endpoint:");
+                }
+                "file"
             } else if matches!(kind, "spec" | "openapi") {
                 match (args.contains_key("file"), args.contains_key("url")) {
                     (true, false) => "file",

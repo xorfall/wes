@@ -629,6 +629,20 @@ mod tests {
                                 )
                                 .unwrap(),
                             )])
+                        } else if mode == 0 {
+                            indexmap::IndexMap::from([(
+                                "args".into(),
+                                Value::new(
+                                    crate::process::argument_shape(false),
+                                    Data::List(vec![
+                                        Data::Text("two words".into()),
+                                        Data::Text("".into()),
+                                        Data::Text("quote\"; $(command) $HOME ĞğİıŞş".into()),
+                                    ]),
+                                    Provenance::default(),
+                                )
+                                .unwrap(),
+                            )])
                         } else {
                             Default::default()
                         },
@@ -669,7 +683,17 @@ mod tests {
         assert_eq!(fields["stdout"], Data::Bytes(b"ok".to_vec().into()));
         assert_eq!(fields["stderr"], Data::Bytes(b"e".to_vec().into()));
         assert!(requests[0].starts_with("GET /v1.45/containers/synthetic/json "));
-        assert!(requests[1].contains("/not/on/host/tool"));
+        let body: Json =
+            serde_json::from_str(requests[1].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body["Cmd"],
+            json!([
+                "/not/on/host/tool",
+                "two words",
+                "",
+                "quote\"; $(command) $HOME ĞğİıŞş"
+            ])
+        );
         assert!(requests[1].contains("/remote-only"));
         assert!(requests[1].contains("QA_ONLY=remote"));
         assert!(!requests[1].contains("PATH="));

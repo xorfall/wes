@@ -114,7 +114,7 @@ async fn current_documents_promote_default_preserve_other_owners_and_replay_capt
     accepted(
         &submit(
             &session,
-            ":import process bin:./example-echo.bin as:echo\necho run args:captured > imported",
+            ":import process bin:./example-echo.bin as:echo\necho run args:[captured] > imported",
             None,
         )
         .await,

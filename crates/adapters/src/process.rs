@@ -33,7 +33,7 @@ pub struct ProcessConfig {
     pub timeout: Duration,
     /// Combined captured stdout and stderr bytes, not allocator or OS pipe buffers.
     pub output_bytes: usize,
-    /// Fixed command and optional appended argument, including separators used by provenance.
+    /// Fixed command and appended arguments, including separators used by provenance.
     pub argument_bytes: usize,
 }
 impl Default for ProcessConfig {
@@ -62,7 +62,18 @@ pub fn output_shape() -> Shape {
         .expect("constant output fields"),
     )
 }
-/// A fixed argv prefix plus at most one Text argument. No whitespace splitting or shell expansion.
+pub(crate) const MAX_ARGUMENTS: usize = 1024;
+
+pub(crate) fn argument_shape(program_text: bool) -> Shape {
+    let text = Shape::Primitive(Primitive::Text);
+    if program_text {
+        text
+    } else {
+        Shape::List(Box::new(text))
+    }
+}
+
+/// A fixed argv prefix plus an optional List<Text>. Elements are literal OS arguments.
 pub fn provider(
     name: impl Into<String>,
     command: Vec<String>,
@@ -72,7 +83,7 @@ pub fn provider(
     let argument_key = argument_key.into();
     if command.is_empty()
         || command[0].is_empty()
-        || command.len() > 1024
+        || command.len() > MAX_ARGUMENTS
         || command.iter().any(|part| part.contains('\0'))
         || argument_key.trim().is_empty()
         || argument_key == "timeout"
@@ -94,9 +105,9 @@ pub fn provider(
         ));
     }
     let mut capability = Capability::new(["run"], output_shape(), Safety::Unsafe);
-    capability.summary = "Runs a local process with one optional literal argument".into();
+    capability.summary = "Runs a local process with an optional List<Text> of literal arguments; no splitting or shell expansion. At most 1024 argv elements including the executable and fixed prefix, within the process argument byte budget.".into();
     capability.parameters = vec![
-        Parameter::new(&argument_key, Shape::Primitive(Primitive::Text), false),
+        Parameter::new(&argument_key, argument_shape(false), false),
         Parameter::new("timeout", Shape::Primitive(Primitive::Duration), false),
     ];
     let description = ProviderDescription::new(name, [capability], vec![])
@@ -158,6 +169,7 @@ pub(crate) fn shell_named(
             .as_ref()
             .clone();
         capability.summary = "Runs an explicitly supplied native shell program".into();
+        capability.parameters[0].shape = argument_shape(true);
         capability.parameters[0].content = Some(language.into());
         Ok((
             ProviderDescription::new(alias, [capability], vec![])
@@ -322,16 +334,13 @@ impl ProcessInvoker {
         }
         let mut line = self.command.to_vec();
         if let Some(argument) = call.arguments.get(self.argument_key.as_ref()) {
-            let Data::Text(text) = argument.data() else {
-                return Err(Failure::Arguments);
-            };
-            if text.contains('\0') || text.len() > self.config.argument_bytes {
-                return Err(Failure::Arguments);
-            }
-            line.push(text.to_string());
-        }
-        if line_bytes(&line).is_none_or(|n| n > self.config.argument_bytes) {
-            return Err(Failure::Arguments);
+            append_arguments(
+                &mut line,
+                argument.data(),
+                self.program_text,
+                self.config.argument_bytes,
+            )
+            .map_err(|_| Failure::Arguments)?;
         }
         let timeout = match call.arguments.get("timeout") {
             None => self.config.timeout,
@@ -380,6 +389,54 @@ impl ManagedLaunch {
 fn line_bytes(line: &[String]) -> Option<usize> {
     line.iter()
         .try_fold(line.len().saturating_sub(1), |n, s| n.checked_add(s.len()))
+}
+/// Shared by local, interactive and remote invocations; validate before any launch.
+pub(crate) fn append_arguments(
+    line: &mut Vec<String>,
+    data: &Data,
+    program_text: bool,
+    byte_limit: usize,
+) -> Result<(), &'static str> {
+    let count = match (program_text, data) {
+        (true, Data::Text(_)) => 1,
+        (false, Data::List(items)) => items.len(),
+        _ => return Err("Process arguments require List<Text>; shell programs require Text"),
+    };
+    if line
+        .len()
+        .checked_add(count)
+        .is_none_or(|n| n > MAX_ARGUMENTS)
+    {
+        return Err("Process argv exceeds 1024 elements");
+    }
+    let mut bytes = line_bytes(line).ok_or("Process argv exceeds its byte budget")?;
+    if bytes > byte_limit {
+        return Err("Process argv exceeds its byte budget");
+    }
+    let mut append = |text: &str| {
+        bytes = bytes
+            .checked_add(usize::from(!line.is_empty()))
+            .and_then(|n| n.checked_add(text.len()))
+            .ok_or("Process argv exceeds its byte budget")?;
+        if text.contains('\0') || bytes > byte_limit {
+            return Err("Process argv exceeds its byte budget or contains NUL");
+        }
+        line.push(text.to_owned());
+        Ok(())
+    };
+    match data {
+        Data::Text(text) => append(text)?,
+        Data::List(items) => {
+            for item in items {
+                let Data::Text(text) = item else {
+                    return Err("Process argv elements require Text");
+                };
+                append(text)?;
+            }
+        }
+        _ => unreachable!("argument kind checked above"),
+    }
+    Ok(())
 }
 fn valid_timeout(timeout: Duration) -> bool {
     !timeout.is_zero() && timeout.as_nanos() <= i64::MAX as u128

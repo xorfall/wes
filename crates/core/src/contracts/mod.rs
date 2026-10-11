@@ -17,7 +17,7 @@ pub use model::{
     Contract, Field as ContractField, Kind as ContractKind, Limits as ContractLimits,
     ValidationCancelled,
 };
-pub(crate) use package::read_strict as read_strict_package;
+pub use package::read_strict as read_strict_package;
 pub use package::{Node as PackageNode, ScalarKind as PackageScalarKind, read as read_package};
 pub use registry::ContractRegistry;
 

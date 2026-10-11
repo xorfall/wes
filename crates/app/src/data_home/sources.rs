@@ -58,7 +58,7 @@ impl SourceArchive for Sources {
                 library.retain_input(source)?;
                 ("spec", format!("api-library/objects/{revision}.json"))
             }
-            SourceKind::Types | SourceKind::Environments => {
+            SourceKind::Types | SourceKind::Environments | SourceKind::Provider => {
                 let packages = imports.join("packages");
                 directory(&packages)?;
                 immutable(
@@ -67,6 +67,7 @@ impl SourceArchive for Sources {
                 )?;
                 let kind = match kind {
                     SourceKind::Environments => "environments",
+                    SourceKind::Provider => "provider",
                     _ => "types",
                 };
                 (kind, format!("imports/packages/{revision}.yaml"))

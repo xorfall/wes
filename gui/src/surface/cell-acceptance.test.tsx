@@ -308,7 +308,7 @@ describe("process output", () => {
     };
     const workspace = { ...emptyWorkspace, nodes: [node({ id: "p", name: "missing", handle: "h", type: "ProcessOutput" })] };
     const held = new Map([["h", value]]);
-    const cell = session(workspace, client('cat run args:"/nowhere" > missing', ["p"]), held);
+    const cell = session(workspace, client('cat run args:["/nowhere"] > missing', ["p"]), held);
     const exit = cell.verdict.flatMap((it) => it.segments).find((it) => it.text === "exit 1");
     expect(exit?.role).toBe("mono-warn");
     expect(lineText(joined(cell.verdict))).toBe("ok · ProcessOutput · exit 1 · kept");

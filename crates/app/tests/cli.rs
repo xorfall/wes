@@ -75,7 +75,7 @@ fn managed_batch_file_lock_and_explicit_restored_activation() {
     let first = run(
         "original",
         &["--env-file", "env.yaml", "--env", "dev"],
-        "echo run args:qa > first",
+        "echo run args:[qa] > first",
     );
     assert!(
         first.status.success(),
@@ -85,13 +85,13 @@ fn managed_batch_file_lock_and_explicit_restored_activation() {
     let denied = run(
         "original",
         &["--env-file", "env.yaml", "--env", "dev"],
-        "echo run args:denied",
+        "echo run args:[denied]",
     );
     assert_eq!(denied.status.code(), Some(1));
     let restored = run(
         "original",
         &["--env-file", "env.yaml", "--env", "dev", "--activate-env"],
-        "echo run args:restored",
+        "echo run args:[restored]",
     );
     assert!(
         restored.status.success(),
@@ -107,7 +107,7 @@ fn managed_batch_file_lock_and_explicit_restored_activation() {
     let locked = run(
         "fresh",
         &["--env-lock", "captured.lock.json", "--env", "dev"],
-        "echo run args:locked",
+        "echo run args:[locked]",
     );
     assert!(
         locked.status.success(),
@@ -141,7 +141,7 @@ fn managed_batch_credentials_stdin_never_becomes_source_or_stdout() {
             "--grant-provider",
             "vars",
             "--command",
-            "vars run args:QA_SECRET",
+            "vars run args:[QA_SECRET]",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -797,7 +797,7 @@ fn bytes_cli_hint_does_not_change_json_or_appear_in_json_mode() {
                 "--env",
                 "dev",
                 "--command",
-                "printer run args:3",
+                "printer run args:[3]",
             ]);
         if json {
             command.arg("--json");
