@@ -256,18 +256,35 @@ fn sandbox_cli_observations_listing_and_joined_removal_are_visible() {
 #[test]
 fn unavailable_map_results_keep_provable_declared_types_after_reopen() {
     let root = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_wes"))
-        .arg("--home")
-        .arg(root.path())
-        .args([
-            "--no-auto-keep",
-            "--command",
-            ":calc { return [1,2].map(x=>text(x)); } > labels",
-        ])
-        .output()
+    let run_bounded = |source: &str, no_auto_keep: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wes"));
+        command
+            .arg("--home")
+            .arg(root.path())
+            .args(["--command", source]);
+        if no_auto_keep {
+            command.arg("--no-auto-keep");
+        }
+        let captured = super::command_output::capture(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            64 * 1024,
+        )
         .unwrap();
+        assert!(
+            !captured.timed_out,
+            "CLI phase {source:?}, pid {} timed out; stdout: {}; stderr: {}; omitted: {}/{} bytes",
+            captured.pid,
+            String::from_utf8_lossy(&captured.output.stdout),
+            String::from_utf8_lossy(&captured.output.stderr),
+            captured.stdout_omitted,
+            captured.stderr_omitted,
+        );
+        captured.output
+    };
+    let output = run_bounded(":calc { return [1,2].map(x=>text(x)); } > labels", true);
     success(&output);
-    let listed = run(root.path(), ":list names", false);
+    let listed = run_bounded(":list names", false);
     success(&listed);
     let text = String::from_utf8_lossy(&listed.stdout);
     assert!(text.contains("labels"));
