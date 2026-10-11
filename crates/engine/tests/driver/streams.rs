@@ -335,3 +335,68 @@ async fn adopting_an_open_idle_stream_runtime_is_rejected_until_its_lease_is_dra
         Err(DriverError::ActiveRuntime)
     ));
 }
+
+#[tokio::test]
+async fn source_readiness_is_bound_to_the_current_run_and_never_uses_a_retained_window() {
+    let (handle, task, mut entered, finite) = fixture(None);
+    let node = add(&handle, "stream", vec![]).await;
+    handle.command(Command::Start).await.unwrap();
+    let source = started(&mut entered).await;
+    assert_eq!(
+        handle
+            .wait_source_ready(
+                node.clone(),
+                source.run.id().clone(),
+                Duration::from_secs(2),
+                CancellationToken::new()
+            )
+            .await,
+        Ok(true)
+    );
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert_eq!(
+        handle
+            .wait_source_ready(
+                node.clone(),
+                source.run.id().clone(),
+                Duration::from_secs(2),
+                cancelled
+            )
+            .await,
+        Err(DriverError::WaitCancelled)
+    );
+    source.finish.send(Ok(())).unwrap();
+    seen(&handle, |s| s.idle && s.streaming.is_empty()).await;
+    assert_eq!(
+        handle
+            .wait_source_ready(
+                node.clone(),
+                source.run.id().clone(),
+                Duration::from_secs(2),
+                CancellationToken::new()
+            )
+            .await,
+        Err(DriverError::SourceClosed)
+    );
+    handle
+        .command(Command::Refresh(node.clone()))
+        .await
+        .unwrap();
+    let next = started(&mut entered).await;
+    assert_eq!(
+        handle
+            .wait_source_ready(
+                node,
+                source.run.id().clone(),
+                Duration::from_secs(2),
+                CancellationToken::new()
+            )
+            .await,
+        Err(DriverError::SourceChanged)
+    );
+    assert_eq!(finite.load(Ordering::SeqCst), 0);
+    next.finish.send(Ok(())).unwrap();
+    handle.command(Command::Shutdown).await.unwrap();
+    task.join().await.unwrap();
+}

@@ -14,6 +14,12 @@ pub(crate) fn max_selected_outputs() -> usize {
     wes_budgets::get("execution.selected") as usize
 }
 pub(crate) enum Waiter {
+    SourceReady {
+        node: crate::graph::NodeId,
+        run: crate::runtime::RunId,
+        until: Instant,
+        reply: oneshot::Sender<Result<bool, DriverError>>,
+    },
     Idle(oneshot::Sender<Result<(), DriverError>>),
     Outputs {
         selected: OutputSelection,
@@ -26,12 +32,13 @@ impl Waiter {
         match self {
             Self::Idle(_) => 0,
             Self::Outputs { selected, .. } => selected.len(),
+            Self::SourceReady { .. } => 1,
         }
     }
     fn abandoned(&self) -> bool {
         match self {
             Self::Idle(reply) => reply.is_closed(),
-            Self::Outputs { reply, .. } => reply.is_closed(),
+            Self::Outputs { reply, .. } | Self::SourceReady { reply, .. } => reply.is_closed(),
         }
     }
     fn answer(self, result: Result<bool, DriverError>) {
@@ -39,7 +46,7 @@ impl Waiter {
             Self::Idle(reply) => {
                 let _ = reply.send(result.map(|_| ()));
             }
-            Self::Outputs { reply, .. } => {
+            Self::Outputs { reply, .. } | Self::SourceReady { reply, .. } => {
                 let _ = reply.send(result);
             }
         }
@@ -76,6 +83,23 @@ impl Waiters {
                 continue;
             }
             let result = match waiter {
+                Waiter::SourceReady {
+                    node, run, until, ..
+                } => {
+                    if runtime.is_closed() {
+                        Some(Err(DriverError::Stopped))
+                    } else if runtime.run_of(node) != Some(run) {
+                        Some(Err(DriverError::SourceChanged))
+                    } else if runtime.is_streaming(node) {
+                        Some(Ok(true))
+                    } else if !runtime.has_lease(node) {
+                        Some(Err(DriverError::SourceClosed))
+                    } else if now >= *until {
+                        Some(Ok(false))
+                    } else {
+                        None
+                    }
+                }
                 Waiter::Idle(_) => (runtime.is_idle() && io_idle).then_some(Ok(true)),
                 Waiter::Outputs {
                     selected, until, ..
@@ -101,7 +125,7 @@ impl Waiters {
         self.0
             .iter()
             .filter_map(|waiter| match waiter {
-                Waiter::Outputs { until, .. } => Some(*until),
+                Waiter::Outputs { until, .. } | Waiter::SourceReady { until, .. } => Some(*until),
                 Waiter::Idle(_) => None,
             })
             .min()

@@ -444,3 +444,6 @@ async fn rejected_item_counts_are_run_bound_and_preserve_valid_window_and_attrib
     assert_eq!(replacement.snapshot().rejected, 0);
     assert_eq!(snapshot.rejected, 2);
 }
+
+#[path = "streams/readiness.rs"]
+mod readiness;
