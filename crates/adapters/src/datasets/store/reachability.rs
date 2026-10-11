@@ -259,9 +259,10 @@ impl DatasetStore {
                     handle: cp.bindings.source_handle.clone(),
                     digest: cp.bindings.source_digest.clone(),
                     bytes: cp.bindings.source_bytes,
+                    selection: cp.bindings.source_selection.clone(),
                 };
                 if let Some(prior) = captures.get(&source.handle) {
-                    if prior != &source {
+                    if !prior.same_storage(&source) {
                         return Err(DatasetError::StorageCorrupt);
                     }
                 } else {
@@ -331,7 +332,9 @@ impl DatasetStore {
                 return Err(DatasetError::Limit("retention captures"));
             }
             match retained.captures.get(&capture.handle) {
-                Some(previous) if previous != capture => return Err(DatasetError::StorageCorrupt),
+                Some(previous) if !previous.same_storage(capture) => {
+                    return Err(DatasetError::StorageCorrupt);
+                }
                 Some(_) => {}
                 None => {
                     retained

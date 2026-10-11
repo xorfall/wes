@@ -19,6 +19,7 @@ use tokio::{
 use tracing::Instrument;
 
 pub(crate) struct Enter<T> {
+    pub(crate) prepared: bool,
     pub(crate) ticket: RunTicket<T>,
     pub(crate) reply: oneshot::Sender<Result<Option<RunTicket<T>>, wes_core::ErrorValue>>,
     streaming: bool,
@@ -86,6 +87,15 @@ impl<T: Clone> RuntimeInput<T> {
     pub fn apply(self, runtime: &mut Runtime<T>, now: Duration) -> Vec<Effect<T>> {
         match self {
             Self::Enter(enter) => {
+                if !enter.ticket.deferred_inputs.is_empty() {
+                    let _ = enter
+                        .reply
+                        .send(Err(crate::runtime::RuntimeCode::ResultUnavailable.error(
+                            "Stored inputs require guarded preparation by the owning session.",
+                            None,
+                        )));
+                    return vec![];
+                }
                 let allowed = if enter.streaming {
                     runtime.enter_stream(&enter.ticket.run)
                 } else if enter.lifetime {
@@ -121,6 +131,7 @@ impl<T: Clone> RuntimeInput<T> {
 }
 
 pub(crate) struct ExecutionIo<T> {
+    payload_events: bool,
     executor: Arc<dyn Executor<T>>,
     events: broadcast::Sender<Observation>,
     notices: broadcast::Sender<ExecutionNotice>,
@@ -162,6 +173,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
         let (progress_updates, progress_receiver) = mpsc::channel(32);
         let (lifetime_updates, lifetime_receiver) = mpsc::channel(32);
         Ok(Self {
+            payload_events: true,
             executor,
             events,
             notices,
@@ -194,6 +206,10 @@ impl<T: Send + 'static> ExecutionIo<T> {
     }
     pub fn events(&self) -> broadcast::WeakSender<Observation> {
         self.events.downgrade()
+    }
+    pub fn metadata_events(mut self) -> Self {
+        self.payload_events = false;
+        self
     }
     pub fn notices(&self) -> broadcast::WeakSender<ExecutionNotice> {
         self.notices.downgrade()
@@ -347,7 +363,11 @@ impl<T: Send + 'static> ExecutionIo<T> {
     pub fn effects(&mut self, effects: Vec<Effect<T>>) {
         for effect in effects {
             match effect {
-                Effect::Observe(observation) => {
+                Effect::Observe(mut observation) => {
+                    if !self.payload_events {
+                        observation.value = None;
+                        observation.evidence = None;
+                    }
                     let _ = self.events.send(observation);
                 }
                 Effect::Watch(deadline) => {
@@ -425,7 +445,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 permit = permits.acquire_owned() => permit.expect("driver never closes permit pool"),
             };
             let (reply, receive) = oneshot::channel();
-            if enters.send(Enter { ticket, reply, streaming, lifetime }).await.is_err() {
+            if enters.send(Enter { ticket, reply, streaming, lifetime, prepared: false }).await.is_err() {
                 return None;
             }
             let ticket = match receive.await.ok()? {
@@ -448,7 +468,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 Some(executor.execute_lifetime(ticket, token, progress, values).await)
             } else { Some(executor.execute_reporting(ticket, token, progress).await) }
             }.instrument(execution.span()).await;
-            execution.finish(match report.as_ref().map(|r: &ExecutionReport| &r.outcome) { Some(Outcome::Produced(_)) => "ok", Some(Outcome::Skipped) => "skipped", Some(Outcome::Failed(_) | Outcome::Incomplete {..}) => "error", Some(Outcome::Cancelled(_)) | None => "cancelled" });
+            execution.finish(match report.as_ref().map(|r: &ExecutionReport| &r.outcome) { Some(Outcome::Produced(_) | Outcome::Stored(_)) => "ok", Some(Outcome::Skipped) => "skipped", Some(Outcome::Failed(_) | Outcome::Incomplete {..}) => "error", Some(Outcome::Cancelled(_)) | None => "cancelled" });
             report
         });
         self.task_runs.insert(task.id(), run);

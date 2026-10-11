@@ -62,7 +62,7 @@ it("keeps backend context and does not guess that an unexplained 503 means missi
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
-it.each([404, 410, 403, 500])("does not retry HTTP %i and releases admission after errors", async status => {
+it.each([404, 410, 403, 409, 413, 500])("does not retry HTTP %i and releases admission after errors", async status => {
   const fetch = vi.fn().mockResolvedValueOnce(new Response(null, { status }))
     .mockResolvedValueOnce(new Response(JSON.stringify(value)));
   vi.stubGlobal("window", { fetch });

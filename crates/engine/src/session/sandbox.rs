@@ -1519,26 +1519,54 @@ pub(super) fn observe_sources(
             if member.is_some_and(|m| m.split('.').next() != Some(name)) {
                 return None;
             }
-            let crate::runtime::OutputState::Available(value) = workspace.runtime().output(output)
-            else {
-                return None;
-            };
-            if value.provenance().policy().is_private()
-                || value.provenance().policy().is_unknown()
-                || workspace.dataset_access.blocks(&value)
-            {
+            let (shape, provenance, metadata, stored_handle) =
+                match workspace.runtime().output(output) {
+                    crate::runtime::OutputState::Available(value) => {
+                        if workspace.dataset_access.blocks(&value) {
+                            return None;
+                        }
+                        (
+                            value.shape().clone(),
+                            value.provenance().clone(),
+                            value.metadata().cloned(),
+                            None,
+                        )
+                    }
+                    crate::runtime::OutputState::Stored(stored) => (
+                        stored.snapshot.shape.clone(),
+                        stored.snapshot.provenance.clone(),
+                        stored.snapshot.metadata.clone(),
+                        Some(stored.snapshot.handle.to_string()),
+                    ),
+                    _ => return None,
+                };
+            if provenance.policy().is_private() || provenance.policy().is_unknown() {
                 return None;
             }
-            let handle = published
-                .outputs
-                .get(&output.node)
-                .filter(|p| workspace.runtime().run_of(&output.node) == Some(p.run()))
-                .and_then(ValuePublication::handle)
-                .map(ToString::to_string);
+            let handle = stored_handle.or_else(|| {
+                published
+                    .outputs
+                    .get(&output.node)
+                    .filter(|p| workspace.runtime().run_of(&output.node) == Some(p.run()))
+                    .and_then(ValuePublication::handle)
+                    .map(ToString::to_string)
+            });
             let fields = member.map_or_else(Vec::new, |m| {
                 m.split('.').skip(1).map(str::to_owned).collect()
             });
-            let value = crate::plan::project_value(&value, &fields).ok()?;
+            let shape = crate::plan::field_shape(&shape, &fields)?;
+            let metadata = if fields.is_empty() {
+                metadata
+            } else {
+                metadata.and_then(|m| {
+                    m.project(
+                        &fields
+                            .iter()
+                            .map(|f| wes_core::contracts::metadata::field_segment(f))
+                            .collect::<String>(),
+                    )
+                })
+            };
             Some((
                 if member.is_some() {
                     String::new()
@@ -1559,9 +1587,9 @@ pub(super) fn observe_sources(
                         .display_revision(&output.node)
                         .to_string(),
                     evidence: None,
-                    shape: value.shape().clone(),
-                    metadata: value.metadata().cloned(),
-                    provenance: value.provenance().clone(),
+                    shape,
+                    metadata,
+                    provenance,
                 },
             ))
         })

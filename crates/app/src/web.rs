@@ -1288,13 +1288,18 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
     if current.session.check_retirement_access().await.is_err() {
         return value_errors::Failure::Retiring.response(Some(&handle));
     }
-    let value = match shared.values.read(handle.clone()).await {
+    let (reader, worker) =
+        match read_context::resolve(&current.session, &shared.values, request.headers()).await {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    let value = match worker.read(handle.clone()).await {
         Ok(Some(value)) => value,
         Ok(None) => return value_errors::Failure::Missing.response(Some(&handle)),
         Err(error) => return value_errors::Failure::Storage(error).response(Some(&handle)),
     };
     if value.value.provenance().policy().is_private() {
-        let Ok(observation) = current.session.observe().await else {
+        let Ok(observation) = reader.observe().await else {
             return value_errors::Failure::SessionUnavailable.response(Some(&handle));
         };
         if observation
@@ -1325,7 +1330,7 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
             {
                 return StatusCode::CONFLICT.into_response();
             }
-            let authorization = shared.values.validate_read(handle.clone(), captured).await;
+            let authorization = worker.validate_read(handle.clone(), captured).await;
             if !shared
                 .application
                 .current()

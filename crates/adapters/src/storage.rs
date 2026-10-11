@@ -16,7 +16,19 @@ use wes_engine::storage::{
     EvictionBatch, LoadedValue, Retention, RetentionUsage, StoreError, ValueHandle, ValueLease,
     ValuePlacement, ValueStore,
 };
+mod composite;
 mod memory;
+mod segmented;
+mod temporary;
+
+/// Owned acquisition allocations and physical input, independently of process RSS.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AcquisitionUsage {
+    pub drafts: usize,
+    pub payload_bytes: u64,
+    pub metadata_charge: u64,
+    pub buffer_bytes: usize,
+}
 
 pub struct FileValues {
     directory: OwnedDirectory,
@@ -28,6 +40,8 @@ pub struct FileValues {
     published: HashMap<ValueHandle, u64>,
     next_publication: u64,
     holds: HashMap<ValueHandle, Weak<()>>,
+    drafts: HashMap<ValueHandle, segmented::Draft>,
+    manifests: Arc<std::sync::Mutex<segmented::ManifestCache>>,
 }
 impl FileValues {
     /// Opens a private directory. Existing directories are never chmod'ed or recursively cleaned.
@@ -46,6 +60,8 @@ impl FileValues {
             published: HashMap::new(),
             next_publication: 0,
             holds: HashMap::new(),
+            drafts: HashMap::new(),
+            manifests: Default::default(),
         })
     }
     pub fn handles(&self) -> Result<Vec<ValueHandle>, StoreError> {
@@ -61,6 +77,69 @@ impl FileValues {
         self.holds
             .get(handle)
             .is_some_and(|owner| owner.strong_count() != 0)
+    }
+    /// Hard admission for explicitly spillable results. No archived copy is selected for removal.
+    fn admit_spill(&mut self, bytes: u64) -> Result<(), StoreError> {
+        self.admit_spill_admission(bytes, 1)
+    }
+    fn admit_spill_admission(&mut self, bytes: u64, artifacts: usize) -> Result<(), StoreError> {
+        let limit = self
+            .budget
+            .map_or_else(|| wes_budgets::get("storage.live.bytes"), NonZeroU64::get);
+        if bytes > limit {
+            return Err(StoreError::Limit("temporary result bytes"));
+        }
+        let maximum = wes_budgets::get("storage.temporary.files") as usize;
+        let mut files = self.files()?;
+        files.sort_by(|a, b| {
+            a.publication
+                .cmp(&b.publication)
+                .then_with(|| a.modified.cmp(&b.modified))
+                .then_with(|| a.handle.cmp(&b.handle))
+        });
+        let draft_bytes = self
+            .drafts
+            .values()
+            .fold(0u64, |n, d| n.saturating_add(d.disk_charge()));
+        let mut used = files
+            .iter()
+            .fold(draft_bytes, |n, f| n.saturating_add(f.bytes));
+        let mut count = files
+            .iter()
+            .map(|f| f.artifacts)
+            .sum::<usize>()
+            .saturating_add(self.drafts.len().saturating_mul(2));
+        let (free_count, free_bytes) = files
+            .iter()
+            .filter(|f| !self.held(&f.handle))
+            .fold((0usize, 0u64), |(n, b), f| {
+                (n + f.artifacts, b.saturating_add(f.bytes))
+            });
+        if used.saturating_sub(free_bytes).saturating_add(bytes) > limit
+            || count.saturating_sub(free_count).saturating_add(artifacts) > maximum
+        {
+            return Err(StoreError::Limit("protected temporary results"));
+        }
+        for file in files {
+            if used.saturating_add(bytes) <= limit && count.saturating_add(artifacts) <= maximum {
+                break;
+            }
+            if self.held(&file.handle) {
+                continue;
+            }
+            if self.release(&file.handle)? {
+                used -= file.bytes;
+                count -= file.artifacts;
+                self.evicted.push_back(file.handle);
+            }
+        }
+        Ok(())
+    }
+    fn adopt_spill(&mut self, handle: &ValueHandle, bytes: &[u8]) -> Result<(), StoreError> {
+        if self.size(handle)?.is_none() {
+            self.admit_spill(bytes.len() as u64)?;
+        }
+        self.adopt(handle, bytes)
     }
     /// Adopt bytes under their existing identity. It never overwrites a file, including on races.
     pub fn adopt(&mut self, handle: &ValueHandle, encoded: &[u8]) -> Result<(), StoreError> {
@@ -201,8 +280,13 @@ impl FileValues {
             }
             files.push(HeldFile {
                 publication: self.published.get(&handle).copied(),
-                handle,
-                bytes: metadata.len(),
+                handle: handle.clone(),
+                bytes: self.segmented_size(&handle)?.unwrap_or(metadata.len()),
+                artifacts: if self.segmented_size(&handle)?.is_some() {
+                    2
+                } else {
+                    1
+                },
                 modified: metadata
                     .modified()
                     .map(|time| time.into_std())
@@ -250,6 +334,7 @@ impl FileValues {
     }
 }
 struct HeldFile {
+    artifacts: usize,
     handle: ValueHandle,
     /// Earlier sessions' results have no recorded publication and order before this session's.
     publication: Option<u64>,
@@ -288,6 +373,24 @@ fn write_and_sync<W: Write>(
     sync(&file)
 }
 impl ValueStore for FileValues {
+    fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
+        use sha2::{Digest, Sha256};
+        let Some(mut file) = self.file(handle)? else {
+            return Ok(None);
+        };
+        let mut digest = Sha256::new();
+        let mut buffer = [0u8; 65536];
+        loop {
+            let count = file
+                .read(&mut buffer)
+                .map_err(|e| StoreError::backend("hashing a snapshot", e))?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&buffer[..count]);
+        }
+        Ok(Some(format!("sha256:{:x}", digest.finalize())))
+    }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
         let encoded = codec::encode_value(value, self.limits)
             .map_err(|e| codec_error("encoding a result", e))?;
@@ -298,7 +401,80 @@ impl ValueStore for FileValues {
     fn has_temporary_file(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
         Ok(self.size(handle)?.is_some())
     }
+    fn describe(
+        &self,
+        handle: &ValueHandle,
+        fields: &[String],
+    ) -> Result<Option<wes_engine::storage::StoredSnapshot>, StoreError> {
+        if let Some(s) = self.describe_composite(handle, fields)? {
+            return Ok(Some(s));
+        }
+        if let Some(s) = self.describe_segmented(handle, fields)? {
+            return Ok(Some(s));
+        }
+        let Some(v) = self.read(handle)? else {
+            return Ok(None);
+        };
+        let v =
+            wes_engine::plan::project_value(&v.value, fields).map_err(|_| StoreError::Conflict)?;
+        let mut snapshot = wes_engine::storage::StoredSnapshot::capture(
+            handle.clone(),
+            self.digest(handle)?.ok_or(StoreError::MissingValue)?,
+            &v,
+        )
+        .ok_or(StoreError::Limit("snapshot metadata"))?;
+        snapshot = snapshot.with_selection(fields.to_vec());
+        Ok(Some(snapshot))
+    }
+    fn dependencies(&self, handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+        self.composite_header(handle)?
+            .map_or(Ok(vec![]), |(root, _)| {
+                root.members
+                    .iter()
+                    .map(|m| ValueHandle::new(&m.handle))
+                    .collect()
+            })
+    }
+    fn read_selected(
+        &self,
+        h: &ValueHandle,
+        fields: &[String],
+        limit: u64,
+    ) -> Result<Option<LoadedValue>, StoreError> {
+        if let Some(v) = self.read_composite(h, fields, limit)? {
+            return Ok(Some(v));
+        }
+        if let Some(v) = self.read_segmented(h, fields, limit)? {
+            return Ok(Some(v));
+        }
+        let Some(v) = self.read(h)? else {
+            return Ok(None);
+        };
+        let v =
+            wes_engine::plan::project_value(&v.value, fields).map_err(|_| StoreError::Conflict)?;
+        Ok(Some(LoadedValue { value: v }))
+    }
+    fn source_range(
+        &self,
+        s: &wes_engine::storage::StoredSnapshot,
+        from: u64,
+        maximum: usize,
+    ) -> Result<wes_engine::storage::SourceRange, StoreError> {
+        if let Some(range) = self.composite_range(s, from, maximum)? {
+            return Ok(range);
+        }
+        if let Some(range) = self.segmented_range(s, from, maximum)? {
+            return Ok(range);
+        }
+        ordinary_range(self, s, from, maximum)
+    }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
+        if let Some(v) = self.read_composite(handle, &[], self.limits.bytes as u64)? {
+            return Ok(Some(v));
+        }
+        if let Some(v) = self.read_segmented(handle, &[], self.limits.bytes as u64)? {
+            return Ok(Some(v));
+        }
         self.encoded(handle)?
             .map(|bytes| {
                 codec::decode_value(&bytes, self.limits)
@@ -310,6 +486,11 @@ impl ValueStore for FileValues {
             .transpose()
     }
     fn encoded(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
+        if self.composite_header(handle)?.is_some() || self.segmented_size(handle)?.is_some() {
+            return Err(StoreError::Limit(
+                "segmented encoding export; use bounded selections or ranges",
+            ));
+        }
         let Some(file) = self.file(handle)? else {
             return Ok(None);
         };
@@ -330,6 +511,9 @@ impl ValueStore for FileValues {
         Ok(Some(bytes))
     }
     fn size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {
+        if let Some(size) = self.segmented_size(handle)? {
+            return Ok(Some(size));
+        }
         self.file(handle)?
             .map(|file| {
                 file.metadata()
@@ -346,6 +530,7 @@ impl ValueStore for FileValues {
         if self.file(handle)?.is_none() {
             return Ok(false);
         }
+        self.remove_segmented(handle)?;
         self.directory
             .remove_file(file_name(handle))
             .map_err(|e| StoreError::backend("releasing a result", e))?;
@@ -369,8 +554,9 @@ impl ValueStore for FileValues {
         if self.size(handle)?.is_none() {
             return Ok(None);
         }
+        let children = self.composite_holds(handle)?;
         if let Some(owner) = self.holds.get(handle).and_then(Weak::upgrade) {
-            return Ok(Some(ValueLease::retain(owner)));
+            return Ok(Some(ValueLease::retain((owner, children))));
         }
         self.holds.retain(|_, owner| owner.strong_count() != 0);
         if self.holds.len() >= wes_budgets::get("values.outputs") as usize {
@@ -378,7 +564,7 @@ impl ValueStore for FileValues {
         }
         let owner = Arc::new(());
         self.holds.insert(handle.clone(), Arc::downgrade(&owner));
-        Ok(Some(ValueLease::retain(owner)))
+        Ok(Some(ValueLease::retain((owner, children))))
     }
 }
 
@@ -387,8 +573,12 @@ pub struct TieredValues {
     live: FileValues,
     archive: FileValues,
     memory: memory::MemoryValues,
+    temporary: temporary::TemporaryValues,
 }
 impl TieredValues {
+    pub fn acquisition_usage(&self) -> AcquisitionUsage {
+        self.temporary.acquisition_usage()
+    }
     pub fn open(
         live: &Path,
         archive: &Path,
@@ -396,9 +586,15 @@ impl TieredValues {
         durability: Durability,
         live_budget: Option<NonZeroU64>,
     ) -> Result<Self, StoreError> {
+        let live = FileValues::open(live, limits, durability, live_budget)?;
+        let mut temporary = temporary::TemporaryValues::open(&live.directory, limits, live_budget)?;
+        let mut archive = FileValues::open(archive, limits, durability, None)?;
+        temporary.manifests = live.manifests.clone();
+        archive.manifests = live.manifests.clone();
         Ok(Self {
-            live: FileValues::open(live, limits, durability, live_budget)?,
-            archive: FileValues::open(archive, limits, durability, None)?,
+            live,
+            temporary,
+            archive,
             memory: memory::MemoryValues::new(
                 NonZeroU64::new(wes_budgets::get("storage.bytes")).expect("positive budget"),
                 wes_budgets::get("values.outputs") as usize,
@@ -474,6 +670,124 @@ impl TieredValues {
     }
 }
 impl ValueStore for TieredValues {
+    fn dependencies(&self, h: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+        if self.memory.size(h).is_some() {
+            return Ok(vec![]);
+        }
+        if self.temporary.size(h)?.is_some() {
+            return self.temporary.dependencies(h);
+        }
+        if self.live.size(h)?.is_some() {
+            return self.live.dependencies(h);
+        }
+        self.archive.dependencies(h)
+    }
+    fn compose(
+        &mut self,
+        handle: &ValueHandle,
+        members: &[wes_engine::storage::SnapshotMember],
+    ) -> Result<wes_engine::storage::StoredSnapshot, StoreError> {
+        self.archive.compose_retained(handle, members)
+    }
+    fn begin_acquisition(&mut self, max: u64, owner: Weak<()>) -> Result<ValueHandle, StoreError> {
+        self.temporary.begin_segmented(max, owner)
+    }
+    fn append_acquisition(&mut self, h: &ValueHandle, p: &str, b: &[u8]) -> Result<(), StoreError> {
+        self.temporary.append_segmented(h, p, b)
+    }
+    fn seal_acquisition(
+        &mut self,
+        h: &ValueHandle,
+        shell: &Value,
+        leaves: &[wes_engine::storage::LeafSelection],
+    ) -> Result<wes_engine::storage::StoredSnapshot, StoreError> {
+        self.temporary.seal_segmented(h, shell, leaves)
+    }
+    fn abort_acquisition(&mut self, h: &ValueHandle) -> Result<(), StoreError> {
+        self.temporary.abort_segmented(h)
+    }
+    fn describe(
+        &self,
+        h: &ValueHandle,
+        fields: &[String],
+    ) -> Result<Option<wes_engine::storage::StoredSnapshot>, StoreError> {
+        if let Some(bytes) = self.memory.encoded(h) {
+            let v = codec::decode_value(&bytes, self.live.limits)
+                .map_err(|e| codec_error("describing memory snapshot", e))?
+                .value;
+            let v =
+                wes_engine::plan::project_value(&v, fields).map_err(|_| StoreError::Conflict)?;
+            use sha2::{Digest, Sha256};
+            let mut snapshot = wes_engine::storage::StoredSnapshot::capture(
+                h.clone(),
+                format!("sha256:{:x}", Sha256::digest(&bytes)),
+                &v,
+            )
+            .ok_or(StoreError::Limit("snapshot metadata"))?;
+            snapshot = snapshot.with_selection(fields.to_vec());
+            return Ok(Some(snapshot));
+        }
+        if let Some(s) = self.temporary.describe(h, fields)? {
+            return Ok(Some(s));
+        }
+        if let Some(s) = self.live.describe(h, fields)? {
+            return Ok(Some(s));
+        }
+        self.archive.describe(h, fields)
+    }
+    fn read_selected(
+        &self,
+        h: &ValueHandle,
+        f: &[String],
+        limit: u64,
+    ) -> Result<Option<LoadedValue>, StoreError> {
+        if let Some(bytes) = self.memory.encoded(h) {
+            let v = codec::decode_value(&bytes, self.live.limits)
+                .map_err(|e| codec_error("reading memory selection", e))?
+                .value;
+            return wes_engine::plan::project_value(&v, f)
+                .map(|value| Some(LoadedValue { value }))
+                .map_err(|_| StoreError::Conflict);
+        }
+        if let Some(v) = self.temporary.read_selected(h, f, limit)? {
+            return Ok(Some(v));
+        }
+        if let Some(v) = self.live.read_selected(h, f, limit)? {
+            return Ok(Some(v));
+        }
+        self.archive.read_selected(h, f, limit)
+    }
+    fn source_range(
+        &self,
+        s: &wes_engine::storage::StoredSnapshot,
+        from: u64,
+        maximum: usize,
+    ) -> Result<wes_engine::storage::SourceRange, StoreError> {
+        if self.temporary.size(&s.handle)?.is_some() {
+            return self.temporary.source_range(s, from, maximum);
+        }
+        if self.live.size(&s.handle)?.is_some() {
+            return self.live.source_range(s, from, maximum);
+        }
+        if self.archive.size(&s.handle)?.is_some() {
+            return self.archive.source_range(s, from, maximum);
+        }
+        ordinary_range(self, s, from, maximum)
+    }
+
+    fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
+        use sha2::{Digest, Sha256};
+        if let Some(bytes) = self.memory.encoded(handle) {
+            return Ok(Some(format!("sha256:{:x}", Sha256::digest(bytes))));
+        }
+        if let Some(digest) = self.temporary.digest(handle)? {
+            return Ok(Some(digest));
+        }
+        match self.live.digest(handle)? {
+            Some(digest) => Ok(Some(digest)),
+            None => self.archive.digest(handle),
+        }
+    }
     fn retained_persistence(&self) -> wes_engine::history::Persistence {
         match self.archive.directory.durability() {
             Durability::File => wes_engine::history::Persistence::FileSynced,
@@ -493,22 +807,34 @@ impl ValueStore for TieredValues {
         match placement {
             ValuePlacement::ManagedFile => self.store(value),
             ValuePlacement::Memory => self.memory.store(value, self.live.limits),
+            ValuePlacement::MemoryAndDisk => {
+                let archive = &self.archive;
+                let live = &mut self.temporary;
+                self.memory
+                    .store_with_spill(value, live.limits, |handle, bytes| {
+                        if archive.size(handle)?.is_none() {
+                            live.adopt_spill(handle, bytes)?;
+                        }
+                        Ok(())
+                    })
+            }
         }
     }
     fn has_temporary_file(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
-        Ok(self.live.size(handle)?.is_some())
+        Ok(self.live.size(handle)?.is_some() || self.temporary.size(handle)?.is_some())
     }
     fn hold(&mut self, handle: &ValueHandle) -> Result<Option<ValueLease>, StoreError> {
         if let Some(lease) = self.memory.hold(handle) {
             return Ok(Some(lease));
         }
         // Both copies belong to this identity. A hold also protects a later archive promotion.
+        let temporary = self.temporary.hold(handle)?;
         let live = self.live.hold(handle)?;
         let archive = self.archive.hold(handle)?;
-        if live.is_none() && archive.is_none() {
+        if temporary.is_none() && live.is_none() && archive.is_none() {
             Ok(None)
         } else {
-            Ok(Some(ValueLease::retain((live, archive))))
+            Ok(Some(ValueLease::retain((temporary, live, archive))))
         }
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
@@ -516,6 +842,9 @@ impl ValueStore for TieredValues {
             return codec::decode_value(&bytes, self.live.limits)
                 .map(|value| Some(LoadedValue { value: value.value }))
                 .map_err(|e| codec_error("decoding a memory result", e));
+        }
+        if let Some(value) = self.temporary.read(handle)? {
+            return Ok(Some(value));
         }
         match self.live.read(handle)? {
             Some(value) => Ok(Some(value)),
@@ -526,6 +855,9 @@ impl ValueStore for TieredValues {
         if let Some(bytes) = self.memory.encoded(handle) {
             return Ok(Some(bytes));
         }
+        if let Some(value) = self.temporary.encoded(handle)? {
+            return Ok(Some(value));
+        }
         match self.live.encoded(handle)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.archive.encoded(handle),
@@ -535,12 +867,30 @@ impl ValueStore for TieredValues {
         if let Some(size) = self.memory.size(handle) {
             return Ok(Some(size));
         }
+        if let Some(size) = self.temporary.size(handle)? {
+            return Ok(Some(size));
+        }
         match self.live.size(handle)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.archive.size(handle),
         }
     }
     fn keep(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self.archive.composite_header(handle)?.is_some() {
+            self.archive.confirm_composite(handle)?;
+            return Ok(true);
+        }
+        if self.temporary.copy_segmented(handle, &mut self.archive)? {
+            return Ok(true);
+        }
+        if self.archive.segmented_size(handle)?.is_some() {
+            self.archive.confirm_segmented(handle)?;
+            return Ok(true);
+        }
+        if let Some(bytes) = self.temporary.encoded(handle)? {
+            self.archive.adopt(handle, &bytes)?;
+            return Ok(true);
+        }
         if let Some(bytes) = self.memory.encoded(handle) {
             self.archive.adopt(handle, &bytes)?;
             return Ok(true);
@@ -596,6 +946,10 @@ impl ValueStore for TieredValues {
     fn retention_usage(&self) -> Result<RetentionUsage, StoreError> {
         let mut entries = std::collections::BTreeMap::new();
         let mut usage = RetentionUsage::default();
+        for file in self.temporary.files()? {
+            usage.live_bytes += file.bytes;
+            entries.insert(file.handle, file.bytes);
+        }
         for (handle, bytes) in self.memory.handles() {
             usage.memory_bytes += bytes;
             usage.memory_count += 1;
@@ -631,7 +985,11 @@ impl ValueStore for TieredValues {
         Ok(usage)
     }
     fn release(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
-        if self.memory.held(handle) || self.live.held(handle) || self.archive.held(handle) {
+        if self.memory.held(handle)
+            || self.temporary.held(handle)
+            || self.live.held(handle)
+            || self.archive.held(handle)
+        {
             return Err(StoreError::Limit("active value holds"));
         }
         // Validate the exact evidence before changing any bytes. Unknown evidence is
@@ -641,7 +999,8 @@ impl ValueStore for TieredValues {
         }
         self.live.file(handle)?;
         self.archive.file(handle)?;
-        let memory = self.memory.remove(handle);
+        let temporary = self.temporary.release(handle)?;
+        let memory = self.memory.remove(handle) || temporary;
         let live = self.live.release(handle).map(|removed| removed || memory);
         let archive = self.archive.release(handle);
         let removed = released_tiers(handle, live, archive)?;
@@ -665,26 +1024,41 @@ impl ValueStore for TieredValues {
         Ok(removed)
     }
     fn take_evicted(&mut self, maximum: usize) -> Result<EvictionBatch, StoreError> {
-        // A last-copy loss is distinct from an eviction backed by the archive.
-        let mut gone = vec![];
-        let count = self.live.evicted.len().min(maximum);
-        for handle in self.live.evicted.iter().take(count) {
-            if self.archive.size(handle)?.is_none_or(|size| size == 0) {
-                gone.push(handle.clone());
+        let mut examined = 0usize;
+        let mut candidates = Vec::new();
+        let live_count = self.live.evicted.len().min(maximum);
+        candidates.extend(self.live.evicted.iter().take(live_count).cloned());
+        examined += live_count;
+        let temporary_count = self
+            .temporary
+            .evicted
+            .len()
+            .min(maximum.saturating_sub(examined));
+        candidates.extend(self.temporary.evicted.iter().take(temporary_count).cloned());
+        examined += temporary_count;
+        let memory_count = self
+            .memory
+            .pending_evictions(maximum.saturating_sub(examined))
+            .count();
+        candidates.extend(self.memory.pending_evictions(memory_count).cloned());
+        let mut gone = Vec::new();
+        for handle in candidates {
+            if self.memory.size(&handle).is_none()
+                && self.temporary.size(&handle)?.is_none()
+                && self.live.size(&handle)?.is_none()
+                && self.archive.size(&handle)?.is_none()
+            {
+                gone.push(handle);
             }
         }
-        let mut memory_count = 0;
-        for handle in self.memory.pending_evictions(maximum.saturating_sub(count)) {
-            memory_count += 1;
-            if self.archive.size(handle)?.is_none_or(|size| size == 0) {
-                gone.push(handle.clone());
-            }
-        }
-        self.live.evicted.drain(..count);
+        self.live.evicted.drain(..live_count);
+        self.temporary.evicted.drain(..temporary_count);
         self.memory.drain_evictions(memory_count);
         Ok(EvictionBatch {
             handles: gone,
-            more: !self.live.evicted.is_empty() || self.memory.has_evictions(),
+            more: !self.live.evicted.is_empty()
+                || !self.temporary.evicted.is_empty()
+                || self.memory.has_evictions(),
         })
     }
 }
@@ -836,4 +1210,45 @@ mod tests {
             ["write", "write", "write", "sync", "close", "publish"]
         );
     }
+}
+
+fn ordinary_range(
+    store: &dyn ValueStore,
+    snapshot: &wes_engine::storage::StoredSnapshot,
+    from: u64,
+    maximum: usize,
+) -> Result<wes_engine::storage::SourceRange, StoreError> {
+    if maximum == 0 || maximum > wes_engine::storage::CHUNK_BYTES {
+        return Err(StoreError::Limit("source range"));
+    }
+    if store.digest(&snapshot.handle)?.as_ref() != Some(&snapshot.digest) {
+        return Err(StoreError::Conflict);
+    }
+    let value = store
+        .read_selected(
+            &snapshot.handle,
+            &snapshot.selection,
+            wes_budgets::get("storage.bytes"),
+        )?
+        .ok_or(StoreError::MissingValue)?
+        .value;
+    if !snapshot.matches(&value) {
+        return Err(StoreError::Conflict);
+    }
+    let (bytes, text) = match value.data() {
+        wes_core::Data::Text(s) => (s.as_bytes(), true),
+        wes_core::Data::Bytes(b) => (b.as_ref(), false),
+        _ => return Err(StoreError::NonMaterialized),
+    };
+    let start = usize::try_from(from)
+        .ok()
+        .filter(|n| *n <= bytes.len())
+        .ok_or(StoreError::SourceRange(
+            "from is beyond the captured extent",
+        ))?;
+    Ok(wes_engine::storage::SourceRange {
+        bytes: bytes[start..start.saturating_add(maximum).min(bytes.len())].to_vec(),
+        extent: bytes.len() as u64,
+        text,
+    })
 }

@@ -58,18 +58,15 @@ impl Sandboxes {
         capture.protect(worker).await?;
         let single = member.is_some();
         let alias_shape = if single {
-            capture
-                .values
-                .get(&capture.members[0].name)
-                .map(|v| v.shape().clone())
+            capture.shapes.get(&capture.members[0].name).cloned()
         } else {
             Some(wes_core::Shape::Record(
                 wes_core::RecordShape::new(
                     "Record",
                     capture
-                        .values
+                        .shapes
                         .iter()
-                        .map(|(n, v)| (n.clone(), v.shape().clone())),
+                        .map(|(n, shape)| (n.clone(), shape.clone())),
                 )
                 .map_err(|_| SessionError::Preparation)?,
             ))
@@ -137,6 +134,22 @@ impl Sandboxes {
         }
         state.pending_saves.remove(saved_name);
         state.saved.insert(saved_name.into(), saved.clone());
+        let stored = if capture.values.len()
+            != saved.members.iter().filter(|m| m.payload.is_some()).count()
+        {
+            super::super::saved::stored_alias(
+                self.storage.as_ref().ok_or(SessionError::NoStorage)?,
+                &saved,
+            )
+            .await
+            .map_err(|_| SessionError::KeepIncomplete {
+                identity: saved.id.clone(),
+                stage: "retained snapshot is recorded; stored alias preparation failed",
+                may_have_applied: false,
+            })?
+        } else {
+            None
+        };
         let (reply, receive) = oneshot::channel();
         let installed = match self.controls.upgrade() {
             Some(controls) => {
@@ -144,6 +157,7 @@ impl Sandboxes {
                     .send(Control::SavedInstall {
                         saved: saved.clone(),
                         values: capture.values,
+                        stored,
                         reply,
                     })
                     .await
@@ -224,12 +238,28 @@ impl Sandboxes {
                     row.insert("evidence".into(), text(evidence));
                 }
                 if !inspect && member.payload.is_some() {
-                    let value = super::super::saved::load_member(worker, member, &[]).await?;
-                    let charge = crate::value_size::value_charge(&value, remaining)
-                        .ok_or(SessionError::Capacity)?;
-                    remaining -= charge;
-                    row.insert("value".into(), value.data().clone());
-                    loaded_values.insert(member.name.clone(), value);
+                    match super::super::saved::load_member(worker, member, &[]).await {
+                        Ok(value) => {
+                            if let Some(charge) = crate::value_size::value_charge(&value, remaining)
+                            {
+                                remaining -= charge;
+                                row.insert("value".into(), value.data().clone());
+                                loaded_values.insert(member.name.clone(), value);
+                            } else {
+                                row.insert(
+                                    "availability".into(),
+                                    text("stored; decoded capacity required"),
+                                );
+                            }
+                        }
+                        Err(SessionError::Capacity) => {
+                            row.insert(
+                                "availability".into(),
+                                text("stored; decoded capacity required"),
+                            );
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 rows.push(Data::Record(row));
             }

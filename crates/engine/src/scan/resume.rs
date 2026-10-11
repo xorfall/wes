@@ -174,8 +174,9 @@ impl BoundAttempt {
                         span,
                     );
                 }
-                Runner::prepare_resume(
+                Runner::prepare_stored_resume(
                     captured.source,
+                    captured.stored_source,
                     self.live,
                     captured.reference,
                     captured.checkpoint,

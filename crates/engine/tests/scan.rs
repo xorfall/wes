@@ -636,6 +636,7 @@ fn bounded_dataset_batches_publish_state_and_original_ranges_only_after_acknowle
                 .unwrap();
                 runner.acknowledge_dataset(reference.clone()).unwrap();
             }
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
             _ => panic!("inline non-durable sink needs no I/O grant or page"),
         }
@@ -733,6 +734,7 @@ fn finishing_outputs_follow_the_unpublished_input_batch_at_its_exact_boundary() 
                 runner.acknowledge_dataset(acknowledged).unwrap();
                 committed = true;
             }
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
             _ => panic!("inline sink needs no source I/O"),
         }
@@ -817,6 +819,7 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
     .unwrap();
     let mut checkpoint = runner
         .checkpoint_seed(CapturedValue {
+            selection: vec![],
             handle: uuid::Uuid::new_v4().to_string(),
             digest: format!("sha256:{}", "1".repeat(64)),
             bytes: 100,
@@ -949,6 +952,7 @@ fn explicit_durable_resume_keeps_the_original_cursor_state_and_budget() {
                     .acknowledge_grant(reference, request.checkpoint.unwrap())
                     .unwrap();
             }
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
         }
     }

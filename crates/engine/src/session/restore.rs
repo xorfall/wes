@@ -721,18 +721,38 @@ pub async fn restore(
                 _ => None,
             });
         if let Some(saved) = saved {
-            let loaded = match &storage {
+            let mut loaded = match &storage {
                 Some(storage) => super::saved::load_alias(&storage.worker, &saved).await,
                 None => Err(SessionError::NoStorage),
             };
             check_cancelled(&cancellation)?;
-            let state = match loaded {
-                Ok(Some(value)) if value_charge(&value, remaining).is_some() => {
+            let stored = if matches!(&loaded, Err(SessionError::Capacity)) {
+                match &storage {
+                    Some(storage) => {
+                        match super::saved::stored_alias(&storage.worker, &saved).await {
+                            Ok(snapshot) => snapshot,
+                            Err(error) => {
+                                loaded = Err(error);
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let state = match (loaded, stored) {
+                (_, Some(snapshot)) => {
+                    report.values += 1;
+                    crate::runtime::RestoredState::ReadyStored(snapshot)
+                }
+                (Ok(Some(value)), None) if value_charge(&value, remaining).is_some() => {
                     remaining -= value_charge(&value, remaining).expect("checked charge");
                     report.values += 1;
                     crate::runtime::RestoredState::Ready(value)
                 }
-                result => {
+                (result, _) => {
                     let kind = match result {
                         Err(SessionError::NoStorage) => RestoreProblemKind::NoValueStore,
                         Err(SessionError::Capacity) | Ok(Some(_)) => {

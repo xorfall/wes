@@ -318,6 +318,7 @@ mod tests {
         PreparedLog::observation(
             Timestamp::new(0, 0).unwrap(),
             &Observation {
+                stored: None,
                 revision: 0,
                 stale_reason: None,
                 delivery: None,

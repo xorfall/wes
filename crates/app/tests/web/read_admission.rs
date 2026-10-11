@@ -4,7 +4,23 @@ use super::*;
 async fn unread_stored_value_bodies_do_not_hold_display_or_interaction_admission() {
     use tokio::io::AsyncReadExt;
 
-    let fixture = Fixture::new().await;
+    // This test stresses encoded delivery, independently of the default decoded admission cap.
+    // The cold-result capacity test covers refusal with the smaller configured ledger.
+    let fixture = Fixture::configured_store(
+        |_| wes::web::Services::default(),
+        Arc::new(|_| Ok(())),
+        |values| {
+            let (worker, task) = spawn_store(values, StoreWorkerLimits::default()).unwrap();
+            (
+                worker.with_resident_memory(wes_engine::storage::ResidentMemory::new(
+                    512 * 1024 * 1024,
+                    10000,
+                )),
+                task,
+            )
+        },
+    )
+    .await;
     let current = fixture.app.current().unwrap();
     let generation = &current.generation;
     let mut roots = Vec::new();
@@ -30,27 +46,15 @@ async fn unread_stored_value_bodies_do_not_hold_display_or_interaction_admission
         roots.push((node, identity, String::new()));
     }
 
-    // Inline record contract and synthetic payload. The body exceeds the loopback send buffer:
-    // reading only its headers leaves encoding complete but delivery backpressured.
-    let mut contracts = wes_core::contracts::ContractRegistry::new();
-    contracts
-        .load(
-            "types:\n  StoredRow:\n    base: Record\n    fields: {ordinal: Int, raw: Text, text: Text}\n",
-        )
-        .unwrap();
-    let contract = contracts.resolve("List<StoredRow>").unwrap();
-    let text = "x".repeat(4096);
-    let rows: Vec<_> = (1..=2048)
-        .map(|ordinal| json!({"ordinal":ordinal,"raw":text,"text":text}))
-        .collect();
-    let data = wes_adapters::codec::decode_json_for_contract(
-        &serde_json::to_vec(&rows).unwrap(),
-        Limits::default(),
-        &contract,
+    // Keep setup independent of structural JSON decoding cost. A scalar still crosses the real
+    // store/read/encoder boundary; the body exceeds the loopback send buffer, so reading only
+    // its headers leaves encoding complete but delivery backpressured.
+    let value = wes_core::Value::new(
+        Shape::Primitive(wes_core::Primitive::Text),
+        wes_core::Data::Text("x".repeat(16 * 1024 * 1024).into()),
+        Default::default(),
     )
     .unwrap();
-    assert!(contract.issues(&data).is_empty());
-    let value = wes_core::Value::new(contract.shape(), data, Default::default()).unwrap();
     let expected = wes_adapters::codec::encode_display_value(&value, Limits::default()).unwrap();
     assert!(expected.len() > 16 * 1024 * 1024);
     let handle = fixture.worker.store(value).await.unwrap();

@@ -213,6 +213,7 @@ pub struct Stop {
 pub enum Poll {
     Yield,
     ReadPage,
+    ReadRange,
     ReadHead,
     /// No more source or callback work may enter until the durable grant is acknowledged.
     Grant,
@@ -492,6 +493,22 @@ impl Runner {
     pub fn refuse_scan(&mut self, failure: Failure) {
         self.fail(stop(failure));
     }
+    pub(crate) fn stored_source(&self) -> Option<&crate::storage::StoredSnapshot> {
+        self.source.stored_snapshot()
+    }
+    pub(crate) fn source_range_request(
+        &self,
+    ) -> Result<(crate::storage::StoredSnapshot, u64, usize), Failure> {
+        self.source.range_request(self.settings.block, self.span)
+    }
+    pub(crate) fn acknowledge_source_range(
+        &mut self,
+        from: u64,
+        range: crate::storage::SourceRange,
+    ) -> Result<(), Failure> {
+        self.source
+            .acknowledge_range(from, range, self.settings.block, self.span)
+    }
     pub fn new(
         input: Input,
         settings: Settings,
@@ -509,7 +526,7 @@ impl Runner {
         }
         let ledger = Ledger::with_startup(settings.limits, pool, settings.startup_work)
             .map_err(|error| refusal(error, span).failure)?;
-        Self::new_admitted(input, settings, ledger, services, token, span)
+        Self::new_admitted(input, settings, ledger, services, token, span, None)
     }
     pub(super) fn new_admitted(
         mut input: Input,
@@ -518,6 +535,7 @@ impl Runner {
         services: Option<Arc<dyn LocalServices>>,
         token: CancellationToken,
         span: Span,
+        stored: Option<(crate::storage::StoredSnapshot, u64)>,
     ) -> Result<Self, Failure> {
         if input.live
             && (!matches!(input.source.data(), Data::Dataset(_)) || input.framing.is_some())
@@ -563,7 +581,13 @@ impl Runner {
         if token.is_cancelled() {
             return Err(Failure::cancelled(span));
         }
-        let source_charge = charge(&input.source, settings.source_charge, span)?;
+        let source_charge = charge(&input.source, settings.source_charge, span)?
+            .checked_add(if stored.is_some() {
+                (crate::storage::CHUNK_BYTES as u64) * 3
+            } else {
+                0
+            })
+            .ok_or_else(|| Failure::new("CAL006", span, "stored cursor charge overflow"))?;
         let state_charge = charge(&input.initial, settings.state_charge, span)?;
         let context_charge = charge(&input.context, settings.context_charge, span)?;
         if input.step.finish {
@@ -713,13 +737,16 @@ impl Runner {
                     ))
                 }
             });
-        let source = CapturedSource::new(
+        let mut source = CapturedSource::new(
             input.source,
             input.framing,
             settings.source_charge,
             settings.record_charge,
             span,
         )?;
+        if let Some((snapshot, extent)) = stored {
+            source.attach_stored(snapshot, extent, span)?;
+        }
         let item_shape = source.item_shape();
         if item_shape != wes_core::Shape::Unknown
             && !item_shape.is_assignable_to(&input.step.input.shape())
@@ -1065,6 +1092,7 @@ impl Runner {
         match polled {
             SourcePoll::Renew => self.request_renewal(),
             SourcePoll::Pending => Ok(Poll::Yield),
+            SourcePoll::ReadRange => Ok(Poll::ReadRange),
             SourcePoll::ReadPage => {
                 if let Some(candidate) = &mut self.candidate {
                     candidate.flush = true;

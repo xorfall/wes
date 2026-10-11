@@ -199,3 +199,5 @@ pub(crate) fn describe_purity(
 
 mod local;
 pub use local::LocalError;
+
+mod projection;

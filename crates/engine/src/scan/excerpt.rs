@@ -239,6 +239,72 @@ pub(crate) fn read_source_excerpt(
         }
         _ => return Err(StoreError::NonMaterialized),
     };
+    build_excerpt(
+        checkpoint, from, registry, provenance, unit, extent, next, data, shape, contract, limited,
+    )
+}
+/// A range already read and checked by the same owned storage transaction.
+pub(crate) fn stored_source_excerpt(
+    source: &Value,
+    checkpoint: &AnalysisCheckpoint,
+    from: u64,
+    range: crate::storage::SourceRange,
+) -> Result<Value, StoreError> {
+    let registry = ContractRegistry::new();
+    let (data, primitive) = if range.text {
+        (
+            Data::Text(
+                String::from_utf8(range.bytes)
+                    .map_err(|_| {
+                        StoreError::SourceRange(
+                            "Text ranges must start and end at original UTF-8 byte boundaries",
+                        )
+                    })?
+                    .into(),
+            ),
+            Primitive::Text,
+        )
+    } else {
+        (Data::Bytes(range.bytes.into()), Primitive::Bytes)
+    };
+    let contract = registry
+        .resolve(&primitive.to_string())
+        .map_err(|_| StoreError::DatasetCorrupt)?;
+    let next = from
+        .checked_add(match &data {
+            Data::Text(s) => s.len(),
+            Data::Bytes(b) => b.len(),
+            _ => unreachable!(),
+        } as u64)
+        .ok_or(StoreError::Conflict)?;
+    build_excerpt(
+        checkpoint,
+        from,
+        registry,
+        source.provenance().clone(),
+        "bytes",
+        range.extent,
+        next,
+        data,
+        Shape::Primitive(primitive),
+        Some(contract),
+        None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn build_excerpt(
+    checkpoint: &AnalysisCheckpoint,
+    from: u64,
+    registry: ContractRegistry,
+    provenance: wes_core::Provenance,
+    unit: &str,
+    extent: u64,
+    next: u64,
+    data: Data,
+    shape: Shape,
+    contract: Option<Arc<Contract>>,
+    limited: Option<&str>,
+) -> Result<Value, StoreError> {
     let mut fields: indexmap::IndexMap<String, (Shape, Data)> = [
         ("unit", Data::Text(unit.into())),
         ("from", Data::Text(from.to_string().into())),

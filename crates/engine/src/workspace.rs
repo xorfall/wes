@@ -1046,6 +1046,39 @@ impl Workspace {
         &mut self,
         mut ticket: crate::runtime::RunTicket<BoundTask>,
     ) -> Result<Option<crate::runtime::RunTicket<BoundTask>>, wes_core::ErrorValue> {
+        if !self.runtime.accepts_prepared(&ticket) {
+            return Ok(None);
+        }
+        for (source, captured) in &ticket.deferred_inputs {
+            if ticket.prepared_fields.contains_key(source)
+                || matches!(&ticket.payload,BoundTask::Scan(scan) if scan.stored_source_for(source))
+            {
+                if self
+                    .dataset_access
+                    .blocks_policy(captured.snapshot.provenance.policy())
+                {
+                    return Err(crate::runtime::RuntimeCode::ResultUnavailable.error(
+                        "Stored source authority was withdrawn before scan entry.",
+                        None,
+                    ));
+                }
+                continue;
+            }
+            let Some(value) = ticket
+                .inputs
+                .get(source)
+                .filter(|v| !self.dataset_access.blocks(v))
+            else {
+                return Err(crate::runtime::RuntimeCode::ResultUnavailable.error("Prepared input is unavailable or no longer authorized; no source was replayed.", None));
+            };
+            if !self
+                .runtime
+                .install_resident(source, captured, value.clone())
+            {
+                return Ok(None);
+            }
+        }
+        ticket.deferred_inputs.clear();
         let entered = if ticket
             .payload
             .call()
@@ -1154,6 +1187,7 @@ impl Workspace {
                     None,
                 ))
             }
+            Outcome::Stored(stored) if stored.snapshot.as_ref().is_some_and(|s|self.dataset_access.blocks_policy(s.provenance.policy())) => Outcome::Failed(crate::runtime::RuntimeCode::ResultUnavailable.error("Stored result access was withdrawn before publication; no source was replayed.",None)),
             outcome => outcome,
         };
         let effects = self.runtime.complete(run, outcome, now);
@@ -1186,6 +1220,10 @@ impl Workspace {
                     .value_of(node.id())
                     .or_else(|| self.runtime.evidence_value(node.id()).map(|e| &e.value));
                 (value.is_some_and(|value| access.blocks(value))
+                    || self
+                        .runtime
+                        .stored_output(node.id())
+                        .is_some_and(|s| access.blocks_policy(s.snapshot.provenance.policy()))
                     || self
                         .runtime
                         .execution_progress(node.id())
@@ -1245,6 +1283,34 @@ impl Workspace {
         }
         self.views.cancel_origins(std::slice::from_ref(node));
         self.runtime.cancel(node, now)
+    }
+    /// The publication owner has already matched an evicted handle. Guard the run again here:
+    pub(crate) fn release_resident_output(&mut self, node: &NodeId) -> bool {
+        let Some(stored) = self.runtime.stored_output(node) else {
+            return false;
+        };
+        if !self.runtime.release_resident(node) {
+            return false;
+        }
+        if self
+            .runtime
+            .graph()
+            .node(node)
+            .is_some_and(|n| matches!(n.payload(), BoundTask::Input(_)))
+        {
+            let _ = self
+                .runtime
+                .replace_residency_payload(node, BoundTask::StoredInput(stored.snapshot));
+        }
+        true
+    }
+    pub(crate) fn attach_stored_output(
+        &mut self,
+        node: &NodeId,
+        run: &crate::runtime::RunId,
+        snapshot: crate::storage::StoredSnapshot,
+    ) -> bool {
+        self.runtime.attach_stored(node, run, snapshot)
     }
     /// The publication owner has already matched an evicted handle. Guard the run again here:
     /// an old storage receipt must never remove a newer run's in-memory output or actual typing.

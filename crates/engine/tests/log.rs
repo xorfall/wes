@@ -114,6 +114,7 @@ fn observation() -> Observation {
         run: Some(RunId::new("run").unwrap()),
         state: NodeState::Cancelled,
         value: None,
+        stored: None,
         error: Some(
             ErrorValue::new(
                 ErrorId::new("original-error").unwrap(),

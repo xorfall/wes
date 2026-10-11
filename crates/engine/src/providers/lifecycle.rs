@@ -44,7 +44,10 @@ pub(super) async fn finish(
 ) -> ExecutionReport {
     if let (Some(journal), Some(calling)) = (journal, calling)
         && journal
-            .called(calling, matches!(report.outcome, Outcome::Produced(_)))
+            .called(
+                calling,
+                matches!(report.outcome, Outcome::Produced(_) | Outcome::Stored(_)),
+            )
             .await
             .is_err()
     {

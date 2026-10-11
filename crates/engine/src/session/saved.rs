@@ -5,7 +5,6 @@ use crate::{
     history::{SavedEdge, SavedLineage, SavedMember, SavedPayload, SavedSelection},
     storage::ValueLease,
 };
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Capture {
@@ -13,6 +12,7 @@ pub(super) struct Capture {
     pub members: Vec<SavedMember>,
     pub lineage: Vec<SavedLineage>,
     pub values: BTreeMap<String, wes_core::Value>,
+    pub shapes: BTreeMap<String, wes_core::Shape>,
     pub holds: Vec<ValueLease>,
 }
 impl Actor {
@@ -32,6 +32,7 @@ impl Actor {
             members: vec![],
             lineage: vec![],
             values: BTreeMap::new(),
+            shapes: BTreeMap::new(),
             holds: vec![],
         };
         let selected = member.map(|m| m.split('.').next().unwrap());
@@ -81,7 +82,21 @@ impl Actor {
                 .map(ToString::to_string);
             let mut payload = None;
             let mut selected_typing = typing.shape.to_string();
-            if let Some(value) = value {
+            let mut physical_fields = fields.clone();
+            if let crate::runtime::OutputState::Stored(stored) =
+                self.workspace.runtime().output(output)
+            {
+                let shape = crate::plan::field_shape(&stored.snapshot.shape, &fields)
+                    .ok_or(SessionError::UnknownValue)?;
+                physical_fields = stored.snapshot.selection.clone();
+                physical_fields.extend_from_slice(&fields);
+                selected_typing = shape.to_string();
+                payload = Some(SavedPayload {
+                    handle: stored.snapshot.handle.to_string(),
+                    digest: stored.snapshot.digest.clone(),
+                });
+                capture.shapes.insert(name.clone(), shape);
+            } else if let Some(value) = value {
                 if value.provenance().policy().is_private()
                     || value.provenance().policy().is_unknown()
                     || self.workspace.dataset_access.blocks(&value)
@@ -114,6 +129,9 @@ impl Actor {
                         digest: String::new(),
                     });
                     selected_typing = projected.shape().to_string();
+                    capture
+                        .shapes
+                        .insert(name.clone(), projected.shape().clone());
                     capture.values.insert(name.clone(), projected);
                 } else if selected.is_some() {
                     return Err(SessionError::UnknownValue);
@@ -135,12 +153,14 @@ impl Actor {
                     BoundTask::ScanAttempt(_) => "scan_attempt",
                     BoundTask::Call(_) => "call",
                     BoundTask::Calculation(_) => "calculation",
-                    BoundTask::Input(_) | BoundTask::SavedInput(_) => "input",
+                    BoundTask::Input(_) | BoundTask::StoredInput(_) | BoundTask::SavedInput(_) => {
+                        "input"
+                    }
                     BoundTask::View(_) => "view",
                     _ => "other",
                 }
                 .into(),
-                fields: fields.clone(),
+                fields: physical_fields,
                 payload,
                 evidence,
             });
@@ -214,14 +234,15 @@ impl Capture {
                     payload.digest = digest.clone();
                     continue;
                 }
-                let bytes = worker
-                    .encoded(
-                        crate::storage::ValueHandle::new(&payload.handle).map_err(store_error)?,
-                    )
+                let digest = worker
+                    .digest(crate::storage::ValueHandle::new(&payload.handle).map_err(store_error)?)
                     .await
                     .map_err(store_error)?
                     .ok_or(SessionError::UnknownValue)?;
-                payload.digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+                if !payload.digest.is_empty() && payload.digest != digest {
+                    return Err(SessionError::UnknownValue);
+                }
+                payload.digest = digest;
                 digests.insert(payload.handle.clone(), payload.digest.clone());
             }
         }
@@ -307,23 +328,69 @@ pub(super) async fn load_member(
         .await
         .map_err(store_error)?
         .ok_or(SessionError::UnknownValue)?;
-    let loaded = worker
-        .recover(handle.clone())
-        .await
-        .map_err(store_error)?
-        .ok_or(SessionError::UnknownValue)?;
-    let bytes = worker
-        .encoded(handle)
-        .await
-        .map_err(store_error)?
-        .ok_or(SessionError::UnknownValue)?;
-    if format!("sha256:{:x}", Sha256::digest(&bytes)) != payload.digest {
-        return Err(SessionError::UnknownValue);
-    }
     let mut path = member.fields.clone();
     path.extend_from_slice(fields);
-    crate::plan::project_value(&loaded.loaded.value, &path).map_err(|_| SessionError::UnknownValue)
+    let snapshot = worker
+        .describe(handle, path)
+        .await
+        .map_err(store_error)?
+        .ok_or(SessionError::UnknownValue)?;
+    if snapshot.digest != payload.digest {
+        return Err(SessionError::UnknownValue);
+    }
+    let (loaded, _resident_hold) = worker.materialize(snapshot).await.map_err(store_error)?;
+    Ok(loaded.value)
 }
 pub(crate) fn alias_id(saved: &SavedSelection) -> NodeId {
     NodeId::new(format!("saved:{}", saved.id)).expect("saved id")
+}
+
+/// Reconstruct an inert stored alias from exact retained membership, without payload decoding.
+pub(crate) async fn stored_alias(
+    worker: &crate::storage::StoreWorker,
+    saved: &SavedSelection,
+) -> Result<Option<crate::storage::StoredSnapshot>, SessionError> {
+    let Some(shape) = &saved.alias_shape else {
+        return Ok(None);
+    };
+    let snapshot = if saved.single {
+        let member = &saved.members[0];
+        let payload = member.payload.as_ref().ok_or(SessionError::UnknownValue)?;
+        let snapshot = worker
+            .describe(
+                crate::storage::ValueHandle::new(&payload.handle).map_err(store_error)?,
+                member.fields.clone(),
+            )
+            .await
+            .map_err(store_error)?
+            .ok_or(SessionError::UnknownValue)?;
+        if snapshot.digest != payload.digest {
+            return Err(SessionError::UnknownValue);
+        }
+        snapshot
+    } else {
+        let members = saved
+            .members
+            .iter()
+            .filter_map(|m| {
+                m.payload.as_ref().map(|p| crate::storage::SnapshotMember {
+                    name: m.name.clone(),
+                    handle: p.handle.clone(),
+                    digest: p.digest.clone(),
+                    selection: m.fields.clone(),
+                })
+            })
+            .collect();
+        worker
+            .compose(
+                crate::storage::ValueHandle::new(&saved.id).map_err(store_error)?,
+                members,
+            )
+            .await
+            .map_err(store_error)?
+    };
+    if &snapshot.shape != shape {
+        return Err(SessionError::UnknownValue);
+    }
+    Ok(Some(snapshot))
 }
