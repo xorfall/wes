@@ -13,6 +13,92 @@ fn artifact() -> String {
         package.digest
     )
 }
+
+#[tokio::test]
+async fn optional_view_marker_accepts_prepared_and_marked_typed_inputs_without_running_a_provider()
+{
+    let (mut w, calls) = workspace();
+    let mut compiled: serde_json::Value = serde_json::from_str(&artifact()).unwrap();
+    let types = "types: {BadgeKind: {base: Text, enum: [task-badge]}, TaskBadge: {base: Record, fields: {count: Int, view: {type: BadgeKind, optional: true}}}}";
+    let package = wes_views::Package::parse(compiled["manifest"].as_str().unwrap(), types).unwrap();
+    compiled["types"] = types.into();
+    compiled["definition"] = package.digest.into();
+    let source = compiled.to_string();
+    let p = plan(
+        &w,
+        r#":package load path:badge.json
+:def BadgeData(draw:Bool) -> TaskBadge as :calc pure {
+  if (draw) { return {count:2, view:'task-badge'}; }
+  return {count:2};
+}
+BadgeData draw:false > prepared
+BadgeData draw:true > marked
+:calc pure { return {count:2, view:'other'}; } > invalid_marker
+:calc pure { return {view:'task-badge'}; } > missing_count"#,
+        capture(move |_, _| Ok(source.clone())),
+    )
+    .await;
+    assert_eq!(p.accepted().len(), 6, "{:?}", p.diagnostics());
+    p.commit(&mut w, Duration::ZERO).unwrap();
+    run_all(&mut w).await;
+    for (name, marked) in [("prepared", false), ("marked", true)] {
+        let output = w.resolve(name).unwrap();
+        let value = w.runtime().value_of(&output.node).unwrap();
+        let Data::Record(fields) = value.data() else {
+            panic!("typed badge must be a Record");
+        };
+        assert_eq!(fields.contains_key("view"), marked);
+        assert!(value.metadata().is_some());
+        let Shape::Record(shape) = value.shape() else {
+            panic!("typed badge shape");
+        };
+        assert_eq!(shape.name(), "TaskBadge");
+        assert!(shape.field("view").is_none());
+    }
+    for source in ["invalid_marker", "missing_count"] {
+        let output = w.resolve(source).unwrap();
+        assert!(w.runtime().value_of(&output.node).is_some());
+        let name = format!("refused_{source}");
+        let SourcePreparation::Declarations(p) = prepare_declarations(
+            SourceInput::new(
+                name.clone(),
+                format!(":view create TaskBadge input:${source} > {name}"),
+            )
+            .unwrap(),
+            w.draft().unwrap(),
+            no_files(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap() else {
+            panic!("View creation is a declaration");
+        };
+        assert_eq!(p.accepted().len(), 1, "{:?}", p.diagnostics());
+        p.commit(&mut w, Duration::ZERO).unwrap();
+        run_all(&mut w).await;
+        let node = w.resolve(&name).unwrap().node;
+        assert_eq!(
+            w.runtime().graph().node(&node).unwrap().state(),
+            NodeState::Failed
+        );
+        assert_eq!(w.runtime().error_of(&node).unwrap().code(), "TYP005");
+        assert!(w.view_frame(&node).is_err());
+    }
+    let p = plan(
+        &w,
+        ":view create TaskBadge input:$prepared > first\n:view create TaskBadge input:$marked > second",
+        capture(|_, _| panic!("creation reads completed inputs only")),
+    )
+    .await;
+    assert_eq!(p.accepted().len(), 2, "{:?}", p.diagnostics());
+    p.commit(&mut w, Duration::ZERO).unwrap();
+    run_all(&mut w).await;
+    for name in ["first", "second"] {
+        let node = w.resolve(name).unwrap().node;
+        assert!(w.view_frame(&node).unwrap().instances[0].input.is_some());
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
 #[tokio::test]
 async fn installed_views_are_workspace_scoped_atomic_discoverable_and_captured_for_replay() {
     let (mut w, calls) = workspace();

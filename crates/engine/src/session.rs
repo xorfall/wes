@@ -1833,13 +1833,19 @@ impl Actor {
                 {
                     Err(SessionError::CheckpointBusy)
                 } else {
-                    let result = edit.map_or(Ok(()), |edit| {
-                        self.workspace
-                            .commit_view_interaction(&node, &identity, edit)
-                            .map(|_| ())
-                    });
-                    result
-                        .and_then(|()| self.workspace.view_interaction(&node, &identity))
+                    self.workspace
+                        .view_interaction(&node, &identity)
+                        .and_then(|(owner, state)| {
+                            // No fallible read after committing: a refused reply
+                            // must establish that the edit did not take effect.
+                            let state = match edit {
+                                Some(edit) => self
+                                    .workspace
+                                    .commit_view_interaction(&node, &identity, edit)?,
+                                None => state,
+                            };
+                            Ok((owner, state))
+                        })
                         .map_err(SessionError::AccessDenied)
                 };
                 let _ = reply.send(result);

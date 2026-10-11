@@ -31,7 +31,7 @@ export function decodeContract(definition: ViewDefinition, name: string, value: 
       // Only engine input carries a Dataset, and only as the exact descriptor of one snapshot; a
       // View's own outputs, state and events never hold one. Its declared row contract must match
       // the captured element shape, so pages are read against what the View was compiled for.
-      if (!wire || type && type.kind !== "dataset") return fail();
+      if (!wire || shape && !type || type && type.kind !== "dataset") return fail();
       const reference = decodeDatasetData(v);
       if (!reference) return fail();
       if (type && !conforms(definition, s.element!, type.element, 0)) return fail();
@@ -50,7 +50,9 @@ export function decodeContract(definition: ViewDefinition, name: string, value: 
       for (const [key,f] of Object.entries(s.fields!)) {
         if (!Object.hasOwn(v,key)) {if(f.optional)continue;return fail();}
         const childType=type?.kind==="record"?type.fields.find(f=>f.name===key)?.type:undefined;
-        if(type && !childType)return fail();
+        // Native contract shapes contain required fields only. Present optional
+        // fields still undergo their full declared contract validation.
+        if(type && !childType && !f.optional)return fail();
         result[key]=visit(f.type,v[key],depth+1,childType);
       }
       return Object.freeze(result);

@@ -280,10 +280,41 @@ async fn shared_interaction_is_typed_revisioned_separate_from_input_and_has_no_e
             .header("Content-Type", "application/json")
             .body(body.to_string())
     };
+    let mut oversized = edit.clone();
+    let item = json!({"source":"requests","series":"latency","id":"sample","at":"2026-01-01T00:00:00Z","value":"x".repeat(1500)});
+    oversized["fields"]["selectedItem"] = item.clone();
+    oversized["outputs"]["selectedItem"] = item;
+    assert!(oversized.to_string().len() < 16 * 1024);
+    let refused = send(oversized.clone()).send().await.unwrap();
+    assert_eq!(refused.status(), 409);
+    let refused: Value = serde_json::from_slice(&refused.bytes().await.unwrap()).unwrap();
+    assert_eq!(refused["outcome"], "rejected");
+    assert_eq!(refused["revision"], "0");
+    assert_eq!(refused["fields"], json!({}));
+    assert!(
+        refused["problem"]
+            .as_str()
+            .unwrap()
+            .contains("conservative charge units")
+    );
+    assert!(
+        !refused["problem"]
+            .as_str()
+            .unwrap()
+            .contains(&"x".repeat(16))
+    );
     let response = send(edit.clone()).send().await.unwrap();
     assert_eq!(response.status().as_u16(), 200);
     let changed: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    assert_eq!(changed["outcome"], "committed");
     assert_eq!(changed["revision"], "1");
+    oversized["revision"] = "1".into();
+    let refused = send(oversized).send().await.unwrap();
+    assert_eq!(refused.status(), 409);
+    let refused: Value = serde_json::from_slice(&refused.bytes().await.unwrap()).unwrap();
+    assert_eq!(refused["outcome"], "rejected");
+    assert_eq!(refused["revision"], "1");
+    assert_eq!(refused["fields"], edit["fields"]);
     assert!(changed.get("input").is_none());
     assert_eq!(
         send(edit.clone()).send().await.unwrap().status().as_u16(),

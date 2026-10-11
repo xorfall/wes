@@ -690,7 +690,7 @@ export class Engine {
   watchViewState(node:string,instance:string,generation:string,changed:(sample:FrameSample<SharedState>)=>void):()=>void {
     return this.viewStates.watch(`${node}/${instance}`,generation,changed);
   }
-  async commitViewState(node:string,instance:string,generation:string,edit:SharedCommit,signal:AbortSignal):Promise<{state:SharedState;conflict:boolean;problem?:string}> {
+  async commitViewState(node:string,instance:string,generation:string,edit:SharedCommit,signal:AbortSignal):Promise<import("./value-views/shared-state").SharedCommitResult> {
     if(generation!==this.generation)throw new Error("Workspace changed");
     const {owner,identity,definitionRevision,revision,fields,outputs,events=[]}=edit;
     const deadline=AbortSignal.any([signal,AbortSignal.timeout(2000)]);
@@ -714,8 +714,10 @@ export class Engine {
     }
     if(generation!==this.generation||signal.aborted)throw new Error("Workspace changed");
     if(!response.ok&&response.status!==409)throw new Error("Selection was not confirmed");
-    const state=await readExactJson(response) as SharedState & {problem?:string};
-    return {state,conflict:response.status===409,problem:state.problem};
+    const state=await readExactJson(response) as SharedState & {problem?:string;outcome?:string};
+    const outcome=response.status===409?"rejected":"committed";
+    if(state.outcome!==outcome)throw new Error("View write outcome was not confirmed");
+    return {state,outcome,problem:state.problem};
   }
   private async viewMountAction(node:string,identity:string,generation:string,action:string,token?:string):Promise<string|undefined>{
     if(generation!==this.generation)throw new Error("Workspace changed; reopen the view.");
@@ -763,14 +765,14 @@ export class Engine {
     return name;
   }
   viewGeneration():string|undefined { return this.generation; }
-  watchViewFrame(node:string, instance:string, changed:(sample:FrameSample)=>void):()=>void {
+  watchViewFrame(node:string, instance:string, changed:(sample:FrameSample)=>void,options?:{reopen?:boolean}):()=>void {
     if(!this.generation){changed({problem:"Wait for the workspace connection before opening this view."});return ()=>{};}
     const generation=this.generation;
     let closed=false,failed=false,stop:(()=>void)|undefined;
     const mount=this.viewMounts.mount(node,instance,generation,error=>{
       if(closed)return;
       failed=true;stop?.();stop=undefined;changed({problem:error.message});
-    });
+    },options?.reopen);
     if(mount.waiting)changed({paused:true});
     void mount.ready.then(token=>{if(!closed&&!failed)stop=this.viewFrames.watch(`${node}/${instance}/${token}`,generation,changed);}).catch(error=>{if(!closed)changed({problem:error instanceof Error?error.message:"View unavailable"});});
     return ()=>{closed=true;stop?.();mount.close();};

@@ -2,7 +2,7 @@ import { max_active_view_roots } from "./limits";
 
 interface Mount {
   node:string; identity:string; generation:string; users:number;
-  active:boolean; finished:boolean; closed:boolean; token?:string;
+  active:boolean; finished:boolean; closed:boolean; closing?:boolean; token?:string;
   timer?:ReturnType<typeof setInterval>;
   problem?:Error;
   ready:Promise<string>; resolve:(token:string)=>void; reject:(error:unknown)=>void;
@@ -14,9 +14,12 @@ export class ViewMounts {
   private entries=new Map<string,Mount>();
   private active=0;
   constructor(private action:(node:string,identity:string,generation:string,action:string,token?:string)=>Promise<string|undefined>){}
-  mount(node:string,identity:string,generation:string,failed?:(error:Error)=>void):{ready:Promise<string>;waiting:boolean;close:()=>void}{
+  mount(node:string,identity:string,generation:string,failed?:(error:Error)=>void,reopen=false):{ready:Promise<string>;waiting:boolean;close:()=>void}{
     const key=`${generation}:${node}:${identity}`;
     let entry=this.entries.get(key);
+    // Only an explicit recovery may retire a failed shared lease. Existing displays stay failed;
+    // a normal duplicate must not restart reading or a query after an uncertain renewal.
+    if(entry?.problem&&reopen){this.dispose(key,entry);entry=undefined;}
     if(!entry){
       let resolve!:(token:string)=>void,reject!:(error:unknown)=>void;
       const ready=new Promise<string>((yes,no)=>{resolve=yes;reject=no;});
@@ -30,13 +33,16 @@ export class ViewMounts {
     return {ready:selected.ready,waiting:!selected.active,close:()=>{
       if(closed)return;closed=true;selected.users--;
       if(failed)selected.failures.delete(failed);
-      if(!selected.users){
-        selected.closed=true;clearInterval(selected.timer);this.entries.delete(key);
-        if(selected.token)this.closeLease(selected);
-        else if(selected.finished)this.release(selected);
-        else if(!selected.active)selected.reject(new Error("View closed"));
-      }
+      if(!selected.users)this.dispose(key,selected);
     }};
+  }
+  private dispose(key:string,entry:Mount){
+    if(entry.closed)return;
+    entry.closed=true;clearInterval(entry.timer);
+    if(this.entries.get(key)===entry)this.entries.delete(key);
+    if(entry.token)this.closeLease(entry);
+    else if(entry.finished)this.release(entry);
+    else if(!entry.active)entry.reject(new Error("View closed"));
   }
   private admit(){
     for(const entry of this.entries.values()){
@@ -51,6 +57,7 @@ export class ViewMounts {
         entry.timer=setInterval(()=>{
           if(busy||entry.closed)return;busy=true;
           void this.action(entry.node,entry.identity,entry.generation,"touch",token).catch(error=>{
+            if(entry.closed)return;
             clearInterval(entry.timer); // A failed or uncertain lease is never automatically reopened.
             const problem=error instanceof Error?error:new Error("View display session is unavailable; reopen the view.");
             entry.problem=problem;
@@ -59,12 +66,13 @@ export class ViewMounts {
         },1000);
         entry.resolve(token);
       }).catch(error=>{
-        entry.finished=true;entry.reject(error);
+        entry.finished=true;entry.problem=error instanceof Error?error:new Error("View display session is unavailable; reopen the view.");entry.reject(entry.problem);
         if(entry.closed)this.release(entry);
       });
     }
   }
   private closeLease(entry:Mount){
+    if(entry.closing)return;entry.closing=true;
     // Keep the slot until cleanup settles, including opens completed after unmount.
     void this.action(entry.node,entry.identity,entry.generation,"close",entry.token).catch(()=>{}).finally(()=>this.release(entry));
   }

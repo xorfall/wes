@@ -170,7 +170,8 @@ pub(super) async fn state(
     };
     let mut status = StatusCode::OK;
     let mut problem = None;
-    if request.method() == axum::http::Method::PUT {
+    let writing = request.method() == axum::http::Method::PUT;
+    if writing {
         if request
             .headers()
             .get(header::CONTENT_TYPE)
@@ -199,6 +200,15 @@ pub(super) async fn state(
         {
             Ok(pair) => (owner, state) = pair,
             Err(error) => {
+                // A lost session reply can follow a commit. Do not label it a
+                // known rejection or return the pre-mutation 503 retry signal.
+                if !matches!(
+                    error,
+                    wes_engine::session::SessionError::AccessDenied(_)
+                        | wes_engine::session::SessionError::CheckpointBusy
+                ) {
+                    return StatusCode::GONE.into_response();
+                }
                 problem = Some(error.to_string());
                 status = StatusCode::CONFLICT;
                 let Ok(pair) = current
@@ -237,6 +247,14 @@ pub(super) async fn state(
     };
     if let Some(problem) = problem {
         json["problem"] = problem.into();
+    }
+    if writing {
+        json["outcome"] = if status == StatusCode::OK {
+            "committed"
+        } else {
+            "rejected"
+        }
+        .into();
     }
     let tag = format!(
         "\"{}-{}-{}\"",

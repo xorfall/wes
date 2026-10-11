@@ -2,6 +2,8 @@
 use super::*;
 use wes_core::{Provenance, Shape, contracts::ContractKind};
 
+const SHARED_STATE_CHARGE_LIMIT: u64 = 16_384;
+
 #[derive(Clone, Debug, Default)]
 pub struct InteractionState {
     pub revision: u64,
@@ -152,9 +154,16 @@ fn validate(
 ) -> Result<(), Error> {
     let value = Value::new(Shape::Unknown, data.clone(), Provenance::default())
         .map_err(|_| Error::Interaction)?;
-    *charge += crate::value_size::value_charge(&value, 16384).ok_or(Error::Capacity)?;
-    if *charge > 16384 {
-        return Err(Error::Capacity);
+    // Traversal is bounded by value_size's node/depth limits. Report the actual
+    // conservative charge, without echoing any user field or output content.
+    *charge = charge
+        .checked_add(crate::value_size::value_charge(&value, u64::MAX).ok_or(Error::Capacity)?)
+        .ok_or(Error::Capacity)?;
+    if *charge > SHARED_STATE_CHARGE_LIMIT {
+        return Err(Error::InteractionCapacity {
+            charged: *charge,
+            limit: SHARED_STATE_CHARGE_LIMIT,
+        });
     }
     if !data.is_inline() || !contract.issues(data).is_empty() {
         return Err(Error::Interaction);

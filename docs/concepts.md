@@ -155,6 +155,16 @@ values; stop unneeded work and do not assume closing an agent connection cancels
 it. A stopped stream's last observation is not a current calculation input.
 
 View input references distinguish a current result from a retained value.
+Shared View selections use a revision-checked commit. A confirmed refusal restores
+the last committed state and does not replay events. If initialization is refused,
+the owner has no committed fields yet; the View reports that refusal and stops
+automatic initialization attempts. A lost or invalid commit reply remains an
+unknown outcome and blocks further writes until reconnection. Shared fields and
+state outputs together have a 16,384-unit conservative value-charge ceiling,
+separate from the 16 KiB JSON message ceiling. Capacity refusals report the scope,
+minimum charge and limit without including field contents. Keep larger authored
+documents in ordinary typed results and share compact selections or decisions.
+
 **Current** follows committed publications of its referenced node; it does not
 run that node. **Stop observing** pauses this view's reads. **Pin input** retains
 the input actually shown and binds the view to that fixed value, including a

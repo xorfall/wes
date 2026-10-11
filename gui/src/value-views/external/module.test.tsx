@@ -16,6 +16,27 @@ vi.mock("./document",()=>({frameDocument:async()=>"<!doctype html><body></body>"
 afterEach(()=>{vi.unstubAllGlobals();vi.useRealTimers();});
 type Host=NonNullable<ContextType<typeof InstanceInteractionHost>>;
 
+it("uses an optional marker only for automatic matching, while explicit presentation accepts unmarked data",()=>{
+  const original=valueViewModules.named("timeline")!.definition!;
+  const schema=original.contracts[original.input]!;
+  const definition={...original,contracts:{...original.contracts,[original.input]:{
+    ...schema,fields:{...schema.fields,view:{...schema.fields!.view!,optional:true}},
+  }}};
+  const module=externalModule({definition,digest:definition.artifact!,javascript:"void 0",css:""});
+  const value=timelineValue();
+  if(value.type.kind!=="record")throw new Error("Synthetic timeline must be a Record");
+  const type={...value.type,fields:value.type.fields.filter(field=>field.name!=="view")};
+  const {view,...unmarked}=value.data as Record<string,unknown>;
+  expect(module.matches(type,unmarked)).toBe(false);
+  expect(module.matches(type,{...unmarked,view})).toBe(true);
+  expect(module.matches(type,{...unmarked,view:"other"})).toBe(false);
+  expect(module.matches(type,{...unmarked,view,title:12})).toBe(false);
+  const shown=module.present({path:"input",type,data:unmarked,context:{mode:"expanded",columns:80,lines:100,density:"normal",locale:"en-GB",timeZone:"UTC"}},
+    {remaining:()=>100,spend:vi.fn(),child:()=>({kind:"empty",path:"child",text:"empty"})});
+  expect(shown.model).toMatchObject({input:{title:unmarked.title}});
+  expect((shown.model as {input:object}).input).not.toHaveProperty("view");
+});
+
 async function mounted(member=false){
   vi.stubGlobal("ResizeObserver",class{observe(){} disconnect(){}});
   vi.stubGlobal("getComputedStyle",()=>({lineHeight:"21px"}));

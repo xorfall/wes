@@ -168,6 +168,10 @@ pub enum Error {
     },
     #[error("View capacity exceeded")]
     Capacity,
+    #[error(
+        "View shared fields and state outputs require at least {charged} conservative charge units; the limit is {limit} (separate from JSON message bytes)"
+    )]
+    InteractionCapacity { charged: u64, limit: u64 },
     #[error("Select a declared view slot; no default slot is available")]
     Slot,
     #[error("View slot does not accept this definition or interaction protocol")]

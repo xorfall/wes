@@ -333,6 +333,47 @@ fn separate_coordinators_keep_committed_selections_independent() {
 }
 
 #[test]
+fn shared_state_capacity_refusal_reports_scope_and_preserves_the_committed_revision() {
+    use wes_engine::views::InteractionEdit;
+    let package = Arc::new(wes_views::Package::parse(
+        r#"{"name":"TextSelection","id":"text-selection","summary":"Synthetic text state","renderer":"View.tsx","input":"Input","outputs":{"text":{"type":"Text","mode":"state","shared":true}},"interaction":{"protocol":"TextSelection","state":"Input","event":"Input","sharedFields":["text"]}}"#,
+        "types: {Input: {base: Record, fields: {text: Text}}}",
+    ).unwrap());
+    let mut store = Store::new([package.clone()], Limits::default()).unwrap();
+    let handle = store
+        .create(id("selector"), "TextSelection", &package.digest, None)
+        .unwrap();
+    let identity = store.read(&handle).unwrap().identity.to_string();
+    let edit = |revision, text: &str| InteractionEdit {
+        owner: handle.id().clone(),
+        identity: identity.clone(),
+        definition_revision: 0,
+        revision,
+        fields: [("text".into(), Data::Text(text.into()))].into(),
+        outputs: [("text".into(), Data::Text(text.into()))].into(),
+        events: vec![],
+    };
+    for revision in [0, 1] {
+        let error = store
+            .commit_interaction(&handle, edit(revision, &"x".repeat(1500)))
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::InteractionCapacity { charged, limit: 16_384 } if charged > 16_384)
+        );
+        assert!(!error.to_string().contains(&"x".repeat(16)));
+        assert_eq!(store.interaction(&handle).unwrap().1.revision, revision);
+        if revision == 0 {
+            assert!(store.interaction(&handle).unwrap().1.fields.is_empty());
+            store.commit_interaction(&handle, edit(0, "small")).unwrap();
+        }
+    }
+    assert_eq!(
+        store.output(&handle, "text").unwrap().data(),
+        &Data::Text("small".into())
+    );
+}
+
+#[test]
 fn output_links_validate_types_writers_and_cycles() {
     let example = wes_views::Package::parse(
         include_str!("../../../examples/view-packages/source/range-summary/view.json"),
