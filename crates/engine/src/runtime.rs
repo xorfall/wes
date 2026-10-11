@@ -162,7 +162,7 @@ impl Outcome {
                 }) {
                     Self::Stored(stored)
                 } else {
-                    Self::Failed(RuntimeCode::ResultUnavailable.error("Stored result policy does not cover its captured inputs; no source was replayed.", None))
+                    Self::Failed(RuntimeCode::ResultForbidden.error("Stored result policy does not cover its captured inputs; no source was replayed.", None))
                 }
             }
             Self::Incomplete { value, error } => {
@@ -1453,7 +1453,7 @@ impl<T: Clone> Runtime<T> {
                 }) =>
             {
                 Outcome::Failed(
-                    RuntimeCode::ResultUnavailable.error("Invalid stored result descriptor.", None),
+                    RuntimeCode::ResultCorrupt.error("Invalid stored result descriptor.", None),
                 )
             }
             Outcome::Incomplete { value, error } => match self.admit_value(run.node(), &value) {
@@ -2814,6 +2814,12 @@ pub enum RuntimeCode {
     StreamOverloaded,
     ResultCapacity,
     ResultUnavailable,
+    ResultForbidden,
+    ResultStale,
+    ResultClosed,
+    ResultCorrupt,
+    ResultUncertain,
+    ResultReadFailed,
 }
 fn typing(value: &Value) -> Arc<Typing> {
     Arc::new(Typing {
@@ -2832,6 +2838,12 @@ impl RuntimeCode {
             Self::StreamOverloaded => "RUN006",
             Self::ResultCapacity => "RUN007",
             Self::ResultUnavailable => "RUN008",
+            Self::ResultForbidden => "RUN009",
+            Self::ResultStale => "RUN010",
+            Self::ResultClosed => "RUN011",
+            Self::ResultCorrupt => "RUN012",
+            Self::ResultUncertain => "RUN013",
+            Self::ResultReadFailed => "RUN014",
         }
     }
     pub fn error(self, message: impl Into<String>, cause: Option<ErrorId>) -> ErrorValue {

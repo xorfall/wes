@@ -88,7 +88,16 @@ export class Engine {
     const response = await fetch(`/sandbox?${new URLSearchParams({ reference, inspect: String(inspect) })}`, {
       headers: this.headers({ "X-Wes-Session": generation }), cache: "no-store", signal,
     });
-    if (!response.ok) throw new Error(await response.text() || "Sandbox observation is unavailable.");
+    if (!response.ok) {
+      const text = await response.text();
+      if (generation !== this.generation) throw new Error("Workspace changed; analysis read refusal was discarded.");
+      let problem: { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
+      try { problem = JSON.parse(text)?.error; } catch { /* An unstructured failure proves no storage outcome. */ }
+      if (typeof problem?.code === "string" && typeof problem.message === "string" && problem.retryable === false) {
+        throw new StorageError(`${problem.code}: ${problem.message}`, [], problem.code);
+      }
+      throw new Error(text || "Analysis observation could not be read; storage state is unconfirmed.");
+    }
     const result = sandboxObservation((await readExactJson<{sandbox:unknown}>(response)).sandbox);
     if (generation !== this.generation || result.generation !== generation) throw new Error("Workspace changed; sandbox observation discarded.");
     return result;

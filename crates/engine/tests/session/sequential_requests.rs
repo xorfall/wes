@@ -1,5 +1,5 @@
 use super::*;
-use wes_engine::session::SequentialState;
+use wes_engine::session::{SequentialPhase, SequentialProgress, SequentialState};
 
 async fn finish(handle: &SessionHandle, cell: &str) -> SequentialState {
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -58,6 +58,15 @@ async fn sequential_waits_for_finite_results_and_deduplicates_mode_and_unicode_s
     blocked.await.unwrap();
     assert_eq!(handle.observe().await.unwrap().cells.len(), 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while handle.sequential_progress(&record.cell).unwrap().phase != SequentialPhase::Executing
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(handle.sequential_progress(&record.cell).unwrap().step, 0);
     let duplicate = handle
         .submit_sequential_request(
             "pane".into(),
@@ -91,6 +100,7 @@ async fn sequential_waits_for_finite_results_and_deduplicates_mode_and_unicode_s
     let observed = handle.observe().await.unwrap();
     assert_eq!(observed.cells.len(), 3);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(handle.sequential_progress(&record.cell).unwrap().step, 3);
     assert_eq!(
         observed.state.execution.values[&observed.state.names["third"].node].data(),
         &Data::Text("blockedé".into())
@@ -132,6 +142,7 @@ async fn parse_preflight_is_atomic_and_runtime_failure_stops_later_effects() {
     assert_eq!(finish(&handle, &record.cell).await, SequentialState::Failed);
     assert_eq!(handle.observe().await.unwrap().cells.len(), 2);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(handle.sequential_progress(&record.cell).unwrap().step, 1);
     stop(handle, task).await;
 }
 #[tokio::test]
@@ -385,6 +396,14 @@ async fn blocked_step_admission_keeps_request_reads_and_cancellation_bounded() {
     )
     .await;
     blocked.await.unwrap();
+    assert_eq!(
+        handle.sequential_progress(&record.cell),
+        Some(SequentialProgress {
+            state: SequentialState::Running,
+            step: 0,
+            phase: SequentialPhase::Admitting,
+        })
+    );
     assert_eq!(
         tokio::time::timeout(
             Duration::from_secs(1),

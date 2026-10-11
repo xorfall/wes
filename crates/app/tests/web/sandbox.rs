@@ -194,6 +194,20 @@ async fn transient_dataset_reads_require_the_live_scope_and_keep_preserves_the_e
         .await
         .unwrap();
     assert_eq!(expired.status(), 410);
+    let expired_value = fixture
+        .client
+        .get(format!("{url}/values/{handle}"))
+        .header("X-Wes-Workspace", "default")
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-Scope", scope)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(expired_value.status(), 403);
+    let problem: Value = serde_json::from_slice(&expired_value.bytes().await.unwrap()).unwrap();
+    assert_eq!(problem["error"]["code"], "VALUE_ACCESS_REFUSED");
+    assert_eq!(problem["error"]["context"]["handle"], handle);
+    assert_eq!(problem["error"]["retryable"], false);
     let saved = current
         .session
         .read_sandbox_export("saved_study.analysis.outputs", false)

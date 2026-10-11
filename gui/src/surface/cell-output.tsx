@@ -85,7 +85,7 @@ function stateBlock(node: WorkspaceNode, input: OutputInput): ReactNode | undefi
   if (node.accessWithdrawn) return line([{ text: WITHDRAWN_TITLE, role: "mono-warn" }, { text: " · no work was rerun", role: "mono-faint" }]);
   if (node.handle && !input.held.has(node.handle)) {
     const handle = node.handle;
-    return <ReadStatus problem={input.reads.get(handle)?.problem} withdrawn={input.reads.get(handle)?.withdrawn} onRetry={() => input.retryRead(handle)} />;
+    return <ReadStatus problem={input.reads.get(handle)?.problem} problemCode={input.reads.get(handle)?.problemCode} withdrawn={input.reads.get(handle)?.withdrawn} onRetry={() => input.retryRead(handle)} />;
   }
   const value = node.handle ? input.held.get(node.handle) : undefined;
   if (value?.type?.kind === "iter") {

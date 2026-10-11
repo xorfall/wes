@@ -3,11 +3,12 @@ import { useEffect, useMemo, useReducer } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
 import type { WorkspaceNode } from "../workspace";
-import { ResultWithdrawnError } from "../result-reader";
+import { ResultReadError, ResultWithdrawnError } from "../result-reader";
 
 export interface ResultRead {
   value?: StoredValue;
   problem?: string;
+  problemCode?: string;
   /** The read was refused because access to the result was withdrawn; reading again cannot help. */
   withdrawn?: boolean;
   pending?: Promise<void>;
@@ -34,7 +35,7 @@ export class ResultDemand {
       this.reads.set(handle, entry);
       this.active++;
       entry.pending = this.fetch(handle).then(value => { entry.value = value; },
-        error => { entry.problem = error instanceof Error ? error.message : String(error); entry.withdrawn = error instanceof ResultWithdrawnError; })
+        error => { entry.problem = error instanceof Error ? error.message : String(error); entry.problemCode = error instanceof ResultReadError ? error.problem?.code : undefined; entry.withdrawn = error instanceof ResultWithdrawnError; })
         .finally(() => {
           entry.pending = undefined;
           this.active--;
@@ -60,6 +61,7 @@ export interface ResultObservation {
   readonly state: "current" | "updating" | "stale";
   readonly staleReason?: string;
   readonly problem?: string;
+  readonly problemCode?: string;
   readonly withdrawn?: boolean;
 }
 
@@ -88,7 +90,8 @@ export class ResultObservations {
         const last = this.last.get(node.id);
         const replacing = node.state === "stale" || node.handle !== undefined || node.publication?.state === "pending" || node.state === "pending" || node.state === "running";
         if (last && replacing) result.set(node.id, { run: last.node.run, value: last.value, handle: last.handle, state: staleReason ? "stale" : "updating", staleReason,
-          problem: node.handle ? reads.get(node.handle)?.problem : undefined, withdrawn: node.handle ? reads.get(node.handle)?.withdrawn === true : false });
+          problem: node.handle ? reads.get(node.handle)?.problem : undefined, problemCode: node.handle ? reads.get(node.handle)?.problemCode : undefined,
+          withdrawn: node.handle ? reads.get(node.handle)?.withdrawn === true : false });
         else this.last.delete(node.id);
       }
     }

@@ -240,7 +240,7 @@ impl Capture {
                     .map_err(store_error)?
                     .ok_or(SessionError::UnknownValue)?;
                 if !payload.digest.is_empty() && payload.digest != digest {
-                    return Err(SessionError::UnknownValue);
+                    return Err(store_error(crate::storage::StoreError::Conflict));
                 }
                 payload.digest = digest;
                 digests.insert(payload.handle.clone(), payload.digest.clone());
@@ -302,18 +302,67 @@ pub(crate) async fn load_alias(
     }
     let value = alias_value(saved, &values)?;
     if value.as_ref().map(wes_core::Value::shape) != saved.alias_shape.as_ref() {
-        return Err(SessionError::UnknownValue);
+        return Err(store_error(crate::storage::StoreError::Conflict));
     }
     Ok(value)
 }
 pub(super) fn store_error(error: crate::storage::StoreError) -> SessionError {
     use crate::storage::StoreError;
     match error {
-        StoreError::Limit(_) => SessionError::Capacity,
-        StoreError::Restricted => SessionError::Authority,
         StoreError::ScopeUnavailable => SessionError::ScopeEnded,
-        StoreError::Closed => SessionError::Stopped,
-        _ => SessionError::UnknownValue,
+        error => SessionError::ResultRead {
+            kind: error.read_failure_kind(),
+            message: error.read_message(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod read_error_tests {
+    use super::*;
+
+    #[test]
+    fn saved_read_errors_preserve_categories_and_safe_context_instead_of_unknown_handle() {
+        use crate::storage::StoreError;
+        for (error, code, public) in [
+            (
+                StoreError::Limit("fixture decoded input"),
+                "RUN007",
+                "fixture decoded input",
+            ),
+            (StoreError::Conflict, "RUN010", "captured identity"),
+            (StoreError::Closed, "RUN011", "storage worker"),
+            (StoreError::Corrupt, "RUN012", "validation failed"),
+            (
+                StoreError::DatasetUnconfirmed {
+                    transaction: "fixture".into(),
+                },
+                "RUN013",
+                "unconfirmed",
+            ),
+            (
+                StoreError::backend(
+                    "reading retained result",
+                    std::io::Error::other("PRIVATE_SAVED_CAUSE"),
+                ),
+                "RUN014",
+                "reading retained result",
+            ),
+        ] {
+            let session = store_error(error);
+            assert!(!matches!(session, SessionError::UnknownValue));
+            let runtime = session.read_error("Saved snapshot read refused");
+            assert_eq!(runtime.code(), code);
+            assert!(runtime.message().to_lowercase().contains(public));
+            assert_eq!(
+                runtime
+                    .message()
+                    .matches("No provider was replayed")
+                    .count(),
+                1
+            );
+            assert!(!runtime.message().contains("PRIVATE_SAVED_CAUSE"));
+        }
     }
 }
 pub(super) async fn load_member(
@@ -336,7 +385,7 @@ pub(super) async fn load_member(
         .map_err(store_error)?
         .ok_or(SessionError::UnknownValue)?;
     if snapshot.digest != payload.digest {
-        return Err(SessionError::UnknownValue);
+        return Err(store_error(crate::storage::StoreError::Conflict));
     }
     let (loaded, _resident_hold) = worker.materialize(snapshot).await.map_err(store_error)?;
     Ok(loaded.value)
@@ -365,7 +414,7 @@ pub(crate) async fn stored_alias(
             .map_err(store_error)?
             .ok_or(SessionError::UnknownValue)?;
         if snapshot.digest != payload.digest {
-            return Err(SessionError::UnknownValue);
+            return Err(store_error(crate::storage::StoreError::Conflict));
         }
         snapshot
     } else {
@@ -390,7 +439,7 @@ pub(crate) async fn stored_alias(
             .map_err(store_error)?
     };
     if &snapshot.shape != shape {
-        return Err(SessionError::UnknownValue);
+        return Err(store_error(crate::storage::StoreError::Conflict));
     }
     Ok(Some(snapshot))
 }

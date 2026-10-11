@@ -3,11 +3,26 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { SandboxPanel } from "./SandboxPanel";
 import {ValueView} from "../views/Result";
 import type { Engine, SandboxObservation } from "../engine";
+import { StorageError } from "../storage-error";
 
 vi.mock("../views/Result", () => ({ ValueView: ({ value }: { value: unknown }) => <pre>{JSON.stringify(value)}</pre> }));
 let tree: ReactTestRenderer | undefined;
 afterEach(async () => { if (tree) await act(async () => tree!.unmount()); tree=undefined; vi.useRealTimers(); });
 const opened: SandboxObservation = { kind:"sandbox", scope:null, sources:{}, name:"preview", reference:"preview", inspect:false, state:"active", generation:"g", value:{ type:{kind:"unknown"}, provenance:{}, data:{count:1} } };
+it("withholds a previous observation only for authoritative withdrawal and stops its polling", async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi.fn().mockRejectedValue(new StorageError("Scope result access withdrawn.", [], "ANALYSIS_ACCESS_WITHDRAWN"));
+  const submit = vi.fn();
+  await act(async () => { tree=create(<SandboxPanel engine={{readSandbox, submit} as unknown as Engine} opened={opened} onClose={()=>{}}/>); });
+  expect(tree!.root.findAllByType("pre")).toHaveLength(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(tree!.root.findAllByType("pre")).toHaveLength(0);
+  expect(JSON.stringify(tree!.toJSON())).toContain("Access withdrawn");
+  expect(JSON.stringify(tree!.toJSON())).not.toContain("Previous observation is shown");
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(readSandbox).toHaveBeenCalledTimes(1);
+  expect(submit).not.toHaveBeenCalled();
+});
 it("updates one observation without submitting commands and closing does not cancel", async () => {
   vi.useFakeTimers();
   const readSandbox=vi.fn().mockResolvedValue({...opened,value:{...opened.value,data:{count:2}}});

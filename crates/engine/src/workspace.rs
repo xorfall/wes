@@ -1057,19 +1057,20 @@ impl Workspace {
                     .dataset_access
                     .blocks_policy(captured.snapshot.provenance.policy())
                 {
-                    return Err(crate::runtime::RuntimeCode::ResultUnavailable.error(
+                    return Err(crate::runtime::RuntimeCode::ResultForbidden.error(
                         "Stored source authority was withdrawn before scan entry.",
                         None,
                     ));
                 }
                 continue;
             }
-            let Some(value) = ticket
-                .inputs
-                .get(source)
-                .filter(|v| !self.dataset_access.blocks(v))
-            else {
-                return Err(crate::runtime::RuntimeCode::ResultUnavailable.error("Prepared input is unavailable or no longer authorized; no source was replayed.", None));
+            let Some(value) = ticket.inputs.get(source) else {
+                return Err(crate::storage::StoreError::MissingValue
+                    .read_error("Prepared input is unavailable"));
+            };
+            if self.dataset_access.blocks(value) {
+                return Err(crate::storage::StoreError::DatasetWithdrawn
+                    .read_error("Prepared input authority was withdrawn"));
             };
             if !self
                 .runtime
@@ -1187,7 +1188,7 @@ impl Workspace {
                     None,
                 ))
             }
-            Outcome::Stored(stored) if stored.snapshot.as_ref().is_some_and(|s|self.dataset_access.blocks_policy(s.provenance.policy())) => Outcome::Failed(crate::runtime::RuntimeCode::ResultUnavailable.error("Stored result access was withdrawn before publication; no source was replayed.",None)),
+            Outcome::Stored(stored) if stored.snapshot.as_ref().is_some_and(|s|self.dataset_access.blocks_policy(s.provenance.policy())) => Outcome::Failed(crate::runtime::RuntimeCode::ResultForbidden.error("Stored result access was withdrawn before publication; no source was replayed.",None)),
             outcome => outcome,
         };
         let effects = self.runtime.complete(run, outcome, now);

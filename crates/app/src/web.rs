@@ -814,8 +814,25 @@ fn sandbox_failure(error: wes_engine::session::SessionError) -> Response {
         SessionError::Authority | SessionError::AccessDenied(_) => {
             (StatusCode::FORBIDDEN, "ANALYSIS_ACCESS_REFUSED")
         }
-        SessionError::ScopeEnded | SessionError::Stopped => {
-            (StatusCode::GONE, "ANALYSIS_SCOPE_ENDED")
+        SessionError::ScopeEnded => (StatusCode::GONE, "ANALYSIS_SCOPE_ENDED"),
+        SessionError::Stopped | SessionError::NoStorage => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ANALYSIS_OWNER_UNAVAILABLE",
+        ),
+        SessionError::ResultRead { kind, .. } => {
+            use wes_engine::storage::ReadFailureKind::*;
+            let code = match kind {
+                Capacity => "ANALYSIS_CAPACITY",
+                Forbidden => "ANALYSIS_ACCESS_REFUSED",
+                Withdrawn => "ANALYSIS_ACCESS_WITHDRAWN",
+                Stale => "ANALYSIS_CHANGED",
+                Unavailable => "ANALYSIS_UNAVAILABLE",
+                Closed => "ANALYSIS_OWNER_UNAVAILABLE",
+                Corrupt => "ANALYSIS_CORRUPT",
+                Uncertain => "ANALYSIS_UNCONFIRMED",
+                Failed => "ANALYSIS_READ_FAILED",
+            };
+            (value_errors::read_status(*kind), code)
         }
         SessionError::UnknownValue | SessionError::UnknownNode => {
             (StatusCode::NOT_FOUND, "ANALYSIS_UNAVAILABLE")
@@ -1283,15 +1300,15 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
         .get("X-Wes-Session")
         .is_some_and(|generation| generation.to_str().ok() != Some(current.generation.as_str()))
     {
-        return StatusCode::CONFLICT.into_response();
+        return value_errors::Failure::SessionChanged.response(Some(&handle));
     }
-    if current.session.check_retirement_access().await.is_err() {
-        return value_errors::Failure::Retiring.response(Some(&handle));
+    if let Err(error) = current.session.check_retirement_access().await {
+        return read_context::Failure::Session(error).value_response(&handle);
     }
     let (reader, worker) =
         match read_context::resolve(&current.session, &shared.values, request.headers()).await {
             Ok(context) => context,
-            Err(response) => return response,
+            Err(failure) => return failure.value_response(&handle),
         };
     let value = match worker.read(handle.clone()).await {
         Ok(Some(value)) => value,
@@ -1328,7 +1345,7 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
                 .current()
                 .is_ok_and(|now| now.generation == current.generation)
             {
-                return StatusCode::CONFLICT.into_response();
+                return value_errors::Failure::SessionChanged.response(Some(&handle));
             }
             let authorization = worker.validate_read(handle.clone(), captured).await;
             if !shared
@@ -1336,10 +1353,10 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
                 .current()
                 .is_ok_and(|now| now.generation == current.generation)
             {
-                return StatusCode::CONFLICT.into_response();
+                return value_errors::Failure::SessionChanged.response(Some(&handle));
             }
-            if current.session.check_retirement_access().await.is_err() {
-                return value_errors::Failure::Retiring.response(Some(&handle));
+            if let Err(error) = current.session.check_retirement_access().await {
+                return read_context::Failure::Session(error).value_response(&handle);
             }
             match authorization {
                 Ok(true) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),

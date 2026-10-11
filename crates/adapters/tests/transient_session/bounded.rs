@@ -399,10 +399,14 @@ async fn bounded_pipeline(bytes: u64, worker_limits: StoreWorkerLimits, resident
             .revision,
         1
     );
-    assert!(matches!(
-        handle.read_sandbox_export("study.raw", false).await,
-        Err(session::SessionError::Capacity)
-    ));
+    let refused = handle
+        .read_sandbox_export("study.raw", false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.read_failure_kind(),
+        Some(wes_engine::storage::ReadFailureKind::Capacity)
+    );
     let source = snapshot.execution.stored_values[raw].clone();
     let mut stdout = source.snapshot.selection.clone();
     stdout.push("stdout".into());

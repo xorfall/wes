@@ -17,15 +17,7 @@ pub(super) async fn prepare_inputs(
     storage: &crate::storage::StoreWorker,
     ticket: &mut crate::runtime::RunTicket<BoundTask>,
 ) -> Result<(), wes_core::ErrorValue> {
-    use crate::runtime::RuntimeCode;
-    let unavailable = |message| RuntimeCode::ResultUnavailable.error(message, None);
-    let read_error = |error: StoreError| {
-        match error {
-        StoreError::Limit(dimension) => RuntimeCode::ResultCapacity.error(
-            format!("Input preparation exceeds {dimension}; the stored source remains available. No provider was replayed."), None),
-        _ => unavailable(format!("Stored input preparation refused: {error}. No provider was replayed.")),
-    }
-    };
+    let read_error = |error: StoreError| error.read_error("Stored input preparation refused");
     let snapshots = ticket
         .deferred_inputs
         .values()
@@ -48,7 +40,7 @@ pub(super) async fn prepare_inputs(
                 .hold(captured.snapshot.handle.clone())
                 .await
                 .map_err(read_error)?
-                .ok_or_else(|| unavailable("Stored source is unavailable.".into()))?;
+                .ok_or_else(|| read_error(StoreError::MissingValue))?;
             ticket.input_holds.push(hold);
             continue;
         }
@@ -61,9 +53,9 @@ pub(super) async fn prepare_inputs(
                     .describe(captured.snapshot.handle.clone(), selection)
                     .await
                     .map_err(read_error)?
-                    .ok_or_else(|| unavailable("Stored field is unavailable.".into()))?;
+                    .ok_or_else(|| read_error(StoreError::MissingValue))?;
                 if snapshot.digest != captured.snapshot.digest {
-                    return Err(unavailable("Stored field identity changed.".into()));
+                    return Err(read_error(StoreError::Conflict));
                 }
                 let (loaded, hold) = storage.materialize(snapshot).await.map_err(read_error)?;
                 fields.insert(path.clone(), loaded.value);
@@ -157,6 +149,13 @@ impl Actor {
             if self.workspace.runtime().is_closed() {
                 return Err(SessionError::Stopped);
             }
+            if self
+                .workspace
+                .dataset_access
+                .blocks_policy(read.captured.snapshot.provenance.policy())
+            {
+                return Err(saved::store_error(StoreError::DatasetWithdrawn));
+            }
             if !self.workspace.runtime().output(&read.output).accessible()
                 || self
                     .workspace
@@ -168,10 +167,12 @@ impl Actor {
                 return Err(SessionError::HistoricalReplyUnavailable);
             }
             let (loaded, _hold) = read.result.map_err(saved::store_error)?;
-            if self.workspace.dataset_access.blocks(&loaded.value)
-                || read.cooperative
-                    && (loaded.value.provenance().policy().is_private()
-                        || loaded.value.provenance().policy().is_unknown())
+            if self.workspace.dataset_access.blocks(&loaded.value) {
+                return Err(saved::store_error(StoreError::DatasetWithdrawn));
+            }
+            if read.cooperative
+                && (loaded.value.provenance().policy().is_private()
+                    || loaded.value.provenance().policy().is_unknown())
             {
                 return Err(SessionError::Authority);
             }

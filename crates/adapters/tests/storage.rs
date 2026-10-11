@@ -929,7 +929,7 @@ fn corrupted_existing_files_are_errors_not_absence_or_empty_success() {
     let mut store = open(root.path(), None);
     let handle = store.store(&value(10)).unwrap();
     fs::write(root.path().join(format!("{handle}.json")), b"").unwrap();
-    assert!(store.read(&handle).is_err());
+    assert!(matches!(store.read(&handle), Err(StoreError::Corrupt)));
 }
 
 #[test]

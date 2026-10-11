@@ -969,7 +969,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
       }),
       reading: live ? undefined : observation && observation.state !== "current" ? <div className="result-observation"><ObservationStatus observation={observation} onRetry={handle ? () => retryRead(handle) : undefined} /></div> :
         handle && !value
-          ? <ReadStatus problem={reads.get(handle)?.problem} withdrawn={reads.get(handle)?.withdrawn} onRetry={() => retryRead(handle)} />
+          ? <ReadStatus problem={reads.get(handle)?.problem} problemCode={reads.get(handle)?.problemCode} withdrawn={reads.get(handle)?.withdrawn} onRetry={() => retryRead(handle)} />
           : undefined,
     };
   };

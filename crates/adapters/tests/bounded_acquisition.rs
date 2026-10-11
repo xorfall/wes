@@ -198,7 +198,7 @@ fn split_utf8_is_verified_before_publication_and_corrupt_chunks_cannot_be_kept()
     );
     assert!(matches!(
         store.source_range(&snapshot, CHUNK_BYTES as u64, 2),
-        Err(StoreError::Conflict)
+        Err(StoreError::Corrupt)
     ));
     assert!(store.keep_with_reason(&h, Retention::Protected).is_err());
     binary.seek(SeekFrom::Start(0)).unwrap();
@@ -206,7 +206,7 @@ fn split_utf8_is_verified_before_publication_and_corrupt_chunks_cannot_be_kept()
     binary.sync_all().unwrap();
     assert!(matches!(
         store.source_range(&snapshot, 0, 10),
-        Err(StoreError::Conflict)
+        Err(StoreError::Corrupt)
     ));
     assert!(store.keep_with_reason(&h, Retention::Protected).is_err());
     assert!(!store.is_kept(&h).unwrap());
@@ -372,6 +372,6 @@ fn nested_record_leaf_ranges_and_keep_preserve_the_full_captured_type() {
     std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     assert!(matches!(
         store.describe(&handle, &[]),
-        Err(StoreError::Conflict)
+        Err(StoreError::Corrupt)
     ));
 }

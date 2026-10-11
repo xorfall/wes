@@ -3,6 +3,7 @@ import { issueText, locationText } from "./failure-text";
 import { applicationLog, markProblemReported, type LogContext } from "./application-log";
 import { StorageError } from "./storage-error";
 import type { Request } from "./protocol";
+import { resultFailure } from "./result-failure";
 
 /** The engine's own statement that a refused submission never started; nothing else proves it. */
 export const SUBMISSION_OUTCOME_HEADER = "X-Wes-Submission-Outcome";
@@ -54,6 +55,8 @@ export function recordExecutionFailure(event: Extract<import("./protocol").Event
   if (recordedFailures.has(key)) return;
   recordedFailures.add(key);
   if (recordedFailures.size > 2048) recordedFailures.delete(recordedFailures.values().next().value!);
+  const read = resultFailure(event.error.code);
   applicationLog.add({ ...context, node: event.node, source: "Execution", operation: "Run", level: "error",
-    code: event.error.code, message: event.error.message, notice: event.error.message, detail: [...(event.error.locations ?? []).map(locationText), ...event.error.issues.map(issueText)].join("\n") || undefined });
+    code: event.error.code, message: event.error.message, notice: event.error.message, next: read?.next,
+    detail: [...(event.error.locations ?? []).map(locationText), ...event.error.issues.map(issueText)].join("\n") || undefined });
 }

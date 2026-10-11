@@ -152,7 +152,7 @@ pub(super) async fn state(
             .await
         {
             Ok(context) => context,
-            Err(response) => return response,
+            Err(failure) => return failure.response(),
         };
     let Ok(node) = NodeId::new(node) else {
         return StatusCode::BAD_REQUEST.into_response();

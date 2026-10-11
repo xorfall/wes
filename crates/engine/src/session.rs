@@ -58,7 +58,7 @@ use identity::Cells;
 mod requests;
 pub use log::LogSnapshot;
 use log::SessionLog;
-pub use requests::{RequestedSubmission, SequentialState};
+pub use requests::{RequestedSubmission, SequentialPhase, SequentialProgress, SequentialState};
 pub use restore::{
     RestoreError, RestoreProblem, RestoreProblemKind, RestoreReport, RestoredSession, restore,
 };
@@ -152,6 +152,11 @@ pub enum SessionError {
     UnknownNode,
     #[error("this value handle is not a current session output")]
     UnknownValue,
+    #[error("{message}")]
+    ResultRead {
+        kind: crate::storage::ReadFailureKind,
+        message: String,
+    },
     /// Payload-independent authority explanation from the shared access boundary.
     #[error("{0}")]
     AccessDenied(String),
@@ -173,6 +178,40 @@ pub enum SessionError {
     Driver(#[from] DriverError),
 }
 impl SessionError {
+    pub fn read_failure_kind(&self) -> Option<crate::storage::ReadFailureKind> {
+        use crate::storage::ReadFailureKind;
+        Some(match self {
+            Self::ResultRead { kind, .. } => *kind,
+            Self::Capacity => ReadFailureKind::Capacity,
+            Self::Authority | Self::AccessDenied(_) | Self::ScopeEnded => {
+                ReadFailureKind::Forbidden
+            }
+            Self::Stopped | Self::NoStorage => ReadFailureKind::Closed,
+            Self::UnknownValue => ReadFailureKind::Unavailable,
+            Self::Conflict | Self::HistoricalReplyUnavailable => ReadFailureKind::Stale,
+            _ => return None,
+        })
+    }
+    pub fn read_error(&self, operation: &'static str) -> wes_core::ErrorValue {
+        if let Self::ResultRead { kind, message } = self {
+            return kind
+                .runtime_code()
+                .error(format!("{operation}: {message}"), None);
+        }
+        match self.read_failure_kind() {
+            Some(kind) => kind.runtime_code().error(
+                format!(
+                    "{operation}: {self}. {} No provider was replayed.",
+                    kind.guidance()
+                ),
+                None,
+            ),
+            None => crate::runtime::RuntimeCode::ResultReadFailed.error(
+                format!("{operation}: {self}. No provider was replayed."),
+                None,
+            ),
+        }
+    }
     /// Preserve only producer-approved public explanations, never diagnostic subjects.
     fn from_access(error: WorkspaceError) -> Self {
         if let WorkspaceError::Rejected { diagnostics, .. } = error
@@ -185,6 +224,12 @@ impl SessionError {
     pub fn authority_message(&self) -> Option<String> {
         match self {
             Self::Authority | Self::AccessDenied(_) => Some(self.to_string()),
+            Self::ResultRead {
+                kind:
+                    crate::storage::ReadFailureKind::Forbidden
+                    | crate::storage::ReadFailureKind::Withdrawn,
+                ..
+            } => Some(self.to_string()),
             _ => None,
         }
     }
@@ -2593,7 +2638,7 @@ impl Actor {
                 let Some(storage) = self.values.as_ref().map(SessionValues::worker) else {
                     let _ = enter
                         .reply
-                        .send(Err(crate::runtime::RuntimeCode::ResultUnavailable.error(
+                        .send(Err(crate::runtime::RuntimeCode::ResultClosed.error(
                             "Stored input preparation requires the owning storage worker.",
                             None,
                         )));

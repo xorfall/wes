@@ -303,13 +303,8 @@ fn clear_leaf(data: &mut wes_core::Data, path: &[String], text: bool) -> Result<
     )
 }
 pub fn acquisition_error(error: StoreError) -> InvocationError {
-    let code = if matches!(error, StoreError::Limit(_)) {
-        crate::runtime::RuntimeCode::ResultCapacity
-    } else {
-        crate::runtime::RuntimeCode::ResultUnavailable
-    };
-    InvocationError::Failed(code.error(
-        format!("Finite acquisition refused: {error}. No provider was replayed."),
+    InvocationError::Failed(error.read_failure_kind().runtime_code().error(
+        format!("Finite acquisition refused: {error}. Inspect acquisition limits and storage state before any new operation. No provider was replayed."),
         None,
     ))
 }

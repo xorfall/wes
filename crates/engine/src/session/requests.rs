@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::Semaphore;
 mod workflows;
-pub use workflows::SequentialState;
 use workflows::Workflow;
+pub use workflows::{SequentialPhase, SequentialProgress, SequentialState};
 
 pub(super) struct Requests {
     backend: Backend,

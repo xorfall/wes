@@ -362,6 +362,14 @@ fn codec_error(operation: &'static str, error: codec::CodecError) -> StoreError 
         _ => StoreError::backend(operation, error),
     }
 }
+fn stored_decode_error(error: codec::CodecError) -> StoreError {
+    match error {
+        codec::CodecError::Bytes => StoreError::Limit("stored result codec bytes"),
+        codec::CodecError::Work => StoreError::Limit("stored result codec work"),
+        codec::CodecError::Depth => StoreError::Limit("stored result codec depth"),
+        _ => StoreError::Corrupt,
+    }
+}
 // The owned file closes on every path before publication or cleanup. Tests inject short writes
 // and sync failures here without replacing the filesystem abstraction with a mock framework.
 fn write_and_sync<W: Write>(
@@ -481,7 +489,7 @@ impl ValueStore for FileValues {
                     .map(|decoded| LoadedValue {
                         value: decoded.value,
                     })
-                    .map_err(|e| codec_error("decoding a result", e))
+                    .map_err(stored_decode_error)
             })
             .transpose()
     }
@@ -713,7 +721,7 @@ impl ValueStore for TieredValues {
     ) -> Result<Option<wes_engine::storage::StoredSnapshot>, StoreError> {
         if let Some(bytes) = self.memory.encoded(h) {
             let v = codec::decode_value(&bytes, self.live.limits)
-                .map_err(|e| codec_error("describing memory snapshot", e))?
+                .map_err(stored_decode_error)?
                 .value;
             let v =
                 wes_engine::plan::project_value(&v, fields).map_err(|_| StoreError::Conflict)?;
@@ -743,7 +751,7 @@ impl ValueStore for TieredValues {
     ) -> Result<Option<LoadedValue>, StoreError> {
         if let Some(bytes) = self.memory.encoded(h) {
             let v = codec::decode_value(&bytes, self.live.limits)
-                .map_err(|e| codec_error("reading memory selection", e))?
+                .map_err(stored_decode_error)?
                 .value;
             return wes_engine::plan::project_value(&v, f)
                 .map(|value| Some(LoadedValue { value }))
@@ -841,7 +849,7 @@ impl ValueStore for TieredValues {
         if let Some(bytes) = self.memory.encoded(handle) {
             return codec::decode_value(&bytes, self.live.limits)
                 .map(|value| Some(LoadedValue { value: value.value }))
-                .map_err(|e| codec_error("decoding a memory result", e));
+                .map_err(stored_decode_error);
         }
         if let Some(value) = self.temporary.read(handle)? {
             return Ok(Some(value));
