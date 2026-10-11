@@ -22,4 +22,4 @@ pub use continuation::BoundContinuation;
 mod excerpt;
 mod owned;
 pub use excerpt::BoundExcerpt;
-pub(crate) use excerpt::read_source_excerpt;
+pub(crate) use excerpt::{read_source_excerpt, stored_source_excerpt};

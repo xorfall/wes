@@ -61,6 +61,7 @@ pub struct StoredOutput {
     pub retention: Retention,
     pub retained_persistence: crate::history::Persistence,
     pub requires_ownership_record: bool,
+    pub snapshot: Option<super::StoredSnapshot>,
 }
 impl Default for StoreWorkerLimits {
     fn default() -> Self {
@@ -77,12 +78,13 @@ pub struct StoreDrain {
 }
 #[derive(Clone)]
 pub struct StoreWorker {
-    placement: ValuePlacement,
-    scope: Option<TransientScope>,
+    pub(super) residency: super::ResidentMemory,
+    pub(super) placement: ValuePlacement,
+    pub(super) scope: Option<TransientScope>,
     eviction_updates: tokio::sync::watch::Receiver<u64>,
     sender: mpsc::Sender<Request>,
     budget: Arc<Semaphore>,
-    limits: StoreWorkerLimits,
+    pub(super) limits: StoreWorkerLimits,
     dataset_read_charge: Option<u32>,
     dataset_access: tokio::sync::watch::Receiver<super::datasets::DatasetAccess>,
     dataset_changes: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>>,
@@ -163,20 +165,42 @@ trait OwnedStorage {
             .checkpoint(&reference)?
             .ok_or(StoreError::DatasetMissing)?;
         self.validate_checkpoint(&checkpoint, &info.policy, true, false)?;
-        let source = self
+        let handle = ValueHandle::new(&checkpoint.source.handle)?;
+        let snapshot = self
             .values()
-            .read(&ValueHandle::new(&checkpoint.source.handle)?)?
-            .ok_or(StoreError::MissingValue)?
-            .value;
+            .describe(&handle, &checkpoint.source.selection)?
+            .ok_or(StoreError::MissingValue)?;
+        let (source, stored_source) = if matches!(
+            snapshot.shape.clone(),
+            wes_core::Shape::Primitive(wes_core::Primitive::Text | wes_core::Primitive::Bytes)
+        ) {
+            let range = self.values().source_range(&snapshot, 0, 1)?;
+            let data = if range.text {
+                wes_core::Data::Text("".into())
+            } else {
+                wes_core::Data::Bytes(vec![].into())
+            };
+            let source = Value::new(snapshot.shape.clone(), data, snapshot.provenance.clone())
+                .map_err(|_| StoreError::Conflict)?
+                .with_metadata(snapshot.metadata.clone());
+            (source, Some((snapshot, range.extent)))
+        } else {
+            (
+                self.values()
+                    .read_selected(&handle, &checkpoint.source.selection, u64::from(limit) / 2)?
+                    .ok_or(StoreError::MissingValue)?
+                    .value,
+                None,
+            )
+        };
         let source = source.with_provenance(source.provenance().clone().with_policy(&info.policy));
-        value_charge(&source, u64::from(limit) / 2)
-            .ok_or(StoreError::Limit("checkpoint source"))?;
         let status = self.datasets()?.analysis_status(&reference)?;
         Ok(super::datasets::DatasetContinuation {
             status,
             reference,
             checkpoint,
             source,
+            stored_source,
         })
     }
     fn validate_checkpoint(
@@ -196,6 +220,7 @@ struct Owner<V> {
     scope: Option<TransientScope>,
     value_scopes: std::collections::HashMap<ValueHandle, (String, TransientScopeWitness)>,
     retaining: std::collections::HashSet<ValueHandle>,
+    holding: std::collections::HashSet<ValueHandle>,
     deferred_evictions:
         std::collections::BTreeMap<Option<String>, std::collections::VecDeque<ValueHandle>>,
     eviction_updates: tokio::sync::watch::Sender<u64>,
@@ -277,7 +302,6 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         validate_source: bool,
         initial_admission: bool,
     ) -> Result<(), StoreError> {
-        use sha2::{Digest, Sha256};
         if checkpoint.state.provenance().policy().is_private()
             || checkpoint.state.provenance().policy().is_unknown()
             || checkpoint.context.provenance().policy().is_private()
@@ -329,9 +353,19 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         if !self.values.is_kept(&handle)? && !self.owns_transient(&handle) {
             return Err(StoreError::MissingValue);
         }
-        let loaded = self.values.read(&handle)?.ok_or(StoreError::MissingValue)?;
-        let source_policy = loaded.value.provenance().policy();
+        let snapshot = self
+            .describe(&handle, &checkpoint.source.selection)?
+            .ok_or(StoreError::MissingValue)?;
+        let source_policy = snapshot.provenance.policy();
         if let Some(followed) = &checkpoint.followed_source {
+            let loaded = self
+                .values
+                .read_selected(
+                    &handle,
+                    &checkpoint.source.selection,
+                    wes_budgets::get("storage.bytes"),
+                )?
+                .ok_or(StoreError::MissingValue)?;
             let wes_core::Data::Dataset(initial) = loaded.value.data() else {
                 return Err(StoreError::Conflict);
             };
@@ -363,12 +397,8 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         {
             return Err(StoreError::Restricted);
         }
-        let bytes = self
-            .values
-            .encoded(&handle)?
-            .ok_or(StoreError::MissingValue)?;
-        if bytes.len() as u64 != checkpoint.source.bytes
-            || format!("sha256:{:x}", Sha256::digest(&bytes)) != checkpoint.source.digest
+        if self.values.size(&handle)? != Some(checkpoint.source.bytes)
+            || self.values.digest(&handle)?.as_ref() != Some(&checkpoint.source.digest)
         {
             return Err(StoreError::Conflict);
         }
@@ -488,6 +518,7 @@ fn spawn_owner(
                     scope: None,
                     value_scopes: Default::default(),
                     retaining: Default::default(),
+                    holding: Default::default(),
                     deferred_evictions: Default::default(),
                     eviction_updates: eviction_updates_tx,
                 },
@@ -498,6 +529,10 @@ fn spawn_owner(
         .map_err(|error| StoreError::backend("starting the storage worker", error))?;
     Ok((
         StoreWorker {
+            residency: super::ResidentMemory::new(
+                wes_budgets::get("storage.resident.bytes"),
+                wes_budgets::get("value_size.nodes") as usize,
+            ),
             placement: ValuePlacement::ManagedFile,
             scope: None,
             eviction_updates,
@@ -533,7 +568,7 @@ impl StoreWorker {
         }
         let mut worker = self.clone();
         worker.scope = Some(TransientScope::new());
-        worker.placement = ValuePlacement::Memory;
+        worker.placement = ValuePlacement::MemoryAndDisk;
         Ok(worker)
     }
     pub fn transient_identity(&self) -> Option<&str> {
@@ -556,6 +591,14 @@ impl StoreWorker {
     /// A host-captured publication placement; retention and authority remain independent.
     pub fn with_placement(mut self, placement: ValuePlacement) -> Self {
         self.placement = placement;
+        self
+    }
+    pub fn resident_memory(&self) -> &super::ResidentMemory {
+        &self.residency
+    }
+    /// Embedding/test admission, configured before the worker is shared with a session.
+    pub fn with_resident_memory(mut self, residency: super::ResidentMemory) -> Self {
+        self.residency = residency;
         self
     }
     pub(crate) fn dataset_changes(
@@ -605,6 +648,7 @@ impl StoreWorker {
                     retention: store.retention(&handle)?,
                     retained_persistence: store.retained_persistence(),
                     requires_ownership_record: store.requires_ownership_record(&handle)?,
+                    snapshot: None,
                 })
             };
             finish().map_err(|source| StoreError::Published {
@@ -674,55 +718,76 @@ impl StoreWorker {
             cost
         };
         let placement = self.placement;
-        self.request(cost, move |store| {
-            let handle = store.store_with_placement(&value, placement)?;
-            let mut finish = || -> Result<StoredOutput, StoreError> {
-                let bytes = store.size(&handle)?.ok_or(StoreError::MissingValue)?;
-                let kept = match policy {
-                    PublicationPolicy::Protected => {
-                        if !store.keep_with_reason(&handle, Retention::Protected)? {
-                            return Err(StoreError::RetentionUnavailable);
+        let result = self
+            .request(cost, move |store| {
+                let handle = store.store_with_placement(&value, placement)?;
+                let mut finish = || -> Result<StoredOutput, StoreError> {
+                    let bytes = store.size(&handle)?.ok_or(StoreError::MissingValue)?;
+                    let kept = match policy {
+                        PublicationPolicy::Protected => {
+                            if !store.keep_with_reason(&handle, Retention::Protected)? {
+                                return Err(StoreError::RetentionUnavailable);
+                            }
+                            true
                         }
-                        true
-                    }
-                    PublicationPolicy::AutomaticUpToBytes(limit)
-                        if value.data().is_storable_snapshot()
-                            && !value.provenance().policy().is_private()
-                            && store.automatic_retention_allowed(&handle)?
-                            && store
-                                .retention_size(&handle)?
-                                .is_some_and(|bytes| bytes <= limit) =>
-                    {
-                        if !store.keep_with_reason(&handle, Retention::Automatic)? {
-                            return Err(StoreError::RetentionUnavailable);
+                        PublicationPolicy::AutomaticUpToBytes(limit)
+                            if value.data().is_storable_snapshot()
+                                && !value.provenance().policy().is_private()
+                                && store.automatic_retention_allowed(&handle)?
+                                && store
+                                    .retention_size(&handle)?
+                                    .is_some_and(|bytes| bytes <= limit) =>
+                        {
+                            if !store.keep_with_reason(&handle, Retention::Automatic)? {
+                                return Err(StoreError::RetentionUnavailable);
+                            }
+                            true
                         }
-                        true
-                    }
-                    _ => false,
+                        _ => false,
+                    };
+                    Ok(StoredOutput {
+                        handle: handle.clone(),
+                        bytes,
+                        kept,
+                        retention: store.retention(&handle)?,
+                        retained_persistence: if kept {
+                            store.retained_persistence()
+                        } else {
+                            crate::history::Persistence::Volatile
+                        },
+                        requires_ownership_record: store.requires_ownership_record(&handle)?,
+                        snapshot: if value.shape().contains_meta()
+                            || value.provenance().policy().is_private()
+                            || value.provenance().policy().is_unknown()
+                            || !value.data().is_storable_snapshot()
+                        {
+                            None
+                        } else {
+                            store.digest(&handle)?.and_then(|digest| {
+                                super::StoredSnapshot::capture(handle.clone(), digest, &value)
+                            })
+                        },
+                    })
                 };
-                Ok(StoredOutput {
-                    handle: handle.clone(),
-                    bytes,
-                    kept,
-                    retention: store.retention(&handle)?,
-                    retained_persistence: if kept {
-                        store.retained_persistence()
-                    } else {
-                        crate::history::Persistence::Volatile
-                    },
-                    requires_ownership_record: store.requires_ownership_record(&handle)?,
+                finish().map_err(|source| StoreError::Published {
+                    handle,
+                    source: Box::new(source),
                 })
-            };
-            finish().map_err(|source| StoreError::Published {
-                handle,
-                source: Box::new(source),
             })
-        })
-        .await?
-        .wait()
-        .await
+            .await?
+            .wait()
+            .await?;
+        if let Some(snapshot) = &result.snapshot {
+            self.residency
+                .admit_snapshot(snapshot)
+                .map_err(|source| StoreError::Published {
+                    handle: result.handle.clone(),
+                    source: Box::new(source),
+                })?;
+        }
+        Ok(result)
     }
-    async fn request<T: Send + 'static>(
+    pub(super) async fn request<T: Send + 'static>(
         &self,
         cost: u32,
         work: impl FnOnce(&mut dyn ValueStore) -> Result<T, StoreError> + Send + 'static,
@@ -1022,19 +1087,36 @@ impl StoreWorker {
         let limit = self.limits.bytes.get();
         self.request_owner(limit, move |owner| {
             let captured = owner.captured_analysis(&run, limit)?;
-            let value = crate::scan::read_source_excerpt(
-                owner.datasets()?,
-                &captured.source,
-                &captured.checkpoint,
-                from,
-                rows_or_bytes,
-            )?;
+            let value = if let Some((snapshot, _)) = &captured.stored_source {
+                if !(1..=super::CHUNK_BYTES).contains(&rows_or_bytes) {
+                    return Err(StoreError::SourceRange("limit must be from 1 to 65536"));
+                }
+                let range = owner.values().source_range(snapshot, from, rows_or_bytes)?;
+                crate::scan::stored_source_excerpt(
+                    &captured.source,
+                    &captured.checkpoint,
+                    from,
+                    range,
+                )?
+            } else {
+                crate::scan::read_source_excerpt(
+                    owner.datasets()?,
+                    &captured.source,
+                    &captured.checkpoint,
+                    from,
+                    rows_or_bytes,
+                )?
+            };
             owner.datasets()?.inspect(&captured.reference)?;
-            if !owner.validate_read(
-                &ValueHandle::new(&captured.checkpoint.source.handle)?,
-                &captured.source,
-            )? {
-                return Err(StoreError::MissingValue);
+            let current = owner
+                .values()
+                .describe(
+                    &ValueHandle::new(&captured.checkpoint.source.handle)?,
+                    &captured.checkpoint.source.selection,
+                )?
+                .ok_or(StoreError::MissingValue)?;
+            if current.digest != captured.checkpoint.source.digest {
+                return Err(StoreError::Conflict);
             }
             Ok(value)
         })
@@ -1091,6 +1173,17 @@ impl StoreWorker {
         let mut cost = self
             .dataset_read_charge
             .ok_or(StoreError::DatasetUnavailable)? as u64;
+        if checkpoint.is_some() {
+            // Source validation completes before the Dataset transaction starts. Their scratch
+            // peaks share this serial operation's credit; retained checkpoint/row payloads below
+            // stay charged throughout. Physical source bytes are never materialized here.
+            // Encoded source size alone is not a decoded contract/index allocation bound.
+            // Reserve the capped metadata working set even for a short leaf in a large Record.
+            let metadata = wes_budgets::get("storage.acquisition.metadata.bytes")
+                .saturating_mul(16)
+                .saturating_add(super::CHUNK_BYTES as u64 * 2);
+            cost = cost.max(metadata);
+        }
         for row in rows {
             cost = cost
                 .checked_add(
@@ -1129,16 +1222,6 @@ impl StoreWorker {
                     )
                     .ok_or(StoreError::Limit("checkpoint payload"))?;
             }
-            // Raw source validation belongs to this job, including its retained encoding.
-            cost = cost
-                .checked_add(
-                    checkpoint
-                        .source
-                        .bytes
-                        .checked_mul(4)
-                        .ok_or(StoreError::Limit("checkpoint source"))?,
-                )
-                .ok_or(StoreError::Limit("checkpoint source"))?;
         }
         u32::try_from(cost)
             .ok()
@@ -1175,6 +1258,7 @@ impl StoreWorker {
                     handle: handle.to_string(),
                     digest: format!("sha256:{:x}", Sha256::digest(&bytes)),
                     bytes: bytes.len() as u64,
+                    selection: vec![],
                 })
             };
             finish(store).map_err(|source| StoreError::Published {
@@ -1263,17 +1347,54 @@ impl StoreWorker {
     pub async fn store(&self, value: Value) -> Result<ValueHandle, StoreError> {
         self.enqueue_store(value).await?.wait().await
     }
-    /// Unknown response size reserves the full byte allowance until its receipt is consumed. The
-    /// leaf codec/store must also bound its own I/O/allocation; this checks the returned value too.
+    /// Unknown response size reserves the full working allowance until its receipt is consumed.
+    /// The backend bounds its decode; register the resulting ownership before delivering it.
+    /// Frozen consumer inputs use `materialize` and its snapshot reservation instead.
     pub async fn read(&self, handle: ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
         let limit = self.limits.bytes.get();
+        let residency = self.residency.clone();
         self.request(limit, move |store| {
             let result = store.read(&handle)?;
             if let Some(loaded) = &result {
                 value_charge(&loaded.value, limit.into())
                     .ok_or(StoreError::Limit("read response"))?;
+                residency.admit(&loaded.value)?;
             }
             Ok(result)
+        })
+        .await?
+        .wait()
+        .await
+    }
+    /// A read tied to one immutable snapshot. Permission, digest and full captured contract are
+    /// checked on the shared owner, with decoded memory reserved before the read.
+    pub async fn materialize(
+        &self,
+        snapshot: super::StoredSnapshot,
+    ) -> Result<(LoadedValue, ValueLease), StoreError> {
+        self.residency.admit_snapshot(&snapshot)?;
+        let reservation = self.residency.reserve(snapshot.charge)?;
+        let limit = self.limits.bytes.get();
+        if snapshot.charge > u64::from(limit) {
+            return Err(StoreError::Limit("materialized input"));
+        }
+        self.request(limit, move |store| {
+            let hold = store
+                .hold(&snapshot.handle)?
+                .ok_or(StoreError::MissingValue)?;
+            if store.digest(&snapshot.handle)?.as_deref() != Some(&snapshot.digest) {
+                return Err(StoreError::Conflict);
+            }
+            let loaded = store
+                .read_selected(&snapshot.handle, &snapshot.selection, snapshot.charge)?
+                .ok_or(StoreError::MissingValue)?;
+            if !snapshot.matches(&loaded.value)
+                || value_charge(&loaded.value, snapshot.charge).is_none()
+            {
+                return Err(StoreError::Conflict);
+            }
+            reservation.finish(&loaded.value)?;
+            Ok((loaded, hold))
         })
         .await?
         .wait()
@@ -1337,6 +1458,12 @@ impl StoreWorker {
         .wait()
         .await
     }
+    pub async fn digest(&self, handle: ValueHandle) -> Result<Option<String>, StoreError> {
+        self.request(1024, move |store| store.digest(&handle))
+            .await?
+            .wait()
+            .await
+    }
     pub async fn size(&self, handle: ValueHandle) -> Result<Option<u64>, StoreError> {
         self.request(256, move |store| store.size(&handle))
             .await?
@@ -1348,6 +1475,49 @@ impl StoreWorker {
             .await?
             .wait()
             .await
+    }
+    /// Admit every exact consumer source in one serialized owner operation before any payload
+    /// read. A failed member drops partial leases; a storage token does not grant new authority.
+    pub(crate) async fn hold_snapshots(
+        &self,
+        snapshots: Vec<super::StoredSnapshot>,
+    ) -> Result<Vec<ValueLease>, StoreError> {
+        if snapshots.len() > wes_budgets::get("values.outputs") as usize
+            || snapshots
+                .iter()
+                .fold(1024u64, |n, s| n.saturating_add(s.metadata_charge()))
+                .saturating_add(snapshots.len() as u64 * 1024)
+                > u64::from(self.limits.bytes.get())
+        {
+            return Err(StoreError::Limit("input source holds"));
+        }
+        self.request(self.limits.bytes.get(), move |store| {
+            let mut held = std::collections::BTreeSet::new();
+            let mut leases = Vec::new();
+            for snapshot in snapshots {
+                let current = store
+                    .describe(&snapshot.handle, &snapshot.selection)?
+                    .ok_or(StoreError::MissingValue)?;
+                if current.digest != snapshot.digest
+                    || current.shape != snapshot.shape
+                    || current.provenance != snapshot.provenance
+                    || current.metadata != snapshot.metadata
+                {
+                    return Err(StoreError::Conflict);
+                }
+                if held.insert(snapshot.handle.clone()) {
+                    leases.push(
+                        store
+                            .hold(&snapshot.handle)?
+                            .ok_or(StoreError::MissingValue)?,
+                    );
+                }
+            }
+            Ok(leases)
+        })
+        .await?
+        .wait()
+        .await
     }
     /// Reserve all selected immutable copies on the one storage owner before a
     /// multi-result Keep is admitted. Partial reservation is dropped on refusal.

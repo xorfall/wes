@@ -864,7 +864,7 @@ fn local_services(root: &std::path::Path) -> wes::web::Services {
         )
         .unwrap();
     inventory
-        .add("live", &root.join("live"), "Evictable values", false, 0)
+        .add("live", &root.join("live"), "Evictable values", false, 1)
         .unwrap();
     let mut services = wes::web::Services {
         inventory: Some(inventory),

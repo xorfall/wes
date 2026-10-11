@@ -69,21 +69,24 @@ impl RetentionPolicy {
 }
 #[derive(Clone, Debug)]
 pub enum ValuePublication {
-    Pending { run: RunId },
+    Pending {
+        run: RunId,
+        handle: Option<ValueHandle>,
+    },
     Complete(PublishedValue),
     Recovered(RecoveredValue),
 }
 impl ValuePublication {
     pub fn run(&self) -> &RunId {
         match self {
-            Self::Pending { run } => run,
+            Self::Pending { run, .. } => run,
             Self::Complete(value) => &value.run,
             Self::Recovered(value) => &value.run,
         }
     }
     pub fn handle(&self) -> Option<&ValueHandle> {
         match self {
-            Self::Pending { .. } => None,
+            Self::Pending { handle, .. } => handle.as_ref(),
             Self::Complete(value) => value
                 .stored
                 .as_ref()
@@ -182,10 +185,12 @@ pub struct ValueSnapshot {
     pub policy: RetentionPolicy,
 }
 struct Publication {
+    _holds: Vec<crate::driver::ExecutionHold>,
     pin: Option<crate::views::PinIntent>,
     node: NodeId,
     run: RunId,
-    value: Value,
+    value: Option<Value>,
+    stored: Option<StoredOutput>,
     charge: u64,
     policy: PublicationPolicy,
     version: Arc<()>,
@@ -251,6 +256,7 @@ pub(super) enum StreamRetention {
     Failed,
 }
 pub(super) struct SessionValues {
+    handoff: Option<(NodeId, RunId, Vec<crate::driver::ExecutionHold>)>,
     pins: IndexMap<NodeId, (RunId, crate::views::PinIntent, u64)>,
     storage: StoreWorker,
     recording: Option<(Recorder, RequiredPersistence)>,
@@ -266,6 +272,17 @@ pub(super) struct SessionValues {
     policy: RetentionPolicy,
 }
 impl SessionValues {
+    pub(super) fn handoff_holds(
+        &mut self,
+        node: NodeId,
+        run: RunId,
+        holds: Vec<crate::driver::ExecutionHold>,
+    ) {
+        self.handoff = Some((node, run, holds));
+    }
+    pub(super) fn clear_handoff(&mut self) {
+        self.handoff = None;
+    }
     pub(super) fn withdraw_nodes(&mut self, nodes: &[NodeId]) {
         let mut changed = false;
         for node in nodes {
@@ -394,6 +411,7 @@ impl SessionValues {
     }
     pub fn new(storage: SessionStorage, mode: &RecordingMode) -> Self {
         Self {
+            handoff: None,
             policy: storage.auto_keep.into(),
             storage: storage.worker,
             recording: match mode {
@@ -573,6 +591,7 @@ impl SessionValues {
                 run: Some(last.run.clone()),
                 state: NodeState::Ready,
                 value: Some(last.value.clone()),
+                stored: None,
                 error: None,
                 evidence: None,
             };
@@ -598,6 +617,79 @@ impl SessionValues {
                 }
                 let _ = self.updates.send(());
             }
+            return None;
+        }
+        if let (Some(run), Some(stored)) = (&observation.run, &observation.stored) {
+            if self
+                .outputs
+                .get(&observation.node)
+                .is_some_and(|p| p.run() == run)
+            {
+                return None;
+            }
+            let charge = stored
+                .snapshot
+                .as_ref()
+                .map_or(u64::MAX, |s| s.metadata_charge());
+            if self.outputs.len() >= max_outputs()
+                || self.queued.len() + self.active.len() >= max_pending()
+                || self.bytes.saturating_add(charge) > max_bytes()
+            {
+                return Some(StorageNotice {
+                    context: NoticeContext::Publication {
+                        node: observation.node.clone(),
+                        run: run.clone(),
+                        handle: Some(stored.handle.clone()),
+                    },
+                    error: RuntimeCode::RecordingFailed.error(
+                        "Stored result metadata capacity is full; its execution was not replayed.",
+                        None,
+                    ),
+                });
+            }
+            let version = Arc::new(());
+            self.versions.insert(
+                observation.node.clone(),
+                Version {
+                    live: None,
+                    evidence: false,
+                    private: false,
+                    token: version.clone(),
+                    streaming: false,
+                },
+            );
+            self.outputs.insert(
+                observation.node.clone(),
+                ValuePublication::Pending {
+                    run: run.clone(),
+                    handle: Some(stored.handle.clone()),
+                },
+            );
+            self.bytes += charge;
+            let holds = if self
+                .handoff
+                .as_ref()
+                .is_some_and(|(node, captured, _)| node == &observation.node && captured == run)
+            {
+                self.handoff.take().unwrap().2
+            } else {
+                vec![]
+            };
+            self.queued.push_back(Waiting::Publish(Publication {
+                _holds: holds,
+                pin: None,
+                node: observation.node.clone(),
+                run: run.clone(),
+                value: None,
+                stored: Some(stored.clone()),
+                charge,
+                policy: PublicationPolicy::Temporary,
+                version,
+                streaming: false,
+                previous: None,
+            }));
+            self.pump();
+            let _ = self.updates.send(());
             return None;
         }
         let (Some(run), Some(value)) = (&observation.run, &observation.value) else {
@@ -670,12 +762,17 @@ impl SessionValues {
             self.bytes += charge;
             self.outputs.insert(
                 observation.node.clone(),
-                ValuePublication::Pending { run: run.clone() },
+                ValuePublication::Pending {
+                    run: run.clone(),
+                    handle: None,
+                },
             );
             self.queued.push_back(Waiting::Publish(Publication {
+                _holds: vec![],
                 node: observation.node.clone(),
                 run: run.clone(),
-                value: value.clone(),
+                value: Some(value.clone()),
+                stored: None,
                 charge,
                 policy: if pin.is_some() {
                     PublicationPolicy::Protected
@@ -735,9 +832,10 @@ impl SessionValues {
                     Waiting::Storage(request) => return storage_request(store, recording, request).await,
                     Waiting::Publish(publication) => publication,
                 };
-                let Publication { node, run, value, charge, policy, version, streaming, previous, pin } = waiting;
+                let Publication { node, run, value, stored, charge, policy, version, streaming, previous, pin, _holds } = waiting;
                 let mut recording_failed = false;
-                let result = match store.publish(value, policy).await {
+                let publication=match stored {Some(stored)=>store.acknowledge_acquired(stored).await,None=>store.publish(value.expect("resident publication"),policy).await};
+                let result = match publication {
                     Ok(stored) => {
                         let mut result = PublishedValue { pin: pin.as_ref().map(|_|PinBinding::Pending), run: run.clone(), stored: Some(stored.clone()), journal: None, problem: None, uncertain_handle: None };
                         if stored.kept {
@@ -945,6 +1043,13 @@ impl SessionValues {
                     }
                 }
                 if current {
+                    if !streaming
+                        && result.problem.is_none()
+                        && let Some(snapshot) =
+                            result.stored.as_ref().and_then(|s| s.snapshot.clone())
+                    {
+                        workspace.attach_stored_output(&node, &result.run, snapshot);
+                    }
                     self.outputs
                         .insert(node, ValuePublication::Complete(result));
                 }
@@ -966,6 +1071,23 @@ impl SessionValues {
                     self.outputs.swap_remove(&node);
                     self.versions.swap_remove(&node);
                     effects.extend(workspace.forget_output(&node, Some(&run)));
+                }
+                // A preplaced result can outlive a refused metadata publication. True last-copy
+                // loss still reaches that exact Runtime result rather than leaving a Ready ghost.
+                let orphaned = workspace
+                    .runtime()
+                    .graph()
+                    .nodes()
+                    .filter_map(|n| {
+                        workspace
+                            .runtime()
+                            .stored_output(n.id())
+                            .filter(|s| handles.contains(&s.snapshot.handle))
+                            .map(|s| (n.id().clone(), s.run))
+                    })
+                    .collect::<Vec<_>>();
+                for (node, run) in orphaned {
+                    effects.extend(workspace.forget_output(&node, run.as_ref()));
                 }
                 self.evictions_due = batch.more;
             }

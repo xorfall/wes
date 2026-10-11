@@ -50,6 +50,10 @@ pub struct BoundView {
     captured: Option<Outcome>,
     pub(crate) pipe_input: Option<crate::graph::OutputRef>,
     input_contract: Option<std::sync::Arc<wes_core::contracts::Contract>>,
+    prepared_fields: std::collections::BTreeMap<
+        crate::graph::NodeId,
+        std::collections::BTreeMap<Vec<String>, Value>,
+    >,
     pub(crate) pin: Option<crate::views::PinIntent>,
     pub(crate) origin: Option<crate::runtime::Run>,
     pub(crate) caller: Option<crate::source::SourceInput>,
@@ -57,6 +61,44 @@ pub struct BoundView {
     pub(crate) scope: crate::access::WriteScope,
 }
 impl BoundView {
+    pub(crate) fn prepared_policy(&self) -> wes_core::flow::FlowPolicy {
+        self.prepared_fields
+            .values()
+            .flat_map(|fields| fields.values())
+            .fold(Default::default(), |policy, value| {
+                policy.join(value.provenance().policy())
+            })
+    }
+    pub(crate) fn stored_field_paths(
+        &self,
+        node: &crate::graph::NodeId,
+    ) -> Option<Vec<Vec<String>>> {
+        let mut paths = std::collections::BTreeSet::new();
+        for input in self.task.subjects.iter().chain(self.task.inputs.values()) {
+            input.stored_paths(node, &mut paths);
+        }
+        if paths.is_empty() || paths.contains(&vec![]) {
+            None
+        } else {
+            Some(paths.into_iter().collect())
+        }
+    }
+    pub(crate) fn prepare_fields(
+        &mut self,
+        node: &crate::graph::NodeId,
+        values: &std::collections::BTreeMap<Vec<String>, Value>,
+    ) {
+        self.prepared_fields.insert(node.clone(), values.clone());
+    }
+    pub(crate) fn read_sources(&self) -> Vec<crate::graph::OutputRef> {
+        self.task
+            .subjects
+            .iter()
+            .chain(self.task.inputs.values())
+            .flat_map(Input::dependencies)
+            .cloned()
+            .collect()
+    }
     pub(crate) fn selection_shape(&self, views: &wes_views::Catalogue) -> Option<wes_core::Shape> {
         let package = views.get(self.task.tail.first()?)?;
         crate::selection::selected_shape(package)
@@ -123,6 +165,7 @@ impl BoundView {
             },
             task,
             captured: None,
+            prepared_fields: Default::default(),
             pipe_input: None,
             pin: None,
             caller: None,
@@ -166,8 +209,14 @@ impl BoundView {
         node: &crate::graph::NodeId,
     ) -> Result<Value, EditError> {
         let resolve = |input: &Input| -> Result<Value, EditError> {
+            // Retain the original input reference for View source/run/path lineage below.
+            // Only this execution's copy receives the already prepared field values.
+            let mut prepared = input.clone();
+            for (node, fields) in &self.prepared_fields {
+                prepared.prepare_fields(node, fields);
+            }
             let mut values = indexmap::IndexMap::new();
-            if let Some(output) = input.dependency() {
+            if let Some(output) = prepared.dependency() {
                 let value=match workspace.runtime().output(output){
                     OutputState::Available(value)=>value,
                     _ if output.port==crate::graph::OutputPort::Data=>workspace.runtime().value_of(&output.node).cloned().ok_or("View binding needs a completed value; binding never starts the source")?,
@@ -175,7 +224,7 @@ impl BoundView {
                 };
                 values.insert(output.node.clone(), value);
             }
-            input
+            prepared
                 .resolve(&values)
                 .map(|v| v.into_owned())
                 .map_err(EditError::Input)

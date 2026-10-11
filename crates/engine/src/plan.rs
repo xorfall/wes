@@ -42,6 +42,56 @@ pub enum Input {
     },
 }
 impl Input {
+    pub(crate) fn stored_paths(
+        &self,
+        node: &NodeId,
+        paths: &mut std::collections::BTreeSet<Vec<String>>,
+    ) {
+        match self {
+            Self::FromNode(output) if &output.node == node => {
+                paths.insert(vec![]);
+            }
+            Self::FieldPath { output, fields } if &output.node == node => {
+                paths.insert(fields.clone());
+            }
+            Self::Record(fields) => {
+                for input in fields.values() {
+                    input.stored_paths(node, paths);
+                }
+            }
+            Self::List { items, .. } => {
+                for input in items {
+                    input.stored_paths(node, paths);
+                }
+            }
+            _ => {}
+        }
+    }
+    /// Only the captured execution ticket changes. Graph declarations and producer state stay exact.
+    pub(crate) fn prepare_fields(
+        &mut self,
+        node: &NodeId,
+        values: &std::collections::BTreeMap<Vec<String>, Value>,
+    ) {
+        match self {
+            Self::FieldPath { output, fields } if &output.node == node => {
+                if let Some(value) = values.get(fields) {
+                    *self = Self::Literal(value.clone());
+                }
+            }
+            Self::Record(fields) => {
+                for input in fields.values_mut() {
+                    input.prepare_fields(node, values);
+                }
+            }
+            Self::List { items, .. } => {
+                for input in items {
+                    input.prepare_fields(node, values);
+                }
+            }
+            _ => {}
+        }
+    }
     /// Read only the runtime-selected ticket snapshot, never a mutable current binding or value.
     pub fn resolve<'a>(
         &'a self,

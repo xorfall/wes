@@ -16,6 +16,76 @@ impl<S> PolicyValues<S> {
     }
 }
 impl<S: ValueStore> ValueStore for PolicyValues<S> {
+    fn dependencies(&self, handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+        if self.private.contains_key(handle) {
+            Ok(vec![])
+        } else {
+            self.backing.dependencies(handle)
+        }
+    }
+    fn compose(
+        &mut self,
+        handle: &ValueHandle,
+        members: &[super::SnapshotMember],
+    ) -> Result<super::StoredSnapshot, StoreError> {
+        self.backing.compose(handle, members)
+    }
+    fn begin_acquisition(
+        &mut self,
+        maximum: u64,
+        owner: std::sync::Weak<()>,
+    ) -> Result<ValueHandle, StoreError> {
+        self.backing.begin_acquisition(maximum, owner)
+    }
+    fn append_acquisition(&mut self, h: &ValueHandle, p: &str, b: &[u8]) -> Result<(), StoreError> {
+        self.backing.append_acquisition(h, p, b)
+    }
+    fn seal_acquisition(
+        &mut self,
+        h: &ValueHandle,
+        shell: &Value,
+        leaves: &[LeafSelection],
+    ) -> Result<StoredSnapshot, StoreError> {
+        if shell.provenance().policy().is_private() || shell.provenance().policy().is_unknown() {
+            return Err(StoreError::Restricted);
+        }
+        self.backing.seal_acquisition(h, shell, leaves)
+    }
+    fn abort_acquisition(&mut self, h: &ValueHandle) -> Result<(), StoreError> {
+        self.backing.abort_acquisition(h)
+    }
+    fn describe(
+        &self,
+        h: &ValueHandle,
+        fields: &[String],
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        if self.private.contains_key(h) {
+            return Ok(None);
+        }
+        self.backing.describe(h, fields)
+    }
+    fn read_selected(
+        &self,
+        h: &ValueHandle,
+        fields: &[String],
+        limit: u64,
+    ) -> Result<Option<LoadedValue>, StoreError> {
+        if self.private.contains_key(h) {
+            return Err(StoreError::Restricted);
+        }
+        self.backing.read_selected(h, fields, limit)
+    }
+    fn source_range(
+        &self,
+        s: &StoredSnapshot,
+        from: u64,
+        maximum: usize,
+    ) -> Result<SourceRange, StoreError> {
+        if self.private.contains_key(&s.handle) {
+            return Err(StoreError::Restricted);
+        }
+        self.backing.source_range(s, from, maximum)
+    }
     fn retained_persistence(&self) -> crate::history::Persistence {
         self.backing.retained_persistence()
     }
@@ -88,6 +158,12 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
             Some((_, bytes)) => Ok(Some(*bytes)),
             None => self.backing.size(handle),
         }
+    }
+    fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
+        if self.private.contains_key(handle) {
+            return Err(StoreError::Restricted);
+        }
+        self.backing.digest(handle)
     }
     fn keep(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
         if self.private.contains_key(handle) {

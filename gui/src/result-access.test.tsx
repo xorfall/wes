@@ -268,6 +268,9 @@ describe("Server refusal of a withdrawn handle", () => {
       ["h-flag", refusal(403, "VALUE_ACCESS_WITHDRAWN", "h-flag", true), false],
       ["h-500", { ok: false, status: 500, text: async () => "upstream failure" }, false],
       ["h-500s", refusal(500, "VALUE_READ_FAILED", "h-500s"), false],
+      ["h-capacity", refusal(413, "VALUE_CAPACITY", "h-capacity"), false],
+      ["h-conflict", refusal(409, "VALUE_REVISION_CONFLICT", "h-conflict"), false],
+      ["h-authority", refusal(403, "VALUE_ACCESS_REFUSED", "h-authority"), false],
     ];
     for (const [handle, reply, withdrawn] of cases) {
       const reading = results.read(handle);

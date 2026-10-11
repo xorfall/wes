@@ -253,6 +253,15 @@ impl<T> DependencyGraph<T> {
         node.definition = Arc::new(());
         Ok(std::mem::replace(&mut node.payload, payload))
     }
+    /// Change only internal physical representation of an immutable native input. Callers must
+    /// preserve the authored declaration, result identity and public contract.
+    pub(crate) fn replace_residency(&mut self, id: &NodeId, payload: T) -> Result<T, GraphError> {
+        let node = self
+            .nodes
+            .get_mut(id)
+            .ok_or_else(|| GraphError::Missing(id.clone()))?;
+        Ok(std::mem::replace(&mut node.payload, payload))
+    }
     pub fn dependents_of(&self, id: &NodeId) -> impl Iterator<Item = &NodeId> {
         self.dependents.get(id).into_iter().flatten()
     }

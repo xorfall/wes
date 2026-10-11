@@ -19,7 +19,9 @@ pub use failure::{ErrorId, ErrorValue, InvalidError, ValidationIssue};
 pub use provenance::Provenance;
 pub use shape::{MetaType, Primitive, RecordShape, Shape};
 pub use temporal::{DurationValue, Interval, Timestamp};
-pub use value::{Data, Decimal, DecimalOp, ModelError, NumericError, TimeParts, Value};
+pub use value::{
+    Allocation, AllocationKey, Data, Decimal, DecimalOp, ModelError, NumericError, TimeParts, Value,
+};
 
 mod iteration;
 pub use iteration::{

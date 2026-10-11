@@ -141,6 +141,7 @@ fn coarse_withdrawal_follows_captured_source_roots_and_survives_reopen_without_p
             generation: 1,
             prefixes: vec![b_ref.clone()],
             captures: vec![wes_engine::storage::datasets::CapturedValue {
+                selection: vec![],
                 handle: capture,
                 digest: format!("sha256:{}", "a".repeat(64)),
                 bytes: 100,
@@ -184,6 +185,7 @@ fn acknowledged_deletion_preserves_pending_cleanup_captures_across_reopen() {
     let mut manifest = create(&mut store);
     let cp = checkpoint(&store, &manifest);
     let capture = CapturedValue {
+        selection: vec![],
         handle: cp.bindings.source_handle.clone(),
         digest: cp.bindings.source_digest.clone(),
         bytes: cp.bindings.source_bytes,
@@ -876,7 +878,7 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
                 0
             },
         },
-        version: 4,
+        version: 5,
         followed_source: None,
         store: store.store_id().into(),
         dataset: manifest.dataset.clone(),
@@ -886,6 +888,7 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
         run: uuid::Uuid::new_v4().to_string(),
         transaction: manifest.transaction.clone(),
         bindings: CheckpointBindings {
+            source_selection: vec![],
             task_revision: super::super::checkpoint::digest(b"synthetic-task-r1"),
             source_handle: uuid::Uuid::new_v4().to_string(),
             source_digest: super::super::checkpoint::digest(b"synthetic-input-r1"),
@@ -1694,6 +1697,7 @@ fn checkpoint_output_deletion_releases_the_whole_root_without_stranding_source_p
     let output = store.descriptor(&analysis.dataset).unwrap();
     let identity = uuid::Uuid::new_v4().to_string();
     let capture = CapturedValue {
+        selection: vec![],
         handle: uuid::Uuid::new_v4().to_string(),
         digest: format!("sha256:{}", "a".repeat(64)),
         bytes: 100,
@@ -1782,6 +1786,7 @@ fn tainted_checkpoint_withdraws_its_output_without_revoking_an_independent_retai
             generation: 1,
             prefixes: vec![c.clone(), b.clone()],
             captures: vec![CapturedValue {
+                selection: vec![],
                 handle: capture,
                 digest: format!("sha256:{}", "a".repeat(64)),
                 bytes: 100,

@@ -71,13 +71,13 @@ async fn submit(handle: &SessionHandle, id: &str, source: &str) -> Arc<session::
     handle
         .submit(SourceInput::new(id.into(), source.into()).unwrap())
         .await
-        .unwrap()
+        .unwrap_or_else(|e| panic!("{id}: {e:?}"))
 }
 async fn read(handle: &SessionHandle, reference: &str) -> Data {
     handle
         .read_sandbox_export(reference, false)
         .await
-        .unwrap()
+        .unwrap_or_else(|e| panic!("{reference}: {e:?}"))
         .data
 }
 fn files(directory: &std::path::Path) -> usize {
@@ -909,3 +909,105 @@ async fn an_unacknowledged_final_keep_is_queryable_but_never_claimed_as_saved() 
     worker.shutdown().await.unwrap();
     storage_task.join().await.unwrap();
 }
+
+struct BytesCounter(Arc<AtomicUsize>);
+impl Invoker for BytesCounter {
+    fn invoke(&self, call: Call, _: CancellationToken) -> InvocationFuture {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            let Data::Int(n) = call.arguments["value"].data() else {
+                unreachable!()
+            };
+            Ok(wes_core::Value::new(
+                Shape::Primitive(Primitive::Bytes),
+                Data::Bytes(vec![*n as u8; 6000].into()),
+                Default::default(),
+            )
+            .unwrap())
+        })
+    }
+}
+#[tokio::test]
+async fn decoded_spill_prepares_a_later_consumer_without_changing_the_source_run() {
+    use wes_engine::storage::ResidentMemory;
+    let root = tempfile::tempdir().unwrap();
+    let (worker, storage_task) = spawn_store(
+        TieredValues::open(
+            &root.path().join("live"),
+            &root.path().join("archive"),
+            Limits::default(),
+            Durability::FileAndDirectory,
+            None,
+        )
+        .unwrap(),
+        StoreWorkerLimits::default(),
+    )
+    .unwrap();
+    let worker = worker.with_resident_memory(ResidentMemory::new(20000, 10000));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut base = Workspace::local(LocalScope::new("residency-fixture").unwrap())
+        .with_sandbox_store(Arc::new(Definitions::default()));
+    let mut cap = Capability::new(["bytes"], Shape::Primitive(Primitive::Bytes), Safety::Safe);
+    cap.parameters.push(Parameter::new(
+        "value",
+        Shape::Primitive(Primitive::Int),
+        true,
+    ));
+    base.register_provider(
+        ProviderDescription::new("payload", [cap], vec![]).unwrap(),
+        Arc::new(BytesCounter(calls.clone())),
+    )
+    .unwrap();
+    let (handle, task) = session::spawn_with_storage(
+        base,
+        RecordingMode::Ephemeral,
+        Arc::new(NoFiles),
+        NonZeroUsize::new(2).unwrap(),
+        SessionStorage {
+            worker: worker.clone(),
+            auto_keep: AutoKeep::default(),
+        },
+    )
+    .unwrap();
+    let reply = submit(&handle, "study", ":transient {\npayload bytes value:7 > a\npayload bytes value:8 > b\npayload bytes value:9 > c\n} > study").await;
+    assert!(reply.sandbox.is_some(), "{:?}", reply.diagnostics);
+    let running = handle.read_sandbox_export("study", false).await.unwrap();
+    let scope = running.scope.clone().unwrap();
+    drop(running);
+    let (child, _) = handle.resolve_read_scope(&scope).await.unwrap();
+    child.wait_idle().await.unwrap();
+    let before = child.snapshot().await.unwrap();
+    let a = before.names["a"].node.clone();
+    let run = before.execution.runs[&a].clone();
+    assert!(before.execution.stored_values.contains_key(&a));
+    assert!(
+        !before.execution.values.contains_key(&a),
+        "the decoded payload must actually leave Runtime"
+    );
+    drop(before);
+    submit(&child, "reuse", ":calc pure { return $a; } > reused").await;
+    child.wait_idle().await.unwrap();
+    let after = child.snapshot().await.unwrap();
+    assert_eq!(after.execution.runs[&a], run);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(
+        !after
+            .execution
+            .errors
+            .contains_key(&after.names["reused"].node),
+        "{:?}",
+        after.execution.errors
+    );
+    drop(after);
+    assert_eq!(
+        read(&handle, "study.a").await,
+        Data::Bytes(vec![7; 6000].into())
+    );
+    handle.shutdown().await.unwrap();
+    task.join().await.unwrap();
+    worker.shutdown().await.unwrap();
+    storage_task.join().await.unwrap();
+}
+
+#[path = "transient_session/bounded.rs"]
+mod bounded;

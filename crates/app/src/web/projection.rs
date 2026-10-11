@@ -545,16 +545,22 @@ pub(super) fn build(
                 )),
                 _ => None,
             };
-            if let Some((handle, bytes, kept, retention)) = stored
-                && let Some(value) = stopped
+            if let Some((handle, bytes, kept, retention)) = stored {
+                if let Some(value) = stopped
                     .map(|last| &last.value)
                     .or_else(|| execution.values.get(node.id()))
-            {
-                state = if value.provenance().policy().is_private() {
-                    json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":{}, "cautions":["Private · memory only · unavailable after restart"], "kept":false,"private":true})
-                } else {
-                    json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":value.provenance().facts(), "cautions":value.provenance().cautions(), "kept":kept,"retention":retention,"private":false})
-                };
+                {
+                    state = if value.provenance().policy().is_private() {
+                        json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":{}, "cautions":["Private · memory only · unavailable after restart"], "kept":false,"private":true})
+                    } else {
+                        json!({"event":"ready", "node":id, "type":display_type(value), "handle":handle, "bytes":bytes, "provenance":value.provenance().facts(), "cautions":value.provenance().cautions(), "kept":kept,"retention":retention,"private":false})
+                    };
+                } else if let Some(captured) = execution.stored_values.get(node.id())
+                    && captured.snapshot.handle.as_str() == handle
+                {
+                    let snapshot = &captured.snapshot;
+                    state = json!({"event":"ready", "node":id, "type":snapshot.shape.to_string(), "handle":handle, "bytes":bytes, "provenance":snapshot.provenance.facts(), "cautions":snapshot.provenance.cautions(), "kept":kept,"retention":retention,"private":false});
+                }
             }
             if let Some(last) = stopped {
                 // Historical visibility never overwrites the engine's terminal graph state.
@@ -1202,7 +1208,10 @@ mod tests {
             storage::{StoredOutput, ValueHandle},
         };
         let run = RunId::new("current").unwrap();
-        let pending = publication(Some(&ValuePublication::Pending { run: run.clone() }));
+        let pending = publication(Some(&ValuePublication::Pending {
+            run: run.clone(),
+            handle: None,
+        }));
         assert_eq!(pending["state"], "pending");
         assert_eq!(pending["run"], "current");
         assert!(pending["handle"].is_null());
@@ -1225,6 +1234,7 @@ mod tests {
         assert_eq!(failed["problem"], error(&problem));
         let acknowledged = ValueHandle::fresh();
         value.stored = Some(StoredOutput {
+            snapshot: None,
             handle: acknowledged.clone(),
             bytes: 1,
             kept: true,

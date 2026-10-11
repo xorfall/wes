@@ -10,6 +10,7 @@ impl Workspace {
         &mut self,
         saved: SavedSelection,
         values: BTreeMap<String, wes_core::Value>,
+        stored: Option<crate::storage::StoredSnapshot>,
     ) -> Result<(), WorkspaceError> {
         saved
             .validate()
@@ -25,7 +26,10 @@ impl Workspace {
         if self.saved_selections.len() >= wes_budgets::get("values.outputs") as usize {
             return Err(WorkspaceError::UnsafeObservation);
         }
-        if let Some(value) =
+        if values.len() != saved.members.iter().filter(|m| m.payload.is_some()).count() {
+            let snapshot = stored.ok_or(WorkspaceError::UnsafeObservation)?;
+            self.install_stored_saved_alias(&saved, snapshot)?;
+        } else if let Some(value) =
             alias_value(&saved, &values).map_err(|_| WorkspaceError::UnsafeObservation)?
         {
             if Some(value.shape()) != saved.alias_shape.as_ref() {
@@ -34,6 +38,42 @@ impl Workspace {
             self.install_saved_alias(&saved, Some(value), false)?;
         }
         self.saved_selections.push(saved);
+        Ok(())
+    }
+    pub(crate) fn install_stored_saved_alias(
+        &mut self,
+        saved: &SavedSelection,
+        snapshot: crate::storage::StoredSnapshot,
+    ) -> Result<(), WorkspaceError> {
+        if saved.alias_shape.as_ref() != Some(&snapshot.shape) {
+            return Err(WorkspaceError::UnsafeObservation);
+        }
+        let id = alias_id(saved);
+        let typing = Arc::new(wes_core::capability::Typing {
+            shape: snapshot.shape.clone(),
+            provenance: snapshot.provenance.clone(),
+        });
+        self.runtime.restore(
+            id.clone(),
+            BoundTask::SavedInput(saved.clone()),
+            [],
+            crate::runtime::ExecutionTraits {
+                pure: false,
+                repeatable: true,
+                bounded: true,
+            },
+            crate::runtime::RestoredState::ReadyStored(snapshot),
+            Some(crate::runtime::RunId::new(format!("saved:{}", saved.id)).expect("saved id")),
+        )?;
+        self.predictions.insert(id.clone(), typing);
+        self.bindings
+            .bind(
+                &saved.name,
+                crate::graph::OutputRef::data(id.clone()),
+                self.runtime.graph(),
+            )
+            .map_err(|_| WorkspaceError::UnsafeObservation)?;
+        self.native_inputs.insert(id);
         Ok(())
     }
     pub(crate) fn install_saved_alias(

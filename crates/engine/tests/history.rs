@@ -169,6 +169,7 @@ fn observation_validation_preserves_error_identity_and_excludes_payloads() {
             .is_err()
         );
         let observation = Observation {
+            stored: None,
             revision: 0,
             stale_reason: None,
             delivery: None,

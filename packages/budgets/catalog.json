@@ -902,6 +902,50 @@
     "source": "crates/engine/src/storage/worker.rs"
   },
   {
+    "id": "storage.acquisition.bytes",
+    "label": "Finite acquisition bytes",
+    "description": "Total finite input admitted by a bounded acquisition adapter; temporary disk quota independently applies.",
+    "group": "Values and storage",
+    "unit": "bytes",
+    "default": 1073741824,
+    "min": 1024,
+    "max": 17179869184,
+    "source": "crates/adapters/src/storage/segmented.rs"
+  },
+  {
+    "id": "storage.acquisition.metadata.bytes",
+    "label": "Acquisition metadata and buffers",
+    "description": "Shared unpublished acquisition indices and fixed buffers, and maximum immutable snapshot manifest. Not process RSS.",
+    "group": "Values and storage",
+    "unit": "bytes",
+    "default": 16777216,
+    "min": 65536,
+    "max": 67108864,
+    "source": "crates/adapters/src/storage/segmented.rs"
+  },
+  {
+    "id": "storage.resident.bytes",
+    "label": "Decoded result memory",
+    "description": "Conservative shared live allocation and materialization reservations; includes externally held snapshots. Not process RSS.",
+    "group": "Values and storage",
+    "unit": "bytes",
+    "default": 67108864,
+    "min": 1024,
+    "max": 536870912,
+    "source": "crates/engine/src/storage/residency.rs"
+  },
+  {
+    "id": "storage.temporary.files",
+    "label": "Temporary result files",
+    "description": "Maximum owned temporary result payload files across workspaces. Archive values are separate.",
+    "group": "Values and storage",
+    "unit": "count",
+    "default": 10000,
+    "min": 1,
+    "max": 80000,
+    "source": "crates/adapters/src/storage.rs"
+  },
+  {
     "id": "journal.pending",
     "label": "Journal writer records",
     "description": "Maximum queued writer records.",

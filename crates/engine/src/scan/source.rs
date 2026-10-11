@@ -23,6 +23,7 @@ pub enum SourcePoll {
     Renew,
     Pending,
     ReadPage,
+    ReadRange,
     ReadHead,
     Incomplete,
     End,
@@ -88,6 +89,7 @@ pub struct CapturedSource {
     /// Admission evidence stays frozen while the read cursor advances committed heads.
     /// Only Dataset descriptors need a second copy; finite inline sources retain one tree.
     admitted: Option<Value>,
+    stored: Option<StoredCursor>,
     value: Value,
     framer: Option<Framer>,
     position: usize,
@@ -106,7 +108,91 @@ enum FollowEnd {
     Natural,
     Incomplete,
 }
+struct StoredCursor {
+    snapshot: crate::storage::StoredSnapshot,
+    chunk: Vec<u8>,
+    start: usize,
+}
 impl CapturedSource {
+    pub(super) fn attach_stored(
+        &mut self,
+        snapshot: crate::storage::StoredSnapshot,
+        extent: u64,
+        span: Span,
+    ) -> Result<(), Failure> {
+        if extent > i64::MAX as u64
+            || self.framer.is_none()
+            || self.position != 0
+            || (snapshot.shape != *self.value.shape()
+                || snapshot.metadata.as_ref() != self.value.metadata()
+                || self
+                    .value
+                    .provenance()
+                    .policy()
+                    .join(snapshot.provenance.policy())
+                    != *self.value.provenance().policy())
+        {
+            return Err(Failure::new(
+                "CAL004",
+                span,
+                "stored scan source does not match its captured contract",
+            ));
+        }
+        self.total = extent;
+        self.stored = Some(StoredCursor {
+            snapshot,
+            chunk: vec![],
+            start: 0,
+        });
+        Ok(())
+    }
+    pub(super) fn stored_snapshot(&self) -> Option<&crate::storage::StoredSnapshot> {
+        self.stored.as_ref().map(|s| &s.snapshot)
+    }
+    pub(super) fn range_request(
+        &self,
+        maximum: usize,
+        span: Span,
+    ) -> Result<(crate::storage::StoredSnapshot, u64, usize), Failure> {
+        let stored = self
+            .stored
+            .as_ref()
+            .ok_or_else(|| Failure::new("CAL004", span, "scan has no stored byte source"))?;
+        Ok((
+            stored.snapshot.clone(),
+            self.position as u64,
+            maximum.min(crate::storage::CHUNK_BYTES),
+        ))
+    }
+    pub(super) fn acknowledge_range(
+        &mut self,
+        from: u64,
+        range: crate::storage::SourceRange,
+        maximum: usize,
+        span: Span,
+    ) -> Result<(), Failure> {
+        let stored = self
+            .stored
+            .as_mut()
+            .ok_or_else(|| Failure::new("CAL004", span, "scan has no stored source"))?;
+        let text = matches!(stored.snapshot.shape, Shape::Primitive(Primitive::Text));
+        if from != self.position as u64
+            || range.extent != self.total
+            || range.text != text
+            || range.bytes.len() > maximum
+            || range.bytes.is_empty() && from < self.total
+        {
+            return Err(Failure::new(
+                "CAL004",
+                span,
+                "stored range does not match its exact source and cursor",
+            ));
+        }
+        stored.start = self.position;
+        stored.chunk = range.bytes;
+        Ok(())
+    }
+
     pub(super) fn value(&self) -> &Value {
         self.admitted.as_ref().unwrap_or(&self.value)
     }
@@ -181,6 +267,7 @@ impl CapturedSource {
             .map_err(|error| framing_failure(error, span).failure)?;
         Ok(Self {
             admitted: None,
+            stored: None,
             value,
             framer,
             position: 0,
@@ -329,6 +416,10 @@ impl CapturedSource {
                 return Err(invalid());
             }
             self.ordinal = usize::try_from(ordinal).map_err(|_| invalid())?;
+        }
+        if let Some(stored) = &mut self.stored {
+            stored.chunk.clear();
+            stored.start = self.position;
         }
         self.ended = false;
         self.pending_frame = None;
@@ -578,17 +669,31 @@ impl CapturedSource {
                 input_charge,
             });
         };
-        let bytes = match self.value.data() {
-            Data::Text(text) => text.as_bytes(),
-            Data::Bytes(bytes) => bytes.as_ref(),
-            _ => unreachable!("captured byte source"),
+        let (bytes, offset) = if let Some(stored) = &self.stored {
+            if self.pending_frame.is_none()
+                && self.position < self.total as usize
+                && self.position >= stored.start + stored.chunk.len()
+            {
+                return Ok(SourcePoll::ReadRange);
+            }
+            (stored.chunk.as_slice(), stored.start)
+        } else {
+            (
+                match self.value.data() {
+                    Data::Text(t) => t.as_bytes(),
+                    Data::Bytes(b) => b.as_ref(),
+                    _ => unreachable!("captured byte source"),
+                },
+                0,
+            )
         };
+        let relative = self.position - offset;
         let row = if let Some(row) = self.pending_frame.take() {
             Some(row)
-        } else if self.position < bytes.len() {
-            let end = self.position + block.min(bytes.len() - self.position);
+        } else if self.position < self.total as usize {
+            let end = relative + block.min(bytes.len() - relative);
             let pull = framer
-                .pull_frame_scheduled(&bytes[self.position..end], |amount| {
+                .pull_frame_scheduled(&bytes[relative..end], |amount| {
                     if token.is_cancelled() {
                         return Err(Admission::Cancelled);
                     }

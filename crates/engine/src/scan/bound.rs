@@ -22,6 +22,7 @@ use wes_language::{Diagnostic, Span, templates::Templates, vocabulary::scan};
 #[derive(Clone)]
 pub struct BoundScan {
     source: Input,
+    stored_source: Option<crate::storage::StoredSnapshot>,
     initial: Input,
     context: Input,
     step: Transition,
@@ -47,6 +48,42 @@ impl std::fmt::Debug for BoundScan {
     }
 }
 impl BoundScan {
+    pub(crate) fn defer_source(
+        &mut self,
+        node: &crate::graph::NodeId,
+        snapshot: &crate::storage::StoredSnapshot,
+    ) -> bool {
+        if self.live
+            || self.source.dependency().is_none_or(|r| &r.node != node)
+            || self
+                .initial
+                .dependencies()
+                .iter()
+                .chain(self.context.dependencies().iter())
+                .any(|r| &r.node == node)
+        {
+            return false;
+        }
+        let fields = match &self.source {
+            Input::FieldPath { fields, .. } => fields.clone(),
+            _ => vec![],
+        };
+        if !matches!(
+            crate::plan::field_shape(&snapshot.shape, &fields),
+            Some(Shape::Primitive(
+                wes_core::Primitive::Text | wes_core::Primitive::Bytes
+            ))
+        ) || self.framing.is_none()
+        {
+            return false;
+        }
+        self.stored_source = Some(snapshot.clone());
+        true
+    }
+    pub(crate) fn stored_source_for(&self, node: &crate::graph::NodeId) -> bool {
+        self.stored_source.is_some() && self.source.dependency().is_some_and(|r| &r.node == node)
+    }
+
     pub(crate) fn durable(&self) -> bool {
         self.durable_sink
     }
@@ -254,6 +291,7 @@ impl BoundScan {
         let profile_revision = profile_digest(profile, framing.as_ref());
         Ok(Self {
             source: required("source")?,
+            stored_source: None,
             initial: required("initial")?,
             context: required("context")?,
             step,
@@ -291,7 +329,9 @@ impl BoundScan {
             .into_iter()
             .flat_map(Input::literal_values)
             .fold(
-                Default::default(),
+                self.stored_source
+                    .as_ref()
+                    .map_or_else(Default::default, |s| s.provenance.policy().clone()),
                 |policy: wes_core::flow::FlowPolicy, value| {
                     policy.join(value.provenance().policy())
                 },
@@ -318,6 +358,38 @@ impl BoundScan {
                 ))
                 .into();
             }
+            let stored = if let Some(root) = self.stored_source.clone() {
+                let Some(worker) = storage.as_ref() else {
+                    return failed(Failure::new(
+                        "CAL004",
+                        span,
+                        "stored scan source requires its owner",
+                    ))
+                    .into();
+                };
+                let mut fields = root.selection.clone();
+                if let Input::FieldPath { fields: path, .. } = &self.source {
+                    fields.extend_from_slice(path);
+                }
+                let result = async {
+                    let snapshot = worker
+                        .describe(root.handle.clone(), fields)
+                        .await?
+                        .ok_or(crate::storage::StoreError::MissingValue)?;
+                    if snapshot.digest != root.digest {
+                        return Err(crate::storage::StoreError::Conflict);
+                    }
+                    let range = worker.source_range(snapshot.clone(), 0, 1).await?;
+                    Ok::<_, crate::storage::StoreError>((snapshot, range.extent))
+                }
+                .await;
+                match result {
+                    Ok(stored) => Some(stored),
+                    Err(e) => return failed(Failure::new("CAL004", span, e.to_string())).into(),
+                }
+            } else {
+                None
+            };
             let cancel = token.clone();
             let initialized=tokio::task::spawn_blocking(move || {
                 if cancel.is_cancelled() {return Err(Failure::cancelled(span));}
@@ -328,7 +400,7 @@ impl BoundScan {
                     .map_err(|error|Failure::new("CAL006",span,format!("scan {} admission refused ({})",error.dimension.name(),error.limit)))?;
                 let resolve=|name:&str,input:&Input,limit:u64|input.resolve_with_limit(&ticket.inputs,limit).map(std::borrow::Cow::into_owned)
                     .map_err(|error| {let code=match error.problem {crate::plan::InputProblem::ChargeLimit=>"CAL006",_=>"CAL004"};let mut failure=Failure::new(code,span,error.message());failure.policy=error.policy().clone();failure.issues=error.issue(name).into_iter().collect();failure});
-                let source=resolve("source",&self.source,self.settings.source_charge)?;
+                let source=if let Some((snapshot,_))=&stored {let data=match snapshot.shape {Shape::Primitive(wes_core::Primitive::Text)=>Data::Text("".into()),Shape::Primitive(wes_core::Primitive::Bytes)=>Data::Bytes(vec![].into()),_=>return Err(Failure::new("CAL004",span,"stored source is not Text/Bytes"))};wes_core::Value::new(snapshot.shape.clone(),data,snapshot.provenance.clone()).map_err(|_|Failure::new("CAL004",span,"invalid stored source declaration"))?.with_metadata(snapshot.metadata.clone())}else{resolve("source",&self.source,self.settings.source_charge)?};
                 let initial=resolve("initial",&self.initial,self.settings.state_charge)?;
                 let context=resolve("context",&self.context,self.settings.context_charge)?;
                 let source_identity=if let Some(reference)=self.source.dependency() {
@@ -342,7 +414,7 @@ impl BoundScan {
                     profile:self.profile.name().into(),profile_revision:self.profile_revision};
                 let control=self.pipe_input.as_ref().and_then(|reference|ticket.inputs.get(&reference.node)).map(|v|v.provenance().clone());
                 Runner::new_admitted(ScanInput {live,source,initial,context,step:self.step,finish:self.finish,framing:self.framing,identity,control},
-                    self.settings,ledger,self.services,cancel,span)
+                    self.settings,ledger,self.services,cancel,span,stored)
             }).await;
             let mut runner = match initialized {
                 Ok(Ok(runner)) => runner,
@@ -377,10 +449,12 @@ impl BoundScan {
                     if token.is_cancelled() {
                         return Err(Failure::cancelled(span));
                     }
-                    let source = worker
-                        .capture_scan_source(runner.captured_source())
-                        .await
-                        .map_err(|e| Failure::new("CAL004", span, e.to_string()))?;
+                    let source = if let Some(snapshot) = runner.stored_source() {
+                        worker.capture_stored_source(snapshot.clone()).await
+                    } else {
+                        worker.capture_scan_source(runner.captured_source()).await
+                    }
+                    .map_err(|e| Failure::new("CAL004", span, e.to_string()))?;
                     let checkpoint = runner.checkpoint_seed(source)?;
                     let mut request = runner.dataset_admission()?;
                     request.checkpoint = Some(checkpoint);
@@ -511,6 +585,28 @@ pub(crate) async fn run_admitted(
                         }
                     }
                 }
+            }
+            continue;
+        }
+        if matches!(result, Poll::ReadRange) {
+            let result = async {
+                let worker = storage.as_ref().ok_or_else(|| {
+                    Failure::new(
+                        "CAL004",
+                        span,
+                        "stored scan source requires its owned reader",
+                    )
+                })?;
+                let (snapshot, from, maximum) = runner.source_range_request()?;
+                let range = worker
+                    .source_range(snapshot, from, maximum)
+                    .await
+                    .map_err(|e| Failure::new("CAL004", span, e.to_string()))?;
+                runner.acknowledge_source_range(from, range)
+            }
+            .await;
+            if let Err(e) = result {
+                runner.refuse_scan(e);
             }
             continue;
         }

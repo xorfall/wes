@@ -37,6 +37,7 @@ fn covered(store: &mut DatasetStore) -> (DatasetWriterAdmission, AnalysisCheckpo
         run: saved.run,
         task_revision: saved.bindings.task_revision,
         source: CapturedValue {
+            selection: vec![],
             handle: saved.bindings.source_handle,
             digest: saved.bindings.source_digest,
             bytes: saved.bindings.source_bytes,

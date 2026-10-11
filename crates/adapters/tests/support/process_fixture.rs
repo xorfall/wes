@@ -66,6 +66,14 @@ fn main() {
             std::io::stdin().read_to_end(&mut input).unwrap();
             assert_eq!(input.len(), 256 * 1024);
         }
+        "finite" => {
+            let count = args.get(4).unwrap().parse::<u64>().unwrap();
+            let mut out = std::io::stdout().lock();
+            let mut chunk = [b'x'; 65536];chunk[65535]=b'\n';
+            let mut remaining=count;
+            while remaining>0 {let n=remaining.min(chunk.len() as u64) as usize;out.write_all(&chunk[..n]).unwrap();remaining-=n as u64;}
+            std::io::stderr().write_all(b"synthetic finite source").unwrap();
+        }
         "bytes" => {
             std::io::stdout().write_all(&[0, 255, 1, 10]).unwrap();
             std::io::stderr().write_all(&[254, 0, 2]).unwrap();

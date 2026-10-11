@@ -86,7 +86,20 @@ pub struct ExecutionTraits {
 pub enum OutputState {
     Pending,
     Available(Value),
+    Stored(StoredOutputRef),
     Closed,
+}
+impl OutputState {
+    pub fn accessible(&self) -> bool {
+        matches!(self, Self::Available(_) | Self::Stored(_))
+    }
+}
+/// One exact acknowledged result; resolution never consults a producer's next revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredOutputRef {
+    pub run: Option<RunId>,
+    pub revision: u64,
+    pub snapshot: crate::storage::StoredSnapshot,
 }
 
 /// Stable output references for a wait, deduplicated without merging mutually exclusive channels.
@@ -123,6 +136,7 @@ pub enum Outcome {
     /// Deliberate filtering: closes this delivery without selecting error or cancel.
     Skipped,
     Produced(Value),
+    Stored(crate::storage::StoredOutput),
     /// Committed partial evidence from failed finite work. It remains display
     /// only: the data graph port is closed and downstream work cannot consume it.
     Incomplete {
@@ -139,6 +153,17 @@ impl Outcome {
             Self::Produced(value) => {
                 let provenance = value.provenance().clone().with_policy(policy);
                 Self::Produced(value.with_provenance(provenance))
+            }
+            Self::Stored(stored) => {
+                if stored.snapshot.as_ref().is_some_and(|s| {
+                    s.provenance.policy().join(policy) == *s.provenance.policy()
+                        && !s.provenance.policy().is_private()
+                        && !s.provenance.policy().is_unknown()
+                }) {
+                    Self::Stored(stored)
+                } else {
+                    Self::Failed(RuntimeCode::ResultUnavailable.error("Stored result policy does not cover its captured inputs; no source was replayed.", None))
+                }
             }
             Self::Incomplete { value, error } => {
                 let joined = policy
@@ -211,6 +236,7 @@ pub struct Observation {
     pub run: Option<RunId>,
     pub state: NodeState,
     pub value: Option<Value>,
+    pub stored: Option<crate::storage::StoredOutput>,
     pub error: Option<ErrorValue>,
 }
 
@@ -261,6 +287,9 @@ pub struct RunTicket<T> {
     /// Acknowledged revisions captured with the immutable input snapshot, never
     /// guessed from a dependency's next attempt when the worker finally enters.
     pub input_origins: IndexMap<NodeId, InputOrigin>,
+    pub deferred_inputs: IndexMap<NodeId, StoredOutputRef>,
+    pub input_holds: Vec<crate::storage::ValueLease>,
+    pub prepared_fields: IndexMap<NodeId, Vec<Vec<String>>>,
 }
 
 /// Timer identity includes both run and replacement revision. Time is monotonic and driver-owned.
@@ -305,6 +334,7 @@ pub enum Effect<T> {
 #[derive(Clone, Debug)]
 pub enum RestoredState {
     Ready(Value),
+    ReadyStored(crate::storage::StoredSnapshot),
     Stale,
     StaleBecause(StaleReason),
     Failed(ErrorValue),
@@ -364,6 +394,8 @@ struct Entry {
     automatic_pause: Option<StaleReason>,
     stale_reason: Option<StaleReason>,
     value: Option<Value>,
+    stored: Option<crate::storage::StoredSnapshot>,
+    stored_receipt: Option<crate::storage::StoredOutput>,
     value_run: Option<RunId>,
     display_revision: u64,
     stream_counts: Option<(u64, u64, usize)>,
@@ -411,6 +443,8 @@ impl Entry {
             self.dependency_lifetime == DependencyLifetime::Captured && run.is_some();
         self.last_run = run;
         self.value = None;
+        self.stored = None;
+        self.stored_receipt = None;
         self.error = None;
         self.actual_typing = None;
         self.stale_reason = None;
@@ -420,6 +454,15 @@ impl Entry {
                 self.actual_typing = Some(typing(&value));
                 self.creation_complete = self.dependency_lifetime == DependencyLifetime::Creation;
                 self.value = Some(value);
+                NodeState::Ready
+            }
+            RestoredState::ReadyStored(snapshot) => {
+                self.actual_typing = Some(Arc::new(Typing {
+                    shape: snapshot.shape.clone(),
+                    provenance: snapshot.provenance.clone(),
+                }));
+                self.creation_complete = self.dependency_lifetime == DependencyLifetime::Creation;
+                self.stored = Some(snapshot);
                 NodeState::Ready
             }
             RestoredState::Stale => {
@@ -449,6 +492,8 @@ impl Entry {
             stale_reason: None,
             value: None,
             value_run: None,
+            stored: None,
+            stored_receipt: None,
             display_revision: 0,
             stream_counts: None,
             evidence: None,
@@ -673,6 +718,83 @@ impl<T: Clone> Runtime<T> {
     }
     pub fn value_of(&self, node: &NodeId) -> Option<&Value> {
         self.entries.get(node)?.value.as_ref()
+    }
+    pub fn stored_output(&self, node: &NodeId) -> Option<StoredOutputRef> {
+        let entry = self.entries.get(node)?;
+        Some(StoredOutputRef {
+            run: entry.value_run.clone(),
+            revision: entry.display_revision,
+            snapshot: entry.stored.clone()?,
+        })
+    }
+    /// Bind a verified storage receipt without changing execution state or acknowledged revision.
+    pub(crate) fn attach_stored(
+        &mut self,
+        node: &NodeId,
+        run: &RunId,
+        snapshot: crate::storage::StoredSnapshot,
+    ) -> bool {
+        if self
+            .graph
+            .node(node)
+            .is_none_or(|n| n.state() != NodeState::Ready)
+            || self.is_executing(node)
+        {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(node) else {
+            return false;
+        };
+        if entry.value_run.as_ref() != Some(run)
+            || entry.value.as_ref().is_none_or(|v| !snapshot.matches(v))
+        {
+            return false;
+        }
+        entry.stored = Some(snapshot);
+        true
+    }
+    /// Release only this completed decoded copy. The stored identity remains accessible/Ready.
+    pub(crate) fn release_resident(&mut self, node: &NodeId) -> bool {
+        if self.is_executing(node)
+            || self
+                .graph
+                .node(node)
+                .is_none_or(|n| n.state() != NodeState::Ready)
+        {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(node).filter(|e| e.stored.is_some()) else {
+            return false;
+        };
+        entry.value.take().is_some()
+    }
+    pub(crate) fn accepts_prepared<Ticket>(&self, ticket: &RunTicket<Ticket>) -> bool {
+        !self.closed
+            && self.is_active(&ticket.run)
+            && ticket.deferred_inputs.iter().all(|(node, captured)| {
+                self.graph
+                    .node(node)
+                    .is_some_and(|n| n.state() == NodeState::Ready)
+                    && self.stored_output(node).as_ref() == Some(captured)
+            })
+    }
+    pub(crate) fn install_resident(
+        &mut self,
+        node: &NodeId,
+        captured: &StoredOutputRef,
+        value: Value,
+    ) -> bool {
+        if self
+            .graph
+            .node(node)
+            .is_none_or(|n| n.state() != NodeState::Ready)
+            || self.stored_output(node).as_ref() != Some(captured)
+            || !captured.snapshot.matches(&value)
+        {
+            return false;
+        }
+        self.entries.get_mut(node).expect("prepared source").value = Some(value);
+        true
     }
     pub fn execution_progress(
         &self,
@@ -986,9 +1108,13 @@ impl<T: Clone> Runtime<T> {
         let entry = &self.entries[&reference.node];
         match (node.state(), reference.port) {
             (NodeState::Pending | NodeState::Running | NodeState::Stale, _) => OutputState::Pending,
-            (NodeState::Ready, OutputPort::Data) => {
-                OutputState::Available(entry.value.clone().expect("ready holds a value"))
-            }
+            (NodeState::Ready, OutputPort::Data) => match &entry.value {
+                Some(value) => OutputState::Available(value.clone()),
+                None => OutputState::Stored(
+                    self.stored_output(&reference.node)
+                        .expect("ready has a decoded or stored result"),
+                ),
+            },
             (NodeState::Failed, OutputPort::Error) => OutputState::Available(
                 entry
                     .error
@@ -1024,7 +1150,7 @@ impl<T: Clone> Runtime<T> {
                     },
                 );
                 let closed = match status {
-                    OutputState::Available(_) => return None,
+                    OutputState::Available(_) | OutputState::Stored(_) => return None,
                     OutputState::Closed => true,
                     OutputState::Pending => false,
                 };
@@ -1052,7 +1178,7 @@ impl<T: Clone> Runtime<T> {
         Some(
             selected
                 .outputs()
-                .all(|output| matches!(self.output(&output), OutputState::Available(_))),
+                .all(|output| self.output(&output).accessible()),
         )
     }
     pub fn start(&mut self, now: Duration) -> Vec<Effect<T>> {
@@ -1319,32 +1445,67 @@ impl<T: Clone> Runtime<T> {
                 Ok(()) => Outcome::Produced(value),
                 Err(error) => Outcome::Failed(error),
             },
+            Outcome::Stored(stored)
+                if stored.snapshot.as_ref().is_none_or(|s| {
+                    s.shape.contains_meta()
+                        || s.provenance.policy().is_private()
+                        || s.provenance.policy().is_unknown()
+                }) =>
+            {
+                Outcome::Failed(
+                    RuntimeCode::ResultUnavailable.error("Invalid stored result descriptor.", None),
+                )
+            }
             Outcome::Incomplete { value, error } => match self.admit_value(run.node(), &value) {
                 Ok(()) => Outcome::Incomplete { value, error },
                 Err(refusal) => Outcome::Failed(refusal),
             },
             other => other,
         };
-        if !matches!(outcome, Outcome::Produced(_) | Outcome::Incomplete { .. }) {
+        if !matches!(
+            outcome,
+            Outcome::Produced(_) | Outcome::Stored(_) | Outcome::Incomplete { .. }
+        ) {
             self.private_charges.shift_remove(run.node());
         }
         let changed_window = stream
             && self.value_of(run.node()).is_some_and(|old| match &outcome {
                 Outcome::Produced(value) => old != value,
+                Outcome::Stored(_) => true,
                 Outcome::Failed(_)
                 | Outcome::Cancelled(_)
                 | Outcome::Skipped
                 | Outcome::Incomplete { .. } => true,
             });
-        let succeeded = matches!(outcome, Outcome::Produced(_));
+        let succeeded = matches!(outcome, Outcome::Produced(_) | Outcome::Stored(_));
         let entry = self.entries.get_mut(&run.node).expect("active node exists");
         let inputs_changed = std::mem::take(&mut entry.input_update_pending) && succeeded;
         entry.active = None;
+        entry.stored = None;
+        entry.stored_receipt = None;
         let state = match outcome {
             Outcome::Skipped => {
                 entry.value = None;
                 entry.error = None;
                 NodeState::Skipped
+            }
+            Outcome::Stored(stored) => {
+                let snapshot = stored
+                    .snapshot
+                    .as_ref()
+                    .expect("stored outcome has verified descriptor");
+                entry.actual_typing = Some(Arc::new(Typing {
+                    shape: snapshot.shape.clone(),
+                    provenance: snapshot.provenance.clone(),
+                }));
+                entry.creation_complete = entry.dependency_lifetime == DependencyLifetime::Creation;
+                entry.value_run = Some(run.id.clone());
+                entry.evidence = None;
+                entry.value = None;
+                entry.error = None;
+                entry.stored = Some(snapshot.clone());
+                entry.stored_receipt = Some(stored);
+                NodeState::Ready
             }
             Outcome::Produced(value) => {
                 entry.actual_typing = Some(typing(&value));
@@ -1667,6 +1828,14 @@ impl<T: Clone> Runtime<T> {
     pub(crate) fn forget_invocation_payload(&mut self, node: &NodeId) {
         self.invocation_payloads.shift_remove(node);
     }
+    pub(crate) fn replace_residency_payload(
+        &mut self,
+        node: &NodeId,
+        payload: T,
+    ) -> Result<(), RuntimeError> {
+        self.graph.replace_residency(node, payload)?;
+        Ok(())
+    }
     pub(crate) fn restore_invocation_payload(
         &mut self,
         node: NodeId,
@@ -1747,7 +1916,7 @@ impl<T: Clone> Runtime<T> {
                     node: dependency.clone(),
                     port: *port,
                 };
-                if !matches!(self.output(&input), OutputState::Available(_)) {
+                if !self.output(&input).accessible() {
                     return Err(RuntimeError::UnavailableDownstreamInput {
                         node: node.clone(),
                         input,
@@ -1966,7 +2135,9 @@ impl<T: Clone> Runtime<T> {
             return vec![];
         };
         let stopped = entry.evidence.take().is_some();
-        if entry.value.take().is_none() && !stopped {
+        let stored = entry.stored.take().is_some();
+        entry.stored_receipt = None;
+        if entry.value.take().is_none() && !stopped && !stored {
             return vec![];
         }
         let mut effects = vec![];
@@ -2063,6 +2234,9 @@ impl<T: Clone> Runtime<T> {
             value: (state == NodeState::Ready)
                 .then(|| entry.value.clone())
                 .flatten(),
+            stored: (state == NodeState::Ready)
+                .then(|| entry.stored_receipt.clone())
+                .flatten(),
             error: matches!(state, NodeState::Failed | NodeState::Cancelled)
                 .then(|| entry.error.clone())
                 .flatten(),
@@ -2113,7 +2287,7 @@ impl<T: Clone> Runtime<T> {
                             queue.extend(self.pipeline_successors(&id));
                             continue;
                         }
-                        OutputState::Available(_) => {}
+                        OutputState::Available(_) | OutputState::Stored(_) => {}
                     }
                 }
                 let closed = node
@@ -2196,28 +2370,34 @@ impl<T: Clone> Runtime<T> {
             if !may_start || self.leases.contains_key(&id) || node.state() == NodeState::Running {
                 continue;
             }
-            let inputs = if captured_invocation {
-                Some(IndexMap::new())
-            } else {
-                node.dependencies()
-                    .iter()
-                    .map(|(node, port)| {
-                        match self.ordered_output(
-                            &id,
-                            &OutputRef {
-                                node: node.clone(),
-                                port: *port,
-                            },
-                        ) {
-                            OutputState::Available(value) => Some((node.clone(), value)),
-                            _ => None,
+            let mut inputs = IndexMap::new();
+            let mut deferred_inputs = IndexMap::new();
+            let mut pending = false;
+            if !captured_invocation {
+                for (source, port) in node.dependencies() {
+                    match self.ordered_output(
+                        &id,
+                        &OutputRef {
+                            node: source.clone(),
+                            port: *port,
+                        },
+                    ) {
+                        OutputState::Available(value) => {
+                            inputs.insert(source.clone(), value);
                         }
-                    })
-                    .collect::<Option<IndexMap<_, _>>>()
-            };
-            let Some(inputs) = inputs else {
+                        OutputState::Stored(value) => {
+                            deferred_inputs.insert(source.clone(), value);
+                        }
+                        _ => {
+                            pending = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if pending {
                 continue;
-            };
+            }
             let input_origins = node
                 .dependencies()
                 .iter()
@@ -2250,13 +2430,16 @@ impl<T: Clone> Runtime<T> {
                 id: RunId::fresh(),
             };
             let attempt = Attempt {
-                flow: inputs.values().fold(
-                    self.invocation_payloads
-                        .get(&id)
-                        .map_or_else(wes_core::flow::FlowPolicy::default, |(_, policy)| {
-                            policy.clone()
-                        }),
-                    |policy, value| policy.join(value.provenance().policy()),
+                flow: deferred_inputs.values().fold(
+                    inputs.values().fold(
+                        self.invocation_payloads
+                            .get(&id)
+                            .map_or_else(wes_core::flow::FlowPolicy::default, |(_, policy)| {
+                                policy.clone()
+                            }),
+                        |policy, value| policy.join(value.provenance().policy()),
+                    ),
+                    |policy, stored| policy.join(stored.snapshot.provenance.policy()),
                 ),
                 run: run.clone(),
                 started: now,
@@ -2311,6 +2494,9 @@ impl<T: Clone> Runtime<T> {
                 payload,
                 inputs,
                 input_origins,
+                deferred_inputs,
+                prepared_fields: Default::default(),
+                input_holds: vec![],
             }));
         }
         effects
@@ -2626,6 +2812,8 @@ pub enum RuntimeCode {
     InputFailed,
     RecordingFailed,
     StreamOverloaded,
+    ResultCapacity,
+    ResultUnavailable,
 }
 fn typing(value: &Value) -> Arc<Typing> {
     Arc::new(Typing {
@@ -2642,6 +2830,8 @@ impl RuntimeCode {
             Self::InputFailed => "RUN004",
             Self::RecordingFailed => "RUN005",
             Self::StreamOverloaded => "RUN006",
+            Self::ResultCapacity => "RUN007",
+            Self::ResultUnavailable => "RUN008",
         }
     }
     pub fn error(self, message: impl Into<String>, cause: Option<ErrorId>) -> ErrorValue {
@@ -3053,5 +3243,67 @@ mod captured_inputs_tests {
             !runtime.enter_lifetime(&queued.run),
             "a queued refresh cannot enter with obsolete inputs"
         );
+    }
+    #[test]
+    fn stored_residency_preserves_run_revision_and_rejects_late_preparation() {
+        use wes_core::{Data, Primitive, Provenance, Shape};
+        let value = Value::new(
+            Shape::Primitive(Primitive::Bytes),
+            Data::Bytes(vec![3; 4096].into()),
+            Provenance::default(),
+        )
+        .unwrap();
+        let mut runtime = Runtime::new();
+        let source = runtime
+            .add(
+                (),
+                [],
+                ExecutionTraits {
+                    pure: false,
+                    repeatable: false,
+                    bounded: true,
+                },
+            )
+            .unwrap();
+        let run = runtime
+            .start(Duration::ZERO)
+            .into_iter()
+            .find_map(|e| {
+                if let Effect::Spawn(t) = e {
+                    Some(t.run)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert!(runtime.enter(&run));
+        runtime.complete(&run, Outcome::Produced(value.clone()), Duration::ZERO);
+        let snapshot = crate::storage::StoredSnapshot::capture(
+            crate::storage::ValueHandle::new("d0d35554-cd13-40cf-ae8a-45ed555b575e").unwrap(),
+            "sha256:fixture".into(),
+            &value,
+        )
+        .unwrap();
+        assert!(runtime.attach_stored(&source, run.id(), snapshot));
+        let revision = runtime.display_revision(&source);
+        assert!(runtime.release_resident(&source));
+        let captured = runtime.stored_output(&source).unwrap();
+        assert_eq!(
+            runtime.graph.node(&source).unwrap().state(),
+            NodeState::Ready
+        );
+        assert_eq!(captured.run.as_ref(), Some(run.id()));
+        assert_eq!(captured.revision, revision);
+        assert!(matches!(
+            runtime.output(&OutputRef::data(source.clone())),
+            OutputState::Stored(_)
+        ));
+        assert!(runtime.install_resident(&source, &captured, value.clone()));
+        assert_eq!(runtime.display_revision(&source), revision);
+        runtime.refresh(&source, Duration::from_secs(1)).unwrap();
+        assert!(!runtime.install_resident(&source, &captured, value));
+        assert_eq!(runtime.stored_output(&source), Some(captured)); // stale is separate from physical availability
+        runtime.forget(&source);
+        assert!(runtime.stored_output(&source).is_none());
     }
 }

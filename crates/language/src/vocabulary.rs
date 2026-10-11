@@ -490,7 +490,7 @@ impl MetaCommand {
                 spec.recorded = false;
             }
             Self::Transient => {
-                spec.summary = "Run a named finite analysis with automatic retention off and bounded temporary storage; unsaved data does not reopen. Example: :transient { :calc { return 1; } > value } > study";
+                spec.summary = "Run a named finite analysis with automatic retention off and bounded temporary storage; unsaved data does not reopen. Whole-value reads/calculations obey memory limits: select fields or use bounded :scan for larger finite sources. Example: :transient { :calc { return 1; } > value } > study";
                 spec.recorded = false;
             }
             Self::Keep => {

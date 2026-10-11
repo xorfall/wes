@@ -35,6 +35,7 @@ mod view_queries;
 pub use display::DisplaySample;
 pub use observation_query::{ObservationQuery, PreparedObservationQuery};
 mod queries;
+mod residency;
 pub mod sandbox;
 pub(crate) mod saved;
 pub use environments::{
@@ -241,6 +242,7 @@ enum Control {
     SavedInstall {
         saved: crate::history::SavedSelection,
         values: std::collections::BTreeMap<String, wes_core::Value>,
+        stored: Option<crate::storage::StoredSnapshot>,
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     SandboxWorkspace {
@@ -979,7 +981,7 @@ fn spawn_owned(
         .with_scan_memory(capacity.scan_memory.clone())
         .with_storage(values.as_ref().map(SessionValues::worker)),
     );
-    let io = ExecutionIo::with_capacity(executor, capacity.clone())?;
+    let io = ExecutionIo::with_capacity(executor, capacity.clone())?.metadata_events();
     let (sources, source_receiver) = mpsc::channel(32);
     let (controls, control_receiver) = mpsc::channel(256);
     let updates = broadcast::channel(1).0;
@@ -1037,6 +1039,8 @@ fn spawn_owned(
         view_queries: view_queries::Queries::default(),
         query_capacity: capacity,
         displays: Default::default(),
+        preparing_inputs: JoinSet::new(),
+        preparing_reads: JoinSet::new(),
         remote_uncertain,
         sandboxes,
         environment_credit: handle.environment_credit.clone(),
@@ -1080,6 +1084,11 @@ enum Admission {
     Recorded(Result<PreparedSource, SessionError>),
 }
 struct Actor {
+    preparing_inputs: JoinSet<(
+        crate::driver::io::Enter<BoundTask>,
+        Result<(), wes_core::ErrorValue>,
+    )>,
+    preparing_reads: JoinSet<residency::ReadCompletion>,
     first_activation: Option<crate::providers::BoundCall>,
     selection_pending: std::collections::BTreeMap<NodeId, selection::Pending>,
     dataset_access: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetAccess>>,
@@ -1142,6 +1151,7 @@ impl Actor {
             self.recording_failed = true;
         }
         loop {
+            self.maintain_residency(0);
             self.drain_activations();
             // Cancellation/removal can revoke a deferred run while a checkpoint is settling. Ack
             // that update promptly so its worker can join; otherwise an idle barrier could deadlock.
@@ -1231,6 +1241,7 @@ impl Actor {
                 && self.waiting.is_empty()
                 && self.log.is_idle()
                 && self.values.as_ref().is_none_or(SessionValues::is_idle)
+                && self.preparing_reads.is_empty()
             {
                 break;
             }
@@ -1243,6 +1254,19 @@ impl Actor {
                 .min();
             let mut changed = true;
             tokio::select! {
+                Some(result) = self.preparing_reads.join_next(), if !self.preparing_reads.is_empty() => {
+                    if let Ok(result) = result { self.complete_read(result); }
+                    changed = false;
+                },
+                Some(result) = self.preparing_inputs.join_next(), if !self.preparing_inputs.is_empty() => {
+                    if let Ok((mut enter, result)) = result {
+                        enter.prepared = true;
+                        match result {
+                            Ok(()) => self.runtime_input(crate::driver::RuntimeInput::Enter(enter)),
+                            Err(error) => { let _ = enter.reply.send(Err(error)); }
+                        }
+                    }
+                },
                 result = async { self.eviction_updates.as_mut().expect("configured eviction updates").changed().await }, if self.eviction_updates.is_some() => {
                     if result.is_err() { self.eviction_updates = None; }
                     else {
@@ -1790,6 +1814,10 @@ impl Actor {
                 cooperative,
                 reply,
             } => {
+                let mut reply = Some(reply);
+                if !inspect && self.prepare_read(member.as_deref(), cooperative, &mut reply) {
+                    return;
+                }
                 let result = sandbox::observe(
                     &self.workspace,
                     member.as_deref(),
@@ -1806,7 +1834,7 @@ impl Actor {
                         inspect,
                     ),
                 });
-                let _ = reply.send(result);
+                let _ = reply.expect("synchronous observation").send(result);
             }
             Control::SavedCapture { member, reply } => {
                 let result = self.capture_saved(member.as_deref());
@@ -1815,9 +1843,12 @@ impl Actor {
             Control::SavedInstall {
                 saved,
                 values,
+                stored,
                 reply,
             } => {
-                let result = self.workspace.install_saved_selection(saved, values);
+                let result = self
+                    .workspace
+                    .install_saved_selection(saved, values, stored);
                 let _ = reply.send(result.map_err(|_| SessionError::Commit));
             }
             Control::SandboxWorkspace {
@@ -2507,7 +2538,7 @@ impl Actor {
         self.check_log();
         self.cells.finish(cell, reply);
     }
-    fn runtime_input(&mut self, input: crate::driver::RuntimeInput<BoundTask>) {
+    fn runtime_input(&mut self, mut input: crate::driver::RuntimeInput<BoundTask>) {
         for (run, error) in input.notices() {
             if error.code() == wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN {
                 self.remote_uncertain
@@ -2536,6 +2567,53 @@ impl Actor {
             return;
         }
         if let crate::driver::RuntimeInput::Enter(mut enter) = input {
+            if !enter.prepared {
+                for source in enter.ticket.payload.entry_read_sources() {
+                    // Capture every completed stored input before cache maintenance:
+                    // preparing one cold input may release another input's decoded copy.
+                    let captured = match self.workspace.runtime().output(&source) {
+                        crate::runtime::OutputState::Stored(captured) => Some(captured),
+                        crate::runtime::OutputState::Available(_)
+                            if source.port == crate::graph::OutputPort::Data =>
+                        {
+                            self.workspace.runtime().stored_output(&source.node)
+                        }
+                        _ => None,
+                    };
+                    if let Some(captured) = captured {
+                        enter
+                            .ticket
+                            .deferred_inputs
+                            .entry(source.node)
+                            .or_insert(captured);
+                    }
+                }
+            }
+            if !enter.prepared && !enter.ticket.deferred_inputs.is_empty() {
+                let Some(storage) = self.values.as_ref().map(SessionValues::worker) else {
+                    let _ = enter
+                        .reply
+                        .send(Err(crate::runtime::RuntimeCode::ResultUnavailable.error(
+                            "Stored input preparation requires the owning storage worker.",
+                            None,
+                        )));
+                    return;
+                };
+                if let BoundTask::Scan(scan) = &mut enter.ticket.payload {
+                    for (source, captured) in &enter.ticket.deferred_inputs {
+                        scan.defer_source(source, &captured.snapshot);
+                    }
+                }
+                let charge = enter.ticket.deferred_inputs.iter().filter(|(source, _)|
+                    !matches!(&enter.ticket.payload, BoundTask::Scan(scan) if scan.stored_source_for(source)))
+                    .fold(0u64, |n, (_, r)| n.saturating_add(r.snapshot.charge));
+                self.maintain_residency(charge);
+                self.preparing_inputs.spawn(async move {
+                    let result = residency::prepare_inputs(&storage, &mut enter.ticket).await;
+                    (enter, result)
+                });
+                return;
+            }
             if let BoundTask::View(view) = &mut enter.ticket.payload {
                 view.origin = Some(enter.ticket.run.clone());
                 if let Some((authority, client)) =
@@ -2608,8 +2686,23 @@ impl Actor {
             let _ = enter.reply.send(ticket);
             return;
         }
+        if let crate::driver::RuntimeInput::Completed(run, report) = &mut input
+            && matches!(&report.outcome, crate::runtime::Outcome::Stored(_))
+            && let Some(values) = &mut self.values
+        {
+            values.handoff_holds(
+                run.node().clone(),
+                run.id().clone(),
+                std::mem::take(&mut report.holds),
+            );
+        }
         let effects = input.apply_workspace(&mut self.workspace, self.io.now());
+        // The publication has either taken the holds or explicitly refused admission.
+
         self.effects(effects);
+        if let Some(values) = &mut self.values {
+            values.clear_handoff();
+        }
     }
     fn effects(&mut self, effects: Vec<Effect<BoundTask>>) {
         for effect in &effects {

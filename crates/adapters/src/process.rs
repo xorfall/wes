@@ -1,4 +1,5 @@
 //! Local execution ownership. Finite invocation, piped interaction and terminal handover are distinct.
+mod acquired;
 mod interactive;
 mod launch;
 mod ownership;
@@ -31,7 +32,8 @@ use wes_engine::{
 #[derive(Clone, Copy, Debug)]
 pub struct ProcessConfig {
     pub timeout: Duration,
-    /// Combined captured stdout and stderr bytes, not allocator or OS pipe buffers.
+    /// Materialized stdout/stderr cap. Permitted transient acquisition instead uses the separate
+    /// finite acquisition and temporary disk budgets, with fixed pipe buffers.
     pub output_bytes: usize,
     /// Fixed command and appended arguments, including separators used by provenance.
     pub argument_bytes: usize,
@@ -196,58 +198,22 @@ impl fmt::Debug for ProcessInvoker {
     }
 }
 impl Invoker for ProcessInvoker {
+    fn invoke_acquired(
+        &self,
+        call: Call,
+        cancellation: CancellationToken,
+        context: wes_engine::storage::AcquisitionContext,
+    ) -> wes_engine::storage::AcquiredFuture {
+        acquired::invoke(self.clone(), call, cancellation, context)
+    }
+
     fn invoke(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture {
         let this = self.clone();
         Box::pin(async move {
             if cancellation.is_cancelled() {
                 return Err(InvocationError::Cancelled);
             }
-            let (line, timeout) = this.prepare(&call).map_err(Failure::error)?;
-            let deadline = Instant::now()
-                .checked_add(timeout)
-                .ok_or_else(|| Failure::Arguments.error())?;
-            if cancellation.is_cancelled() {
-                return Err(InvocationError::Cancelled);
-            }
-            let mut command = Command::new(&line[0]);
-            let supplied = usize::from(line.len() > this.command.len());
-            let literal = if this.program_text && cfg!(windows) {
-                line.len() - supplied
-            } else {
-                line.len()
-            };
-            command.args(&line[1..literal]);
-            // cmd.exe does not read the escaping other programs expect in an argument: a
-            // quote inside the program would arrive as a backslash and a quote. With /S it
-            // takes everything between the first and the last quote as the program.
-            #[cfg(windows)]
-            if let Some(program) = line.get(literal) {
-                command.raw_arg(format!("\"{program}\""));
-            }
-            command
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-            let starting = cancellation.clone();
-            let launch = this.launch.clone();
-            let mut child = tokio::task::spawn_blocking(move || {
-                serialized_spawn(|| {
-                    if starting.is_cancelled() {
-                        return Err(Failure::Cancelled);
-                    }
-                    if Instant::now() >= deadline {
-                        return Err(Failure::Timeout);
-                    }
-                    if let Some(launch) = launch {
-                        launch.apply(&mut command)?;
-                    }
-                    ownership::LocalChild::spawn(command, false).map_err(|_| Failure::Spawn)
-                })
-            })
-            .await
-            .map_err(|_| Failure::Internal.error())?
-            .map_err(Failure::error)?;
+            let (mut child, deadline, line) = this.launch_call(&call, &cancellation).await?;
             let captured = capture(
                 child.inner(),
                 deadline,
@@ -302,6 +268,60 @@ impl Invoker for ProcessInvoker {
     }
 }
 impl ProcessInvoker {
+    async fn launch_call(
+        &self,
+        call: &Call,
+        cancellation: &CancellationToken,
+    ) -> Result<(ownership::LocalChild, Instant, Vec<String>), InvocationError> {
+        let this = self;
+        let (line, timeout) = this.prepare(&call).map_err(Failure::error)?;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| Failure::Arguments.error())?;
+        if cancellation.is_cancelled() {
+            return Err(InvocationError::Cancelled);
+        }
+        let mut command = Command::new(&line[0]);
+        let supplied = usize::from(line.len() > this.command.len());
+        let literal = if this.program_text && cfg!(windows) {
+            line.len() - supplied
+        } else {
+            line.len()
+        };
+        command.args(&line[1..literal]);
+        // cmd.exe does not read the escaping other programs expect in an argument: a
+        // quote inside the program would arrive as a backslash and a quote. With /S it
+        // takes everything between the first and the last quote as the program.
+        #[cfg(windows)]
+        if let Some(program) = line.get(literal) {
+            command.raw_arg(format!("\"{program}\""));
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let starting = cancellation.clone();
+        let launch = this.launch.clone();
+        let child = tokio::task::spawn_blocking(move || {
+            serialized_spawn(|| {
+                if starting.is_cancelled() {
+                    return Err(Failure::Cancelled);
+                }
+                if Instant::now() >= deadline {
+                    return Err(Failure::Timeout);
+                }
+                if let Some(launch) = launch {
+                    launch.apply(&mut command)?;
+                }
+                ownership::LocalChild::spawn(command, false).map_err(|_| Failure::Spawn)
+            })
+        })
+        .await
+        .map_err(|_| Failure::Internal.error())?
+        .map_err(Failure::error)?;
+        Ok((child, deadline, line))
+    }
     pub fn managed(
         mut self,
         target: &wes_core::environments::Target,
