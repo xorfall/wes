@@ -98,7 +98,9 @@ pub(super) fn prepare_types(
         operation: Change::Types {
             views: None,
             registry,
-            information: Diagnostic::error("TYP000", span, message).with_severity(Severity::Info),
+            information: Diagnostic::error("TYP000", span, message)
+                .with_severity(Severity::Info)
+                .with_public_message("Type package validated and installed in this workspace, including its declared types and iterator recipes. Use :list types to inspect the available contracts."),
         },
         diagnostics: vec![],
     })
@@ -284,7 +286,8 @@ impl Analysis<'_> {
                                 statement.span,
                                 format!("defined template {}", definition.name.text),
                             )
-                            .with_severity(Severity::Info),
+                            .with_severity(Severity::Info)
+                            .with_public_message("Template definition registered in this workspace. No template invocation was run. Use :list templates to inspect the available definitions."),
                         },
                         vec![],
                     ),

@@ -149,6 +149,17 @@ fn successful_definition_is_announced_only_after_commit() {
     let applied = workspace.commit(definition).unwrap();
     assert!(applied.node.is_none());
     assert_eq!(applied.diagnostics[0].code, "TMP000");
+    assert!(
+        applied.diagnostics[0]
+            .public_summary()
+            .contains("registered")
+    );
+    assert!(
+        applied.diagnostics[0]
+            .public_summary()
+            .contains("No template invocation was run")
+    );
+    assert!(!applied.diagnostics[0].public_summary().contains("named"));
     assert!(workspace.templates().contains("named"));
 }
 

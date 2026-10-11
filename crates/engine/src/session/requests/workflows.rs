@@ -25,10 +25,27 @@ impl SequentialState {
         }
     }
 }
+
+/// Live admission progress, not durable evidence or permission to resume a request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SequentialProgress {
+    pub state: SequentialState,
+    /// Zero-based current step; after completion this is the number of steps.
+    pub step: usize,
+    pub phase: SequentialPhase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SequentialPhase {
+    AwaitingAdmission,
+    Admitting,
+    Executing,
+}
+
 pub(super) struct Workflow {
     actor: String,
     stop: CancellationToken,
-    state: SequentialState,
+    progress: SequentialProgress,
     gate: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -65,12 +82,16 @@ pub fn step_state(observation: &SessionObservation, cell: &str) -> Option<Sequen
 
 impl SessionHandle {
     pub fn sequential_state(&self, cell: &str) -> Option<SequentialState> {
+        self.sequential_progress(cell)
+            .map(|progress| progress.state)
+    }
+    pub fn sequential_progress(&self, cell: &str) -> Option<SequentialProgress> {
         self.requests
             .workflows
             .lock()
             .expect("request workflows")
             .get(cell)
-            .map(|w| w.state)
+            .map(|w| w.progress)
     }
     pub fn sequential_step_state(
         observation: &SessionObservation,
@@ -93,7 +114,7 @@ impl SessionHandle {
             if workflows.len() >= KNOWN_REQUESTS {
                 let expired = workflows
                     .iter()
-                    .find(|(_, w)| w.state != SequentialState::Running)
+                    .find(|(_, w)| w.progress.state != SequentialState::Running)
                     .map(|(key, _)| key.clone())
                     .ok_or(RecordError::ReadBusy)?;
                 workflows.shift_remove(&expired);
@@ -103,7 +124,11 @@ impl SessionHandle {
                 Workflow {
                     actor: actor.clone(),
                     stop: stop.clone(),
-                    state: SequentialState::Running,
+                    progress: SequentialProgress {
+                        state: SequentialState::Running,
+                        step: 0,
+                        phase: SequentialPhase::AwaitingAdmission,
+                    },
                     gate: gate.clone(),
                 },
             );
@@ -120,7 +145,7 @@ impl SessionHandle {
                 }
             };
             let mut outcome = SequentialState::Completed;
-            for input in inputs {
+            for (index, input) in inputs.into_iter().enumerate() {
                 let admission = gate.lock().await;
                 if stop.is_cancelled() || terminal_stop.is_cancelled() {
                     outcome = SequentialState::Cancelled;
@@ -128,10 +153,12 @@ impl SessionHandle {
                 }
                 let cell = input.cell().to_owned();
                 // Admission owns publication once submitted. Do not abandon or retry it on a lost wait.
+                session.workflow_step(&root, index, SequentialPhase::Admitting);
                 if session.submit(input).await.is_err() {
                     outcome = SequentialState::Interrupted;
                     break;
                 }
+                session.workflow_step(&root, index, SequentialPhase::Executing);
                 drop(admission);
                 loop {
                     if stop.is_cancelled() || terminal_stop.is_cancelled() {
@@ -163,10 +190,26 @@ impl SessionHandle {
                 if outcome != SequentialState::Completed {
                     break;
                 }
+                session.workflow_step(&root, index + 1, SequentialPhase::AwaitingAdmission);
             }
             session.finish_workflow(&root, outcome);
         });
         Ok(())
+    }
+    fn workflow_step(&self, cell: &str, step: usize, phase: SequentialPhase) {
+        if let Some(workflow) = self
+            .requests
+            .workflows
+            .lock()
+            .expect("request workflows")
+            .get_mut(cell)
+        {
+            workflow.progress.step = step;
+            workflow.progress.phase = phase;
+        }
+        if let Some(updates) = self.updates.upgrade() {
+            let _ = updates.send(());
+        }
     }
     fn finish_workflow(&self, cell: &str, state: SequentialState) {
         if let Some(workflow) = self
@@ -176,7 +219,7 @@ impl SessionHandle {
             .expect("request workflows")
             .get_mut(cell)
         {
-            workflow.state = state;
+            workflow.progress.state = state;
         }
         if let Some(updates) = self.updates.upgrade() {
             let _ = updates.send(());

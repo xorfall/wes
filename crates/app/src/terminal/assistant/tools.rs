@@ -8,7 +8,11 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use wes_engine::{graph::NodeState, session::SessionObservation, source::SourceInput};
+use wes_engine::{
+    graph::NodeState,
+    session::{SequentialPhase, SequentialProgress, SequentialState, SessionObservation},
+    source::SourceInput,
+};
 
 pub(in crate::terminal) struct State {
     actor: String,
@@ -290,13 +294,18 @@ fn settled(observation: &SessionObservation, execution: &Execution) -> bool {
     }
 }
 /// Subscribe before observing, so completion between observation and waiting cannot be lost.
+struct ExecutionObservation {
+    session: SessionObservation,
+    workflow: Option<SequentialProgress>,
+}
+
 async fn observe_execution(
     terminal: &TerminalSession,
     application: &ApplicationHandle,
     current: &CurrentSession,
     execution: &Execution,
     wait_ms: u64,
-) -> Result<SessionObservation, BridgeReply> {
+) -> Result<ExecutionObservation, BridgeReply> {
     validate_wait(wait_ms)?;
     let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_ms);
     let mut updates = current
@@ -305,21 +314,23 @@ async fn observe_execution(
         .map_err(|_| fail("Workspace unavailable."))?;
     let mut sessions = application.subscribe_sessions();
     loop {
-        let workflow_before = current.session.sequential_state(&execution.cell);
+        let workflow_before = current.session.sequential_progress(&execution.cell);
         let observation = observe_current(terminal, application, current).await?;
         if !execution.steps.is_empty()
-            && workflow_before != current.session.sequential_state(&execution.cell)
+            && workflow_before != current.session.sequential_progress(&execution.cell)
         {
             continue;
         }
         if (if execution.steps.is_empty() {
             settled(&observation, execution)
         } else {
-            workflow_state(&observation, execution, current)
-                != wes_engine::session::SequentialState::Running
+            workflow_state(&observation, execution, workflow_before) != SequentialState::Running
         }) || tokio::time::Instant::now() >= deadline
         {
-            return Ok(observation);
+            return Ok(ExecutionObservation {
+                session: observation,
+                workflow: workflow_before,
+            });
         }
         tokio::select! {
             _ = terminal.stopped.cancelled() => return Err(fail("Terminal authority has ended.")),
@@ -334,7 +345,7 @@ async fn observe_execution(
             }
             _ = tokio::time::sleep_until(deadline) => {
                 check_current(terminal, application, current)?;
-                return Ok(observation);
+                return Ok(ExecutionObservation { session: observation, workflow: workflow_before });
             }
         }
     }
@@ -482,11 +493,11 @@ fn report_bounded(
 fn workflow_state(
     observation: &SessionObservation,
     execution: &Execution,
-    current: &CurrentSession,
-) -> wes_engine::session::SequentialState {
-    use wes_engine::session::{SequentialState, SessionHandle};
-    if let Some(state) = current.session.sequential_state(&execution.cell) {
-        return state;
+    progress: Option<SequentialProgress>,
+) -> SequentialState {
+    use wes_engine::session::SessionHandle;
+    if let Some(progress) = progress {
+        return progress.state;
     }
     // Restored identities never resume. Missing steps mean an interrupted outcome.
     for cell in &execution.steps {
@@ -501,14 +512,14 @@ fn workflow_state(
 fn request_report(
     observation: &SessionObservation,
     execution: &Execution,
-    current: &CurrentSession,
+    progress: Option<SequentialProgress>,
     trace: bool,
     results: Results,
 ) -> Value {
     if execution.steps.is_empty() {
         return report(observation, execution, trace, results);
     }
-    let state = workflow_state(observation, execution, current);
+    let state = workflow_state(observation, execution, progress);
     let mut budget = 8 * 1024 * 1024 - 256 * 1024;
     let steps = execution
         .steps
@@ -520,15 +531,49 @@ fn request_report(
                 actor: execution.actor.clone(),
                 steps: Vec::new(),
             };
-            let mut result = report_bounded(observation, &step, trace, results, &mut budget);
+            let absent = !observation.cells.iter().any(|c| c.input.cell() == cell);
+            let mut result = absent
+                .then(|| unstarted_step(progress, index, cell))
+                .flatten()
+                .unwrap_or_else(|| report_bounded(observation, &step, trace, results, &mut budget));
             result["index"] = json!(index);
-            if !observation.cells.iter().any(|c| c.input.cell() == cell) {
+            if absent && result["status"] == "admission_pending_or_unavailable" {
                 result["status"] = json!("not_admitted_or_unavailable");
             }
             result
         })
         .collect::<Vec<_>>();
-    json!({"cell":execution.cell,"sequential":true,"status":state.as_str(),"settled":state!=wes_engine::session::SequentialState::Running,"steps":steps})
+    json!({"cell":execution.cell,"sequential":true,"status":state.as_str(),"settled":state!=SequentialState::Running,"steps":steps})
+}
+
+/// Only live, coherently observed progress can prove why a reserved step is absent.
+fn unstarted_step(progress: Option<SequentialProgress>, index: usize, cell: &str) -> Option<Value> {
+    let progress = progress?;
+    if index < progress.step {
+        return None; // Previously submitted evidence may have been retired.
+    }
+    if progress.state == SequentialState::Running {
+        if index > progress.step {
+            return Some(
+                json!({"cell":cell,"settled":false,"status":"waiting_for_predecessor","admitted":false,"waitingForStep":progress.step,"message":"Waiting for an earlier sequential step to finish successfully. This step has not been submitted."}),
+            );
+        }
+        if progress.phase != SequentialPhase::Executing {
+            let started = progress.phase == SequentialPhase::Admitting;
+            let mut result = json!({"cell":cell,"settled":false,"status":"admission_pending","admissionStarted":started,"message":"This step is awaiting or undergoing admission. Read the same request_id to observe its outcome; do not submit a new request to repeat it."});
+            if !started {
+                result["admitted"] = json!(false);
+            }
+            return Some(result);
+        }
+    } else if progress.state != SequentialState::Completed
+        && (index > progress.step || progress.phase == SequentialPhase::AwaitingAdmission)
+    {
+        return Some(
+            json!({"cell":cell,"settled":true,"status":"not_admitted","admitted":false,"workflowStatus":progress.state.as_str(),"message":"The sequential workflow stopped before this step was submitted. Earlier effects are not rolled back; no step will resume automatically."}),
+        );
+    }
+    None // A started or restored admission must not be described as safely unstarted.
 }
 /// Contract metadata is only inspected after the same root egress policy as value_read.
 fn public_outcome(value: &wes_core::Value) -> Option<Value> {
@@ -1053,7 +1098,7 @@ async fn perform(
             let observation =
                 observe_execution(terminal, application, &current, &execution, input.wait_ms)
                     .await?;
-            let mut result = json!({"request_id":input.request_id,"duplicate":!fresh,"context":context_token(&context(&observation,terminal,&current)),"plans":plan_summaries(&observation, terminal),"execution":request_report(&observation,&execution,&current,false,input.results)});
+            let mut result = json!({"request_id":input.request_id,"duplicate":!fresh,"context":context_token(&context(&observation.session,terminal,&current)),"plans":plan_summaries(&observation.session, terminal),"execution":request_report(&observation.session,&execution,observation.workflow,false,input.results)});
             if let Some(Err(error)) = admitted.submission {
                 result["execution"]["admission_error"] = json!(error.to_string());
             }
@@ -1069,9 +1114,9 @@ async fn perform(
                 observe_execution(terminal, application, &current, &execution, input.wait_ms)
                     .await?;
             Ok(request_report(
-                &observation,
+                &observation.session,
                 &execution,
-                &current,
+                observation.workflow,
                 input.trace,
                 input.results,
             ))
@@ -1148,6 +1193,7 @@ mod tests {
     #[cfg(unix)]
     include!("view_authoring_tests.rs");
     include!("workspace_rejoin_tests.rs");
+    include!("workflow_report_tests.rs");
     use crate::{
         runtime::{RuntimeOptions, launch},
         terminal::Manager,
@@ -1937,7 +1983,7 @@ mod tests {
             .await
             .ok()
             .unwrap();
-        assert!(!settled(&timed, &execution));
+        assert!(!settled(&timed.session, &execution));
         assert!(start.elapsed() >= Duration::from_millis(10));
         let waiting = observe_execution(&terminal, &runtime.handle, &current, &execution, 1000);
         let submission = async {
@@ -1951,7 +1997,7 @@ mod tests {
                 .unwrap();
         };
         let (observed, ()) = tokio::join!(waiting, submission);
-        assert!(settled(&observed.ok().unwrap(), &execution));
+        assert!(settled(&observed.ok().unwrap().session, &execution));
         let mut failed = current.session.observe().await.unwrap();
         failed
             .cells

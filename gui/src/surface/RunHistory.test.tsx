@@ -89,6 +89,11 @@ describe("fixed run inspection", () => {
     expect(text(tree)).toContain(missing ? "Result unavailable" : "Could not read result");
     expect(tree.root.findAllByProps({ "data-result": true })).toHaveLength(0);
     expect(button(tree, "protect result")).toBeUndefined();
+    if (missing) {
+      expect(button(tree, "read again")).toBeUndefined();
+      expect(api.submit).not.toHaveBeenCalled();
+      return;
+    }
     api.fetch.mockResolvedValue(value("recovered historical result"));
     await act(async () => button(tree, "read again").props.onClick());
     expect(api.fetch.mock.calls.every(([handle]) => handle === old.handle)).toBe(true);

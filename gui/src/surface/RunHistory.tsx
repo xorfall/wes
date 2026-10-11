@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue, WorkHistory, WorkRun, WorkRunDetail } from "../protocol";
 import type { Workspace } from "../workspace";
-import { ResultReadError } from "../result-reader";
+import { ResultReadError, ResultWithdrawnError } from "../result-reader";
+import { resultFailure } from "../result-failure";
 import { ValueView } from "../views/Result";
 import type { Identity } from "./session-model";
 import "./run-history.css";
@@ -219,14 +220,17 @@ function HistoricalResult({ engine, run, canProtect, protection, onProtect }: {
     return () => { valid = false; };
   }, [engine, run.handle, revision]);
   const unavailable = error instanceof ResultReadError && ["VALUE_UNAVAILABLE", "VALUE_PRIVATE_UNAVAILABLE"].includes(error.problem?.code ?? "");
+  const withdrawn = error instanceof ResultWithdrawnError;
+  const failure = error instanceof ResultReadError ? resultFailure(error.problem?.code) : undefined;
   return <div className="history-result">
     <div className="history-result-heading"><strong>Result</strong>
       {run.protected ? <span>Protected</span> : protection === "pending" ? <span role="status">Protecting…</span>
         : value && canProtect && !protection ? <button className="cell-action" onClick={onProtect} aria-description="Protect this run’s result from automatic cleanup">protect result</button> : null}
     </div>
     {!run.handle ? <p>No result was recorded for this run.</p> : error ? <>
-      <p className="history-error" role="alert">{unavailable ? "Result unavailable" : "Could not read result"}: {message(error)}</p>
-      <button className="cell-action" onClick={() => setRevision(n => n + 1)}>read again</button>
+      <p className="history-error" role="alert">{withdrawn ? "Access withdrawn" : unavailable ? "Result unavailable" : "Could not read result"}: {message(error)}</p>
+      {failure && <p className="cell-quiet">{failure.next}</p>}
+      {!withdrawn && failure?.canReadAgain !== false && <button className="cell-action" onClick={() => setRevision(n => n + 1)}>read again</button>}
     </> : value ? <ValueView value={value} cacheKey={`history:${run.node}:${run.run}:${run.handle}`} /> : <p role="status">Reading this run’s result…</p>}
   </div>;
 }

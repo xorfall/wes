@@ -400,12 +400,14 @@ async fn keep_saves_exact_members_and_reopens_old_analysis_without_provider_repl
             .await
             .is_ok()
     );
-    assert!(matches!(
-        limited_handle
-            .read_sandbox_export("saved_summary", false)
-            .await,
-        Err(session::SessionError::Capacity)
-    ));
+    let refused = limited_handle
+        .read_sandbox_export("saved_summary", false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.read_failure_kind(),
+        Some(wes_engine::storage::ReadFailureKind::Capacity)
+    );
     assert_eq!(limited_calls.load(Ordering::SeqCst), 0);
     assert_eq!(files(&archive), 2);
     limited_handle.shutdown().await.unwrap();

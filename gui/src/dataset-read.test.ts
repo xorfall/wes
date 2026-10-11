@@ -6,6 +6,18 @@ import {
 import { Engine } from "./engine";
 import { decodeDatasetReference, type DatasetReference } from "./presentation/dataset";
 
+it.each([
+  ["DATASET_OWNER_UNAVAILABLE", 503, "closed"],
+  ["DATASET_CORRUPT", 500, "corrupt"],
+  ["DATASET_READ_UNCONFIRMED", 409, "uncertain"],
+] as const)("keeps %s distinct without retrying or treating it as missing", async (code, status, kind) => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code, message: "Synthetic storage refusal.", retryable: false } }), { status }));
+  vi.stubGlobal("fetch", fetch);
+  const engine = Object.assign(new Engine(), { generation: "g" }) as Engine;
+  await expect(engine.readDataset("exact-result", "g", reference(), "", { from: "0" }, 2, new AbortController().signal)).rejects.toMatchObject({ kind, code, retryable: false });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 /* Synthetic snapshots only: invented identifiers and digests that name no real store. */
 
 const BEYOND_SAFE = "9007199254740993"; // 2^53 + 1: a float would read it as ...992.

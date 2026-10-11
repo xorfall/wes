@@ -137,6 +137,14 @@ describe("DatasetBridge", () => {
   const page = (rows: unknown[]): DatasetRead => ({ reference: reference(), stream: "outputs", lifecycle: "open", protected: false, persistence: "Durable", segmentBytes: "64",
     page: { first: "0", next: String(rows.length), extentExhausted: false, limitedBy: null, cursor: "bmV4dA", rows: rows as never } });
   const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
+  it.each(["closed", "corrupt", "uncertain"] as const)("preserves %s through the frozen View read bridge without resubmitting work", async kind => {
+    const { ask, pending, replies, submit } = harness();
+    ask(1);
+    pending[0]!.reject(new DatasetReadError(kind, 500, "fixture", "Synthetic result refusal.", false));
+    await flush();
+    expect(replies).toEqual([{ kind: "dataset-reply", request: 1, ok: false, error: kind }]);
+    expect(submit).not.toHaveBeenCalled();
+  });
 
   it("binds reads to the drawn member and decodes rows against the declared contract", async () => {
     const { ask, pending, replies, binding, submit } = harness();

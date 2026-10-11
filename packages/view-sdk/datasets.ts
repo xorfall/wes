@@ -86,9 +86,12 @@ export interface DatasetInspection extends DatasetSnapshot {
  * - `limit`: the page is too large; ask for fewer rows.
  * - `invalid`: the path, position or limit is not acceptable, or the reply was not one page.
  * - `failed`: the read failed.
+ * - `closed`: the owning storage worker is unavailable; this does not prove missing data.
+ * - `corrupt`: validation of the stored data failed.
+ * - `uncertain`: storage completion is unconfirmed; no operation is automatically repeated.
  */
-export type DatasetErrorCode = "unavailable" | "busy" | "changed" | "withdrawn" | "limit" | "invalid" | "failed";
-export const DATASET_ERROR_CODES: readonly DatasetErrorCode[] = ["unavailable", "busy", "changed", "withdrawn", "limit", "invalid", "failed"];
+export type DatasetErrorCode = "unavailable" | "busy" | "changed" | "withdrawn" | "limit" | "invalid" | "failed" | "closed" | "corrupt" | "uncertain";
+export const DATASET_ERROR_CODES: readonly DatasetErrorCode[] = ["unavailable", "busy", "changed", "withdrawn", "limit", "invalid", "failed", "closed", "corrupt", "uncertain"];
 export class ViewDatasetError extends Error {
   constructor(readonly code: DatasetErrorCode) { super(`Dataset read ${code}`); this.name = "ViewDatasetError"; }
 }
