@@ -13,6 +13,81 @@ impl Drop for Cleanup {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn command_publication_skips_unchanged_metadata_and_follows_client_selection() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let runtime = launch(RuntimeOptions::new(home.clone(), root.path().into()))
+        .await
+        .unwrap();
+    let manager = Manager::default();
+    let _cleanup = Cleanup(manager.clone());
+    let current = runtime.handle.current().unwrap();
+    let client = "command-discovery-client";
+    let config = crate::runtime::browser_services(home, root.path().into())
+        .unwrap()
+        .terminal
+        .unwrap();
+    let id = manager
+        .start(
+            config,
+            current.clone(),
+            client.into(),
+            0,
+            runtime.handle.clone(),
+        )
+        .await
+        .unwrap();
+    let terminal = manager.owned(&id, &current.generation, client).unwrap();
+    let path = terminal.directory.path();
+    let environment = prompt::environment_file(path);
+    assert_eq!(std::fs::read_to_string(&environment).unwrap(), "default\n");
+    // Removing an owned synthetic command exposes even an otherwise harmless repeated
+    // publication. Idle ticks must not touch command files when metadata is unchanged.
+    let command = path.join("sh");
+    assert!(command.symlink_metadata().is_ok());
+    std::fs::remove_file(&command).unwrap();
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert!(command.symlink_metadata().is_err());
+    for (cell, source, expected) in [
+        ("clear", ":env clear", "no-env\n"),
+        ("select", ":env use \"default\"", "default\n"),
+    ] {
+        if cell == "clear" {
+            std::fs::remove_file(&environment).unwrap();
+            std::fs::create_dir(&environment).unwrap();
+        }
+        current
+            .session
+            .submit(
+                SourceInput::new(cell.into(), source.into())
+                    .unwrap()
+                    .with_client(client.into())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        current.session.wait_idle().await.unwrap();
+        if cell == "clear" {
+            // A failed internal publication must be retried without another selection
+            // change. This does not retry any workspace command or external effect.
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            assert!(environment.is_dir());
+            std::fs::remove_dir(&environment).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !std::fs::read_to_string(&environment).is_ok_and(|text| text == expected) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    assert!(command.symlink_metadata().is_ok());
+    manager.shutdown().await;
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn desktop_survives_suspended_reads_and_workspace_focus_but_close_and_shutdown_revoke() {
     let root = tempfile::tempdir().unwrap();
     let runtime = launch(RuntimeOptions::new(
@@ -255,6 +330,46 @@ async fn history_shutdown_serializes_start_and_forget_is_final() {
         )
         .await
         .unwrap();
+    let attached = manager
+        .find(&key, &current.generation, "history-client")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(attached.id, id);
+    assert!(attached.workspace_tools);
+    assert!(attached.selection.is_none());
+    assert_eq!(manager.sessions.lock().unwrap().len(), 1);
+    assert!(
+        manager
+            .find(&key, &current.generation, "other-client")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        manager
+            .find(&key, "retired-generation", "history-client")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        manager
+            .find(
+                &uuid::Uuid::new_v4().to_string(),
+                &current.generation,
+                "history-client"
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        manager
+            .find("../invalid", &current.generation, "history-client")
+            .await
+            .is_err()
+    );
     assert!(
         manager
             .start(
@@ -281,6 +396,13 @@ async fn history_shutdown_serializes_start_and_forget_is_final() {
         .await
         .unwrap();
     assert!(terminal.finished.is_cancelled());
+    assert!(
+        manager
+            .find(&key, &current.generation, "history-client")
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert!(
         !root
             .path()

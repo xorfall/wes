@@ -15,7 +15,7 @@ mod keyboard;
 #[cfg(windows)]
 mod terminal;
 mod windows;
-use windows::{Origin, SHELL, follows_navigation, requested_window};
+use windows::{Origin, SHELL, follows_navigation, requested_window, window_client};
 
 /// The host owns every opened engine and joins them at exit.
 type Held = Mutex<Option<DesktopHost>>;
@@ -90,6 +90,7 @@ fn main() {
             let changed_origin = origin.clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .initialization_script(SHELL)
+                .on_page_load(window_client())
                 .title(if isolated {
                     "WesDesk — Rust Debug"
                 } else {

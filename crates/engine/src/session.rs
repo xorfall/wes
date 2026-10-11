@@ -40,7 +40,7 @@ pub use environments::{
     EnvironmentAuthentication, EnvironmentAuthorityCommand, EnvironmentPlan,
     EnvironmentPublication, ProviderAuthorityCommand,
 };
-pub use observation::{ObservedCell, SessionObservation};
+pub use observation::{CommandEnvironment, ObservedCell, SessionObservation};
 mod checkpoint;
 mod identity;
 mod repeat;
@@ -266,6 +266,11 @@ enum Control {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     Observe(oneshot::Sender<SessionObservation>),
+    CommandEnvironment {
+        client: String,
+        captured: Option<String>,
+        reply: oneshot::Sender<CommandEnvironment>,
+    },
     DisplayValue(NodeId, oneshot::Sender<Result<DisplaySample, SessionError>>),
     ViewFrame(
         NodeId,
@@ -457,6 +462,24 @@ impl SessionHandle {
         let (reply, receive) = oneshot::channel();
         self.controls
             .send(Control::Observe(reply))
+            .await
+            .map_err(|_| SessionError::Stopped)?;
+        receive.await.map_err(|_| SessionError::Stopped)
+    }
+    /// Capture command discovery metadata without cloning execution state or history.
+    /// A captured environment overrides client selection but grants no execution authority.
+    pub async fn command_environment(
+        &self,
+        client: String,
+        captured: Option<String>,
+    ) -> Result<CommandEnvironment, SessionError> {
+        let (reply, receive) = oneshot::channel();
+        self.controls
+            .send(Control::CommandEnvironment {
+                client,
+                captured,
+                reply,
+            })
             .await
             .map_err(|_| SessionError::Stopped)?;
         receive.await.map_err(|_| SessionError::Stopped)
@@ -1182,7 +1205,7 @@ impl Actor {
                 },
                 control = self.controls.recv(), if self.controls_open => match control {
                     Some(control) => {
-                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
+                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::CommandEnvironment { .. } | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
                         self.control(control);
                     },
                     None => {self.controls_open = false; self.close();}
@@ -1888,6 +1911,13 @@ impl Actor {
             }
             Control::Observe(reply) => {
                 let _ = reply.send(self.observation());
+            }
+            Control::CommandEnvironment {
+                client,
+                captured,
+                reply,
+            } => {
+                let _ = reply.send(self.command_environment(&client, captured));
             }
             Control::CheckRetirementAccess(reply) => {
                 let result = if self.checkpoints.rejects_sources() {

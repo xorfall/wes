@@ -48,6 +48,12 @@ async fn coherent_observation_survives_notification_lag_and_reading_does_not_gen
     while updates.try_recv().is_ok() {}
     for _ in 0..3 {
         handle.observe().await.unwrap();
+        let commands = handle
+            .command_environment("observer".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(commands.selected, None);
+        assert_eq!(commands.providers, ["catalog"]);
         handle.snapshot().await.unwrap();
         handle.log().await.unwrap();
         handle.values().await.unwrap();
@@ -56,9 +62,14 @@ async fn coherent_observation_survives_notification_lag_and_reading_does_not_gen
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
     handle.shutdown().await.unwrap();
     task.join().await.unwrap();
     assert!(handle.subscribe_updates().is_err());
+    assert!(matches!(
+        handle.command_environment("observer".into(), None).await,
+        Err(SessionError::Stopped)
+    ));
 }
 #[tokio::test]
 async fn typed_cancel_never_parses_the_node_id_as_source() {

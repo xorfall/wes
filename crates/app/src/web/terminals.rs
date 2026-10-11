@@ -14,6 +14,9 @@ use review::target_review;
 #[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
 enum Action {
     Targets,
+    Find {
+        history: String,
+    },
     Resolve {
         #[serde(default)]
         environment: Option<String>,
@@ -195,6 +198,9 @@ pub(super) async fn action(super::Scoped(shared): super::Scoped, request: Reques
             let manager = &shared.terminals;
             let generation = &current.generation;
             match request.action {
+                Action::Find { history } => Ok(json!({
+                    "terminal": manager.find(&history, generation, client).await?
+                })),
                 Action::Resolve { environment, target } => {
                     let observation = current.session.observe().await.map_err(io::Error::other)?;
                     resolve_terminal(&observation, client, environment, target)

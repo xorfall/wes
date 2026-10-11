@@ -18,6 +18,26 @@ class Events {
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("reuses the native window's client across UI recreation, keeping other windows and browsers distinct", () => {
+  const client = "6e1929ad-847a-4d35-b34c-7c9111f975ad";
+  vi.stubGlobal("window", { __WES_DESKTOP__: true, __WES_WINDOW_CLIENT__: client });
+  expect(new Engine("first").client).toBe(client);
+  expect(new Engine("second").client).toBe(client);
+  expect(new Engine().terminalRecovery).toBe(true);
+  vi.stubGlobal("window", { __WES_DESKTOP__: true, __WES_WINDOW_CLIENT__: "c64ad929-a50f-4c46-b341-73398ef7b235" });
+  expect(new Engine().client).not.toBe(client);
+  vi.stubGlobal("window", {});
+  expect(new Engine().client).not.toBe(new Engine().client);
+  expect(new Engine().terminalRecovery).toBe(false);
+});
+
+it("does not accept malformed or non-desktop window identities", () => {
+  for (const window of [{ __WES_DESKTOP__: true, __WES_WINDOW_CLIENT__: "bad" }, { __WES_WINDOW_CLIENT__: "6e1929ad-847a-4d35-b34c-7c9111f975ad" }]) {
+    vi.stubGlobal("window", window);
+    expect(new Engine().terminalRecovery).toBe(false);
+  }
+});
+
 it("renews static view leases without rereading frames, but refreshes explicit observation changes", async () => {
   vi.useFakeTimers(); vi.stubGlobal("EventSource", Events);
   const metric = valueViewModules.named("metric")!.definition!;
