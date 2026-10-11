@@ -1,5 +1,8 @@
 import { SpecScreen } from "./screens/Spec";
-vi.mock("./screens/Spec", () => ({ SpecScreen: () => null }));
+vi.mock("./screens/Spec", async () => {
+  const { useState } = await import("react");
+  return { SpecScreen: () => { const [source, setSource] = useState(""); return <textarea aria-label="Unsubmitted spec text" value={source} onChange={event => setSource(event.target.value)} />; } };
+});
 const transport = vi.hoisted(() => ({ submit: vi.fn<(...args: unknown[]) => Promise<void>>(), generation: "g1" }));
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
@@ -53,7 +56,7 @@ describe("a screen in a window of its own", () => {
     // Act: the newest node is selected until another is chosen
     act(() => shown.root.findByType(GraphScreen).props.onOpenResult());
     // Assert
-    expect(open).toHaveBeenCalledWith(expect.stringMatching(/^#open\/two\/result\?workspace=w1$/), "_blank");
+    expect(open).toHaveBeenCalledWith(expect.stringMatching(/^#open\/two\/result\?workspace=w1$/), "wes-result");
   });
 
   it("should_ShowTheSection_And_AnnounceAChoiceInsteadOfPersisting", () => {
@@ -112,4 +115,14 @@ it("renders /spec in its own window and submits through its bound engine, retain
   await expect(shown.root.findByType(SpecScreen).props.onSubmit(":describe file:synthetic.json provider:demo")).rejects.toThrow("Workspace changed");
   act(() => shown.root.findByType(SpecScreen).props.onClose());
   expect(close).toHaveBeenCalledOnce();
+});
+it("keeps the detached editor document and its unsaved text across a session generation change", () => {
+  vi.stubGlobal("window", { close: vi.fn(), open: vi.fn(), localStorage: { getItem: () => null, setItem: () => undefined } });
+  vi.stubGlobal("document", { title: "" });
+  const shown = draw({ screen: "spec", workspace: "synthetic" });
+  act(() => shown.root.findByType("textarea").props.onChange({ target: { value: "UNSAVED SYNTHETIC TEXT" } }));
+  transport.generation = "new-generation";
+  act(() => shown.update(<ScreenWindow route={{ screen: "spec", workspace: "synthetic" }} />));
+  expect(shown.root.findByType("textarea").props.value).toBe("UNSAVED SYNTHETIC TEXT");
+  expect(transport.submit).not.toHaveBeenCalled();
 });

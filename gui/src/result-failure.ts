@@ -20,7 +20,7 @@ const failures: Record<ResultFailureKind, ResultFailure> = {
   busy: { kind: "busy", title: "Result readers busy", next: "Read this same result again shortly. Do not rerun the command.", canReadAgain: true },
 };
 const kinds: Record<string, ResultFailureKind> = {
-  RUN007: "capacity", VALUE_CAPACITY: "capacity", ANALYSIS_CAPACITY: "capacity",
+  RUN007: "capacity", VALUE_CAPACITY: "capacity", VALUE_PREVIEW_LIMIT: "capacity", ANALYSIS_CAPACITY: "capacity",
   RUN008: "unavailable", VALUE_UNAVAILABLE: "unavailable", ANALYSIS_UNAVAILABLE: "unavailable",
   RUN009: "forbidden", VALUE_ACCESS_REFUSED: "forbidden", VALUE_ACCESS_WITHDRAWN: "forbidden",
   VALUE_PRIVATE_UNAVAILABLE: "forbidden",
@@ -38,6 +38,8 @@ const kinds: Record<string, ResultFailureKind> = {
   DATASET_READ_FAILED: "failed", DATASET_ENCODING_FAILED: "failed", DATASET_READ_BUSY: "busy",
 };
 export function resultFailure(code: string | undefined): ResultFailure | undefined {
+  if (code === "VALUE_PREVIEW_LIMIT") return { ...failures.capacity, title: "Preview limit exceeded", next: "Open the result to inspect it. This refusal does not mean the result was deleted." };
+  if (code === "VALUE_PREVIEW_UNAVAILABLE") return { ...failures.forbidden, title: "Preview not available", next: "Open the result to inspect its current read access." };
   const kind = code === undefined || !Object.hasOwn(kinds, code) ? undefined : kinds[code];
   return kind === undefined ? undefined : failures[kind];
 }

@@ -1,5 +1,5 @@
 import { budget } from "./limits/policy";
-import { readExactJson, stringifyExactJson } from "./exact-json";
+import { parseExactJson, readExactJson, stringifyExactJson } from "./exact-json";
 import type { StoredValue } from "./protocol";
 import { withValidMeta } from "./value-meta";
 import { workspaceHeaders } from "./workspace-binding";
@@ -24,6 +24,33 @@ async function problemOf(response: Response): Promise<ValueReadProblem | undefin
     || typeof error.retryable !== "boolean" || error.context?.operation !== "read-value"
     || (error.context.handle !== null && typeof error.context.handle !== "string")) return undefined;
   return error as ValueReadProblem;
+}
+
+/** A preview also bounds the received body, before parsing or retaining it. */
+async function boundedBody(response: Response, maximum: number, handle: string, current: () => void): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) return parseExactJson("");
+  let bytes = 0;
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  try {
+    for (;;) {
+      const next = await reader.read();
+      current();
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > maximum) throw new ResultReadError(413, {
+        code: "VALUE_PREVIEW_LIMIT", message: "The response exceeds this preview's byte limit; no command was rerun.", retryable: false,
+        context: { operation: "read-value", handle },
+      });
+      parts.push(decoder.decode(next.value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    return parseExactJson(parts.join(""));
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 /** Withdrawn handles remembered by one client; older ones fall back to the server's own refusal. */
@@ -78,10 +105,11 @@ export class ResultReader {
   constructor(private generation: () => string | undefined, private timeout: () => number, private workspace: () => string | undefined = () => undefined,
     private refused: (handle: string, generation: string | undefined) => void = () => undefined) {}
 
-  read(handle: string): Promise<StoredValue> {
+  read(handle: string, maximumBytes?: number): Promise<StoredValue> {
+    if (maximumBytes !== undefined && (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0 || maximumBytes > budget("codec.bytes"))) return Promise.reject(new Error("Invalid result read limit."));
     if (this.withdrawn.has(handle)) return Promise.reject(new ResultWithdrawnError());
     const generation = this.generation();
-    const key = stringifyExactJson([generation, handle]);
+    const key = stringifyExactJson([generation, handle, maximumBytes]);
     const pending = this.pending.get(key);
     if (pending) return pending;
     const fence = { closed: false };
@@ -104,10 +132,11 @@ export class ResultReader {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.timeout());
         try {
-          const response = await window.fetch(`/values/${encodeURIComponent(handle)}`, { signal: controller.signal, headers: { ...workspaceHeaders(this.workspace()), ...(generation === undefined ? {} : { "X-Wes-Session": generation }) } });
+          const suffix = maximumBytes === undefined ? "" : `?${new URLSearchParams({ max_bytes: String(maximumBytes) })}`;
+          const response = await window.fetch(`/values/${encodeURIComponent(handle)}${suffix}`, { signal: controller.signal, headers: { ...workspaceHeaders(this.workspace()), ...(generation === undefined ? {} : { "X-Wes-Session": generation }) } });
           current();
           if (response.ok) {
-            const value = withValidMeta(await readExactJson(response) as StoredValue);
+            const value = withValidMeta(await (maximumBytes === undefined ? readExactJson(response) : boundedBody(response, maximumBytes, handle, current)) as StoredValue);
             current();
             return value;
           }

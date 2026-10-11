@@ -23,10 +23,12 @@ export interface GraphNode {
   /** What it holds, in one short line: `table 248×6`, `stale · 09:31`, `running…`. */
   readonly detail?: string;
   readonly state: GraphNodeState;
+  readonly selected?: boolean;
 }
 export interface GraphEdge {
   readonly from: string;
   readonly to: string;
+  readonly kind?: "selection";
   /**
    * `creation`: the edge ordered the consumer's one construction. Once it is `constructed`, refreshes
    * no longer travel along it; the edge stays drawn because ownership and deletion still follow it.
@@ -74,7 +76,13 @@ export interface GraphProps {
   readonly onConnectedOnly?: (on: boolean) => void;
   readonly onDirection?: (direction: "LR" | "TB") => void;
   readonly onFit?: () => void;
-  readonly onFind?: () => void;
+  readonly onReset?: () => void;
+  readonly search?: string;
+  readonly onSearch?: (query: string) => void;
+  readonly matches?: readonly { id: string; name: string }[];
+  readonly onSelect?: (id: string) => void;
+  readonly relations?: readonly { id: string; name: string; label: string }[];
+  readonly preview?: React.ReactNode;
   /** Take the session to the cell that made the selected node. */
   readonly onJump?: () => void;
   /** Run the selected node's cell again, dependents and all. */
@@ -114,7 +122,7 @@ export function selectionFacts(selected: Selected): Segment[][] {
   if (selected.shape) facts.push(["shape", selected.shape]);
   if (selected.input) facts.push(["input", selected.input]);
   if (selected.breaks !== undefined) {
-    facts.push(["breaks", `${selected.breaks} dependent${selected.breaks === 1 ? "" : "s"}`]);
+    facts.push(["affects", `${selected.breaks} downstream after refresh`]);
   }
   return facts.map(([name, value]) => [
     { text: padded(name, FACT_WIDTH), role: "mono-param" as const },
@@ -147,7 +155,8 @@ function PanelKey({ mark, what, onDo }: { readonly mark: string; readonly what: 
 
 export function GraphScreen({
   top, nodes, edges, cycles, selected, staleOnly = false, connectedOnly = false, hidden = 0, direction = "LR",
-  onStaleOnly, onConnectedOnly, onDirection, onFit, onFind, onJump, onRepeat, onOpenResult, onClose, canvas, chrome = "full",
+  onStaleOnly, onConnectedOnly, onDirection, onFit, onJump, onRepeat, onOpenResult, onClose, canvas, chrome = "full",
+  onReset, search = "", onSearch, matches = [], onSelect, relations = [], preview,
 }: GraphProps) {
   return (
     <Screen
@@ -183,14 +192,15 @@ export function GraphScreen({
           <button type="button" className="screen-chip cell-action" onClick={() => onDirection?.(direction === "LR" ? "TB" : "LR")}>
             {`layout ↔ ${direction}`}
           </button>
-          <button type="button" className="screen-chip cell-action" onClick={() => onFit?.()}>fit</button>
-          <button type="button" className="screen-chip cell-action" onClick={() => onFind?.()}>⌕ find node</button>
+          <button type="button" className="screen-chip cell-action" disabled={!onFit} onClick={onFit}>fit</button>
+          <button type="button" className="screen-chip cell-action" disabled={!onReset} onClick={onReset}>reset layout</button>
+          <input type="search" className="graph-search settings-field" aria-label="Find graph node" placeholder="Find node…" value={search} onChange={event => onSearch?.(event.target.value)} />
         </>
       }
       keys={[
         { text: "esc", role: "mono-ref" }, { text: " close", role: "mono-dim" },
         { text: "   ", role: "mono-faint" },
-        { text: "⏎", role: "mono-ref" }, { text: " jump to cell", role: "mono-dim" },
+        ...(onJump ? [{ text: "⏎", role: "mono-ref" as const }, { text: " jump to cell", role: "mono-dim" as const }] : []),
       ]}
     >
       <div className="graph-layout">
@@ -198,11 +208,14 @@ export function GraphScreen({
         {nodes.length === 0 ? (
           <MonoLine segments={[{ text: "no nodes yet", role: "mono-faint" }]} className="graph-empty" />
         ) : (
-          <div className="graph-canvas" role="img" aria-label={`${nodes.length} nodes, ${edges.length} edges`}>
+          <div className="graph-canvas" role="group" aria-label={`${nodes.length} nodes, ${edges.length} edges`}>
             {canvas}
           </div>
         )}
         <aside className="graph-panel surface-sunk">
+          {search.trim() && <section aria-label="Matching graph nodes"><span className="screen-label">Find node</span>
+            {matches.length ? matches.map(node => <button key={node.id} type="button" className="graph-relation cell-action" onClick={() => onSelect?.(node.id)}>{node.name}</button>) : <p className="mono-faint">No matching nodes</p>}
+          </section>}
           {(staleOnly || connectedOnly) && (
             <>
               <span className="screen-label">Filter</span>
@@ -215,14 +228,19 @@ export function GraphScreen({
           {selected && (
             <>
               <span className="screen-label">Selected</span>
+              <code className="graph-selected-name mono-ref">{selected.name}</code>
               {selectionFacts(selected).map((line, at) => (
                 <MonoLine key={at} segments={line} className="graph-fact graph-selection-fact" />
               ))}
               <div className="graph-panel-offers">
-                <PanelKey mark="⏎" what="jump to cell" onDo={onJump} />
-                <PanelKey mark="↻" what="repeat + 1" onDo={onRepeat} />
-                <PanelKey mark="⊙" what="open result" onDo={onOpenResult} />
+                {onOpenResult && <PanelKey mark="⊙" what="open result" onDo={onOpenResult} />}
+                {onJump && <PanelKey mark="⏎" what="jump to cell" onDo={onJump} />}
+                {onRepeat && <PanelKey mark="↻" what="run again" onDo={onRepeat} />}
               </div>
+              {preview}
+              {relations.length > 0 && <section className="graph-relations" aria-label="Node relationships"><span className="screen-label">Connections</span>
+                {relations.map((relation, i) => <button key={`${relation.id}:${relation.label}:${i}`} type="button" className="graph-relation cell-action" onClick={() => onSelect?.(relation.id)}><span className="mono-faint">{relation.label} </span><span className="mono-ref">{relation.name}</span></button>)}
+              </section>}
             </>
           )}
           {cycles.length > 0 && (
@@ -233,6 +251,7 @@ export function GraphScreen({
               ))}
             </>
           )}
+          <p className="graph-legend mono-faint">Drag nodes to arrange. Dotted selection links run on explicit activation; source updates do not run the call.</p>
         </aside>
       </div>
     </Screen>

@@ -1,10 +1,11 @@
 //! Native window creation shared with the isolated macOS acceptance fixture.
+use std::collections::HashMap;
 use std::sync::{
-    Arc, RwLock,
+    Arc, Mutex, OnceLock, RwLock,
     atomic::{AtomicUsize, Ordering},
 };
 use tauri::{
-    Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
+    Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent,
     webview::{NewWindowFeatures, NewWindowResponse, PageLoadEvent, PageLoadPayload},
 };
 
@@ -129,6 +130,9 @@ pub(crate) fn requested_window<R: Runtime>(
         Err(_) => return NewWindowResponse::Deny,
     };
     match destination(url, &client) {
+        Destination::App if reuse_window(app, url, &client, incognito, origin) => {
+            NewWindowResponse::Deny
+        }
         Destination::App => match result_window(app, url.as_str(), features, incognito, origin) {
             Ok(window) => NewWindowResponse::Create { window },
             Err(error) => {
@@ -163,6 +167,116 @@ pub(crate) fn follows_navigation(url: &tauri::Url, origin: &Origin) -> bool {
 /// Labels have to be unique for the lifetime of the app, and a result may be opened many times.
 static OPENED: AtomicUsize = AtomicUsize::new(0);
 
+fn purpose_of(url: &tauri::Url) -> Option<&'static str> {
+    let path = url.fragment()?.split('?').next()?.trim_start_matches('/');
+    let parts: Vec<_> = path.split('/').collect();
+    match parts.as_slice() {
+        ["graph" | "stale"] => Some("graph"),
+        ["settings"] | ["settings", _] => Some("settings"),
+        ["spec"] => Some("spec"),
+        ["open"] | ["open" | "peek", _, _] | ["source", _] => Some("result"),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct DetachedWindows(HashMap<&'static str, String>);
+impl DetachedWindows {
+    fn find(&self, url: &tauri::Url) -> Option<String> {
+        self.0.get(purpose_of(url)?).cloned()
+    }
+    fn remember(&mut self, url: &tauri::Url, label: &str) {
+        if let Some(purpose) = purpose_of(url) {
+            self.0.insert(purpose, label.to_owned());
+        }
+    }
+    fn forget(&mut self, label: &str) {
+        self.0.retain(|_, current| current != label);
+    }
+}
+fn detached_windows() -> &'static Mutex<DetachedWindows> {
+    static WINDOWS: OnceLock<Mutex<DetachedWindows>> = OnceLock::new();
+    WINDOWS.get_or_init(Default::default)
+}
+
+fn reuse_window<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &tauri::Url,
+    client: &tauri::Url,
+    incognito: bool,
+    origin: &Origin,
+) -> bool {
+    let label = detached_windows()
+        .lock()
+        .ok()
+        .and_then(|windows| windows.find(url));
+    let Some(label) = label else {
+        return false;
+    };
+    let Some(window) = app.get_webview_window(&label) else {
+        return false;
+    };
+    if window
+        .url()
+        .is_ok_and(|address| address.origin() == client.origin())
+    {
+        let address = serde_json::to_string(url.as_str()).expect("URL is JSON text");
+        let script = format!(
+            "if (window.__WES_RETARGET__) {{ window.__WES_RETARGET__({address}); }} else {{ window.location.replace({address}); }}"
+        );
+        // Retargeting from the new-window callback must not re-enter WebKit. The frontend router
+        // can hold a dirty editor transition; the window retains its own client identity.
+        let opening = app.clone();
+        let url = url.clone();
+        let origin = origin.clone();
+        let queued = app.run_on_main_thread(move || {
+            // Closing may have removed this window while the callback was queued. Resolve the
+            // current registry again; a late close must not consume the new open request.
+            if !origin
+                .read()
+                .is_ok_and(|client| client.origin() == url.origin())
+            {
+                return;
+            }
+            let registered = detached_windows()
+                .lock()
+                .ok()
+                .and_then(|windows| windows.find(&url));
+            let current = registered.and_then(|label| opening.get_webview_window(&label));
+            let target = match current {
+                Some(window) => {
+                    if !window
+                        .url()
+                        .is_ok_and(|address| address.origin() == url.origin())
+                    {
+                        return;
+                    }
+                    if let Err(error) = window.eval(&script) {
+                        // An existing dirty editor is never replaced merely because eval failed.
+                        eprintln!("wes-desktop: could not retarget a window: {error}");
+                        tracing::warn!(target: "wes.telemetry", notice = "ui_error");
+                    }
+                    window
+                }
+                None => match build_result_window(&opening, url.as_str(), None, incognito, &origin)
+                {
+                    Ok(window) => window,
+                    Err(error) => {
+                        eprintln!("wes-desktop: could not reopen a window: {error}");
+                        tracing::warn!(target: "wes.telemetry", notice = "ui_error");
+                        return;
+                    }
+                },
+            };
+            let _ = target.unminimize();
+            let _ = target.show();
+            let _ = target.set_focus();
+        });
+        return queued.is_ok();
+    }
+    false
+}
+
 /// One result, in a window of its own: same client, same origin, its own document.
 pub(crate) fn result_window<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -171,21 +285,30 @@ pub(crate) fn result_window<R: Runtime>(
     incognito: bool,
     origin: &Origin,
 ) -> Result<tauri::WebviewWindow<R>, Error> {
+    build_result_window(app, url, Some(features), incognito, origin)
+}
+
+fn build_result_window<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &str,
+    features: Option<NewWindowFeatures>,
+    incognito: bool,
+    origin: &Origin,
+) -> Result<tauri::WebviewWindow<R>, Error> {
     let address: tauri::Url = url.parse()?;
     let label = format!("result-{}", OPENED.fetch_add(1, Ordering::Relaxed));
     let closing = app.clone();
     let closed = label.clone();
+    let destroyed = label.clone();
     let opener = app.clone();
     let opened_from = origin.clone();
     let navigated_from = origin.clone();
-    WebviewWindowBuilder::new(app, &label, WebviewUrl::External(address))
+    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(address.clone()))
         // A window the client opened may open windows in turn: a result from the graph window,
         // a piece of a result from a result window. Each is built the same way as this one.
         .on_new_window(move |url, features| {
             requested_window(&opener, &url, features, incognito, &opened_from)
         })
-        // WebKit requires its supplied configuration when returning NewWindowResponse::Create.
-        .window_features(features)
         .incognito(incognito)
         .initialization_script(SHELL)
         .on_page_load(window_client())
@@ -203,23 +326,72 @@ pub(crate) fn result_window<R: Runtime>(
             // Closing from inside the navigation callback re-enters the webview; queue it instead.
             let app = closing.clone();
             let label = closed.clone();
+            if let Ok(mut windows) = detached_windows().lock() {
+                windows.forget(&label);
+            }
             let _ = closing.run_on_main_thread(move || {
                 if let Some(window) = app.get_webview_window(&label) {
                     let _ = window.close();
                 }
             });
             false
-        })
-        .build()
-        .map_err(Into::into)
+        });
+    // A callback-created popup uses WebKit's supplied configuration. Reopening after a queued
+    // close creates a new independent document instead of returning a popup to that callback.
+    let builder = if let Some(features) = features {
+        builder.window_features(features)
+    } else {
+        builder
+    };
+    let window = builder.build().map_err::<Error, _>(Into::into)?;
+    window.on_window_event(move |event| {
+        if matches!(
+            event,
+            WindowEvent::Destroyed | WindowEvent::CloseRequested { .. }
+        ) && let Ok(mut windows) = detached_windows().lock()
+        {
+            windows.forget(&destroyed);
+        }
+    });
+    if let Ok(mut windows) = detached_windows().lock() {
+        windows.remember(&address, &label);
+    }
+    Ok(window)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CLOSING, Destination, SHELL, client_script, destination, is_closing};
+    use super::{
+        CLOSING, Destination, DetachedWindows, SHELL, client_script, destination, is_closing,
+        purpose_of,
+    };
 
     fn url(text: &str) -> tauri::Url {
         text.parse().unwrap()
+    }
+
+    #[test]
+    fn detached_registry_reuses_purposes_and_old_close_does_not_remove_a_reopened_window() {
+        let mut windows = DetachedWindows::default();
+        let graph = url("http://127.0.0.1:8099/#graph?workspace=alpha");
+        let stale = url("http://127.0.0.1:8099/#stale?workspace=beta");
+        let result = url("http://127.0.0.1:8099/#open/item/result?workspace=alpha");
+        let peek = url("http://127.0.0.1:8099/#peek/other/json?workspace=beta");
+        windows.remember(&graph, "graph-first");
+        windows.remember(&result, "result-first");
+        assert_eq!(windows.find(&stale).as_deref(), Some("graph-first"));
+        assert_eq!(windows.find(&peek).as_deref(), Some("result-first"));
+        windows.remember(&graph, "graph-second");
+        windows.forget("graph-first");
+        assert_eq!(windows.find(&graph).as_deref(), Some("graph-second"));
+        windows.forget("graph-second");
+        assert!(windows.find(&graph).is_none());
+        assert_eq!(windows.find(&result).as_deref(), Some("result-first"));
+        assert_eq!(purpose_of(&url("http://127.0.0.1:8099/")), None);
+        assert_eq!(
+            purpose_of(&url("http://127.0.0.1:8099/#gallery/graph")),
+            None
+        );
     }
 
     #[test]

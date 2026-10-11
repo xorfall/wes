@@ -6,6 +6,44 @@ const value = { type: { kind: "unknown" }, provenance: {}, data: "synthetic" };
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const busy = () => new Response(JSON.stringify({ error: { code: "VALUE_READ_BUSY", message: "Backend says readers are busy; result not known missing.", retryable: true, retryAfterMs: 150, context: { operation: "read-value", handle: "h" } } }), { status: 503 });
 
+it("keeps bounded and full reads separate, and does not retry a preview capacity refusal", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(value)))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "VALUE_PREVIEW_LIMIT", message: "Too large for preview", retryable: false, context: { operation: "read-value", handle: "h" } } }), { status: 413 }));
+  vi.stubGlobal("window", { fetch });
+  const reader = new ResultReader(() => "g", () => 15000, () => "synthetic");
+  const full = reader.read("h"), bounded = reader.read("h", 4096);
+  await expect(full).resolves.toEqual(value);
+  await expect(bounded).rejects.toMatchObject({ problem: { code: "VALUE_PREVIEW_LIMIT" }, kind: "capacity" });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch.mock.calls.map(call => call[0])).toEqual(["/values/h", "/values/h?max_bytes=4096"]);
+  await expect(reader.read("h", 0)).rejects.toThrow("Invalid result read limit");
+});
+
+it("cancels an oversized preview body before parsing and releases its read slot", async () => {
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({ start(controller) {
+    controller.enqueue(new TextEncoder().encode("x".repeat(64)));
+  }, cancel });
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(body))
+    .mockResolvedValueOnce(new Response(JSON.stringify(value)));
+  vi.stubGlobal("window", { fetch });
+  const reader = new ResultReader(() => "g", () => 15000);
+  await expect(reader.read("large", 32)).rejects.toMatchObject({ kind: "capacity" });
+  expect(cancel).toHaveBeenCalledOnce();
+  await expect(reader.read("small", 4096)).resolves.toEqual(value);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+it("a preview capability refusal does not withdraw the handle or prevent an ordinary read", async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "VALUE_PREVIEW_UNAVAILABLE", message: "Preview requires current publication", retryable: false, context: { operation: "read-value", handle: "h" } } }), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(value)));
+  vi.stubGlobal("window", { fetch });
+  const reader = new ResultReader(() => "g", () => 15000);
+  await expect(reader.read("h", 4096)).rejects.toMatchObject({ kind: "forbidden" });
+  expect(reader.isWithdrawn("h")).toBe(false);
+  await expect(reader.read("h")).resolves.toEqual(value);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
 it("admits only two complete response bodies and coalesces concurrent handle reads", async () => {
   const complete: (() => void)[] = [];
   let active = 0, peak = 0;

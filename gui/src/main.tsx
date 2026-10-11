@@ -3,6 +3,7 @@ import { initializeDiagnostics } from "./local-telemetry";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { readOpenRoute, readScreenRoute } from "./surface/open-route";
+import { followDetachedRoutes } from "./surface/detached-routing";
 import { Boundary } from "./Boundary";
 import { defaults } from "./settings";
 import { initializeDesktopPreferences } from "./desktop-preferences";
@@ -34,16 +35,23 @@ async function start() {
   // The data home's presentation entries follow the engine's directory for as long as the page lives.
   if (!gallery) void followPresentations(new AbortController().signal);
 
-  createRoot(root).render(
-    <StrictMode>
-      <Boundary>
-        {gallery ? <Gallery route={gallery} />
-          : opened ? <OpenWindow route={opened} />
-          : summoned ? <ScreenWindow route={summoned} />
-          : <SurfaceApp />}
-      </Boundary>
-    </StrictMode>,
-  );
+  const mounted = createRoot(root);
+  const draw = (hash: string) => {
+    const opened = readOpenRoute(hash);
+    const summoned = readScreenRoute(hash);
+    mounted.render(
+      <StrictMode>
+        <Boundary>
+          {gallery ? <Gallery route={gallery} />
+            : opened ? <OpenWindow key={`${opened.workspace}:${opened.node ?? opened.cell}:${opened.peek ?? "open"}:${opened.tab}`} route={opened} />
+            : summoned ? <ScreenWindow key={`${summoned.workspace}:${summoned.screen === "stale" ? "graph" : summoned.screen}`} route={summoned} />
+            : <SurfaceApp />}
+        </Boundary>
+      </StrictMode>,
+    );
+  };
+  draw(window.location.hash);
+  if (opened || summoned) followDetachedRoutes(window.location.hash, draw);
 }
 function StartupFailure({error}:{readonly error:unknown}):never { throw error instanceof Error?error:new Error(String(error)); }
 void start().catch(error=>{

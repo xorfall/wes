@@ -58,12 +58,11 @@ import { useSessionCommands } from "./session-commands";
 import { DebugReport } from "./DebugReport";
 import { readSession, type SessionCell, type SessionContext } from "./session-model";
 import { readOpen, resultNamed } from "./open-model";
-import { openRoute, peekRoute, screenRoute, sourceRoute } from "./open-route";
+import { openRoute, peekRoute, screenRoute, sourceRoute, openDetached } from "./open-route";
 import { followSettings } from "./settings-channel";
 import { useTableViewOwner } from "./table-view-owner";
 import { EnvScreen } from "./screens/Env";
-import { GraphScreen } from "./screens/Graph";
-import { GraphCanvas } from "./screens/GraphCanvas";
+import { GraphWorkbench } from "./GraphWorkbench";
 import { OpenScreen, type OpenTab } from "./screens/Open";
 import { LiveView } from "./LiveView";
 import { resultAccess } from "./result-access";
@@ -457,7 +456,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
          * window (`crates/desktop`), and what the webview hands back is not worth trusting — so
          * there, the ask itself is the answer.
          */
-        const elsewhere = window.open(openRoute(node, which, engine.binding ?? contextRef.current?.workspace), "_blank");
+        const elsewhere = openDetached(openRoute(node, which, engine.binding ?? contextRef.current?.workspace));
         if (elsewhere || window.__WES_DESKTOP__ === true) return setOpened(node);
       }
       setOpened(node);
@@ -474,7 +473,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
       if (node === undefined) return setTrouble("that cell made no result to open");
       setSourceCell(undefined);
       if (openWhere.current === "window") {
-        const elsewhere = window.open(peekRoute(node, what, engine.binding ?? contextRef.current?.workspace), "_blank");
+        const elsewhere = openDetached(peekRoute(node, what, engine.binding ?? contextRef.current?.workspace));
         if (elsewhere || window.__WES_DESKTOP__ === true) return setOpened(node);
       }
       setOpened(node);
@@ -488,7 +487,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
   const openCellSource = (cell: SessionCell) => {
     // Local UI commands have no engine ledger entry to restore in another window.
     if (openWhere.current === "window" && !cell.source?.trimStart().startsWith("/")) {
-      const elsewhere = window.open(sourceRoute(cell.id, engine.binding ?? contextRef.current?.workspace), "_blank");
+      const elsewhere = openDetached(sourceRoute(cell.id, engine.binding ?? contextRef.current?.workspace));
       if (elsewhere || window.__WES_DESKTOP__ === true) return;
     }
     setSourceCell(cell.id);
@@ -665,7 +664,7 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
    */
   const summonScreen = (which: Summoned, section?: SectionName) => {
     if ((which === "graph" || which === "stale" || which === "settings" || which === "spec") && openWhere.current === "window") {
-      const elsewhere = window.open(screenRoute(which, engine.binding ?? contextRef.current?.workspace, section), "_blank");
+      const elsewhere = openDetached(screenRoute(which, engine.binding ?? contextRef.current?.workspace, section));
       if (elsewhere || window.__WES_DESKTOP__ === true) return;
     }
     setScreen(which);
@@ -1023,13 +1022,10 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
     const peekedNode = workspace.nodes.find((it) => it.id === (shown.node ?? opened));
     const peekedCell = sourceCell === undefined ? undefined : model.cells.find(it => it.id === sourceCell);
     return shown.screen === "graph" || shown.screen === "stale" ? (
-    <GraphScreen
+    <GraphWorkbench
       chrome={chromeMode}
       top={model.top}
-      nodes={graph.nodes}
-      edges={graph.edges}
-      cycles={graph.cycles}
-      {...(graph.selected ? { selected: graph.selected } : {})}
+      workspace={workspace} engine={engine} generation={generation} selectedId={selectedNode} onSelect={setChosenNode}
       staleOnly={shown.screen === "stale"}
       connectedOnly={connectedOnly}
       {...(graph.hidden ? { hidden: graph.hidden } : {})}
@@ -1053,9 +1049,6 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
       }}
       onOpenResult={() => openResult(selectedNode, "result")}
       onClose={leave}
-      canvas={
-        <GraphCanvas nodes={graph.nodes} edges={graph.edges} direction={settings.direction} onSelect={setChosenNode} />
-      }
     />
   ) : (
     shown.screen === "settings" ? (

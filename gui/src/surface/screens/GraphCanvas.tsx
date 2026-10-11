@@ -1,13 +1,10 @@
 /**
  * The graph's canvas: xyflow and dagre dressed in the surface's roles.
  *
- * Laid out rather than arranged. Nobody drew this graph — it followed from what was typed — so
- * nobody should have to place it either. A node says what it is with the same colour the scrollback
- * would use for it, which is the whole reason `graph-node-*` exists as roles rather than as a
- * palette of its own.
+ * Dagre supplies the initial arrangement; manual positions are presentation state only.
  */
-import { useMemo } from "react";
-import { Background, MarkerType, MiniMap, ReactFlow, type Edge, type Node as FlowNode } from "@xyflow/react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { Background, MarkerType, MiniMap, Position, ReactFlow, type Edge, type Node as FlowNode, type NodeChange, type ReactFlowInstance } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import type { GraphEdge, GraphNode } from "./Graph";
@@ -43,8 +40,8 @@ export function textWidth(text: string, size: number): number {
  * How wide this node needs to be.
  *
  * A node grows to hold its sub line and stops at 240; past that the type is cut with an ellipsis,
- * because a node wider than that is a label and no longer a node. The layout is given the width it
- * will be drawn at, so the boxes it places are the boxes on screen.
+ * because a node wider than that is a label and no longer a node. The layout reserves stable
+ * 240px slots; drawing a shorter label does not move neighbouring nodes.
  */
 export function widthOf(node: GraphNode): number {
   const name = textWidth(node.name, 13);
@@ -58,7 +55,31 @@ export interface GraphCanvasProps {
   readonly edges: readonly GraphEdge[];
   readonly direction: "LR" | "TB";
   readonly onSelect?: (id: string) => void;
+  readonly layoutId?: string;
+  /** Includes nodes hidden by filters; only genuinely removed nodes lose their positions. */
+  readonly allNodeIds?: readonly string[];
 }
+
+export interface GraphCanvasControl {
+  fit(): void;
+  reset(): void;
+  focus(id: string): void;
+}
+
+type Point = { x: number; y: number };
+// Coordinates only, for a few recently opened graph scopes in this document. Nothing survives a restart.
+const layouts = new Map<string, ReadonlyMap<string, Point>>();
+const MAX_LAYOUTS = 16;
+export function movedPositions(previous: ReadonlyMap<string, Point>, changes: readonly NodeChange[], live: ReadonlySet<string>): Map<string, Point> {
+  const next = new Map([...previous].filter(([id]) => live.has(id)));
+  for (const change of changes) if (change.type === "position" && change.position && live.has(change.id)
+    && Number.isFinite(change.position.x) && Number.isFinite(change.position.y)) next.set(change.id, { ...change.position });
+  return next;
+}
+
+const FIT = { maxZoom: 1, padding: 0.2 };
+// These dimensions must also size the SVG; a CSS-only resize crops it and misplaces pointer input.
+export const MINIMAP_SIZE = { width: 176, height: 112 };
 
 /** Where dagre puts each node and how wide it is, given which way the graph is asked to grow. */
 export function laidOut(
@@ -70,27 +91,63 @@ export function laidOut(
   graph.setDefaultEdgeLabel(() => ({}));
   graph.setGraph({ rankdir: direction, nodesep: 24, ranksep: 56 });
   const widths = new Map(nodes.map((node) => [node.id, widthOf(node)]));
-  for (const node of nodes) graph.setNode(node.id, { width: widths.get(node.id)!, height: NODE_HEIGHT });
+  // Stable slots keep execution/state/type text updates from moving neighbouring nodes.
+  for (const node of nodes) graph.setNode(node.id, { width: NODE_MAX_WIDTH, height: NODE_HEIGHT });
   for (const edge of edges) if (edge.from !== edge.to) graph.setEdge(edge.from, edge.to);
   dagre.layout(graph);
   const placed = new Map<string, { x: number; y: number; width: number }>();
   for (const node of nodes) {
     const at = graph.node(node.id);
     const width = widths.get(node.id)!;
-    placed.set(node.id, { x: at.x - width / 2, y: at.y - NODE_HEIGHT / 2, width });
+    placed.set(node.id, { x: at.x - NODE_MAX_WIDTH / 2, y: at.y - NODE_HEIGHT / 2, width });
   }
   return placed;
 }
 
-export function GraphCanvas({ nodes, edges, direction, onSelect }: GraphCanvasProps) {
+export const GraphCanvas = forwardRef<GraphCanvasControl, GraphCanvasProps>(function GraphCanvas({ nodes, edges, direction, onSelect, layoutId, allNodeIds }: GraphCanvasProps, ref) {
+  const instance = useRef<ReactFlowInstance>();
+  const [manual, setManual] = useState<ReadonlyMap<string, Point>>(() => layoutId ? layouts.get(layoutId) ?? new Map() : new Map());
+  const [resetVersion, setResetVersion] = useState(0);
+  const live = new Set(allNodeIds ?? nodes.map(node => node.id));
+  const structure = JSON.stringify([direction, nodes.map(node => node.id), edges.map(edge => [edge.from, edge.to, edge.kind])]);
+  const placed = useMemo(() => laidOut(nodes, edges, direction), [structure]);
+  const remember = (next: ReadonlyMap<string, Point>) => {
+    setManual(next);
+    if (!layoutId) return;
+    layouts.delete(layoutId);
+    if (next.size) layouts.set(layoutId, next);
+    if (layouts.size > MAX_LAYOUTS) layouts.delete(layouts.keys().next().value!);
+  };
+  useEffect(() => {
+    if (!resetVersion) return;
+    // ReactFlow's child effects have received the restored node positions before this fit.
+    const frame = requestAnimationFrame(() => { void instance.current?.fitView(FIT); });
+    return () => cancelAnimationFrame(frame);
+  }, [resetVersion]);
+  useImperativeHandle(ref, () => ({
+    fit: () => { void instance.current?.fitView(FIT); },
+    reset: () => {
+      remember(new Map());
+      setResetVersion(version => version + 1);
+    },
+    focus: id => {
+      const node = instance.current?.getNode(id);
+      if (node) void instance.current?.setCenter(node.position.x + (node.width ?? NODE_WIDTH) / 2, node.position.y + NODE_HEIGHT / 2, { zoom: 1 });
+    },
+  }));
   const drawn = useMemo(() => {
-    const placed = laidOut(nodes, edges, direction);
     const flowNodes: FlowNode[] = nodes.map((node) => {
-      const at = placed.get(node.id) ?? { x: 0, y: 0, width: NODE_WIDTH };
+      const point = placed.get(node.id) ?? { x: 0, y: 0 };
+      const at = { ...point, width: widthOf(node) };
       return {
       id: node.id,
-      position: { x: at.x, y: at.y },
+      position: manual.get(node.id) ?? { x: at.x, y: at.y },
+      selected: node.selected === true || node.state === "selected",
+      sourcePosition: direction === "LR" ? Position.Right : Position.Bottom,
+      targetPosition: direction === "LR" ? Position.Left : Position.Top,
       data: {
+        state: node.state,
+        selected: node.selected === true || node.state === "selected",
         label: (
           <span className="graph-node-said">
             <span className="graph-node-name">{node.name}</span>
@@ -98,7 +155,7 @@ export function GraphCanvas({ nodes, edges, direction, onSelect }: GraphCanvasPr
           </span>
         ),
       },
-      className: `graph-node graph-node-${node.state}`,
+      className: `graph-node graph-node-${node.state}${node.selected === true ? " graph-node-active" : ""}`,
       // Given rather than left to the browser: the minimap draws from these, and a measurement
       // that has not happened yet leaves it empty.
       width: at.width,
@@ -107,17 +164,17 @@ export function GraphCanvas({ nodes, edges, direction, onSelect }: GraphCanvasPr
       };
     });
     const flowEdges: Edge[] = edges.map((edge) => ({
-      id: `${edge.from}>${edge.to}`,
+      id: `${edge.from}>${edge.to}:${edge.kind ?? "dependency"}`,
       source: edge.from,
       target: edge.to,
-      className: edge.lifetime === "creation" ? `graph-edge graph-edge-creation${edge.constructed ? " graph-edge-constructed" : ""}`
+      className: edge.kind === "selection" ? "graph-edge graph-edge-selection" : edge.lifetime === "creation" ? `graph-edge graph-edge-creation${edge.constructed ? " graph-edge-constructed" : ""}`
         : edge.captured ? "graph-edge graph-edge-captured" : "graph-edge",
-      ...(edge.lifetime === "creation" ? { label: edge.constructed ? "created from" : "creates", ariaLabel: edge.constructed ? "Created from this input; refreshes do not re-create it" : "Construction waits for this input" }
+      ...(edge.kind === "selection" ? { label: "selection", ariaLabel: "Explicit selection activates this call; source updates do not run it" } : edge.lifetime === "creation" ? { label: edge.constructed ? "created from" : "creates", ariaLabel: edge.constructed ? "Created from this input; refreshes do not re-create it" : "Construction waits for this input" }
         : edge.captured ? { label: "captured", ariaLabel: "Input captured when the run started; later updates do not change this run" } : {}),
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
     }));
     return { flowNodes, flowEdges };
-  }, [nodes, edges, direction]);
+  }, [nodes, edges, direction, manual, placed]);
 
   return (
     <ReactFlow
@@ -129,14 +186,26 @@ export function GraphCanvas({ nodes, edges, direction, onSelect }: GraphCanvasPr
        * drawn at twice the size loses its intended geometry — the font, the border and the
        * corner all double with it. Shrinking to fit a large graph is what fitting is for.
        */
-      fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
+      fitViewOptions={FIT}
       proOptions={{ hideAttribution: true }}
-      nodesDraggable={false}
+      nodesDraggable
+      nodeDragThreshold={4}
+      nodesConnectable={false}
+      edgesReconnectable={false}
+      edgesFocusable={false}
+      deleteKeyCode={null}
+      minZoom={0.05}
+      maxZoom={2}
+      onInit={flow => { instance.current = flow; }}
+      onNodesChange={changes => {
+        for (const change of changes) if (change.type === "select" && change.selected) onSelect?.(change.id);
+        if (changes.some(change => change.type === "position" && change.position)) remember(movedPositions(manual, changes, live));
+      }}
       onNodeClick={(_, node) => onSelect?.(node.id)}
     >
       <Background gap={16} size={1} />
       {/* The graph in miniature and where the view is; its size and colours are in screens.css. */}
-      <MiniMap pannable zoomable ariaLabel="Graph minimap" />
+      <MiniMap style={MINIMAP_SIZE} pannable zoomable maskStrokeWidth={1.5} nodeClassName={node => `graph-mini-${node.data.state ?? "ok"}${node.data.selected ? " graph-mini-selected" : ""}`} onNodeClick={(_, node) => onSelect?.(node.id)} ariaLabel="Graph minimap" />
     </ReactFlow>
   );
-}
+});

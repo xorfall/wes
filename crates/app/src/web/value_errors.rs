@@ -35,6 +35,9 @@ fn read_code(kind: ReadFailureKind) -> &'static str {
 pub(super) enum Failure {
     Retiring,
     InvalidHandle,
+    InvalidLimit,
+    PreviewLimit,
+    PreviewUnavailable,
     Busy,
     Missing,
     Storage(StoreError),
@@ -69,6 +72,24 @@ impl Failure {
                 StatusCode::NOT_FOUND,
                 "VALUE_INVALID_HANDLE",
                 "The result reference is invalid. Reconnect to obtain its current reference.",
+                false,
+            ),
+            Self::InvalidLimit => (
+                StatusCode::BAD_REQUEST,
+                "VALUE_READ_LIMIT_INVALID",
+                "The result read limit must be a positive byte count within the display budget.",
+                false,
+            ),
+            Self::PreviewLimit => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "VALUE_PREVIEW_LIMIT",
+                "This result exceeds the bounded preview read. Open the result to inspect it; no command was rerun.",
+                false,
+            ),
+            Self::PreviewUnavailable => (
+                StatusCode::CONFLICT,
+                "VALUE_PREVIEW_UNAVAILABLE",
+                "A bounded preview requires a result published in this workspace. Open the result to inspect its current read access; no command was rerun.",
                 false,
             ),
             Self::Busy => (

@@ -191,6 +191,18 @@ async fn selection_template_is_read_only_and_activation_transport_preserves_one_
         }
     };
     assert_eq!(planned["selectionSource"], source.as_str());
+    let created = loop {
+        let event = events.until("created").await;
+        if event["name"] == "detail" {
+            break event;
+        }
+    };
+    assert_eq!(created["selectionSources"], json!([source.as_str()]));
+    assert_eq!(
+        created["dependsOn"],
+        json!([]),
+        "selection is not an execution dependency"
+    );
     session.wait_idle().await.unwrap();
     assert_eq!(fixture.post(&generation, request).await.status(), 202);
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);

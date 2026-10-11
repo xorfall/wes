@@ -44,6 +44,7 @@ export interface WorkspaceNode {
   readonly command: string;
   readonly currentDefinition?: string;
   readonly dependsOn: readonly string[];
+  readonly selectionSources?: readonly string[];
   readonly state: NodeState;
   readonly type?: string;
   readonly handle?: string;
@@ -262,7 +263,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         return change(workspace, event.node, node => ({ ...node, name: event.name || undefined, errorNames:event.errorNames,
           // Progress belongs to one run; a new run never inherits an older run's counters.
           ...(node.progress && node.progress.run !== (event.run ?? undefined) ? { progress: undefined } : {}),
-          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, dependencyLifetime: event.dependencyLifetime, inputsCaptured: event.inputsCaptured === true || undefined, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
+          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, selectionSources: event.selectionSources, dependencyLifetime: event.dependencyLifetime, inputsCaptured: event.inputsCaptured === true || undefined, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
           repeatable: event.repeatable, startedAt: event.startedAt ?? undefined,
           // Replaced by every announcement: absent or null now means no controls, whatever was said before.
           recordingControl: recordingControlOf(event), reconciliationControl: reconciliationControlOf(event), openLifetime: openLifetimeOf(event) }));
@@ -283,6 +284,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
             streamOutput: event.streamOutput,
             streamSource: event.streamSource === true,
             dependsOn: event.dependsOn,
+            selectionSources: event.selectionSources,
             dependencyLifetime: event.dependencyLifetime,
             ...(event.inputsCaptured === true ? { inputsCaptured: true as const } : {}),
             state: "pending",
