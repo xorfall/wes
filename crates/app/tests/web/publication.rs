@@ -264,7 +264,8 @@ async fn cold_ready_results_keep_their_ui_handle_and_capacity_is_not_withdrawal(
             Box::pin(async {
                 Ok(wes_core::Value::new(
                     Shape::Primitive(wes_core::Primitive::Bytes),
-                    wes_core::Data::Bytes(vec![4; 6000].into()),
+                    // Larger than the shared resident budget even after every cache drops.
+                    wes_core::Data::Bytes(vec![4; 20001].into()),
                     Default::default(),
                 )
                 .unwrap())
@@ -339,6 +340,7 @@ async fn cold_ready_results_keep_their_ui_handle_and_capacity_is_not_withdrawal(
     let first = &snapshot.names["first"].node;
     assert!(!snapshot.execution.values.contains_key(first));
     let captured = &snapshot.execution.stored_values[first];
+    assert!(captured.snapshot.charge > fixture.worker.resident_memory().limit());
     let mut stream = fixture.stream().await;
     assert_eq!(stream.generation().await, generation);
     let ready = loop {

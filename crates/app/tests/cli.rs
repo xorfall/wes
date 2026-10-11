@@ -1,3 +1,5 @@
+#[path = "support/command_output.rs"]
+mod command_output;
 #[path = "support/python.rs"]
 mod python;
 use std::process::Command;

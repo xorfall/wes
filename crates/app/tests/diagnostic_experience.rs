@@ -3,6 +3,9 @@ use std::{
     process::{Command, Output, Stdio},
     time::{Duration, Instant},
 };
+#[cfg(target_os = "macos")]
+#[path = "support/command_output.rs"]
+mod command_output;
 
 fn run_cli(command: &mut Command, source: &str, budget: Duration) -> Output {
     let mut child = command
@@ -34,21 +37,30 @@ fn run_cli(command: &mut Command, source: &str, budget: Duration) -> Output {
             #[cfg(target_os = "macos")]
             {
                 // The sampler targets only this owned synthetic CLI child.
-                let sample = Command::new("/usr/bin/sample")
-                    .args([
+                let sample = command_output::capture(
+                    Command::new("/usr/bin/sample").args([
                         child.id().to_string(),
                         "1".into(),
                         "1".into(),
                         "-file".into(),
                         "/dev/stdout".into(),
-                    ])
-                    .output();
+                    ]),
+                    Duration::from_secs(2),
+                    64 * 1024,
+                );
                 if let Ok(sample) = sample {
                     eprintln!(
                         "Timed-out CLI stack:\n{}",
-                        String::from_utf8_lossy(&sample.stdout)
+                        String::from_utf8_lossy(&sample.output.stdout)
                     );
-                    eprintln!("Sampler: {}", String::from_utf8_lossy(&sample.stderr));
+                    eprintln!(
+                        "Sampler pid {}: {}; timed out: {}; omitted stdout/stderr: {}/{} bytes",
+                        sample.pid,
+                        String::from_utf8_lossy(&sample.output.stderr),
+                        sample.timed_out,
+                        sample.stdout_omitted,
+                        sample.stderr_omitted,
+                    );
                 }
             }
             let _ = child.kill(); // The child may have exited while being sampled.
