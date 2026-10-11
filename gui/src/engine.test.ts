@@ -835,3 +835,22 @@ it("keeps scope authority through late mount closure and releases scoped reader 
   reopen();confirm({ok:true,status:200,text:async()=>JSON.stringify({token:"lease"})});
   await vi.advanceTimersByTimeAsync(1);disconnect();
 });
+
+it("carries the mounted scope through prepare-only commands and independent evidence reads",async()=>{
+  vi.useFakeTimers();vi.stubGlobal("EventSource",Events);
+  const fetch=vi.fn(async(url:string,_init:{headers?:Record<string,string>;body?:string})=>new Response(JSON.stringify(
+    url==="/view-commands"?{source:"synthetic draft"}:url.startsWith("/view-evidence/")?{available:false,complete:false,input:null,cautions:[]}:{token:"lease"}
+  )));
+  vi.stubGlobal("fetch",fetch);
+  const engine=new Engine(),disconnect=engine.listen(()=>{},()=>{});Events.current.say("g");
+  const scope="00000000-0000-4000-8000-0000000000f6";
+  const close=engine.watchViewFrame("scoped","identity",()=>{},{readScope:scope});
+  const binding={engine,generation:"g",root:"scoped",rootInstance:"identity",member:"member",revision:"1",inputRevision:"2",authorityEpoch:"epoch"} as import("./value-views/view-bindings").ViewBinding;
+  const signal=new AbortController().signal;
+  await engine.prepareViewCommand(binding,"send",{value:"synthetic"},engine.captureComposition(),signal);
+  await engine.readViewEvidence(binding,"members",0,signal);
+  const requests=fetch.mock.calls.filter(([url])=>url==="/view-commands"||url.startsWith("/view-evidence/"));
+  expect(requests).toHaveLength(2);
+  expect(requests.every(([,init])=>init.headers?.["X-Wes-Scope"]===scope)).toBe(true);
+  close();await vi.advanceTimersByTimeAsync(1);disconnect();
+});

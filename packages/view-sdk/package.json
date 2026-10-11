@@ -21,6 +21,7 @@
     "values.ts",
     "datasets.ts",
     "commands.ts",
+    "evidence.ts",
     "time.ts",
     "geometry.ts",
     "frame.tsx",

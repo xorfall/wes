@@ -211,7 +211,12 @@ impl crate::workspace::Workspace {
                 warnings.extend(items.iter().cloned());
             }
             let mut outputs = vec![];
-            if entry.definition.manifest.interaction.is_some() {
+            if entry.definition.manifest.interaction.is_some()
+                && self.view_interaction(&entry.id, &entry.identity).is_err()
+            {
+                warnings.push("Shared interaction unavailable".into());
+                complete = false;
+            } else if entry.definition.manifest.interaction.is_some() {
                 let (owner, state) = self.view_interaction(&entry.id, &entry.identity)?;
                 fields.push(("stateOwner".into(), text(owner.identity.clone())));
                 fields.push(("stateRevision".into(), text(state.revision.to_string())));

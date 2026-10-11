@@ -7,6 +7,7 @@ export interface ViewBinding {
   readonly engine: Engine;
   readonly generation: string;
   /** The frame root's node and instance identity, as the frame was read. */
+  readonly authorityEpoch?: string;
   readonly root: string;
   readonly rootInstance: string;
   /** The drawn member and the revisions it was drawn at. */
@@ -27,6 +28,6 @@ export function frameBindings(frame: ViewFrame, rootInstance: string, engine: En
   return path => {
     const entry = members.get(path);
     if (!entry) return undefined;
-    return { engine, generation, root: frame.root, rootInstance, member: entry.id, revision: entry.revision, inputRevision: entry.inputRevision, linkedInputs: entry.linkedInputs };
+    return { engine, generation, authorityEpoch: frame.authorityEpoch, root: frame.root, rootInstance, member: entry.id, revision: entry.revision, inputRevision: entry.inputRevision, linkedInputs: entry.linkedInputs };
   };
 }
