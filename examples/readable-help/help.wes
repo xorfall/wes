@@ -86,6 +86,8 @@
 :help fork
 :help describe
 :help sandbox
+:help transient
+:help keep
 :help info
 :help view
 :help view create

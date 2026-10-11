@@ -1,9 +1,10 @@
-//! Authored definitions and joined volatile runtimes. There is no execution-storage port here.
+//! Named authored programs and joined child runtimes with captured storage policy.
 use super::*;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use wes_core::Data;
 use wes_language::{Expression, Statement, Value};
+mod keep;
 #[derive(Default)]
 struct Names {
     definitions: Vec<String>,
@@ -26,10 +27,27 @@ impl Drop for NameReservation<'_> {
 
 #[derive(Clone)]
 pub struct Definition {
+    pub kind: Kind,
     pub name: String,
     pub source: String,
     pub owner: String,
     pub environment: Option<wes_core::environments::EnvironmentContext>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Sandbox,
+    Transient,
+    Saved,
+}
+impl Kind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sandbox => "Sandbox",
+            Self::Transient => "Transient",
+            Self::Saved => "Saved",
+        }
+    }
 }
 /// Only authored configuration crosses this port. Implementations must replace atomically.
 pub trait DefinitionStore: Send + Sync {
@@ -38,10 +56,47 @@ pub trait DefinitionStore: Send + Sync {
 }
 #[derive(Clone, Debug)]
 pub struct Reply {
+    pub kind: Kind,
+    pub scope: Option<String>,
+    pub sources: BTreeMap<String, StoredSource>,
     pub name: String,
     pub data: Data,
     pub state: ObservationState,
     pub view: Option<(String, bool)>,
+}
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StoredSource {
+    pub handle: Option<String>,
+    pub scope: Option<String>,
+    pub select: String,
+    pub node: String,
+    pub run: Option<String>,
+    pub revision: String,
+    pub evidence: Option<String>,
+    #[serde(skip)]
+    pub shape: wes_core::Shape,
+    #[serde(skip)]
+    pub metadata: Option<wes_core::contracts::metadata::ValueMetadata>,
+    #[serde(skip)]
+    pub provenance: wes_core::Provenance,
+}
+impl Reply {
+    /// An authorized observation keeps its captured type and attribution across transports.
+    pub fn public_value(&self) -> Result<wes_core::Value, SessionError> {
+        let source = self.sources.get("");
+        let shape = source.map_or(wes_core::Shape::Unknown, |s| s.shape.clone());
+        let provenance = source.map_or_else(Default::default, |s| s.provenance.clone());
+        if provenance.policy().is_private() || provenance.policy().is_unknown() {
+            return Err(SessionError::Authority);
+        }
+        wes_core::Value::new(shape, self.data.clone(), provenance)
+            .map(|v| v.with_metadata(source.and_then(|s| s.metadata.clone())))
+            .map_err(|_| SessionError::UnknownValue)
+    }
+}
+pub(super) struct Observed {
+    pub data: Data,
+    pub sources: BTreeMap<String, StoredSource>,
 }
 /// Control metadata, independent of arbitrary member values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +105,8 @@ pub enum ObservationState {
     Stopped,
     NotRun,
     Removed,
+    Saved,
+    Unconfirmed,
 }
 impl ObservationState {
     pub fn as_str(self) -> &'static str {
@@ -58,10 +115,13 @@ impl ObservationState {
             Self::Stopped => "stopped",
             Self::NotRun => "not run",
             Self::Removed => "removed",
+            Self::Saved => "saved",
+            Self::Unconfirmed => "unconfirmed",
         }
     }
 }
 struct Running {
+    storage: Option<crate::storage::StoreWorker>,
     handle: SessionHandle,
     task: SessionTask,
     notification: JoinHandle<()>,
@@ -75,6 +135,12 @@ impl Running {
         }
         self.notification.abort();
         let _ = self.notification.await;
+        if let Some(storage) = self.storage {
+            storage
+                .close_transient_scope()
+                .await
+                .map_err(|_| SessionError::ScopeCleanup)?;
+        }
         joined.map_err(|_| SessionError::Stopped)
     }
 }
@@ -84,7 +150,10 @@ struct State {
     definitions: BTreeMap<String, Definition>,
     running: BTreeMap<String, Running>,
     stopped: std::collections::BTreeSet<String>,
+    cleanups: BTreeMap<String, crate::storage::StoreWorker>,
     requests: BTreeMap<String, (SourceInput, SubmissionReply)>,
+    saved: BTreeMap<String, crate::history::SavedSelection>,
+    pending_saves: BTreeMap<String, crate::history::SavedSelection>,
 }
 pub(super) struct Sandboxes {
     uncertainty: Arc<std::sync::atomic::AtomicBool>,
@@ -99,6 +168,11 @@ pub(super) struct Sandboxes {
     capacity: crate::driver::ExecutionCapacity,
     concurrency: NonZeroUsize,
     updates: broadcast::WeakSender<()>,
+    storage: Option<crate::storage::StoreWorker>,
+    recording: Option<(
+        std::sync::Weak<crate::recording::Recorder>,
+        crate::history::RequiredPersistence,
+    )>,
 }
 impl Sandboxes {
     pub(super) fn new(
@@ -110,6 +184,13 @@ impl Sandboxes {
         capacity: crate::driver::ExecutionCapacity,
         concurrency: NonZeroUsize,
         updates: broadcast::Sender<()>,
+        storage: Option<crate::storage::StoreWorker>,
+        recording: Option<(
+            std::sync::Weak<crate::recording::Recorder>,
+            crate::history::RequiredPersistence,
+        )>,
+        saved: Vec<crate::history::SavedSelection>,
+        pending: Vec<crate::history::SavedSelection>,
     ) -> Self {
         Self {
             uncertainty,
@@ -120,6 +201,8 @@ impl Sandboxes {
             capacity,
             concurrency,
             updates: updates.downgrade(),
+            storage,
+            recording,
             loaded: false.into(),
             closed: false.into(),
             names: Mutex::new(Names::default()),
@@ -129,7 +212,10 @@ impl Sandboxes {
                 definitions: BTreeMap::new(),
                 running: BTreeMap::new(),
                 stopped: Default::default(),
+                cleanups: Default::default(),
                 requests: BTreeMap::new(),
+                saved: saved.into_iter().map(|s| (s.name.clone(), s)).collect(),
+                pending_saves: pending.into_iter().map(|s| (s.name.clone(), s)).collect(),
             }),
         }
     }
@@ -165,6 +251,13 @@ impl Sandboxes {
             }
             for definition in definitions {
                 validate_definition(&definition)?;
+                if state.saved.contains_key(&definition.name)
+                    || state.pending_saves.contains_key(&definition.name)
+                {
+                    return Err(error(
+                        "A definition conflicts with an immutable saved selection.",
+                    ));
+                }
                 if state
                     .definitions
                     .insert(definition.name.clone(), definition)
@@ -174,8 +267,13 @@ impl Sandboxes {
                 }
             }
         }
-        self.names.lock().expect("sandbox names").definitions =
-            state.definitions.keys().cloned().collect();
+        self.names.lock().expect("sandbox names").definitions = state
+            .definitions
+            .keys()
+            .chain(state.saved.keys())
+            .chain(state.pending_saves.keys())
+            .cloned()
+            .collect();
         state.loaded = true;
         self.loaded
             .store(true, std::sync::atomic::Ordering::Release);
@@ -207,7 +305,7 @@ impl Sandboxes {
             .statements
             .iter()
             .any(|s| match &s.expression {
-                Expression::Sandbox(_) => true,
+                Expression::Sandbox(_) | Expression::Transient(_) => true,
                 Expression::Call(call) if call.marker.is_some() => call
                     .operands
                     .iter()
@@ -264,7 +362,7 @@ impl Sandboxes {
                 ));
             };
             let operation = match &statement.expression {
-                Expression::Sandbox(body) => {
+                Expression::Sandbox(body) | Expression::Transient(body) => {
                     if statement.error_binding.is_some() || !statement.annotations.is_empty() {
                         return Err(error(
                             "Sandbox accepts a name, not error bindings or execution annotations.",
@@ -285,6 +383,11 @@ impl Sandboxes {
                             .map(ToString::to_string)
                             .collect::<Vec<_>>()
                             .join("\n"),
+                        if matches!(statement.expression, Expression::Transient(_)) {
+                            Kind::Transient
+                        } else {
+                            Kind::Sandbox
+                        },
                     )
                 }
                 Expression::Call(call) if call.marker.is_some() => {
@@ -296,57 +399,103 @@ impl Sandboxes {
                         .chain(call.arguments.iter().map(|a| &a.value))
                         .flat_map(Value::references)
                         .find(|name| {
-                            state
-                                .definitions
-                                .contains_key(name.text.split('.').next().unwrap_or(&name.text))
+                            let root = name.text.split('.').next().unwrap_or(&name.text);
+                            state.definitions.contains_key(root)
+                                || state.saved.contains_key(root)
+                                || state.pending_saves.contains_key(root)
                         })
                         .map(|name| name.text.as_str())
                     else {
                         return Ok(None);
                     };
                     let root = reference.split('.').next().unwrap_or(reference);
-                    if !state.definitions.contains_key(root) {
+                    if !state.definitions.contains_key(root)
+                        && !state.saved.contains_key(root)
+                        && !state.pending_saves.contains_key(root)
+                    {
                         return Ok(None);
                     }
-                    if statement.binding.is_some()
-                        || statement.error_binding.is_some()
-                        || !statement.annotations.is_empty()
-                    {
-                        return Err(error(
-                            "Sandbox observations are transient; binding or persistence requires an explicit export, which is not supported.",
-                        ));
-                    }
-                    if call.arguments.iter().any(|a| a.key.text == "node") {
-                        return Err(error(
-                            "A sandbox is an object, not a node. Use :inspect $name or :read $name.member.",
-                        ));
-                    }
-                    let removing = invocation.spec.command == MetaCommand::Drop;
-                    let scope = call.arguments.iter().find(|a| a.key.text == "scope");
-                    let valid = if removing {
-                        reference == root && call.operands.len() == 1 && call.arguments.len() == 1 && scope.is_some_and(|a| matches!(&a.value, Value::Word(n) | Value::Text(n) if n.text == "downstream"))
-                    } else {
-                        call.operands.len() + call.arguments.len() == 1
-                    };
-                    if !valid {
-                        return Err(error(if removing {
-                            "Remove a whole sandbox with :remove $name scope:downstream; this joins its work and deletes only its definition."
-                        } else {
-                            "Sandbox operations require exactly one object reference."
-                        }));
-                    }
-                    match invocation.spec.command {
-                        MetaCommand::Drop => Operation::Remove(root.into()),
-                        MetaCommand::Read => Operation::Read(reference.into(), false),
-                        MetaCommand::Inspect => Operation::Read(reference.into(), true),
-                        MetaCommand::Refresh if reference == root => {
-                            Operation::Refresh(root.into())
-                        }
-                        MetaCommand::Cancel if reference == root => Operation::Stop(root.into()),
-                        _ => {
+                    if invocation.spec.command == MetaCommand::Keep {
+                        if !state
+                            .definitions
+                            .get(root)
+                            .is_some_and(|d| d.kind == Kind::Transient)
+                        {
                             return Err(error(
-                                "Use read/inspect for sandbox members, or refresh/cancel/remove on the whole sandbox.",
+                                "Keep requires a live transient analysis or one of its members.",
                             ));
+                        }
+                        if statement.error_binding.is_some()
+                            || !statement.annotations.is_empty()
+                            || call.operands.len() != 1
+                            || !call.arguments.is_empty()
+                        {
+                            return Err(SessionError::CommandArgument(
+                                "Use :keep $analysis.member > savedResult or :keep $analysis > savedAnalysis.",
+                            ));
+                        }
+                        let binding =
+                            statement
+                                .binding
+                                .as_ref()
+                                .ok_or(SessionError::CommandArgument(
+                                    "Give the saved selection a name with > name.",
+                                ))?;
+                        Operation::Keep(reference.into(), binding.name.text.clone())
+                    } else {
+                        if (state.saved.contains_key(root)
+                            || state.pending_saves.contains_key(root))
+                            && !matches!(
+                                invocation.spec.command,
+                                MetaCommand::Read | MetaCommand::Inspect
+                            )
+                        {
+                            return Err(error(
+                                "A saved selection is immutable; use read or inspect.",
+                            ));
+                        }
+                        if statement.binding.is_some()
+                            || statement.error_binding.is_some()
+                            || !statement.annotations.is_empty()
+                        {
+                            return Err(error(
+                                "Sandbox observations are transient; binding or persistence requires an explicit export, which is not supported.",
+                            ));
+                        }
+                        if call.arguments.iter().any(|a| a.key.text == "node") {
+                            return Err(error(
+                                "A sandbox is an object, not a node. Use :inspect $name or :read $name.member.",
+                            ));
+                        }
+                        let removing = invocation.spec.command == MetaCommand::Drop;
+                        let scope = call.arguments.iter().find(|a| a.key.text == "scope");
+                        let valid = if removing {
+                            reference == root && call.operands.len() == 1 && call.arguments.len() == 1 && scope.is_some_and(|a| matches!(&a.value, Value::Word(n) | Value::Text(n) if n.text == "downstream"))
+                        } else {
+                            call.operands.len() + call.arguments.len() == 1
+                        };
+                        if !valid {
+                            return Err(error(if removing {
+                                "Remove a whole sandbox with :remove $name scope:downstream; this joins its work and deletes only its definition."
+                            } else {
+                                "Sandbox operations require exactly one object reference."
+                            }));
+                        }
+                        match invocation.spec.command {
+                            MetaCommand::Drop => Operation::Remove(root.into()),
+                            MetaCommand::Read => Operation::Read(reference.into(), false),
+                            MetaCommand::Inspect => Operation::Read(reference.into(), true),
+                            MetaCommand::Refresh if reference == root => {
+                                Operation::Refresh(root.into())
+                            }
+                            MetaCommand::Cancel if reference == root => {
+                                Operation::Stop(root.into())
+                            }
+                            _ => {
+                                return Err(error(
+                                    "Use read/inspect for sandbox members, or refresh/cancel/remove on the whole sandbox.",
+                                ));
+                            }
                         }
                     }
                 }
@@ -411,8 +560,13 @@ impl Sandboxes {
                     }
                     _ => result.clone(),
                 };
-                owner.names.lock().expect("sandbox names").definitions =
-                    state.definitions.keys().cloned().collect();
+                owner.names.lock().expect("sandbox names").definitions = state
+                    .definitions
+                    .keys()
+                    .chain(state.saved.keys())
+                    .chain(state.pending_saves.keys())
+                    .cloned()
+                    .collect();
                 state
                     .requests
                     .insert(input.cell().into(), (input, retained));
@@ -428,6 +582,7 @@ impl Sandboxes {
         &self,
         input: &SourceInput,
         name: Option<String>,
+        program: Option<String>,
     ) -> Result<Workspace, SessionError> {
         let (reply, receive) = oneshot::channel();
         self.controls
@@ -436,6 +591,7 @@ impl Sandboxes {
             .send(Control::SandboxWorkspace {
                 input: input.clone(),
                 name,
+                program,
                 reply,
             })
             .await
@@ -449,6 +605,13 @@ impl Sandboxes {
         operation: Operation,
     ) -> Result<Reply, SessionError> {
         let name = operation.name().to_owned();
+        let kind = match &operation {
+            Operation::Define(_, _, kind) => *kind,
+            _ if state.saved.contains_key(&name) || state.pending_saves.contains_key(&name) => {
+                Kind::Saved
+            }
+            _ => state.definitions[&name].kind,
+        };
         if input.is_cooperative()
             && state
                 .definitions
@@ -459,7 +622,16 @@ impl Sandboxes {
             return Err(SessionError::Authority);
         }
         match operation {
-            Operation::Define(_, source) => {
+            Operation::Keep(reference, saved_name) => {
+                return self.keep(state, input, &reference, &saved_name).await;
+            }
+            Operation::Define(_, source, kind) => {
+                if state.saved.contains_key(&name) || state.pending_saves.contains_key(&name) {
+                    return Err(error("This name belongs to an immutable saved selection."));
+                }
+                if kind == Kind::Transient && self.storage.is_none() {
+                    return Err(SessionError::NoStorage);
+                }
                 if !state.definitions.contains_key(&name) && state.definitions.len() >= 64 {
                     return Err(SessionError::Capacity);
                 }
@@ -472,12 +644,19 @@ impl Sandboxes {
                     names: &self.names,
                     name: name.clone(),
                 };
-                let mut workspace = self.capture(input, Some(name.clone())).await?;
+                let mut workspace = self
+                    .capture(
+                        input,
+                        Some(name.clone()),
+                        (kind == Kind::Transient).then(|| source.clone()),
+                    )
+                    .await?;
                 let environment = input
                     .environments()
                     .cloned()
                     .or_else(|| workspace.default_environment_context());
                 let definition = Definition {
+                    kind,
                     name: name.clone(),
                     source,
                     owner: input.client().into(),
@@ -504,6 +683,11 @@ impl Sandboxes {
                         .find(|d| d.severity == wes_language::Severity::Error)
                     {
                         return Err(preparation_error(diagnostic, &definition.source));
+                    }
+                    if kind == Kind::Transient && !prepared.finite_analysis() {
+                        return Err(error(
+                            "Transient analysis accepts finite operations; streams, interactive calls and reactive execution are outside this scope.",
+                        ));
                     }
                 } else {
                     return Err(SessionError::AdmissionRefused(
@@ -534,31 +718,29 @@ impl Sandboxes {
                 state.definitions.insert(name.clone(), definition.clone());
                 self.names.lock().expect("sandbox names").definitions =
                     state.definitions.keys().cloned().collect();
-                if let Some(running) = state.running.remove(&name) {
-                    running.stop(&self.uncertainty).await?;
-                }
+                self.stop_running(state, &name).await?;
                 self.start(state, &definition, input, &mut workspace)
                     .await?;
             }
             Operation::Refresh(_) => {
-                let mut workspace = self.capture(input, None).await?;
-                if let Some(running) = state.running.remove(&name) {
-                    running.stop(&self.uncertainty).await?;
-                }
                 let definition = state.definitions[&name].clone();
+                let mut workspace = self
+                    .capture(
+                        input,
+                        None,
+                        (definition.kind == Kind::Transient).then(|| definition.source.clone()),
+                    )
+                    .await?;
+                self.stop_running(state, &name).await?;
                 self.start(state, &definition, input, &mut workspace)
                     .await?;
             }
             Operation::Stop(_) => {
-                if let Some(running) = state.running.remove(&name) {
-                    running.stop(&self.uncertainty).await?;
-                }
+                self.stop_running(state, &name).await?;
                 state.stopped.insert(name.clone());
             }
             Operation::Remove(_) => {
-                if let Some(running) = state.running.remove(&name) {
-                    running.stop(&self.uncertainty).await?;
-                }
+                self.stop_running(state, &name).await?;
                 state.stopped.insert(name.clone());
                 if self.uncertainty.load(std::sync::atomic::Ordering::Acquire) {
                     return Err(error(
@@ -582,13 +764,19 @@ impl Sandboxes {
                 state.definitions.remove(&name);
                 state.stopped.remove(&name);
                 return Ok(Reply {
+                    scope: None,
+                    sources: Default::default(),
+                    kind,
                     name,
-                    data: record([("kind", text("Sandbox")), ("state", text("removed"))]),
+                    data: record([("kind", text(kind.label())), ("state", text("removed"))]),
                     state: ObservationState::Removed,
                     view: None,
                 });
             }
             Operation::Read(reference, inspect) => {
+                if let Some(saved) = state.saved.get(&name) {
+                    return self.read_saved(saved, &reference, inspect).await;
+                }
                 return self.read(state, &reference, inspect, input).await;
             }
         }
@@ -598,11 +786,32 @@ impl Sandboxes {
             ObservationState::Stopped
         };
         Ok(Reply {
+            scope: None,
+            sources: Default::default(),
+            kind,
             name,
-            data: record([("kind", text("Sandbox")), ("state", text("accepted"))]),
+            data: record([("kind", text(kind.label())), ("state", text("accepted"))]),
             state: observation_state,
             view: None,
         })
+    }
+    async fn stop_running(&self, state: &mut State, name: &str) -> Result<(), SessionError> {
+        if let Some(storage) = state.cleanups.remove(name) {
+            if storage.close_transient_scope().await.is_err() {
+                state.cleanups.insert(name.into(), storage);
+                return Err(SessionError::ScopeCleanup);
+            }
+        }
+        if let Some(running) = state.running.remove(name) {
+            let storage = running.storage.clone();
+            if let Err(error) = running.stop(&self.uncertainty).await {
+                if let Some(storage) = storage {
+                    state.cleanups.insert(name.into(), storage);
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
     }
     async fn start(
         &self,
@@ -614,7 +823,19 @@ impl Sandboxes {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return Err(SessionError::Stopped);
         }
-        let child = std::mem::take(workspace);
+        let mut child = std::mem::take(workspace);
+        let storage = if definition.kind == Kind::Transient {
+            let storage = self
+                .storage
+                .as_ref()
+                .ok_or_else(|| error("Transient analysis requires the workspace storage service."))?
+                .transient_scope()
+                .map_err(|_| SessionError::Capacity)?;
+            child.transient_storage = Some(storage.clone());
+            Some(storage)
+        } else {
+            None
+        };
         let recording = RecordingMode::Ephemeral;
         let (handle, task) = spawn_owned(
             child,
@@ -626,7 +847,15 @@ impl Sandboxes {
                 actions: None,
                 cells: Cells::default(),
                 log: SessionLog::new(&recording),
-                values: None,
+                values: storage.as_ref().map(|worker| {
+                    SessionValues::new(
+                        SessionStorage {
+                            worker: worker.clone(),
+                            auto_keep: crate::storage::AutoKeep::Never,
+                        },
+                        &recording,
+                    )
+                }),
                 restoration: None,
             },
         )?;
@@ -648,6 +877,7 @@ impl Sandboxes {
         state.running.insert(
             definition.name.clone(),
             Running {
+                storage,
                 handle,
                 task,
                 notification,
@@ -674,6 +904,33 @@ impl Sandboxes {
         let (name, member) = reference
             .split_once('.')
             .map_or((reference, None), |(a, b)| (a, Some(b)));
+        if let Some(saved) = state.saved.get(name) {
+            return self.read_saved(saved, reference, inspect).await;
+        }
+        if let Some(intent) = state.pending_saves.get(name) {
+            if member.is_some() {
+                return Err(SessionError::KeepIncomplete {
+                    identity: intent.id.clone(),
+                    stage: "the saved record was not acknowledged",
+                    may_have_applied: true,
+                });
+            }
+            return Ok(Reply {
+                kind: Kind::Saved,
+                scope: None,
+                sources: Default::default(),
+                name: name.into(),
+                state: ObservationState::Unconfirmed,
+                data: record([
+                    ("kind", text("Saved")),
+                    ("identity", text(&intent.id)),
+                    ("state", text("unconfirmed")),
+                    ("persistence", text("Keep not acknowledged")),
+                ]),
+                view: Some((reference.into(), inspect)),
+            });
+        }
+        let kind = state.definitions[name].kind;
         if let Some(running) = state.running.get(name) {
             let (reply, receive) = oneshot::channel();
             running
@@ -687,23 +944,40 @@ impl Sandboxes {
                 })
                 .await
                 .map_err(|_| SessionError::Stopped)?;
+            let observed = receive.await.map_err(|_| SessionError::Stopped)??;
             return Ok(Reply {
+                scope: running
+                    .storage
+                    .as_ref()
+                    .and_then(|s| s.transient_identity().map(str::to_owned)),
+                sources: observed.sources,
+                kind,
                 name: name.into(),
-                data: receive.await.map_err(|_| SessionError::Stopped)??,
+                data: scope_projection(observed.data, kind, member.is_none()),
                 state: ObservationState::Active,
                 view: Some((reference.into(), inspect)),
             });
         }
-        let mut workspace = self.capture(caller, None).await?;
+        if kind == Kind::Transient && member.is_some() && !inspect {
+            return Err(if state.stopped.contains(name) {
+                SessionError::ScopeEnded
+            } else {
+                SessionError::UnknownValue
+            });
+        }
+        let mut workspace = self.capture(caller, None, None).await?;
         let definition = &state.definitions[name];
         let input = run_input(definition, caller, "sandbox-inspect")?;
         let draft = workspace.draft().map_err(|_| SessionError::Preparation)?;
-        let prepared = source::prepare_declarations(
+        // Inert definition preparation has a large async state. Allocate it only on this
+        // branch so every named read (including ordinary-name fallthrough) stays small.
+        // Poll it in this read; spawning would change cancellation and work ownership.
+        let prepared = Box::pin(source::prepare_declarations(
             input,
             draft,
             TypeSourceCapture::live(self.reader.clone()),
             CancellationToken::new(),
-        )
+        ))
         .await
         .map_err(|_| SessionError::Preparation)?;
         let SourcePreparation::Declarations(prepared) = prepared else {
@@ -726,23 +1000,30 @@ impl Sandboxes {
             .commit(&mut workspace, std::time::Duration::ZERO)
             .map_err(|_| SessionError::Preparation)?;
         Ok(Reply {
+            scope: None,
+            sources: Default::default(),
+            kind,
             name: name.into(),
             state: if state.stopped.contains(name) {
                 ObservationState::Stopped
             } else {
                 ObservationState::NotRun
             },
-            data: observe(
-                &workspace,
-                member,
-                inspect,
-                caller.is_cooperative(),
-                Some(if state.stopped.contains(name) {
-                    "stopped"
-                } else {
-                    "not run"
-                }),
-            )?,
+            data: scope_projection(
+                observe(
+                    &workspace,
+                    member,
+                    inspect,
+                    caller.is_cooperative(),
+                    Some(if state.stopped.contains(name) {
+                        "stopped"
+                    } else {
+                        "not run"
+                    }),
+                )?,
+                kind,
+                member.is_none(),
+            ),
             view: Some((reference.into(), inspect)),
         })
     }
@@ -764,7 +1045,10 @@ impl Sandboxes {
             .map_err(|_| SessionError::AdmissionBusy)?;
         self.load(&mut state).await?;
         let name = reference.split('.').next().unwrap_or(reference);
-        if !state.definitions.contains_key(name) {
+        if !state.definitions.contains_key(name)
+            && !state.saved.contains_key(name)
+            && !state.pending_saves.contains_key(name)
+        {
             return Err(error("Sandbox does not exist."));
         }
         let caller = SourceInput::new("sandbox-view".into(), String::new())
@@ -777,8 +1061,14 @@ impl Sandboxes {
         for running in state.running.values() {
             let _ = running.handle.shutdown().await;
         }
-        for (_, running) in std::mem::take(&mut state.running) {
-            let _ = running.stop(&self.uncertainty).await;
+        let names: Vec<_> = state
+            .running
+            .keys()
+            .chain(state.cleanups.keys())
+            .cloned()
+            .collect();
+        for name in names {
+            let _ = self.stop_running(&mut state, &name).await;
         }
     }
 }
@@ -833,6 +1123,63 @@ impl SessionHandle {
             .get(cell)
             .map(|(_, reply)| reply.clone())
     }
+    /// Named analyses and saved artifacts share one read boundary with UI, CLI and agents.
+    /// Unknown roots may fall through to ordinary bindings; a known failed read may not.
+    pub async fn read_named_export(
+        &self,
+        reference: &str,
+        inspect: bool,
+    ) -> Result<Option<Reply>, SessionError> {
+        self.check_retirement_access().await?;
+        let reference = reference.strip_prefix('$').unwrap_or(reference);
+        if reference.len() > 512 {
+            return Err(SessionError::CommandArgument(
+                "The reference exceeds its read budget",
+            ));
+        }
+        let mut state = self.sandboxes.state.lock().await;
+        self.sandboxes.load(&mut state).await?;
+        let name = reference.split('.').next().unwrap_or(reference);
+        let known = state.definitions.contains_key(name)
+            || state.saved.contains_key(name)
+            || state.pending_saves.contains_key(name);
+        drop(state);
+        if known {
+            self.read_sandbox_export(reference, inspect).await.map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+    /// Joined reads cannot attach an old observation to a replacement scope or result.
+    pub async fn validate_named_export(&self, before: &Reply) -> Result<(), SessionError> {
+        let (reference, inspect) = before.view.as_ref().ok_or(SessionError::UnknownValue)?;
+        let after = self
+            .read_named_export(reference, *inspect)
+            .await?
+            .ok_or(SessionError::UnknownValue)?;
+        if before.kind != after.kind
+            || before.scope != after.scope
+            || before.state != after.state
+            || before.data != after.data
+            || before.sources.len() != after.sources.len()
+            || before.sources.iter().any(|(name, a)| {
+                !after.sources.get(name).is_some_and(|b| {
+                    a.handle == b.handle
+                        && a.node == b.node
+                        && a.run == b.run
+                        && a.revision == b.revision
+                        && a.evidence == b.evidence
+                        && a.scope == b.scope
+                        && a.select == b.select
+                        && a.shape == b.shape
+                        && a.provenance == b.provenance
+                })
+            })
+        {
+            return Err(SessionError::HistoricalReplyUnavailable);
+        }
+        Ok(())
+    }
     /// Finite export projection: private/unknown provenance is withheld before stdout receives it.
     pub async fn read_sandbox_export(
         &self,
@@ -842,7 +1189,10 @@ impl SessionHandle {
         let mut state = self.sandboxes.state.lock().await;
         self.sandboxes.load(&mut state).await?;
         let name = reference.split('.').next().unwrap_or(reference);
-        if !state.definitions.contains_key(name) {
+        if !state.definitions.contains_key(name)
+            && !state.saved.contains_key(name)
+            && !state.pending_saves.contains_key(name)
+        {
             return Err(error("Sandbox does not exist."));
         }
         let revision = state.revision;
@@ -875,17 +1225,18 @@ impl SessionHandle {
     }
 }
 enum Operation {
-    Define(String, String),
+    Define(String, String, Kind),
     Refresh(String),
     Stop(String),
     Remove(String),
     Read(String, bool),
+    Keep(String, String),
 }
 impl Operation {
     fn name(&self) -> &str {
         match self {
-            Self::Define(n, _) | Self::Refresh(n) | Self::Stop(n) | Self::Remove(n) => n,
-            Self::Read(r, _) => r.split('.').next().unwrap_or(r),
+            Self::Define(n, _, _) | Self::Refresh(n) | Self::Stop(n) | Self::Remove(n) => n,
+            Self::Read(r, _) | Self::Keep(r, _) => r.split('.').next().unwrap_or(r),
         }
     }
 }
@@ -915,12 +1266,15 @@ pub(super) fn observe(
             crate::runtime::OutputState::Available(v) if dormant.is_none() => Some(v),
             _ => None,
         };
-        let withheld = cooperative
-            && (typing.provenance.policy().is_private()
-                || typing.provenance.policy().is_unknown()
-                || value.as_ref().is_some_and(|v| {
-                    v.provenance().policy().is_private() || v.provenance().policy().is_unknown()
-                }));
+        let withheld = value
+            .as_ref()
+            .is_some_and(|v| workspace.dataset_access.blocks(v))
+            || cooperative
+                && (typing.provenance.policy().is_private()
+                    || typing.provenance.policy().is_unknown()
+                    || value.as_ref().is_some_and(|v| {
+                        v.provenance().policy().is_private() || v.provenance().policy().is_unknown()
+                    }));
         if withheld {
             if member.is_some() && !inspect {
                 return Err(SessionError::Authority);
@@ -942,7 +1296,7 @@ pub(super) fn observe(
             let value = value.ok_or_else(|| {
                 error("Sandbox member has no current value. Inspect it for its state.")
             })?;
-            if !value.data().is_inline() {
+            if !value.data().is_inline() && workspace.transient_storage.is_none() {
                 return Err(error(
                     "Sandbox member requires a bounded materialized observation.",
                 ));
@@ -1007,6 +1361,20 @@ pub(super) fn observe(
 fn text(value: impl Into<String>) -> Data {
     Data::Text(value.into().into())
 }
+fn scope_projection(mut data: Data, kind: Kind, whole: bool) -> Data {
+    if whole && let Data::Record(fields) = &mut data {
+        fields.insert("kind".into(), text(kind.label()));
+        fields.insert(
+            "persistence".into(),
+            text(if kind == Kind::Transient {
+                "temporary until Keep"
+            } else {
+                "definition only"
+            }),
+        );
+    }
+    data
+}
 fn record<const N: usize>(fields: [(&str, Data); N]) -> Data {
     Data::Record(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
@@ -1017,7 +1385,11 @@ fn run_input(
 ) -> Result<SourceInput, SessionError> {
     let mut input = SourceInput::new(id.into(), definition.source.clone())
         .map_err(|_| SessionError::Preparation)?
-        .with_source_name(format!("sandbox ${}", definition.name))
+        .with_source_name(format!(
+            "{} ${}",
+            definition.kind.label().to_lowercase(),
+            definition.name
+        ))
         .map_err(|_| SessionError::Preparation)?
         .with_client(caller.client().into())
         .map_err(|_| SessionError::Preparation)?;
@@ -1032,6 +1404,11 @@ fn run_input(
     Ok(input)
 }
 fn validate_definition(definition: &Definition) -> Result<(), SessionError> {
+    if definition.kind == Kind::Saved {
+        return Err(error(
+            "Saved selections are not executable program definitions.",
+        ));
+    }
     if definition.name.is_empty()
         || definition.name.len() > 128
         || !definition
@@ -1053,14 +1430,14 @@ fn validate_definition(definition: &Definition) -> Result<(), SessionError> {
     {
         return Err(error("Sandbox program has syntax errors."));
     }
-    fn valid(statement: &Statement) -> bool {
+    fn valid(statement: &Statement, kind: Kind) -> bool {
         match &statement.expression {
-            Expression::Sandbox(_) => false,
-            Expression::Pipeline(stages) => stages.iter().all(valid),
-            Expression::Fork(branches) => branches.iter().all(|b| valid(&b.body)),
+            Expression::Sandbox(_) | Expression::Transient(_) => false,
+            Expression::Pipeline(stages) => stages.iter().all(|s| valid(s, kind)),
+            Expression::Fork(branches) => branches.iter().all(|b| valid(&b.body, kind)),
             Expression::Call(call) if call.marker.is_some() => {
                 wes_language::vocabulary::commands::invocation(call).is_ok_and(|i| {
-                    matches!(
+                    let common = matches!(
                         i.spec.command,
                         MetaCommand::Read
                             | MetaCommand::Inspect
@@ -1069,14 +1446,26 @@ fn validate_definition(definition: &Definition) -> Result<(), SessionError> {
                             | MetaCommand::Info
                             | MetaCommand::Accumulate
                             | MetaCommand::Scan
-                            | MetaCommand::Stream
-                    )
+                    );
+                    common || (kind == Kind::Sandbox && i.spec.command == MetaCommand::Stream)
+                        || (kind == Kind::Transient && matches!(i.spec.command,
+                            MetaCommand::ScanResume | MetaCommand::ScanContinue | MetaCommand::ScanContinuation | MetaCommand::ScanExcerpt
+                            | MetaCommand::DatasetPage | MetaCommand::DatasetInspect | MetaCommand::DatasetSnapshot | MetaCommand::DatasetRetention
+                            | MetaCommand::ViewCreate | MetaCommand::ViewBind | MetaCommand::ViewConnect | MetaCommand::ViewDisconnect
+                            | MetaCommand::ViewQuery | MetaCommand::ViewApply | MetaCommand::ViewOutput | MetaCommand::ViewCapture
+                            | MetaCommand::ViewLink | MetaCommand::ViewUnlink | MetaCommand::ViewStart | MetaCommand::ViewStop)
+                            && !call.arguments.iter().any(|a|a.key.text == "mode" && matches!(&a.value, Value::Word(n)|Value::Text(n) if n.text == "live")))
                 })
             }
             _ => true,
         }
     }
-    if !parsed.script.statements.iter().all(valid) {
+    if !parsed
+        .script
+        .statements
+        .iter()
+        .all(|s| valid(s, definition.kind))
+    {
         return Err(error(
             "Sandbox supports calculations, definitions, providers and pipelines; host controls, nested sandboxes and durable configuration changes are outside its scope.",
         ));
@@ -1106,4 +1495,111 @@ fn preparation_error(diagnostic: &wes_language::Diagnostic, source: &str) -> Ses
         diagnostic.public_summary(),
         scope
     ))
+}
+
+pub(super) fn observe_sources(
+    workspace: &Workspace,
+    values: Option<&SessionValues>,
+    member: Option<&str>,
+    inspect: bool,
+) -> BTreeMap<String, StoredSource> {
+    if inspect {
+        return BTreeMap::new();
+    }
+    let Some(values) = values else {
+        return BTreeMap::new();
+    };
+    let scope = values.worker().transient_identity().map(str::to_owned);
+    let published = values.snapshot();
+    workspace
+        .bindings()
+        .names()
+        .iter()
+        .filter_map(|(name, output)| {
+            if member.is_some_and(|m| m.split('.').next() != Some(name)) {
+                return None;
+            }
+            let crate::runtime::OutputState::Available(value) = workspace.runtime().output(output)
+            else {
+                return None;
+            };
+            if value.provenance().policy().is_private()
+                || value.provenance().policy().is_unknown()
+                || workspace.dataset_access.blocks(&value)
+            {
+                return None;
+            }
+            let handle = published
+                .outputs
+                .get(&output.node)
+                .filter(|p| workspace.runtime().run_of(&output.node) == Some(p.run()))
+                .and_then(ValuePublication::handle)
+                .map(ToString::to_string);
+            let fields = member.map_or_else(Vec::new, |m| {
+                m.split('.').skip(1).map(str::to_owned).collect()
+            });
+            let value = crate::plan::project_value(&value, &fields).ok()?;
+            Some((
+                if member.is_some() {
+                    String::new()
+                } else {
+                    name.clone()
+                },
+                StoredSource {
+                    handle,
+                    scope: scope.clone(),
+                    select: selection_path(&fields),
+                    node: output.node.to_string(),
+                    run: workspace
+                        .runtime()
+                        .run_of(&output.node)
+                        .map(ToString::to_string),
+                    revision: workspace
+                        .runtime()
+                        .display_revision(&output.node)
+                        .to_string(),
+                    evidence: None,
+                    shape: value.shape().clone(),
+                    metadata: value.metadata().cloned(),
+                    provenance: value.provenance().clone(),
+                },
+            ))
+        })
+        .collect()
+}
+pub(super) fn selection_path(fields: &[String]) -> String {
+    fields
+        .iter()
+        .map(|s| format!("/{}", s.replace('~', "~0").replace('/', "~1")))
+        .collect()
+}
+impl SessionHandle {
+    /// Resolve an existing live scope, never reconstruct authority from a persisted UUID.
+    /// Clones cannot survive scope closure; the shared storage owner checks every operation.
+    pub async fn resolve_read_scope(
+        &self,
+        scope: &str,
+    ) -> Result<(SessionHandle, crate::storage::StoreWorker), SessionError> {
+        if self
+            .sandboxes
+            .closed
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(SessionError::Stopped);
+        }
+        let state = self
+            .sandboxes
+            .state
+            .try_lock()
+            .map_err(|_| SessionError::AdmissionBusy)?;
+        state
+            .running
+            .values()
+            .find_map(|r| {
+                let worker = r.storage.as_ref()?;
+                (worker.transient_identity() == Some(scope))
+                    .then(|| (r.handle.clone(), worker.clone()))
+            })
+            .ok_or(SessionError::ScopeEnded)
+    }
 }

@@ -461,6 +461,9 @@ pub struct DatasetCleanup {
     pub pending_bytes: Option<u64>,
     pub complete: bool,
     pub released_captures: Vec<CapturedValue>,
+    /// Expiring a temporary owner may release its copy, never a retained copy
+    /// created by a separate explicit Keep.
+    pub preserve_retained_captures: std::collections::BTreeSet<String>,
 }
 /// Persisted cause, separate from human-readable failure text and execution outcome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -669,6 +672,15 @@ impl AnalysisDuration {
 /// Actor and result-read authority is validated by the runtime before/after each
 /// request. This port additionally validates same-home committed identity and revocation.
 pub trait DatasetStorage: Send {
+    /// Select one admitted host scope for this serial operation. Implementations
+    /// must not silently persist transient writes when this capability is absent.
+    fn enter_scope(&mut self, scope: Option<&super::TransientScope>) -> Result<(), StoreError> {
+        if scope.is_some() {
+            Err(StoreError::DatasetUnavailable)
+        } else {
+            Ok(())
+        }
+    }
     fn read_access(&self) -> Result<std::collections::BTreeSet<String>, StoreError> {
         Ok(Default::default())
     }
@@ -706,6 +718,11 @@ pub trait DatasetStorage: Send {
         Err(StoreError::DatasetUnavailable)
     }
     fn inspect(&self, reference: &DatasetRef) -> Result<DatasetInfo, StoreError>;
+    /// Protect this exact committed prefix's physical ownership for an admitted read/Keep.
+    /// The lease confers no read authority and never recreates a producer or writer.
+    fn hold(&self, _reference: &DatasetRef) -> Result<DatasetReadLease, StoreError> {
+        Err(StoreError::DatasetUnavailable)
+    }
     /// Read a committed extension within the same EventLog epoch or analysis attempt.
     /// A descriptor is not a control capability and cannot resume or attach work.
     fn head(&self, _reference: &DatasetRef) -> Result<DatasetInfo, StoreError> {

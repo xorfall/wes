@@ -284,8 +284,19 @@ impl RetirementPlan {
         let mut candidate = ReplayWorkspace::validation(candidate).map_err(fail)?;
         let mut seen = BTreeSet::new();
         let mut environments = BTreeSet::new();
+        let mut saved_records = BTreeMap::new();
         for entry in image.journal() {
             match entry {
+                JournalEntry::Saved(saved) => {
+                    if let Some(previous) = saved_records.insert(saved.id.clone(), saved) {
+                        if previous != saved {
+                            return Err(RetirementError::Reconstruction);
+                        }
+                        continue;
+                    }
+                    original.restore_saved(saved).map_err(fail)?;
+                    candidate.restore_saved(saved).map_err(fail)?;
+                }
                 JournalEntry::Retired(r) => {
                     original.reserve_retired(r).map_err(fail)?;
                     candidate.reserve_retired(r).map_err(fail)?;
@@ -411,6 +422,14 @@ impl RetirementPlan {
                 JournalEntry::Result(r) if !self.nodes.contains(&r.node) => Some(&r.handle),
                 _ => None,
             })
+            .cloned()
+            .chain(
+                image
+                    .journal()
+                    .iter()
+                    .filter(|e| matches!(e, JournalEntry::Saved(_) | JournalEntry::SaveIntent(_)))
+                    .flat_map(JournalEntry::payload_references),
+            )
             .collect();
         for entry in image.journal() {
             let removed = match entry {

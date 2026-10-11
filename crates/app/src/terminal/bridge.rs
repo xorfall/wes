@@ -218,6 +218,17 @@ pub(super) fn observed_result(
         None => value,
     }
 }
+pub(super) fn named_result(
+    value: serde_json::Value,
+    named: &wes_engine::session::sandbox::Reply,
+) -> serde_json::Value {
+    match named.sources.get("").filter(|s| s.evidence.is_some()) {
+        Some(source) => {
+            json!({"status":if source.evidence.as_deref()==Some("stopped_stream"){"stopped"}else{"incomplete"},"source":source.node,"run":source.run,"value":value})
+        }
+        None => value,
+    }
+}
 
 fn source(catalogue: &Catalogue, tool: &str, args: &[String]) -> Result<String, BridgeReply> {
     let path_end = args
@@ -393,6 +404,26 @@ async fn perform(
                 2,
                 "Use wesx value get REFERENCE [--wes-typed].",
             ));
+        }
+        if let Some(named) = session
+            .read_named_export(&request.args[1], false)
+            .await
+            .map_err(|e| BridgeReply::error(1, e.to_string()))?
+        {
+            let value = named
+                .public_value()
+                .map_err(|e| BridgeReply::error(1, e.to_string()))?;
+            let text = exported(&value, typed)?;
+            session
+                .validate_named_export(&named)
+                .await
+                .map_err(|e| BridgeReply::error(1, e.to_string()))?;
+            terminal
+                .check(application)
+                .map_err(|_| BridgeReply::error(1, "Terminal authority has ended."))?;
+            let value = serde_json::from_str(&text)
+                .map_err(|_| BridgeReply::error(1, "Value unavailable."))?;
+            return Ok(named_result(value, &named).to_string());
         }
         let (value, stopped) = named_observation(&observation, &request.args[1])?;
         let text = exported(value, typed)?;

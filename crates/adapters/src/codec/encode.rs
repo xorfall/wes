@@ -32,6 +32,10 @@ pub fn encode_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError
     write(&Stored::from(value), limits)
 }
 /// Browser data-plane envelope. Retained files have their own versioned representation.
+pub fn encode_display_shape(shape: &Shape, limits: Limits) -> Result<Vec<u8>, CodecError> {
+    check_shape(Some(shape), limits.nodes, 0)?;
+    write(&ShapeJson(shape), limits)
+}
 pub fn encode_display_value(value: &Value, limits: Limits) -> Result<Vec<u8>, CodecError> {
     let nodes = limits
         .nodes

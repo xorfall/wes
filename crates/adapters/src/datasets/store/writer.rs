@@ -147,6 +147,7 @@ impl DatasetStore {
             Durability::FileAndDirectory => Persistence::FileAndDirectorySynced,
         };
         let mut manifest = Manifest {
+            lifetime: self.current_lifetime(),
             coverage,
             version: 3,
             store: self.store_id().into(),
@@ -561,6 +562,7 @@ impl DatasetStore {
         )?;
         manifest.transaction = request.transaction;
         manifest.lifecycle = Lifecycle::Open;
+        manifest.lifetime = self.current_lifetime();
         manifest.origins = request.policy.origins().iter().cloned().collect();
         manifest.dataset_reads = request.policy.dataset_reads().iter().cloned().collect();
         manifest.checkpoint =

@@ -123,6 +123,12 @@ fn record<'a>(
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "lowercase", deny_unknown_fields)]
 enum JournalWire<'a> {
+    SaveIntent {
+        value: Cow<'a, wes_engine::history::SavedSelection>,
+    },
+    Saved {
+        value: Cow<'a, wes_engine::history::SavedSelection>,
+    },
     Invocation {
         node: Cow<'a, str>,
         run: Cow<'a, str>,
@@ -583,6 +589,18 @@ enum RecoveryWire<'a> {
 
 fn journal_wire(entry: &JournalEntry, limits: Limits) -> Result<JournalWire<'_>, CodecError> {
     Ok(match entry {
+        JournalEntry::SaveIntent(saved) => {
+            saved.validate().map_err(invalid)?;
+            JournalWire::SaveIntent {
+                value: Cow::Borrowed(saved),
+            }
+        }
+        JournalEntry::Saved(saved) => {
+            saved.validate().map_err(invalid)?;
+            JournalWire::Saved {
+                value: Cow::Borrowed(saved),
+            }
+        }
         JournalEntry::ProtectedRun { node, run, handle } => JournalWire::ProtectedRun {
             node: node.as_str().into(),
             run: run.as_str().into(),
@@ -865,6 +883,14 @@ fn journal_wire(entry: &JournalEntry, limits: Limits) -> Result<JournalWire<'_>,
 }
 fn journal_entry(wire: JournalWire<'_>, limits: Limits) -> Result<JournalEntry, CodecError> {
     Ok(match wire {
+        JournalWire::SaveIntent { value } => {
+            value.validate().map_err(invalid)?;
+            JournalEntry::SaveIntent(value.into_owned())
+        }
+        JournalWire::Saved { value } => {
+            value.validate().map_err(invalid)?;
+            JournalEntry::Saved(value.into_owned())
+        }
         JournalWire::ProtectedRun { node, run, handle } => JournalEntry::ProtectedRun {
             node: NodeId::new(&node).map_err(invalid)?,
             run: RunId::new(&run).map_err(invalid)?,

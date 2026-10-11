@@ -223,6 +223,7 @@ impl DatasetStore {
             }
             let expected_generation = previous.map_or(0, |root| root.generation);
             let change = ReferenceRootChange {
+                lifetime: manifest.lifetime.clone(),
                 root: manifest.dataset.clone(),
                 kind: catalog::RootKind::Recording,
                 owner_dataset: None,
@@ -233,7 +234,11 @@ impl DatasetStore {
                     .ok_or(DatasetError::Limit("recording root generation"))?,
                 prefixes: vec![descriptor(reference, manifest)?],
                 captures: vec![],
-                retention: RootRetention::Protected,
+                retention: if manifest.lifetime == wes_engine::storage::DatasetLifetime::Durable {
+                    RootRetention::Protected
+                } else {
+                    RootRetention::Temporary
+                },
                 transaction: manifest.transaction.clone(),
             };
             self.check_reference_successor(&change, previous)?;
@@ -266,6 +271,7 @@ impl DatasetStore {
             let previous = self.references.get(&identity);
             let expected_generation = previous.map_or(0, |r| r.generation);
             let change = ReferenceRootChange {
+                lifetime: manifest.lifetime.clone(),
                 root: identity,
                 kind: catalog::RootKind::Checkpoint,
                 owner_dataset: Some(manifest.dataset.clone()),
@@ -287,7 +293,11 @@ impl DatasetStore {
                     digest: saved.bindings.source_digest.clone(),
                     bytes: saved.bindings.source_bytes,
                 }],
-                retention: RootRetention::Protected,
+                retention: if manifest.lifetime == wes_engine::storage::DatasetLifetime::Durable {
+                    RootRetention::Protected
+                } else {
+                    RootRetention::Temporary
+                },
                 transaction: manifest.transaction.clone(),
             };
             self.check_reference_successor(&change, previous)?;

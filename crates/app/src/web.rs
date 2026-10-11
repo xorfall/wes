@@ -6,6 +6,7 @@ mod credential_vault;
 mod data_home;
 mod datasets;
 mod environment_authentication;
+mod read_context;
 mod workspace_specs;
 pub(crate) use data_home::recovery as listen_data_home_recovery;
 mod edit_files;
@@ -740,14 +741,59 @@ fn sandbox_response(reply: &wes_engine::session::sandbox::Reply, generation: &st
     match wes_adapters::codec::encode_display_value(&value, wes_adapters::codec::Limits::default())
     {
         Ok(bytes) => {
-            let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
                 Ok(value) => value,
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             };
-            let mut response = services::management_json(
-                StatusCode::OK,
-                &serde_json::json!({"sandbox":{"name":reply.name,"generation":generation,"state":reply.state.as_str(),"reference":reply.view.as_ref().map(|v|&v.0),"inspect":reply.view.as_ref().map(|v|v.1),"value":value}}),
-            );
+            let mut remaining = wes_adapters::codec::Limits::default()
+                .bytes
+                .saturating_sub(bytes.len() + 4096);
+            let mut sources = serde_json::Map::new();
+            for (name, source) in &reply.sources {
+                let mut encoded = serde_json::to_value(source).expect("source metadata");
+                let shape = match wes_adapters::codec::encode_display_shape(
+                    &source.shape,
+                    wes_adapters::codec::Limits {
+                        bytes: remaining,
+                        ..Default::default()
+                    },
+                )
+                .ok()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                {
+                    Some(shape) => shape,
+                    None => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+                };
+                encoded["type"] = shape;
+                if let Some(metadata) = &source.metadata {
+                    if let Some(wire) = metadata.wire() {
+                        encoded["meta"] = serde_json::to_value(wire).expect("validated metadata");
+                    }
+                }
+                let charge = serde_json::to_vec(&encoded).map_or(usize::MAX, |b| {
+                    b.len().saturating_add(name.len().saturating_mul(6) + 64)
+                });
+                let Some(next) = remaining.checked_sub(charge) else {
+                    return sandbox_failure(wes_engine::session::SessionError::Capacity);
+                };
+                remaining = next;
+                sources.insert(name.clone(), encoded);
+            }
+            if let Some(source) = sources.get("") {
+                value["type"] = source["type"].clone();
+                if let Some(meta) = source.get("meta") {
+                    value["meta"] = meta.clone();
+                }
+            }
+            let body = serde_json::json!({"sandbox":{"kind":reply.kind,"scope":reply.scope,"sources":sources,"name":reply.name,"generation":generation,"state":reply.state.as_str(),"reference":reply.view.as_ref().map(|v|&v.0),"inspect":reply.view.as_ref().map(|v|v.1),"value":value}});
+            let Ok(bytes) = serde_json::to_vec(&body) else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
+            if bytes.len() > wes_adapters::codec::Limits::default().bytes {
+                return sandbox_failure(wes_engine::session::SessionError::Capacity);
+            }
+            let mut response =
+                ([(header::CONTENT_TYPE, "application/json")], bytes).into_response();
             response.headers_mut().insert(
                 header::CACHE_CONTROL,
                 header::HeaderValue::from_static("no-store"),
@@ -760,6 +806,38 @@ fn sandbox_response(reply: &wes_engine::session::sandbox::Reply, generation: &st
         )
             .into_response(),
     }
+}
+fn sandbox_failure(error: wes_engine::session::SessionError) -> Response {
+    use wes_engine::session::SessionError;
+    let (status, code) = match &error {
+        SessionError::Capacity => (StatusCode::TOO_MANY_REQUESTS, "ANALYSIS_CAPACITY"),
+        SessionError::Authority | SessionError::AccessDenied(_) => {
+            (StatusCode::FORBIDDEN, "ANALYSIS_ACCESS_REFUSED")
+        }
+        SessionError::ScopeEnded | SessionError::Stopped => {
+            (StatusCode::GONE, "ANALYSIS_SCOPE_ENDED")
+        }
+        SessionError::UnknownValue | SessionError::UnknownNode => {
+            (StatusCode::NOT_FOUND, "ANALYSIS_UNAVAILABLE")
+        }
+        SessionError::Conflict | SessionError::HistoricalReplyUnavailable => {
+            (StatusCode::CONFLICT, "ANALYSIS_CHANGED")
+        }
+        SessionError::AdmissionBusy | SessionError::CheckpointBusy => {
+            (StatusCode::SERVICE_UNAVAILABLE, "ANALYSIS_BUSY")
+        }
+        SessionError::KeepIncomplete { .. } | SessionError::ScopeCleanup => {
+            (StatusCode::CONFLICT, "ANALYSIS_UNCONFIRMED")
+        }
+        _ => (StatusCode::CONFLICT, "ANALYSIS_READ_FAILED"),
+    };
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({"error":{"code":code,"message":error.to_string(),"retryable":false}})
+            .to_string(),
+    )
+        .into_response()
 }
 async fn read_sandbox(Scoped(shared): Scoped, request: Request) -> Response {
     let Ok(current) = shared.application.current() else {
@@ -780,13 +858,23 @@ async fn read_sandbox(Scoped(shared): Scoped, request: Request) -> Response {
     let Some(reference) = query.get("reference").filter(|r| r.len() <= 512) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    match current
+    let result = current
         .session
         .read_sandbox(reference, query.get("inspect").is_some_and(|i| i == "true"))
-        .await
+        .await;
+    if !shared
+        .application
+        .current()
+        .is_ok_and(|now| now.generation == current.generation)
     {
+        return sandbox_failure(wes_engine::session::SessionError::HistoricalReplyUnavailable);
+    }
+    if let Err(error) = current.session.check_retirement_access().await {
+        return sandbox_failure(error);
+    }
+    match result {
         Ok(reply) => sandbox_response(&reply, &current.generation),
-        Err(error) => (StatusCode::CONFLICT, error.to_string()).into_response(),
+        Err(error) => sandbox_failure(error),
     }
 }
 async fn submit(Scoped(shared): Scoped, request: Request) -> Response {

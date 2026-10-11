@@ -15,6 +15,50 @@ pub struct ReplayWorkspace {
     validation_only: bool,
 }
 impl ReplayWorkspace {
+    pub(crate) fn restore_saved(
+        &mut self,
+        saved: &crate::history::SavedSelection,
+    ) -> Result<(), WorkspaceError> {
+        if self.hydrating
+            || saved.validate().is_err()
+            || self
+                .workspace
+                .saved_selections
+                .iter()
+                .any(|s| s.id == saved.id || s.name == saved.name)
+            || self.workspace.resolve(&saved.name).is_some()
+        {
+            return Err(WorkspaceError::UnsafeObservation);
+        }
+        if saved.alias_shape.is_some() {
+            let node = crate::session::saved::alias_id(saved);
+            if !self.used.insert(node.clone()) {
+                return Err(WorkspaceError::UnsafeObservation);
+            }
+            self.workspace
+                .runtime
+                .reserve_historical_ids(std::slice::from_ref(&node));
+            self.workspace.install_saved_alias(saved, None, true)?;
+        }
+        self.workspace.saved_selections.push(saved.clone());
+        Ok(())
+    }
+    pub(crate) fn restore_save_intent(
+        &mut self,
+        saved: &crate::history::SavedSelection,
+    ) -> Result<(), WorkspaceError> {
+        if self.hydrating
+            || saved.validate().is_err()
+            || self.workspace.resolve(&saved.name).is_some()
+        {
+            return Err(WorkspaceError::UnsafeObservation);
+        }
+        self.workspace.pending_saves.push(saved.clone());
+        Ok(())
+    }
+    pub(crate) fn confirm_save_intent(&mut self, saved: &crate::history::SavedSelection) {
+        self.workspace.pending_saves.retain(|s| s.id != saved.id);
+    }
     pub(crate) async fn restore_environments(
         &mut self,
         record: &crate::environments::EnvironmentRecord,

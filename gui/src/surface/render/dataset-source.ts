@@ -9,6 +9,7 @@ import type { Engine } from "../../engine";
 import type { Mode } from "../../presentation/types";
 
 export interface DatasetSource {
+  readonly scope?: string; readonly select?: string;
   readonly engine: Engine;
   /** The stored result's handle. */
   readonly handle: string;
@@ -62,7 +63,7 @@ class Withdrawals {
 export const datasetWithdrawals = new Withdrawals();
 
 /** A stored result as one session saw it: the identity withdrawal is recorded under. */
-export interface StoredIdentity { readonly handle: string; readonly generation: string }
+export interface StoredIdentity { readonly handle: string; readonly generation: string; readonly scope?:string; readonly select?:string }
 
 /**
  * The stored identity of a shown value: only when it was read from that handle in that session.

@@ -35,3 +35,29 @@ fn incomplete_blocks_and_annotation_arguments_are_rejected() {
         );
     }
 }
+
+#[test]
+fn transient_block_roundtrips_with_forks_fields_and_exact_keep_targets() {
+    let source = ":transient {\n:calc pure { return {n:4}; } > sample\n$sample | :fork { { :calc pure { return input.n; } > count } } > outputs\n} > study\n:keep $study.sample.n > savedCount\n:keep $study > savedStudy";
+    let parsed = parse(&SourceText::new("finite-study", source));
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert!(matches!(
+        parsed.script.statements[0].expression,
+        Expression::Transient(_)
+    ));
+    let canonical = parsed.script.to_string();
+    let roundtrip = parse(&SourceText::new("canonical", &canonical));
+    assert!(
+        roundtrip.diagnostics.is_empty(),
+        "{:?}",
+        roundtrip.diagnostics
+    );
+    assert_eq!(canonical, roundtrip.script.to_string());
+    for source in [":transient {} > study", ":transient { :calc { return 1; }"] {
+        assert!(
+            !parse(&SourceText::new("invalid", source))
+                .diagnostics
+                .is_empty()
+        );
+    }
+}

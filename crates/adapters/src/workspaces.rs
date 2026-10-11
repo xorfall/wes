@@ -160,6 +160,17 @@ impl FileWorkspaces {
                             .or_default()
                             .insert(name.as_str().into());
                     }
+                    wes_engine::history::JournalEntry::Saved(saved)
+                    | wes_engine::history::JournalEntry::SaveIntent(saved) => {
+                        saved.validate().map_err(|_| WorkspaceFileError::Invalid)?;
+                        for handle in saved.handles() {
+                            census
+                                .references
+                                .entry(handle)
+                                .or_default()
+                                .insert(name.as_str().into());
+                        }
+                    }
                     wes_engine::history::JournalEntry::Retired(r) => {
                         for handle in &r.payloads {
                             *census.cleanup.entry(handle.clone()).or_default() |=
@@ -228,7 +239,7 @@ impl FileWorkspaces {
                 loaded
                     .journal()
                     .iter()
-                    .any(|entry| entry.payload_reference() == Some(handle))
+                    .any(|entry| entry.references_payload(handle))
             };
             if total > 128 * 1024 * 1024 {
                 return Err(WorkspaceFileError::Capacity);

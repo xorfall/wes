@@ -1,5 +1,7 @@
 //! Durable facts are not executable commands. This module owns their meaning, not their format.
 pub mod deletion;
+mod saved;
+pub use saved::{SavedEdge, SavedLineage, SavedMember, SavedPayload, SavedSelection};
 mod requests;
 pub use requests::{RequestClaim, RequestRecord};
 mod pages;
@@ -330,6 +332,10 @@ impl DiagnosticRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalEntry {
+    /// A bodyless selection intent is queryable after partial/uncertain retention.
+    /// It is never a successful saved artifact or a provider-replay instruction.
+    SaveIntent(SavedSelection),
+    Saved(SavedSelection),
     Invocation(crate::selection::InvocationRecord),
     Views(crate::views::ViewRecord),
     Snapshot(LiveSnapshot),
@@ -378,6 +384,10 @@ impl JournalEntry {
     /// Only acknowledged retained ownership participates in saved dataset protection.
     pub fn retained_dataset_handles(&self) -> Result<Vec<ValueHandle>, InvalidRecord> {
         Ok(match self {
+            Self::Saved(saved) => {
+                saved.validate()?;
+                saved.handles()
+            }
             Self::Result(r) => vec![r.handle.clone()],
             Self::Snapshot(s) => s.result.iter().map(|r| r.handle.clone()).collect(),
             Self::ProtectedRun { handle, .. } => vec![handle.clone()],
@@ -396,6 +406,24 @@ impl JournalEntry {
             Self::Snapshot(snapshot) => snapshot.result.as_ref().map(|r| &r.handle),
             Self::Noticed(notice) if notice.context().node().is_some() => notice.context().handle(),
             _ => None,
+        }
+    }
+    /// All physical references, including an unconfirmed saved intent. Intents
+    /// prevent destructive cleanup; they do not authorize successful restoration.
+    pub fn payload_references(&self) -> Vec<ValueHandle> {
+        match self {
+            Self::Saved(saved) | Self::SaveIntent(saved) => saved.handles(),
+            _ => self.payload_reference().cloned().into_iter().collect(),
+        }
+    }
+    pub fn references_payload(&self, handle: &ValueHandle) -> bool {
+        match self {
+            Self::Saved(saved) | Self::SaveIntent(saved) => saved.members.iter().any(|m| {
+                m.payload
+                    .as_ref()
+                    .is_some_and(|p| p.handle == handle.as_str())
+            }),
+            _ => self.payload_reference() == Some(handle),
         }
     }
 }
@@ -798,6 +826,7 @@ impl<'a> RestoreIndex<'a> {
                 | JournalEntry::Noticed(_)
                 | JournalEntry::Environments(_)
                 | JournalEntry::Views(_) => {}
+                JournalEntry::Saved(_) | JournalEntry::SaveIntent(_) => {}
             }
         }
         let latest_snapshots: IndexMap<_, _> = entries

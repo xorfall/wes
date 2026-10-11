@@ -366,12 +366,25 @@ fn sandbox_report(reply: &wes_engine::session::SubmissionReply) -> Value {
                 .ok()
                 .filter(|bytes| bytes.len() <= 64 * 1024)
                 .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-                json!({"kind":"sandbox","name":sandbox.name,"settled":true,"persistence":"definition only","observation":data,"observationAvailable":data.is_some(),"hasExecutionCell":false})
+                let persistence = match sandbox.kind {
+                    wes_engine::session::sandbox::Kind::Sandbox => "definition only",
+                    wes_engine::session::sandbox::Kind::Transient => {
+                        "temporary RAM and disk; auto-Keep off"
+                    }
+                    wes_engine::session::sandbox::Kind::Saved
+                        if sandbox.state
+                            == wes_engine::session::sandbox::ObservationState::Unconfirmed =>
+                    {
+                        "Keep not acknowledged"
+                    }
+                    wes_engine::session::sandbox::Kind::Saved => "retained snapshot",
+                };
+                json!({"kind":sandbox.kind,"name":sandbox.name,"state":sandbox.state.as_str(),"scope":sandbox.scope,"settled":true,"persistence":persistence,"observation":data,"observationAvailable":data.is_some(),"hasExecutionCell":false})
             }
             None => json!({"settled":false}),
         },
         Err(error) => {
-            json!({"kind":"sandbox","settled":true,"error":error.to_string(),"hasExecutionCell":false})
+            json!({"settled":true,"error":error.to_string(),"hasExecutionCell":false})
         }
     }
 }
@@ -816,6 +829,59 @@ async fn perform(
         }
         Tool::DatasetInspect(mut input) | Tool::DatasetPage(mut input) => {
             input.read.inspect = dataset_inspect;
+            if let Some(named) = current
+                .session
+                .read_named_export(&input.name, false)
+                .await
+                .map_err(|e| fail(&e.to_string()))?
+            {
+                if named.kind == wes_engine::session::sandbox::Kind::Transient
+                    && (input.read.head || input.read.extent.is_some())
+                {
+                    return Err(fail(
+                        "Temporary analysis reads select the exact captured Dataset; head and extent reads are outside its finite scope.",
+                    ));
+                }
+                let worker = match &named.scope {
+                    Some(scope) => {
+                        current
+                            .session
+                            .resolve_read_scope(scope)
+                            .await
+                            .map_err(|e| fail(&e.to_string()))?
+                            .1
+                    }
+                    None => application
+                        .storage
+                        .as_ref()
+                        .ok_or_else(|| fail("Dataset storage is unavailable in this application."))?
+                        .clone(),
+                };
+                let _hold = match named.sources.get("").and_then(|s| s.handle.as_ref()) {
+                    Some(handle) => Some(
+                        worker
+                            .hold(
+                                wes_engine::storage::ValueHandle::new(handle)
+                                    .map_err(|e| fail(&e.to_string()))?,
+                            )
+                            .await
+                            .map_err(|e| fail(&e.to_string()))?
+                            .ok_or_else(|| fail("The captured result is unavailable."))?,
+                    ),
+                    None => None,
+                };
+                let value = named.public_value().map_err(|e| fail(&e.to_string()))?;
+                let reply = crate::dataset_reads::read(&worker, &value, input.read, 64 * 1024)
+                    .await
+                    .map_err(|e| fail(&e.to_string()))?;
+                current
+                    .session
+                    .validate_named_export(&named)
+                    .await
+                    .map_err(|e| fail(&e.to_string()))?;
+                check_current(terminal, application, &current)?;
+                return Ok(reply);
+            }
             let observation = observe_current(terminal, application, &current).await?;
             let (value, _) = bridge::named_observation(&observation, &input.name)?;
             let store = application
@@ -830,6 +896,33 @@ async fn perform(
             Ok(reply)
         }
         Tool::ValueRead(input) => {
+            if let Some(named) = current
+                .session
+                .read_named_export(&input.name, false)
+                .await
+                .map_err(|e| fail(&e.to_string()))?
+            {
+                let value = named.public_value().map_err(|e| fail(&e.to_string()))?;
+                let bytes = wes_adapters::codec::encode_selection(
+                    &value,
+                    &input.selection,
+                    input.typed,
+                    wes_adapters::codec::Limits {
+                        bytes: 64 * 1024,
+                        nodes: 100_000,
+                    },
+                )
+                .map_err(|e| fail(&e.to_string()))?;
+                current
+                    .session
+                    .validate_named_export(&named)
+                    .await
+                    .map_err(|e| fail(&e.to_string()))?;
+                check_current(terminal, application, &current)?;
+                return serde_json::from_slice(&bytes)
+                    .map(|value| bridge::named_result(value, &named))
+                    .map_err(|_| fail("Value unavailable."));
+            }
             let observation = observe_current(terminal, application, &current).await?;
             let (value, stopped) = bridge::named_observation(&observation, &input.name)?;
             let text = if input.selection.is_requested() {

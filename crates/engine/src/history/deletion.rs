@@ -46,9 +46,6 @@ impl HistoryImage {
         let nodes = self.observation_nodes();
         let mut candidates = std::collections::BTreeMap::<ValueHandle, bool>::new();
         for entry in &self.journal {
-            let Some(handle) = entry.payload_reference() else {
-                continue;
-            };
             let observation = match entry {
                 JournalEntry::Result(r) => {
                     nodes.contains(&r.node) && r.retention != crate::storage::Retention::Protected
@@ -57,10 +54,12 @@ impl HistoryImage {
                 JournalEntry::Snapshot(s) => nodes.contains(s.observation.node()),
                 _ => false,
             };
-            candidates
-                .entry(handle.clone())
-                .and_modify(|only| *only &= observation)
-                .or_insert(observation);
+            for handle in entry.payload_references() {
+                candidates
+                    .entry(handle)
+                    .and_modify(|only| *only &= observation)
+                    .or_insert(observation);
+            }
         }
         candidates
             .into_iter()

@@ -23,6 +23,8 @@ export default defineConfig({
   server: {
     proxy: {
       "/submit": backend(),
+      "/sandbox": backend(),
+      "/datasets": backend(),
       "/workspaces": backend(),
       "/diagnostics": backend(),
       "/values": backend(),

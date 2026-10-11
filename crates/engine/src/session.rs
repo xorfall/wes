@@ -36,6 +36,7 @@ pub use display::DisplaySample;
 pub use observation_query::{ObservationQuery, PreparedObservationQuery};
 mod queries;
 pub mod sandbox;
+pub(crate) mod saved;
 pub use environments::{
     EnvironmentAuthentication, EnvironmentAuthorityCommand, EnvironmentPlan,
     EnvironmentPublication, ProviderAuthorityCommand,
@@ -104,6 +105,22 @@ pub enum SessionError {
     Management(String),
     #[error("{0}")]
     Sandbox(String),
+    #[error(
+        "Transient work was joined, but temporary cleanup was not acknowledged; retained copies remain protected."
+    )]
+    ScopeCleanup,
+    #[error(
+        "The temporary analysis scope has ended; an explicit Keep is required to read it after closure."
+    )]
+    ScopeEnded,
+    #[error(
+        "Saved selection {identity}: {stage}; retention may have applied: {may_have_applied}. No provider was replayed."
+    )]
+    KeepIncomplete {
+        identity: String,
+        stage: &'static str,
+        may_have_applied: bool,
+    },
     /// The producer has rejected this attempt before installing or starting its work.
     /// Other request failures make no claim about execution or external effects.
     #[error("{0}")]
@@ -215,11 +232,21 @@ enum Control {
         member: Option<String>,
         inspect: bool,
         cooperative: bool,
-        reply: oneshot::Sender<Result<wes_core::Data, SessionError>>,
+        reply: oneshot::Sender<Result<sandbox::Observed, SessionError>>,
+    },
+    SavedCapture {
+        member: Option<String>,
+        reply: oneshot::Sender<Result<saved::Capture, SessionError>>,
+    },
+    SavedInstall {
+        saved: crate::history::SavedSelection,
+        values: std::collections::BTreeMap<String, wes_core::Value>,
+        reply: oneshot::Sender<Result<(), SessionError>>,
     },
     SandboxWorkspace {
         input: SourceInput,
         name: Option<String>,
+        program: Option<String>,
         reply: oneshot::Sender<Result<Workspace, SessionError>>,
     },
     CheckRetirementAccess(oneshot::Sender<Result<(), SessionError>>),
@@ -966,6 +993,13 @@ fn spawn_owned(
         capacity.clone(),
         max_concurrent,
         updates.clone(),
+        values.as_ref().map(SessionValues::worker),
+        match &recording {
+            RecordingMode::Ephemeral => None,
+            RecordingMode::Required(journal) => Some(journal.weak_recording()),
+        },
+        workspace.saved_selections.clone(),
+        workspace.pending_saves.clone(),
     ));
     let management = Arc::new(management::Requests::default());
     let handle = SessionHandle {
@@ -997,6 +1031,7 @@ fn spawn_owned(
         first_activation: None,
         selection_pending: Default::default(),
         dataset_access: values.as_ref().map(|v| v.worker().dataset_access()),
+        eviction_updates: values.as_ref().map(|v| v.worker().eviction_updates()),
         import_plans: Default::default(),
         active_import: None,
         view_queries: view_queries::Queries::default(),
@@ -1048,6 +1083,7 @@ struct Actor {
     first_activation: Option<crate::providers::BoundCall>,
     selection_pending: std::collections::BTreeMap<NodeId, selection::Pending>,
     dataset_access: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetAccess>>,
+    eviction_updates: Option<tokio::sync::watch::Receiver<u64>>,
     import_plans: import_plans::Plans,
     active_import: Option<import_plans::FrozenImport>,
     view_queries: view_queries::Queries,
@@ -1207,6 +1243,14 @@ impl Actor {
                 .min();
             let mut changed = true;
             tokio::select! {
+                result = async { self.eviction_updates.as_mut().expect("configured eviction updates").changed().await }, if self.eviction_updates.is_some() => {
+                    if result.is_err() { self.eviction_updates = None; }
+                    else {
+                        self.eviction_updates.as_mut().expect("eviction updates").borrow_and_update();
+                        if let Some(values) = self.values.as_mut() { values.eviction_wakeup(); }
+                    }
+                    changed = false;
+                },
                 result = async { self.dataset_access.as_mut().expect("configured dataset access").changed().await }, if self.dataset_access.is_some() => {
                     let access = match result {
                         Ok(()) => self.dataset_access.as_mut().expect("dataset access").borrow_and_update().clone(),
@@ -1216,7 +1260,7 @@ impl Actor {
                 },
                 control = self.controls.recv(), if self.controls_open => match control {
                     Some(control) => {
-                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::CommandEnvironment { .. } | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
+                        changed = !matches!(&control, Control::SandboxRead { .. } | Control::SavedCapture { .. } | Control::SandboxWorkspace { .. } | Control::Observe(_) | Control::CommandEnvironment { .. } | Control::ViewCatalogue(_) | Control::ViewFrame(..) | Control::ViewInteraction { .. } | Control::ViewInputs(..) | Control::ViewMount(..) | Control::DisplayValue(..) | Control::ImportedSpecs(_) | Control::ObserveActor { .. } | Control::Snapshot(_) | Control::Log(_) | Control::Values(_) | Control::WaitIdle(_) | Control::Input { .. } | Control::CheckRetirementAccess(_)) && !matches!(&control, Control::Environments(request) if matches!(request.as_ref(), environments::Request::Observe(_) | environments::Request::Authentication(_) | environments::Request::Documents(_) | environments::Request::PrepareTarget { .. }));
                         self.control(control);
                     },
                     None => {self.controls_open = false; self.close();}
@@ -1746,15 +1790,42 @@ impl Actor {
                 cooperative,
                 reply,
             } => {
-                let _ = reply.send(sandbox::observe(
+                let result = sandbox::observe(
                     &self.workspace,
                     member.as_deref(),
                     inspect,
                     cooperative,
                     None,
-                ));
+                )
+                .map(|data| sandbox::Observed {
+                    data,
+                    sources: sandbox::observe_sources(
+                        &self.workspace,
+                        self.values.as_ref(),
+                        member.as_deref(),
+                        inspect,
+                    ),
+                });
+                let _ = reply.send(result);
             }
-            Control::SandboxWorkspace { input, name, reply } => {
+            Control::SavedCapture { member, reply } => {
+                let result = self.capture_saved(member.as_deref());
+                let _ = reply.send(result);
+            }
+            Control::SavedInstall {
+                saved,
+                values,
+                reply,
+            } => {
+                let result = self.workspace.install_saved_selection(saved, values);
+                let _ = reply.send(result.map_err(|_| SessionError::Commit));
+            }
+            Control::SandboxWorkspace {
+                input,
+                name,
+                program,
+                reply,
+            } => {
                 let result = if self.workspace.runtime().is_closed() {
                     Err(SessionError::Stopped)
                 } else if self.checkpoints.busy() || self.active.is_some() {
@@ -1773,11 +1844,18 @@ impl Actor {
                         .cloned()
                         .or_else(|| self.environment_clients.get(input.client()).cloned());
                     workspace
-                        .map(|mut workspace| {
+                        .and_then(|mut workspace| {
                             if let Some(context) = context {
                                 workspace.default_environment = context.selected;
                             }
-                            workspace
+                            if let Some(program) = program {
+                                self.workspace.capture_analysis_inputs(
+                                    &mut workspace,
+                                    &program,
+                                    &input,
+                                )?;
+                            }
+                            Ok(workspace)
                         })
                         .map_err(|_| SessionError::Preparation)
                 };
@@ -1855,10 +1933,14 @@ impl Actor {
                 } else if self.workspace.runtime().graph().node(&node).is_none() {
                     Err(SessionError::UnknownNode)
                 } else {
-                    self.cancel_activations(std::slice::from_ref(&node));
-                    let effects = self.workspace.cancel(&node, self.io.now());
-                    self.effects(effects);
-                    Ok(())
+                    match self.workspace.cancel_node(&node, self.io.now()) {
+                        Ok(effects) => {
+                            self.cancel_activations(std::slice::from_ref(&node));
+                            self.effects(effects);
+                            Ok(())
+                        }
+                        Err(_) => Err(SessionError::Commit),
+                    }
                 };
                 let _ = reply.send(result);
             }
@@ -2062,6 +2144,10 @@ impl Actor {
             Control::RetentionPolicy(policy, reply) => {
                 let result = if self.workspace.runtime().is_closed() {
                     Err(SessionError::Stopped)
+                } else if self.workspace.transient_storage.is_some() && policy.automatic {
+                    Err(SessionError::AccessDenied(
+                        "Automatic retention is disabled for transient analysis.".into(),
+                    ))
                 } else if self.checkpoints.busy() {
                     Err(SessionError::CheckpointBusy)
                 } else if let Some(values) = &mut self.values {

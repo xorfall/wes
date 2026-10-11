@@ -149,9 +149,33 @@ impl Workspace {
         nodes: &[NodeId],
         now: Duration,
     ) -> Result<Vec<Effect<BoundTask>>, WorkspaceError> {
+        self.check_cancel_bindings(nodes)?;
         let effects = self.runtime.cancel_group(nodes, now)?;
         self.views.cancel_origins(nodes);
         Ok(effects)
+    }
+    pub(crate) fn cancel_node(
+        &mut self,
+        node: &NodeId,
+        now: Duration,
+    ) -> Result<Vec<Effect<BoundTask>>, WorkspaceError> {
+        self.check_cancel_bindings(std::slice::from_ref(node))?;
+        Ok(self.cancel(node, now))
+    }
+    fn check_cancel_bindings(&self, nodes: &[NodeId]) -> Result<(), WorkspaceError> {
+        if nodes.iter().any(|node| {
+            self.runtime
+                .graph()
+                .node(node)
+                .is_some_and(|n| matches!(n.payload(), BoundTask::SavedInput(_)))
+        }) {
+            return Err(rejected(
+                "MET007",
+                wes_language::Span::at(0),
+                "Saved snapshot bindings are immutable; read or inspect the saved selection",
+            ));
+        }
+        Ok(())
     }
     /// Resolve the supported immediate runtime/declaration controls without mutating state.
     /// A coordinator routes other meta commands to their own ports instead of calling this method.
@@ -407,7 +431,7 @@ pub(super) fn bind_control<'a>(
         ));
     };
     let target = || {
-        targets
+        let node = targets
             .first()
             .cloned()
             .filter(|_| targets.len() == 1)
@@ -417,7 +441,18 @@ pub(super) fn bind_control<'a>(
                     span,
                     "this control requires one existing node reference",
                 )
-            })
+            })?;
+        if graph
+            .node(&node)
+            .is_some_and(|n| matches!(n.payload(), BoundTask::SavedInput(_)))
+        {
+            return Err(rejected(
+                "MET007",
+                span,
+                "Saved snapshot bindings are immutable; read or inspect the saved selection",
+            ));
+        }
+        Ok(node)
     };
     match task.spec.command {
         MetaCommand::Refresh => match task.inputs.get("scope") {
@@ -495,6 +530,18 @@ pub(super) fn bind_control<'a>(
                     "MET007",
                     span,
                     format!("there is no binding named '{name}'"),
+                ));
+            }
+            if bindings
+                .names()
+                .get(name)
+                .and_then(|o| graph.node(&o.node))
+                .is_some_and(|n| matches!(n.payload(), BoundTask::SavedInput(_)))
+            {
+                return Err(rejected(
+                    "MET007",
+                    span,
+                    "Saved snapshot bindings are immutable; read or inspect the saved selection",
                 ));
             }
             Ok(Control::DropName(name.clone()))

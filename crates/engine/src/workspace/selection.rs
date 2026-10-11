@@ -23,7 +23,8 @@ impl Workspace {
                     .flat_map(wes_language::Value::references)
                     .collect(),
                 wes_language::Expression::Pipeline(stages)
-                | wes_language::Expression::Sandbox(stages) => {
+                | wes_language::Expression::Sandbox(stages)
+                | wes_language::Expression::Transient(stages) => {
                     stages.iter().flat_map(references).collect()
                 }
                 wes_language::Expression::Fork(branches) => branches

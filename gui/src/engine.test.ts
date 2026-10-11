@@ -794,3 +794,44 @@ describe("view workspace identity", () => {
 });
 
 beforeEach(() => { vi.spyOn(Engine.prototype, "selectionTemplate").mockResolvedValue(undefined); });
+
+it("requires the current analysis observation contract without guessing an older format", async () => {
+  vi.stubGlobal("EventSource", Events);
+  const current = { kind:"transient", scope:"00000000-0000-4000-8000-0000000000f6", sources:{}, name:"study", generation:"g", reference:"study", inspect:true, state:"active", value:{type:{kind:"unknown"},provenance:{},data:{}} };
+  let payload: Record<string, unknown> = current;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({sandbox:payload}))));
+  const engine = new Engine(), disconnect = engine.listen(() => {}, () => {}); Events.current.say("g");
+  const read = () => engine.readSandbox("study", true, "g", new AbortController().signal);
+  await expect(read()).resolves.toEqual(current);
+  for (const field of ["kind", "scope", "sources"]) {
+    payload = {...current}; delete payload[field];
+    await expect(read()).rejects.toThrow("Invalid analysis observation");
+  }
+  payload = {...current,kind:"unrecognized"};
+  await expect(read()).rejects.toThrow("Invalid analysis observation");
+  disconnect();
+});
+
+it("keeps scope authority through late mount closure and releases scoped reader registrations",async()=>{
+  vi.useFakeTimers();vi.stubGlobal("EventSource",Events);
+  let confirm!:(value:unknown)=>void;
+  const fetch=vi.fn((_url:string,init:{body?:string;headers?:Record<string,string>})=>{
+    const action=init.body?JSON.parse(init.body).action:undefined;
+    const response={ok:true,status:action?200:304,text:async()=>JSON.stringify({token:"lease"})};
+    return action==="open"?new Promise(resolve=>{confirm=resolve;}):Promise.resolve(response);
+  });
+  vi.stubGlobal("fetch",fetch);
+  const engine=new Engine(),disconnect=engine.listen(()=>{},()=>{});Events.current.say("g");
+  const scope="00000000-0000-4000-8000-0000000000f6";
+  const close=engine.watchViewFrame("scoped","identity",()=>{},{readScope:scope});
+  close();
+  confirm({ok:true,status:200,text:async()=>JSON.stringify({token:"lease"})});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetch.mock.calls).toHaveLength(2);
+  expect(fetch.mock.calls.map(([,init])=>JSON.parse(init.body!).action)).toEqual(["open","close"]);
+  expect(fetch.mock.calls.every(([,init])=>init.headers?.["X-Wes-Scope"]===scope)).toBe(true);
+  const reopen=engine.watchViewFrame("ordinary","identity",()=>{});
+  expect(fetch.mock.calls.at(-1)?.[1].headers?.["X-Wes-Scope"]).toBeUndefined();
+  reopen();confirm({ok:true,status:200,text:async()=>JSON.stringify({token:"lease"})});
+  await vi.advanceTimersByTimeAsync(1);disconnect();
+});

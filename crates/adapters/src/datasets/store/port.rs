@@ -75,6 +75,15 @@ impl DatasetStore {
         }
         let expected_generation = previous.as_ref().map_or(0, |r| r.generation);
         let change = ReferenceRootChange {
+            lifetime: if request.prefixes.is_empty() {
+                previous
+                    .as_ref()
+                    .map_or(self.current_lifetime(), |root| root.lifetime.clone())
+            } else if retention == RootRetention::Temporary {
+                self.current_lifetime()
+            } else {
+                wes_engine::storage::DatasetLifetime::Durable
+            },
             root: request.identity.to_string(),
             kind,
             owner_dataset: previous

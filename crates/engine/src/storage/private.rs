@@ -3,7 +3,7 @@ use super::*;
 use std::collections::BTreeMap;
 pub(super) struct PolicyValues<S> {
     backing: S,
-    private: BTreeMap<ValueHandle, (Value, u64)>,
+    private: BTreeMap<ValueHandle, (Arc<Value>, u64)>,
     bytes: u64,
 }
 impl<S> PolicyValues<S> {
@@ -32,14 +32,47 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
             return Err(StoreError::Limit("private values"));
         }
         let handle = ValueHandle::fresh();
-        self.private.insert(handle.clone(), (value.clone(), charge));
+        self.private
+            .insert(handle.clone(), (Arc::new(value.clone()), charge));
         self.bytes += charge;
         Ok(handle)
+    }
+    fn store_with_placement(
+        &mut self,
+        value: &Value,
+        placement: ValuePlacement,
+    ) -> Result<ValueHandle, StoreError> {
+        if value.provenance().policy().is_private() {
+            self.store(value)
+        } else {
+            self.backing.store_with_placement(value, placement)
+        }
+    }
+    fn has_temporary_file(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self.private.contains_key(handle) {
+            Ok(false)
+        } else {
+            self.backing.has_temporary_file(handle)
+        }
+    }
+    fn hold(&mut self, handle: &ValueHandle) -> Result<Option<ValueLease>, StoreError> {
+        if let Some((value, _)) = self.private.get(handle) {
+            Ok(Some(ValueLease::retain(value.clone())))
+        } else {
+            self.backing.hold(handle)
+        }
+    }
+    fn requires_ownership_record(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self.private.contains_key(handle) {
+            Ok(false)
+        } else {
+            self.backing.requires_ownership_record(handle)
+        }
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
         match self.private.get(handle) {
             Some((value, _)) => Ok(Some(LoadedValue {
-                value: value.clone(),
+                value: value.as_ref().clone(),
             })),
             None => self.backing.read(handle),
         }
@@ -93,6 +126,13 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
         Ok(usage)
     }
     fn release(&mut self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if self
+            .private
+            .get(handle)
+            .is_some_and(|(value, _)| Arc::strong_count(value) > 1)
+        {
+            return Err(StoreError::Limit("active private result holds"));
+        }
         if let Some((_, bytes)) = self.private.remove(handle) {
             self.bytes -= bytes;
             return Ok(true);

@@ -239,7 +239,7 @@ pub(super) fn references(source: &str) -> Vec<String> {
     let mut statements = parsed.script.statements;
     while let Some(statement) = statements.pop() {
         match statement.expression {
-            Expression::Sandbox(_) => {} // Local references are not workspace dependencies.
+            Expression::Sandbox(_) | Expression::Transient(_) => {} // Local references are not workspace dependencies.
             Expression::Fork(branches) => {
                 statements.extend(branches.into_iter().rev().map(|b| b.body))
             }

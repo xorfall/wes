@@ -1230,6 +1230,7 @@ mod tests {
             kept: true,
             retention: wes_engine::storage::Retention::Protected,
             retained_persistence: Persistence::Volatile,
+            requires_ownership_record: false,
         });
         value.pin = Some(wes_engine::session::PinBinding::Refused(
             "View changed during retention".into(),

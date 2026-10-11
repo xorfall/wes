@@ -3,7 +3,8 @@ use super::datasets::{
     DatasetAppend, DatasetCreate, DatasetInfo, DatasetPage, DatasetStorage, PageRequest,
 };
 use super::{
-    EvictionBatch, LoadedValue, Retention, RetentionUsage, StoreError, ValueHandle, ValueStore,
+    EvictionBatch, LoadedValue, Retention, RetentionUsage, StoreError, TransientScope,
+    TransientScopeWitness, ValueHandle, ValueLease, ValuePlacement, ValueStore,
 };
 use crate::value_size::value_charge;
 use std::{
@@ -59,6 +60,7 @@ pub struct StoredOutput {
     pub kept: bool,
     pub retention: Retention,
     pub retained_persistence: crate::history::Persistence,
+    pub requires_ownership_record: bool,
 }
 impl Default for StoreWorkerLimits {
     fn default() -> Self {
@@ -75,6 +77,9 @@ pub struct StoreDrain {
 }
 #[derive(Clone)]
 pub struct StoreWorker {
+    placement: ValuePlacement,
+    scope: Option<TransientScope>,
+    eviction_updates: tokio::sync::watch::Receiver<u64>,
     sender: mpsc::Sender<Request>,
     budget: Arc<Semaphore>,
     limits: StoreWorkerLimits,
@@ -138,6 +143,8 @@ trait Job: Send {
     fn perform(self: Box<Self>, store: &mut dyn OwnedStorage) -> bool;
 }
 trait OwnedStorage {
+    fn enter_scope(&mut self, scope: Option<&TransientScope>) -> Result<(), StoreError>;
+    fn retire_scope(&mut self, id: &str) -> Result<(), StoreError>;
     fn validate_read(&self, handle: &ValueHandle, captured: &Value) -> Result<bool, StoreError>;
     fn refresh_access(&self);
     fn values(&mut self) -> &mut dyn ValueStore;
@@ -186,9 +193,53 @@ struct Owner<V> {
     pending_evictions: std::collections::VecDeque<ValueHandle>,
     evictions_more: bool,
     dataset_access: tokio::sync::watch::Sender<super::datasets::DatasetAccess>,
+    scope: Option<TransientScope>,
+    value_scopes: std::collections::HashMap<ValueHandle, (String, TransientScopeWitness)>,
+    retaining: std::collections::HashSet<ValueHandle>,
+    deferred_evictions:
+        std::collections::BTreeMap<Option<String>, std::collections::VecDeque<ValueHandle>>,
+    eviction_updates: tokio::sync::watch::Sender<u64>,
 }
 impl<V: ValueStore> OwnedStorage for Owner<V> {
+    fn retire_scope(&mut self, id: &str) -> Result<(), StoreError> {
+        // Route losses while the expired ownership identities still exist. They
+        // must not be reassigned to the ordinary workspace after retirement.
+        while self.route_evictions(wes_budgets::get("values.outputs") as usize)? {}
+        if self.datasets.is_some() {
+            let mut cleanup = self.datasets_mut()?.collect()?;
+            finish_dataset_cleanup(self, &mut cleanup);
+            if !cleanup.complete {
+                return Err(StoreError::Limit("pending scope cleanup"));
+            }
+        }
+        let handles = self
+            .value_scopes
+            .iter()
+            .filter(|(_, (scope, _))| scope == id)
+            .map(|(handle, _)| handle.clone())
+            .collect::<Vec<_>>();
+        for handle in handles {
+            if !self.values.is_kept(&handle)? {
+                self.release(&handle)?;
+            } else if self.is_kept(&handle)? {
+                self.value_scopes.remove(&handle);
+            }
+        }
+        self.deferred_evictions.remove(&Some(id.to_owned()));
+        Ok(())
+    }
+    fn enter_scope(&mut self, scope: Option<&TransientScope>) -> Result<(), StoreError> {
+        if scope.is_some_and(|s| !s.is_open()) {
+            return Err(StoreError::Closed);
+        }
+        if let Some(datasets) = &mut self.datasets {
+            datasets.enter_scope(scope)?;
+        }
+        self.scope = scope.cloned();
+        Ok(())
+    }
     fn validate_read(&self, handle: &ValueHandle, captured: &Value) -> Result<bool, StoreError> {
+        self.check_scope(handle)?;
         self.validate_prefixes(captured)?;
         // A ValueHandle identifies immutable bytes. Revalidate existence and
         // current read gates without decoding the same ordinary value again.
@@ -275,7 +326,7 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
             return Ok(());
         }
         let handle = ValueHandle::new(&checkpoint.source.handle)?;
-        if !self.values.is_kept(&handle)? {
+        if !self.values.is_kept(&handle)? && !self.owns_transient(&handle) {
             return Err(StoreError::MissingValue);
         }
         let loaded = self.values.read(&handle)?.ok_or(StoreError::MissingValue)?;
@@ -342,6 +393,7 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
     }
 }
 struct Operation<T, F> {
+    scope: Option<TransientScope>,
     work: F,
     reply: oneshot::Sender<Credited<T>>,
     credit: OwnedSemaphorePermit,
@@ -354,8 +406,11 @@ impl<T: Send, F: FnOnce(&mut dyn OwnedStorage) -> Result<T, StoreError> + Send> 
             work,
             reply,
             credit,
+            scope,
         } = *self;
-        let result = work(store);
+        let result = store.enter_scope(scope.as_ref()).and_then(|()| work(store));
+        let reset = store.enter_scope(None);
+        let result = result.and_then(|value| reset.map(|()| value));
         store.refresh_access();
         let failed = result.is_err();
         let _ = reply.send(Credited { result, credit });
@@ -402,6 +457,7 @@ fn spawn_owner(
         closed: false,
     };
     let (dataset_access_tx, dataset_access) = tokio::sync::watch::channel(access);
+    let (eviction_updates_tx, eviction_updates) = tokio::sync::watch::channel(0);
     let dataset_changes = datasets.as_ref().and_then(|port| port.changes());
     if limits.operations.get() > Semaphore::MAX_PERMITS
         || limits.bytes.get() as usize > Semaphore::MAX_PERMITS
@@ -429,6 +485,11 @@ fn spawn_owner(
                     pending_evictions: Default::default(),
                     evictions_more: false,
                     dataset_access: dataset_access_tx,
+                    scope: None,
+                    value_scopes: Default::default(),
+                    retaining: Default::default(),
+                    deferred_evictions: Default::default(),
+                    eviction_updates: eviction_updates_tx,
                 },
                 receiver,
             );
@@ -437,6 +498,9 @@ fn spawn_owner(
         .map_err(|error| StoreError::backend("starting the storage worker", error))?;
     Ok((
         StoreWorker {
+            placement: ValuePlacement::ManagedFile,
+            scope: None,
+            eviction_updates,
             sender,
             budget,
             limits,
@@ -459,6 +523,41 @@ impl StoreWorkerTask {
     }
 }
 impl StoreWorker {
+    pub fn eviction_updates(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.eviction_updates.clone()
+    }
+    /// A joined child owns this capability; its ID alone cannot be restored.
+    pub fn transient_scope(&self) -> Result<Self, StoreError> {
+        if self.scope.is_some() {
+            return Err(StoreError::Conflict);
+        }
+        let mut worker = self.clone();
+        worker.scope = Some(TransientScope::new());
+        worker.placement = ValuePlacement::Memory;
+        Ok(worker)
+    }
+    pub fn transient_identity(&self) -> Option<&str> {
+        self.scope.as_ref().map(TransientScope::id)
+    }
+    /// Call only after all child work/consumers have joined. Queued later work refuses.
+    pub async fn close_transient_scope(&self) -> Result<(), StoreError> {
+        let scope = self.scope.clone().ok_or(StoreError::Conflict)?;
+        let mut cleanup = self.clone();
+        cleanup.scope = None;
+        cleanup
+            .request_owner(self.limits.bytes.get(), move |owner| {
+                scope.close();
+                owner.retire_scope(scope.id())
+            })
+            .await?
+            .wait()
+            .await
+    }
+    /// A host-captured publication placement; retention and authority remain independent.
+    pub fn with_placement(mut self, placement: ValuePlacement) -> Self {
+        self.placement = placement;
+        self
+    }
     pub(crate) fn dataset_changes(
         &self,
     ) -> Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetChanges>> {
@@ -505,6 +604,7 @@ impl StoreWorker {
                     kept: true,
                     retention: store.retention(&handle)?,
                     retained_persistence: store.retained_persistence(),
+                    requires_ownership_record: store.requires_ownership_record(&handle)?,
                 })
             };
             finish().map_err(|source| StoreError::Published {
@@ -552,6 +652,9 @@ impl StoreWorker {
         value: Value,
         policy: PublicationPolicy,
     ) -> Result<StoredOutput, StoreError> {
+        if self.scope.is_some() && policy != PublicationPolicy::Temporary {
+            return Err(StoreError::Restricted);
+        }
         if policy == PublicationPolicy::Protected {
             if value.provenance().policy().is_private() {
                 return Err(StoreError::Restricted);
@@ -570,8 +673,9 @@ impl StoreWorker {
         } else {
             cost
         };
+        let placement = self.placement;
         self.request(cost, move |store| {
-            let handle = store.store(&value)?;
+            let handle = store.store_with_placement(&value, placement)?;
             let mut finish = || -> Result<StoredOutput, StoreError> {
                 let bytes = store.size(&handle)?.ok_or(StoreError::MissingValue)?;
                 let kept = match policy {
@@ -606,6 +710,7 @@ impl StoreWorker {
                     } else {
                         crate::history::Persistence::Volatile
                     },
+                    requires_ownership_record: store.requires_ownership_record(&handle)?,
                 })
             };
             finish().map_err(|source| StoreError::Published {
@@ -645,6 +750,7 @@ impl StoreWorker {
         let (reply, receive) = oneshot::channel();
         self.sender
             .send(Request::Run(Box::new(Operation {
+                scope: self.scope.clone(),
                 work,
                 reply,
                 credit,
@@ -1052,11 +1158,16 @@ impl StoreWorker {
             return Err(StoreError::Restricted);
         }
         value_charge(&value, limit as u64).ok_or(StoreError::Limit("captured source"))?;
+        let placement = self.placement;
+        let scope = self.scope.clone();
         self.request(limit, move |store| {
             use sha2::{Digest, Sha256};
-            let handle = store.store(&value)?;
+            let handle = store.store_with_placement(&value, placement)?;
             let finish = |store: &mut dyn ValueStore| {
-                if !store.keep_with_reason(&handle, Retention::Protected)? {
+                if let Some(scope) = &scope {
+                    let lease = store.hold(&handle)?.ok_or(StoreError::MissingValue)?;
+                    scope.capture(handle.clone(), lease)?;
+                } else if !store.keep_with_reason(&handle, Retention::Protected)? {
                     return Err(StoreError::RetentionUnavailable);
                 }
                 let bytes = store.encoded(&handle)?.ok_or(StoreError::MissingValue)?;
@@ -1143,7 +1254,11 @@ impl StoreWorker {
         } else {
             cost
         };
-        self.request(cost, move |store| store.store(&value)).await
+        let placement = self.placement;
+        self.request(cost, move |store| {
+            store.store_with_placement(&value, placement)
+        })
+        .await
     }
     pub async fn store(&self, value: Value) -> Result<ValueHandle, StoreError> {
         self.enqueue_store(value).await?.wait().await
@@ -1228,6 +1343,37 @@ impl StoreWorker {
             .wait()
             .await
     }
+    pub async fn hold(&self, handle: ValueHandle) -> Result<Option<ValueLease>, StoreError> {
+        self.request(self.limits.bytes.get(), move |store| store.hold(&handle))
+            .await?
+            .wait()
+            .await
+    }
+    /// Reserve all selected immutable copies on the one storage owner before a
+    /// multi-result Keep is admitted. Partial reservation is dropped on refusal.
+    pub async fn hold_many(
+        &self,
+        handles: Vec<ValueHandle>,
+    ) -> Result<Vec<ValueLease>, StoreError> {
+        if handles.len() > wes_budgets::get("values.outputs") as usize {
+            return Err(StoreError::Limit("result holds"));
+        }
+        u32::try_from(handles.len().saturating_mul(1024).saturating_add(1024))
+            .ok()
+            .filter(|n| *n <= self.limits.bytes.get())
+            .ok_or(StoreError::Limit("result holds"))?;
+        // Each hold can decode a bounded root to acquire its Dataset dependencies.
+        // Charge the shared scratch budget, not just the returned lease metadata.
+        self.request(self.limits.bytes.get(), move |store| {
+            handles
+                .iter()
+                .map(|handle| store.hold(handle)?.ok_or(StoreError::MissingValue))
+                .collect()
+        })
+        .await?
+        .wait()
+        .await
+    }
     pub async fn release(&self, handle: ValueHandle) -> Result<bool, StoreError> {
         self.request(self.limits.bytes.get(), move |store| store.release(&handle))
             .await?
@@ -1237,11 +1383,14 @@ impl StoreWorker {
     /// Reclaim a superseded transient output only if it is still unkept. The retained check and
     /// release share one serial store job, so a previously admitted keep cannot race this cleanup.
     pub async fn release_unkept(&self, handle: ValueHandle) -> Result<bool, StoreError> {
-        self.request(self.limits.bytes.get(), move |store| {
-            if store.is_kept(&handle)? {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            // A partially acknowledged Keep can leave archive bytes without all
+            // dependent roots/evidence being confirmed. Cleanup must preserve
+            // that copy even though it cannot yet report a successful Keep.
+            if owner.retained_value_exists(&handle)? {
                 Ok(false)
             } else {
-                store.release(&handle)
+                owner.values().release(&handle)
             }
         })
         .await?
@@ -1344,6 +1493,11 @@ fn finish_dataset_cleanup(
         let result = (|| {
             let handle = ValueHandle::new(&capture.handle)?;
             if owner.datasets()?.protects_value(&handle)? {
+                return Ok(true);
+            }
+            if cleanup.preserve_retained_captures.contains(handle.as_str())
+                && owner.retained_value_exists(&handle)?
+            {
                 return Ok(true);
             }
             owner.values().release(&handle)?;

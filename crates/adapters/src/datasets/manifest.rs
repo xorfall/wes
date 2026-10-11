@@ -42,6 +42,7 @@ pub enum Persistence {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    pub lifetime: wes_engine::storage::DatasetLifetime,
     pub version: u16,
     pub store: String,
     pub dataset: String,
@@ -122,6 +123,7 @@ impl Manifest {
             return Err(FormatError::Version);
         }
         if !valid_uuid(&self.store)
+            || !self.lifetime.valid()
             || !valid_uuid(&self.dataset)
             || !valid_uuid(&self.transaction)
             || !valid_digest(&self.schema_digest)

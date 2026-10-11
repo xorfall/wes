@@ -46,6 +46,15 @@ impl PreparedObservationQuery {
         let concurrency = NonZeroUsize::new(capacity.subscribe().borrow().operations.limit)
             .ok_or(SessionError::Capacity)?;
         let recording = RecordingMode::Ephemeral;
+        let values = self.workspace.transient_storage.as_ref().map(|worker| {
+            SessionValues::new(
+                SessionStorage {
+                    worker: worker.clone(),
+                    auto_keep: crate::storage::AutoKeep::Never,
+                },
+                &recording,
+            )
+        });
         let (handle, task) = spawn_owned(
             self.workspace,
             recording.clone(),
@@ -56,7 +65,7 @@ impl PreparedObservationQuery {
                 actions: None,
                 cells: Cells::default(),
                 log: SessionLog::new(&recording),
-                values: None,
+                values,
                 restoration: None,
             },
         )?;

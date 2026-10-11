@@ -211,6 +211,18 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         summary: "Retain an isolated program; only definitions persist. Providers act on real targets, not simulated machines. Use :list sandboxes, :read/:inspect $name, :cancel/:refresh $name, or :remove $name scope:downstream (joined stop and definition removal). Example: :sandbox { :calc { return 1; } > value } > preview",
     },
     CommandPath {
+        path: &["transient"],
+        operation: Transient,
+        short: None,
+        summary: "Run a named finite analysis with auto-Keep off and bounded RAM/temporary Dataset and checkpoint storage. Ordinary workspace auto-Keep is unchanged. Unsaved data does not return after reopening; the definition never runs automatically. Existing completed-input requirements apply to View edits. Example: :transient { :calc pure { return 1; } > value } > study",
+    },
+    CommandPath {
+        path: &["keep"],
+        operation: Keep,
+        short: None,
+        summary: "Save an exact result with required data dependencies (:keep $study.value > savedValue), or jointly capture named members and states (:keep $study > savedStudy). Control objects contribute state, not a new live session. Failed results remain labelled incomplete evidence. Only retention plus final history acknowledgement confirms a saved record; partial attempts are inspectable as unconfirmed. Keep never starts or reruns a provider.",
+    },
+    CommandPath {
         path: &["info"],
         operation: Info,
         short: None,

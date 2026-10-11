@@ -201,9 +201,9 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
     const controller = new AbortController();
     setState(was => ({ kind: "reading", ...(retainedOf(was, stream) ? { retained: retainedOf(was, stream)! } : {}) }));
     const reply = stream === "coverage"
-      ? source.engine.readDataset(source.handle, source.generation, reference, select, position, limit, controller.signal, "coverage")
+      ? source.engine.readDataset(source.handle, source.generation, reference, select, position, limit, controller.signal, "coverage", source)
       : sameReference(extent, reference)
-      ? source.engine.readDataset(source.handle, source.generation, reference, select, position, limit, controller.signal)
+      ? source.engine.readDataset(source.handle, source.generation, reference, select, position, limit, controller.signal, "outputs", source)
       : source.engine.readDatasetExtent(source.handle, source.generation, reference, extent, select, position, limit, controller.signal);
     reply.then(read => {
       if (request !== latest.current || controller.signal.aborted) return;
@@ -294,7 +294,7 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
 
   /** Every reading gesture leaves Follow where it is: the shown head and rows stay as they are. */
   const read = () => { setFollowing(false); };
-  const follow = () => { if (stream !== "outputs") return; setFollowEnd(undefined); setTargetProblem(undefined); setFollowing(true); };
+  const follow = () => { if (stream !== "outputs" || source.scope) return; setFollowEnd(undefined); setTargetProblem(undefined); setFollowing(true); };
   const go = (next: DatasetPosition) => { read(); setPosition(next); setTargetProblem(undefined); };
   /** Reading the other stream: nothing of this one stays drawn, and its own position is kept for later. */
   const choose = (next: DatasetStream) => {
@@ -334,7 +334,7 @@ export function DatasetBrowser({ anchor, select, source, mode, name }: {
       {/* One fixed toggle: `follow` while Reading, `reading` while following. Skipped records are never followed. */}
       {following
         ? <button type="button" className="cell-action" aria-pressed={true} onClick={read}>reading</button>
-        : <button type="button" className="cell-action" aria-pressed={false} disabled={stream !== "outputs"} onClick={follow}>follow</button>}
+        : <button type="button" className="cell-action" aria-pressed={false} disabled={stream !== "outputs" || !!source.scope} title={source.scope?"Temporary analyses read the captured snapshot":undefined} onClick={follow}>follow</button>}
     </div>
     {/* Always one line, so a mode change never moves the rows; a withdrawal leaves it empty. */}
     <MonoLine segments={withdrawn ? [] : stream === "coverage" ? SKIPPED_READING : followLine(reference, extent, following, followEnd)} className="value-line dataset-follow" />

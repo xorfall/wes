@@ -121,3 +121,222 @@ async fn sandbox_http_observations_are_transient_generation_bound_and_restore_de
     assert!(current.session.observe().await.unwrap().cells.is_empty());
     runtime.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn transient_dataset_reads_require_the_live_scope_and_keep_preserves_the_exact_snapshot() {
+    let fixture = Fixture::datasets().await;
+    let url = format!("http://{}", fixture.server.address());
+    let current = fixture.app.current().unwrap();
+    let generation = &current.generation;
+    assert_eq!(fixture.source(generation,"scan-types",r#"
+:package load source:"types: {IntStep: {base: Record, fields: {state: Int, outputs: 'List<Int>'}}}"
+:def step(state:Int, context:Int, item:Int) -> IntStep as :calc pure { return {state:state+item,outputs:[item]}; }
+"#).await,202);
+    let made=fixture.post(generation,json!({"request":"submit","client":"web-fixture","cell":"transient-dataset","text":":transient {\n:calc pure { return [1,2,3]; } > raw\n:scan source:$raw transition:step initial:0 context:0 profile:TypedRecords sink:dataset > analysis\n} > study"})).await;
+    assert_eq!(made.status(), 200, "{}", made.text().await.unwrap());
+    let output = current
+        .session
+        .read_sandbox_export("study.analysis.outputs", false)
+        .await
+        .unwrap();
+    assert!(matches!(output.data, wes_core::Data::Dataset(_)));
+    let response = fixture
+        .client
+        .get(format!("{}/sandbox?reference=study.analysis.outputs", url))
+        .header("X-Wes-Workspace", "default")
+        .header("X-Wes-Session", generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(body["sandbox"]["kind"], "transient");
+    assert_eq!(body["sandbox"]["value"]["type"]["kind"], "dataset");
+    let source = &body["sandbox"]["sources"][""];
+    let handle = source["handle"].as_str().unwrap();
+    let scope = source["scope"].as_str().unwrap();
+    assert_eq!(source["select"], "/outputs");
+    let path = format!("{}/datasets/{handle}?select=%2Foutputs&from=1&limit=2", url);
+    let page = fixture
+        .client
+        .get(&path)
+        .header("X-Wes-Workspace", "default")
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-Scope", scope)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(page.status(), 200, "{}", page.text().await.unwrap());
+    let unrelated = fixture
+        .client
+        .get(&path)
+        .header("X-Wes-Workspace", "default")
+        .header("X-Wes-Session", generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unrelated.status(), 410);
+    let kept=fixture.post(generation,json!({"request":"submit","client":"web-fixture","cell":"keep-study","text":":keep $study > saved_study"})).await;
+    assert_eq!(kept.status(), 200, "{}", kept.text().await.unwrap());
+    let receipt: Value = serde_json::from_slice(&kept.bytes().await.unwrap()).unwrap();
+    assert_eq!(receipt["sandbox"]["kind"], "saved");
+    assert_eq!(receipt["sandbox"]["state"], "saved");
+    let stopped=fixture.post(generation,json!({"request":"submit","client":"web-fixture","cell":"stop-study","text":":cancel $study"})).await;
+    assert_eq!(stopped.status(), 200);
+    // A raw old UUID cannot renew a stopped scope, even if all selected files were kept.
+    let expired = fixture
+        .client
+        .get(&path)
+        .header("X-Wes-Workspace", "default")
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-Scope", scope)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), 410);
+    let saved = current
+        .session
+        .read_sandbox_export("saved_study.analysis.outputs", false)
+        .await
+        .unwrap();
+    let source = &saved.sources[""];
+    let saved_path = format!(
+        "{}/datasets/{}?select=%2Foutputs&from=1&limit=2",
+        url,
+        source.handle.as_ref().unwrap()
+    );
+    let page = fixture
+        .client
+        .get(saved_path)
+        .header("X-Wes-Workspace", "default")
+        .header("X-Wes-Session", generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(page.status(), 200, "{}", page.text().await.unwrap());
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn finite_views_use_the_analysis_scope_without_restoring_live_controls() {
+    let fixture = Fixture::datasets().await;
+    let current = fixture.app.current().unwrap();
+    let generation = &current.generation;
+    assert_eq!(
+        fixture
+            .source(
+                generation,
+                "view-input",
+                r#":calc pure { return {view:"metric",value:1250}; } > input"#
+            )
+            .await,
+        202
+    );
+    current.session.wait_idle().await.unwrap();
+    let source = r#":transient {
+:view create Metric input:$input > chart
+:calc pure { return $input; } > evidence
+} > study"#;
+    let response = fixture
+        .post(
+            generation,
+            json!({"request":"submit","client":"web-fixture","cell":"scoped-view","text":source}),
+        )
+        .await;
+    assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    let state = current
+        .session
+        .read_sandbox_export("study", true)
+        .await
+        .unwrap();
+    let chart = current
+        .session
+        .read_sandbox_export("study.chart", false)
+        .await
+        .unwrap_or_else(|e| panic!("{e}: {:?}", state.data));
+    let wes_core::Data::Record(fields) = &chart.data else {
+        panic!("view instance")
+    };
+    let wes_core::Data::Text(node) = &fields["id"] else {
+        panic!("node")
+    };
+    let wes_core::Data::Text(identity) = &fields["instance"] else {
+        panic!("identity")
+    };
+    let scope = chart.scope.as_ref().unwrap();
+    let mount_url = fixture.url(&format!("/view-mounts/{node}/{identity}"));
+    let opened = fixture
+        .client
+        .post(&mount_url)
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-Scope", scope)
+        .header("Content-Type", "application/json")
+        .body(json!({"action":"open"}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), 200, "{}", opened.text().await.unwrap());
+    let opened: Value = serde_json::from_slice(&opened.bytes().await.unwrap()).unwrap();
+    let token = opened["token"].as_str().unwrap();
+    let frame_url = fixture.url(&format!("/view-instances/{node}/{identity}"));
+    let frame = fixture
+        .client
+        .get(&frame_url)
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-Scope", scope)
+        .header("X-Wes-View-Mount", token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(frame.status(), 200, "{}", frame.text().await.unwrap());
+    let frame: Value = serde_json::from_slice(&frame.bytes().await.unwrap()).unwrap();
+    assert_eq!(frame["instances"][0]["input"]["data"]["value"], 1250);
+    let unrelated = fixture
+        .client
+        .get(&frame_url)
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-View-Mount", token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unrelated.status(), 403);
+    let saved=fixture.post(generation,json!({"request":"submit","client":"web-fixture","cell":"save-scoped-view","text":":keep $study > saved_study"})).await;
+    assert_eq!(saved.status(), 200, "{}", saved.text().await.unwrap());
+    let control = current
+        .session
+        .read_sandbox("saved_study.chart", true)
+        .await
+        .unwrap();
+    assert!(format!("{:?}", control.data).contains("ViewInstance"));
+    assert!(
+        current
+            .session
+            .read_sandbox("saved_study.chart", false)
+            .await
+            .is_err(),
+        "a saved control's state is not a new live view"
+    );
+    assert!(
+        current
+            .session
+            .read_sandbox_export("saved_study.evidence", false)
+            .await
+            .is_ok(),
+        "explicit native capture is retained data"
+    );
+    let stopped=fixture.post(generation,json!({"request":"submit","client":"web-fixture","cell":"stop-scoped-view","text":":cancel $study"})).await;
+    assert_eq!(stopped.status(), 200);
+    let expired = fixture
+        .client
+        .get(&frame_url)
+        .header("X-Wes-Session", generation)
+        .header("X-Wes-Scope", scope)
+        .header("X-Wes-View-Mount", token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), 410);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}

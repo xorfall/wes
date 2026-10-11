@@ -66,6 +66,9 @@ impl CallJournal {
     pub(crate) fn weak_recorder(&self) -> std::sync::Weak<Recorder> {
         Arc::downgrade(&self.recorder)
     }
+    pub(crate) fn weak_recording(&self) -> (std::sync::Weak<Recorder>, RequiredPersistence) {
+        (self.weak_recorder(), self.required)
+    }
 
     pub fn new(recorder: Recorder, required: RequiredPersistence) -> Self {
         Self {

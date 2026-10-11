@@ -83,7 +83,14 @@ pub(super) async fn dataset(
             "Result access has been withdrawn.",
         );
     }
-    let frame = match current.session.view_frame(node.clone()).await {
+    let (session, worker) =
+        match super::read_context::resolve(&current.session, &shared.values, request.headers())
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    let frame = match session.view_frame(node.clone()).await {
         Ok(frame)
             if frame
                 .instances
@@ -124,7 +131,7 @@ pub(super) async fn dataset(
         Ok(r) => r,
         Err(e) => return datasets::error_response(e),
     };
-    let response = match dataset_reads::read(&shared.values, value, input, 1024 * 1024).await {
+    let response = match dataset_reads::read(&worker, value, input, 1024 * 1024).await {
         Ok(r) => r,
         Err(e) => return datasets::error_response(e),
     };
@@ -147,10 +154,10 @@ pub(super) async fn dataset(
             "Read the current view frame.",
         );
     }
-    if let Err(error) = shared.values.dataset_inspect(reference).await {
+    if let Err(error) = worker.dataset_inspect(reference).await {
         return datasets::error_response(Error::Storage(error));
     }
-    match current.session.view_frame(node).await {
+    match session.view_frame(node).await {
         Ok(frame) if frame.binding_revisions() == bindings && frame.revisions() == revisions => {}
         _ => {
             return deny(
@@ -206,6 +213,13 @@ pub(super) async fn read(
     let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    let (session, _worker) =
+        match super::read_context::resolve(&current.session, &shared.values, request.headers())
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
     let previous = request
         .headers()
         .get("X-Wes-View-Revisions")
@@ -221,12 +235,11 @@ pub(super) async fn read(
         .map(str::to_owned);
     let read = match observation {
         Some(token) => {
-            current
-                .session
+            session
                 .observed_view_frame(node.clone(), instance.clone(), token)
                 .await
         }
-        None => current.session.view_frame(node.clone()).await,
+        None => session.view_frame(node.clone()).await,
     };
     let frame = match read {
         Ok(frame) => frame,
@@ -296,7 +309,7 @@ pub(super) async fn read(
     {
         return StatusCode::CONFLICT.into_response();
     }
-    match current.session.view_frame(node.clone()).await {
+    match session.view_frame(node.clone()).await {
         Ok(frame) if frame.binding_revisions() == bindings => {}
         Ok(frame)
             if frame

@@ -8,6 +8,8 @@ mod analysis_budget;
 mod analysis_coverage;
 pub mod datasets;
 mod private;
+mod scope;
+pub use scope::{DatasetLifetime, TransientScope, TransientScopeWitness};
 mod worker;
 pub use worker::{
     AutoKeep, PendingStore, PublicationPolicy, StoreDrain, StoreWorker, StoreWorkerLimits,
@@ -51,6 +53,8 @@ pub enum StoreError {
     RetentionUnavailable,
     #[error("the storage worker is unavailable")]
     Closed,
+    #[error("transient data requires its active scope or an acknowledged retained copy")]
+    ScopeUnavailable,
     #[error(transparent)]
     ReadWork(#[from] datasets::ReadWorkRefusal),
     #[error("a dataset row exceeds its logical charge limit ({limit})")]
@@ -167,6 +171,8 @@ impl Retention {
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RetentionUsage {
+    pub memory_count: u64,
+    pub memory_bytes: u64,
     pub classes: Vec<(Retention, u64, u64)>,
     pub live_bytes: u64,
     pub archive_bytes: u64,
@@ -181,6 +187,33 @@ pub struct EvictionBatch {
     pub more: bool,
 }
 
+/// Placement of a new payload, independent of retention and data authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ValuePlacement {
+    #[default]
+    ManagedFile,
+    Memory,
+}
+
+/// A bounded reader/retention hold. Dropping the hold requires no storage I/O.
+#[derive(Clone)]
+#[must_use = "retain the hold for the admitted read or retention operation"]
+pub struct ValueLease {
+    _owner: Arc<dyn Send + Sync>,
+}
+impl ValueLease {
+    pub fn retain(owner: impl Send + Sync + 'static) -> Self {
+        Self {
+            _owner: Arc::new(owner),
+        }
+    }
+}
+impl fmt::Debug for ValueLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValueLease").finish_non_exhaustive()
+    }
+}
+
 /// Synchronous I/O port, called on storage workers rather than the runtime state owner.
 pub trait ValueStore: Send {
     /// Minimum persistence established by a successful `keep`. Unspecified/memory stores MUST
@@ -189,6 +222,29 @@ pub trait ValueStore: Send {
         crate::history::Persistence::Volatile
     }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError>;
+    /// Unsupported placement refuses before publication; it must never fall back to disk.
+    fn store_with_placement(
+        &mut self,
+        value: &Value,
+        placement: ValuePlacement,
+    ) -> Result<ValueHandle, StoreError> {
+        match placement {
+            ValuePlacement::ManagedFile => self.store(value),
+            ValuePlacement::Memory => Err(StoreError::Limit("memory placement unavailable")),
+        }
+    }
+    /// Whether this handle owns a temporary file requiring durable cleanup evidence.
+    fn has_temporary_file(&self, _handle: &ValueHandle) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+    /// Temporary payload or dependency ownership requiring work cleanup evidence.
+    /// A memory descriptor can still own physical Dataset objects.
+    fn requires_ownership_record(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        self.has_temporary_file(handle)
+    }
+    fn hold(&mut self, _handle: &ValueHandle) -> Result<Option<ValueLease>, StoreError> {
+        Ok(None)
+    }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError>;
     fn encoded(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError>;
     fn size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError>;

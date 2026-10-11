@@ -25,6 +25,7 @@ reasons! {
     ResultWithdrawn => ("result_withdrawn", "Access to the result was withdrawn. Cached data and value-derived metadata were cleared; no work was replayed."),
     RestoreNotRetained => ("restore_not_retained", "No retained result was available when the workspace reopened. The command was not rerun."),
     RestoreUnavailable => ("restore_unavailable", "The retained result could not be loaded when the workspace reopened. The command was not rerun."),
+    RestoreCapacity => ("restore_capacity", "The saved result exceeds the current read memory budget. Its retained copy was not deleted and no work was rerun."),
     RestoreUnfinished => ("restore_unfinished", "No completed result was recorded before the workspace reopened. Check run history before retrying; external effects may already have occurred."),
     RestoreChanged => ("restore_changed", "A definition or dependency changed; the previous result is no longer current. Reopening preserved this stale state and did not rerun the command."),
 }

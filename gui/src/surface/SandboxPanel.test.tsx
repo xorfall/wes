@@ -1,12 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { SandboxPanel } from "./SandboxPanel";
+import {ValueView} from "../views/Result";
 import type { Engine, SandboxObservation } from "../engine";
 
 vi.mock("../views/Result", () => ({ ValueView: ({ value }: { value: unknown }) => <pre>{JSON.stringify(value)}</pre> }));
 let tree: ReactTestRenderer | undefined;
 afterEach(async () => { if (tree) await act(async () => tree!.unmount()); tree=undefined; vi.useRealTimers(); });
-const opened: SandboxObservation = { name:"preview", reference:"preview", inspect:false, state:"active", generation:"g", value:{ type:{kind:"unknown"}, provenance:{}, data:{count:1} } };
+const opened: SandboxObservation = { kind:"sandbox", scope:null, sources:{}, name:"preview", reference:"preview", inspect:false, state:"active", generation:"g", value:{ type:{kind:"unknown"}, provenance:{}, data:{count:1} } };
 it("updates one observation without submitting commands and closing does not cancel", async () => {
   vi.useFakeTimers();
   const readSandbox=vi.fn().mockResolvedValue({...opened,value:{...opened.value,data:{count:2}}});
@@ -169,4 +170,28 @@ it("replaces polled member rows in place and stops polling on close", async () =
   await act(async () => tree!.unmount()); tree = undefined;
   expect(signal.aborted).toBe(true);
   await vi.advanceTimersByTimeAsync(5000); expect(readSandbox).toHaveBeenCalledTimes(1);
+});
+
+it("carries captured types, paths and scope authority to a transient member renderer",async()=>{
+  const scope="00000000-0000-4000-8000-0000000000e5";
+  const type={kind:"list",element:{kind:"primitive",name:"INT"}} as const;
+  const source={handle:"result",scope,select:"/log",type};
+  const tree=await show(observe({kind:"Transient",persistence:"temporary until Keep",state:"active",members:[{name:"log",type:"List<Int>",state:"ready",value:[1,2]}]},{kind:"transient",scope,sources:{log:source},reference:null}));
+  const view=tree.root.findByType(ValueView);
+  expect(view.props.readScope).toBe(scope);
+  expect(view.props.stored).toEqual({handle:"result",generation:"g",scope,select:"/log"});
+  expect(view.props.value.type).toEqual(type);
+  const text=JSON.stringify(tree.toJSON());
+  expect(text).toContain("auto-Keep off");
+  expect(text).toContain(":keep $preview.member");
+});
+it("does not claim unacknowledged Keep is retained and preserves a failed capture's evidence label",async()=>{
+  const pending=await show(observe({kind:"Saved",identity:"pending-id",state:"unconfirmed",persistence:"Keep not acknowledged"},{kind:"saved",state:"unconfirmed",reference:null}));
+  expect(JSON.stringify(pending.toJSON())).toContain("Keep unconfirmed");
+  expect(JSON.stringify(pending.toJSON())).not.toContain("retained snapshot");
+  const saved=await show(observe({kind:"Saved",identity:"saved-id",state:"saved",persistence:"retained snapshot",members:[{name:"partial",type:"Int",state:"failed",value:2,evidence:"incomplete",retainedReference:true,availability:"not checked"}]},{kind:"saved",state:"saved",reference:null}));
+  expect(rows(saved)).toHaveLength(1);
+  expect(textOf(rows(saved)[0]!)).toContain("failed");
+  expect(textOf(rows(saved)[0]!)).toContain("Incomplete captured evidence");
+  expect(JSON.stringify(saved.toJSON())).not.toContain("leaves the sandbox active");
 });

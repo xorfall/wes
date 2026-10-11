@@ -34,6 +34,7 @@ fn deletion_revalidates_roots_blocks_live_readers_and_preserves_other_shared_sch
     let other_ref = store.descriptor(&other.dataset).unwrap();
     let transaction = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Keep,
         owner_dataset: None,
@@ -118,6 +119,7 @@ fn coarse_withdrawal_follows_captured_source_roots_and_survives_reopen_without_p
     let tx = uuid::Uuid::new_v4().to_string();
     let roots = vec![
         ReferenceRootChange {
+            lifetime: wes_engine::storage::DatasetLifetime::Durable,
             root: capture.clone(),
             kind: RootKind::Value,
             owner_dataset: None,
@@ -130,6 +132,7 @@ fn coarse_withdrawal_follows_captured_source_roots_and_survives_reopen_without_p
             transaction: tx.clone(),
         },
         ReferenceRootChange {
+            lifetime: wes_engine::storage::DatasetLifetime::Durable,
             root: uuid::Uuid::new_v4().to_string(),
             kind: RootKind::Checkpoint,
             owner_dataset: Some(b.dataset.clone()),
@@ -239,6 +242,7 @@ fn retention_counts_captured_dataset_prefixes_once_instead_of_only_their_small_d
     let cp = checkpoint(&store, &derived);
     let tx = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: cp.bindings.source_handle.clone(),
         kind: RootKind::Value,
         owner_dataset: None,
@@ -346,6 +350,7 @@ fn create_with_schema(store: &mut DatasetStore, schema: &ResolvedContractBundle)
         .publish_schema(schema, &FlowPolicy::default())
         .unwrap();
     Manifest {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         coverage: None,
         version: 3,
         store: store.store_id().into(),
@@ -1169,6 +1174,7 @@ fn exact_empty_snapshot_keep_changes_retention_without_advancing_checkpoint() {
     let prefix = store.descriptor(&manifest.dataset).unwrap();
     let tx = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Keep,
         owner_dataset: None,
@@ -1375,6 +1381,7 @@ fn independent_keep_root_holds_only_the_shown_prefix_across_rotation_and_release
     let shown = store.descriptor(&manifest.dataset).unwrap();
     let tx = uuid::Uuid::new_v4().to_string();
     let mut keep = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Pin,
         owner_dataset: None,
@@ -1449,6 +1456,7 @@ fn reference_catalog_lost_ack_is_reconciled_without_replaying_or_new_generation(
     let shown = store.descriptor(&manifest.dataset).unwrap();
     let transaction = uuid::Uuid::new_v4().to_string();
     let change = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Workspace,
         owner_dataset: None,
@@ -1501,6 +1509,7 @@ fn revocation_withdraws_reads_but_does_not_discard_an_existing_protection_root()
     let shown = store.descriptor(&manifest.dataset).unwrap();
     let transaction = uuid::Uuid::new_v4().to_string();
     let change = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Keep,
         owner_dataset: None,
@@ -1691,6 +1700,7 @@ fn checkpoint_output_deletion_releases_the_whole_root_without_stranding_source_p
     };
     let transaction = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: identity.clone(),
         kind: RootKind::Checkpoint,
         owner_dataset: Some(analysis.dataset.clone()),
@@ -1750,6 +1760,7 @@ fn tainted_checkpoint_withdraws_its_output_without_revoking_an_independent_retai
     let transaction = uuid::Uuid::new_v4().to_string();
     let roots = vec![
         ReferenceRootChange {
+            lifetime: wes_engine::storage::DatasetLifetime::Durable,
             root: capture.clone(),
             kind: RootKind::Value,
             owner_dataset: None,
@@ -1762,6 +1773,7 @@ fn tainted_checkpoint_withdraws_its_output_without_revoking_an_independent_retai
             transaction: transaction.clone(),
         },
         ReferenceRootChange {
+            lifetime: wes_engine::storage::DatasetLifetime::Durable,
             root: uuid::Uuid::new_v4().to_string(),
             kind: RootKind::Checkpoint,
             owner_dataset: Some(output.dataset.clone()),
@@ -2692,6 +2704,7 @@ fn explicit_store_recovery_repairs_unowned_reference_uncertainty_without_a_write
     let prefix = store.descriptor(&manifest.dataset).unwrap();
     let transaction = uuid::Uuid::new_v4().to_string();
     let change = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Keep,
         owner_dataset: None,
@@ -2758,6 +2771,7 @@ fn reference_root_capacity_refuses_recording_before_creating_admission_or_payloa
         .update_references(
             &transaction,
             &[ReferenceRootChange {
+                lifetime: wes_engine::storage::DatasetLifetime::Durable,
                 root: uuid::Uuid::new_v4().to_string(),
                 kind: RootKind::Keep,
                 owner_dataset: None,
@@ -2829,6 +2843,7 @@ fn workspace_roots_hold_exact_shared_prefixes_until_each_generation_is_physicall
     let handle = ValueHandle::new(&uuid::Uuid::new_v4().to_string()).unwrap();
     let tx = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: handle.to_string(),
         kind: RootKind::Value,
         expected_generation: 0,
@@ -2915,6 +2930,7 @@ fn workspace_protection_never_upgrades_a_temporary_value_or_publishes_beyond_cap
     let handle = ValueHandle::new(&uuid::Uuid::new_v4().to_string()).unwrap();
     let tx = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: handle.to_string(),
         kind: RootKind::Value,
         expected_generation: 0,
@@ -2966,6 +2982,7 @@ fn workspace_protection_survives_read_withdrawal_and_unrelated_catalog_uncertain
     let handle = ValueHandle::new(&uuid::Uuid::new_v4().to_string()).unwrap();
     let tx = uuid::Uuid::new_v4().to_string();
     let root = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: handle.to_string(),
         kind: RootKind::Value,
         expected_generation: 0,
@@ -3015,6 +3032,7 @@ fn workspace_protection_survives_read_withdrawal_and_unrelated_catalog_uncertain
     // but new writes and the root IDs touched by that uncertain mutation remain blocked.
     let tx = uuid::Uuid::new_v4().to_string();
     let unrelated = ReferenceRootChange {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         root: uuid::Uuid::new_v4().to_string(),
         kind: RootKind::Keep,
         expected_generation: 0,
@@ -3072,6 +3090,7 @@ fn workspace_metadata_budget_preflights_the_whole_request_without_partial_protec
         let handle = ValueHandle::new(&uuid::Uuid::new_v4().to_string()).unwrap();
         let tx = uuid::Uuid::new_v4().to_string();
         let root = ReferenceRootChange {
+            lifetime: wes_engine::storage::DatasetLifetime::Durable,
             root: handle.to_string(),
             kind: RootKind::Value,
             expected_generation: 0,
@@ -3119,6 +3138,7 @@ fn workspace_retention_does_not_merge_independent_values_into_one_bounded_data_f
             .update_references(
                 &tx,
                 &[ReferenceRootChange {
+                    lifetime: wes_engine::storage::DatasetLifetime::Durable,
                     root: handle.to_string(),
                     kind: RootKind::Value,
                     expected_generation: 0,
@@ -3175,6 +3195,7 @@ fn reviewed_delete_preserves_other_withdrawn_prefixes_consistently_in_replay_and
         .update_references(
             &tx,
             &[ReferenceRootChange {
+                lifetime: wes_engine::storage::DatasetLifetime::Durable,
                 root: identity.clone(),
                 kind: RootKind::Value,
                 expected_generation: 0,
@@ -3345,6 +3366,7 @@ fn retention_preview_counts_a_shared_schema_once_and_keeps_withdrawal_separate_f
     let keep = |reference: DatasetRef| {
         let transaction = uuid::Uuid::new_v4().to_string();
         ReferenceRootChange {
+            lifetime: wes_engine::storage::DatasetLifetime::Durable,
             root: uuid::Uuid::new_v4().to_string(),
             kind: RootKind::Keep,
             owner_dataset: None,

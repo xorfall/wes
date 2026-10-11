@@ -13,6 +13,9 @@ use wes_core::{
 };
 use wes_engine::storage::{StoreWorkerLimits, datasets::PageRequest, spawn_storage};
 
+#[path = "dataset_worker/transient.rs"]
+mod transient;
+
 fn home() -> tempfile::TempDir {
     let mut builder = tempfile::Builder::new();
     #[cfg(unix)]
@@ -398,6 +401,7 @@ fn recorded(store: &mut DatasetStore) -> wes_core::DatasetRef {
         )
         .unwrap();
     let manifest = Manifest {
+        lifetime: wes_engine::storage::DatasetLifetime::Durable,
         coverage: None,
         version: 3,
         store: store.store_id().into(),
@@ -850,6 +854,127 @@ async fn dataset_retention_accounts_for_payload_and_preserves_the_exact_prefix_a
     );
     worker.release(kept.handle).await.unwrap();
     assert!(!worker.dataset_inspect(reference).await.unwrap().protected);
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn unconfirmed_dataset_keep_preserves_archive_bytes_during_transient_cleanup() {
+    use wes_adapters::storage::TieredValues;
+    use wes_engine::storage::{PublicationPolicy, StoreError, ValuePlacement};
+    let tmp = home();
+    let mut datasets = DatasetStore::open(
+        &tmp.path().join("datasets"),
+        Durability::FileAndDirectory,
+        StoreLimits::default(),
+    )
+    .unwrap();
+    let reference = recorded(&mut datasets);
+    let value = Value::new(
+        Shape::Dataset(Box::new(Shape::Primitive(Primitive::Int))),
+        Data::Dataset(reference.clone().into()),
+        Provenance::default(),
+    )
+    .unwrap();
+    let archive = tmp.path().join("archive");
+    let values = TieredValues::open(
+        &tmp.path().join("live"),
+        &archive,
+        wes_adapters::codec::Limits::default(),
+        Durability::FileAndDirectory,
+        None,
+    )
+    .unwrap();
+    let (worker, task) = spawn_storage(values, datasets, StoreWorkerLimits::default()).unwrap();
+    let memory = worker.clone().with_placement(ValuePlacement::Memory);
+    let output = memory
+        .publish(value.clone(), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    let marker = archive.join(format!("{}.protected", output.handle));
+    std::fs::write(&marker, b"invalid evidence").unwrap();
+    assert!(matches!(
+        worker.retain(output.handle.clone()).await,
+        Err(StoreError::Published { handle, .. }) if handle == output.handle
+    ));
+    // After inspection/removal of the malformed marker, bytes remain Unknown.
+    // The dependent root is Protected, so full Keep still lacks acknowledgement.
+    std::fs::remove_file(marker).unwrap();
+    assert!(!worker.is_kept(output.handle.clone()).await.unwrap());
+    assert!(!worker.release_unkept(output.handle.clone()).await.unwrap());
+    assert_eq!(
+        worker
+            .read(output.handle.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .value,
+        value
+    );
+    assert!(worker.dataset_inspect(reference).await.unwrap().protected);
+    assert!(worker.retain(output.handle.clone()).await.unwrap().kept);
+    assert!(worker.is_kept(output.handle).await.unwrap());
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_result_hold_protects_its_exact_dataset_prefix_without_granting_read_authority() {
+    use wes_adapters::storage::TieredValues;
+    use wes_engine::storage::{PublicationPolicy, ValuePlacement};
+    let tmp = home();
+    let mut datasets = DatasetStore::open(
+        &tmp.path().join("datasets"),
+        Durability::FileAndDirectory,
+        StoreLimits::default(),
+    )
+    .unwrap();
+    let reference = recorded(&mut datasets);
+    let value = Value::new(
+        Shape::Dataset(Box::new(Shape::Primitive(Primitive::Int))),
+        Data::Dataset(reference.clone().into()),
+        Provenance::default(),
+    )
+    .unwrap();
+    let values = TieredValues::open(
+        &tmp.path().join("live"),
+        &tmp.path().join("archive"),
+        wes_adapters::codec::Limits::default(),
+        Durability::FileAndDirectory,
+        None,
+    )
+    .unwrap();
+    let (worker, task) = spawn_storage(values, datasets, StoreWorkerLimits::default()).unwrap();
+    let memory = worker.clone().with_placement(ValuePlacement::Memory);
+    let output = memory
+        .publish(value, PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(output.requires_ownership_record);
+    assert!(worker.retention_usage().await.unwrap().memory_count > 0);
+    assert_eq!(
+        worker
+            .dataset_plan_delete(reference.clone())
+            .await
+            .unwrap()
+            .active_readers,
+        0
+    );
+    let lease = worker.hold(output.handle.clone()).await.unwrap().unwrap();
+    assert_eq!(
+        worker
+            .dataset_plan_delete(reference.clone())
+            .await
+            .unwrap()
+            .active_readers,
+        1
+    );
+    assert!(worker.release(output.handle.clone()).await.is_err());
+    // Ownership prevents collection but is not permission to read after withdrawal.
+    worker.dataset_withdraw(reference).await.unwrap();
+    assert!(worker.read(output.handle.clone()).await.is_err());
+    drop(lease);
+    assert!(worker.release(output.handle).await.unwrap());
     worker.shutdown().await.unwrap();
     task.join().await.unwrap();
 }

@@ -327,13 +327,20 @@ pub struct Applied {
 }
 
 mod observation;
+mod saved;
 mod selection;
+mod transient;
 
 pub struct Workspace {
     pub(crate) recordings: crate::eventlog::owner::Owner,
     pub(crate) dataset_access: crate::storage::datasets::DatasetAccess,
     pub(crate) views: crate::views::Store,
     pub(crate) sandbox_store: Option<Arc<dyn crate::session::sandbox::DefinitionStore>>,
+    pub(crate) transient_storage: Option<crate::storage::StoreWorker>,
+    pub(crate) saved_selections: Vec<crate::history::SavedSelection>,
+    pub(crate) pending_saves: Vec<crate::history::SavedSelection>,
+    pub(crate) native_inputs: std::collections::BTreeSet<NodeId>,
+    pub(crate) native_origins: std::collections::BTreeMap<NodeId, crate::history::SavedEdge>,
     pub(crate) sandbox_runtime: bool,
     pub(crate) safe_observation: Option<observation::Kind>,
     sandbox_leases: Vec<Arc<()>>,
@@ -536,6 +543,11 @@ impl Workspace {
             dataset_access: Default::default(),
             views: Default::default(),
             sandbox_store: None,
+            transient_storage: None,
+            saved_selections: Vec::new(),
+            pending_saves: Vec::new(),
+            native_inputs: Default::default(),
+            native_origins: Default::default(),
             sandbox_runtime: false,
             safe_observation: None,
             sandbox_leases: vec![],
@@ -615,6 +627,8 @@ impl Workspace {
             .collect::<Result<_, _>>()?;
         child.home_identity = self.home_identity.clone();
         child.saved_names = self.saved_names.clone();
+        child.dataset_access = self.dataset_access.clone();
+        child.transient_storage = self.transient_storage.clone();
         Ok(child)
     }
     /// Application-owned immutable metadata. Query capture clones the current image without I/O.
@@ -1221,6 +1235,14 @@ impl Workspace {
         )
     }
     pub fn cancel(&mut self, node: &NodeId, now: Duration) -> Vec<Effect<BoundTask>> {
+        if self
+            .runtime
+            .graph()
+            .node(node)
+            .is_some_and(|n| matches!(n.payload(), BoundTask::SavedInput(_)))
+        {
+            return vec![];
+        }
         self.views.cancel_origins(std::slice::from_ref(node));
         self.runtime.cancel(node, now)
     }

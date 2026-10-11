@@ -11,6 +11,7 @@ use wes_language::{Diagnostic, Span};
 #[derive(Clone, Debug)]
 pub(super) struct OwnedAnalysis {
     source: OutputRef,
+    fields: Vec<String>,
     captured: Option<Result<String, String>>,
     policy: FlowPolicy,
 }
@@ -21,7 +22,18 @@ pub(super) enum Selection {
 }
 impl OwnedAnalysis {
     pub(super) fn bind(task: &MetaTask, span: Span) -> Result<Self, Diagnostic> {
-        let [Input::FromNode(source)] = task.subjects.as_slice() else {
+        let (source, fields) = match task.subjects.as_slice() {
+            [Input::FromNode(source)] => (source, vec![]),
+            [Input::FieldPath { output, fields }] => (output, fields.clone()),
+            _ => {
+                return Err(Diagnostic::error(
+                    "CAL009",
+                    span,
+                    "Select one whole owned scan analysis or an exact saved analysis member",
+                ));
+            }
+        };
+        if fields.len() > 1 {
             return Err(Diagnostic::error(
                 "CAL009",
                 span,
@@ -37,6 +49,7 @@ impl OwnedAnalysis {
         }
         Ok(Self {
             source: source.clone(),
+            fields,
             captured: None,
             policy: Default::default(),
         })
@@ -60,7 +73,18 @@ impl OwnedAnalysis {
                     .graph()
                     .node(&self.source.node)
                     .ok_or("Analysis is no longer present in this workspace")?;
-                if !matches!(
+                if let BoundTask::SavedInput(saved) = node.payload() {
+                    let member = if saved.single && self.fields.is_empty() {saved.members.first()}
+                        else if !saved.single && self.fields.len()==1 {saved.members.iter().find(|m|m.name == self.fields[0])} else {None};
+                    let member=member.filter(|m|m.port == "data" && m.fields.is_empty() && m.payload.is_some()
+                        && matches!(m.operation.as_str(),"scan"|"scan_attempt")).ok_or("Select an exact saved whole scan result, not an arbitrary copied value")?;
+                    let value=runtime.value_of(&self.source.node).ok_or("The saved analysis is not prepared within read capacity")?;
+                    let value=crate::plan::project_value(value,&self.fields).map_err(|_|"The saved analysis member is unavailable")?;
+                    if value.provenance().policy().is_private() || value.provenance().policy().is_unknown() || workspace.dataset_access.blocks(&value) {return Err("Saved analysis access is not authorized");}
+                    self.policy=value.provenance().policy().clone();
+                    return member.run.clone().ok_or("Saved analysis has no exact owned run");
+                }
+                if !self.fields.is_empty() || !matches!(
                     node.payload(),
                     BoundTask::Scan(_) | BoundTask::ScanAttempt(_)
                 ) {
