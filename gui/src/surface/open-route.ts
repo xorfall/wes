@@ -13,7 +13,7 @@ import { viewNamed } from "./result-views";
 import { PEEK_WHATS, type PeekWhat } from "./peek";
 
 interface NodeOpenRoute {
-  readonly node: string;
+  readonly node?: string;
   readonly cell?: never;
   readonly tab: OpenTab;
   readonly workspace?: string;
@@ -33,6 +33,26 @@ const query = (workspace?: string) => (workspace === undefined ? "" : `?${new UR
 
 export function openRoute(node: string, tab: OpenTab = "result", workspace?: string): string {
   return `#open/${encodeURIComponent(node)}/${tab}${query(workspace)}`;
+}
+
+/** The result picker has no carried-over node identity when changing workspace. */
+export function resultPickerRoute(workspace: string): string { return `#open${query(workspace)}`; }
+
+export type DetachedPurpose = "graph" | "settings" | "spec" | "result";
+export function detachedPurpose(hash: string): DetachedPurpose | undefined {
+  try {
+    if (readOpenRoute(hash)) return "result";
+    const route = readScreenRoute(hash);
+    return route?.screen === "stale" ? "graph" : route?.screen;
+  } catch { return undefined; }
+}
+
+/** Browser names reuse tabs; the native shell owns desktop reuse and each window's client identity. */
+export function openDetached(route: string): Window | null {
+  const purpose = detachedPurpose(route);
+  const opened = window.open(route, window.__WES_DESKTOP__ === true || !purpose ? "_blank" : `wes-${purpose}`);
+  opened?.focus?.();
+  return opened;
 }
 
 /** The address of one piece of a result — its type, its value or its source — in a plain window. */
@@ -82,6 +102,7 @@ export function readOpenRoute(hash: string): OpenRoute | undefined {
     return cell ? { cell, tab: "result", peek: "source", ...(binding === null ? {} : { workspace: binding }) } : undefined;
   }
   if (parts[0] !== "open" && parts[0] !== "peek") return undefined;
+  if (parts[0] === "open" && parts.length === 1) return { tab: "result", ...(binding === null ? {} : { workspace: binding }) };
   const node = decodeURIComponent(parts[1] ?? "");
   if (node === "") return undefined;
   if (parts[0] === "peek") {

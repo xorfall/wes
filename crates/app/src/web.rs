@@ -1289,6 +1289,22 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
     let Ok(handle) = ValueHandle::new(&handle) else {
         return value_errors::Failure::InvalidHandle.response(None);
     };
+    let mut maximum = None;
+    for (key, value) in url::form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
+    {
+        let bytes = value
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0 && *n <= Limits::default().bytes);
+        if key != "max_bytes"
+            || maximum.is_some()
+            || bytes.is_none()
+            || !value.bytes().all(|b| b.is_ascii_digit())
+        {
+            return value_errors::Failure::InvalidLimit.response(Some(&handle));
+        }
+        maximum = bytes;
+    }
     let Ok(permit) = read_admission::acquire(&shared.reads, &shared.stopped).await else {
         return value_errors::Failure::Busy.response(Some(&handle));
     };
@@ -1310,6 +1326,45 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
             Ok(context) => context,
             Err(failure) => return failure.value_response(&handle),
         };
+    // Bound inspection before a descriptor fallback can decode an ordinary stored body. The
+    // shared owner keeps scope/policy checks, and the read below keeps exact snapshot validation.
+    if let Some(maximum) = maximum {
+        match worker
+            .describe_bounded(handle.clone(), maximum as u64)
+            .await
+        {
+            Ok(Some(snapshot)) if snapshot.charge <= maximum as u64 => {}
+            Ok(Some(_)) => return value_errors::Failure::PreviewLimit.response(Some(&handle)),
+            Ok(None) => {
+                // Private/unknown values deliberately have no deferred descriptor. Preview them
+                // only when this session still publishes the exact handle, under ordinary read authority.
+                let bytes = match worker.size(handle.clone()).await {
+                    Ok(Some(bytes)) => bytes,
+                    Ok(None) => return value_errors::Failure::Missing.response(Some(&handle)),
+                    Err(error) => {
+                        return value_errors::Failure::Storage(error).response(Some(&handle));
+                    }
+                };
+                let Ok(observation) = reader.observe().await else {
+                    return value_errors::Failure::SessionUnavailable.response(Some(&handle));
+                };
+                if observation.values.as_ref().is_none_or(|values| {
+                    !values
+                        .outputs
+                        .values()
+                        .any(|output| output.handle() == Some(&handle))
+                }) {
+                    // Missing deferred metadata is not evidence of private-data withdrawal.
+                    // Refuse just this preview; leave ordinary read access to its own checks.
+                    return value_errors::Failure::PreviewUnavailable.response(Some(&handle));
+                }
+                if bytes > maximum as u64 {
+                    return value_errors::Failure::PreviewLimit.response(Some(&handle));
+                }
+            }
+            Err(error) => return value_errors::Failure::Storage(error).response(Some(&handle)),
+        }
+    }
     let value = match worker.read(handle.clone()).await {
         Ok(Some(value)) => value,
         Ok(None) => return value_errors::Failure::Missing.response(Some(&handle)),
@@ -1335,7 +1390,13 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
             // in the tracked encoder even after disconnect, then release before returning bytes.
             // A slow/unread HTTP body must not prevent frames or shared selection from loading.
             let _permit = permit;
-            encode_display_value(&value.value, Limits::default())
+            encode_display_value(
+                &value.value,
+                Limits {
+                    bytes: maximum.unwrap_or(Limits::default().bytes),
+                    ..Limits::default()
+                },
+            )
         })
         .await;
     match encoded {
@@ -1363,6 +1424,9 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
                 Ok(false) => value_errors::Failure::Missing.response(Some(&handle)),
                 Err(error) => value_errors::Failure::Storage(error).response(Some(&handle)),
             }
+        }
+        Ok(Err(wes_adapters::codec::CodecError::Bytes)) if maximum.is_some() => {
+            value_errors::Failure::PreviewLimit.response(Some(&handle))
         }
         _ => value_errors::Failure::Encoding.response(Some(&handle)),
     }

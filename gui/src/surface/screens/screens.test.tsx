@@ -484,7 +484,7 @@ describe("/graph", () => {
       "because      $orders ran again",
       "made by      cell 09:16",
       "shape        record · 4 fields",
-      "breaks       1 dependent",
+      "affects      1 downstream after refresh",
     ]);
   });
 
@@ -498,7 +498,7 @@ describe("/graph", () => {
 
   it("should_OfferTheResultToolbar_When_TheScreenIsDrawn", () => {
     const tree = drawGraph();
-    expect(chips(tree)).toEqual(["stale only", "hide unconnected", "layout ↔ LR", "fit", "⌕ find node"]);
+    expect(chips(tree)).toEqual(["stale only", "hide unconnected", "layout ↔ LR", "fit", "reset layout"]);
     act(() => tree.unmount());
   });
 
@@ -534,11 +534,11 @@ describe("/graph", () => {
   });
 
   it("should_NameTheKeysTheScreenAnswersTo_When_ItIsDrawn", () => {
-    const tree = drawGraph();
+    const tree = drawGraph({ onJump: vi.fn(), onRepeat: vi.fn(), onOpenResult: vi.fn() });
     const said = lines(tree);
     expect(said).toContain("esc close   ⏎ jump to cell");
     expect(said).toContain("⏎ jump to cell");
-    expect(said).toContain("↻ repeat + 1");
+    expect(said).toContain("↻ run again");
     expect(said).toContain("⊙ open result");
     expect(said).toContain("esc back to the session, the half-typed line intact   ⇥ next node   / another screen");
     act(() => tree.unmount());

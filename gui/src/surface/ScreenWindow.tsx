@@ -9,20 +9,18 @@
 import { useEffect, useRef, useState } from "react";
 import { load, resolveSurfacePalette, type Settings, surfaceTypeStyle } from "../settings";
 import { language, type Language } from "./language";
-import { readGraph } from "./graph-model";
-import { useResults } from "./results";
-import { GraphScreen } from "./screens/Graph";
-import { GraphCanvas } from "./screens/GraphCanvas";
+import { GraphWorkbench } from "./GraphWorkbench";
 import { newCell } from "../cells";
 import { SpecScreen } from "./screens/Spec";
 import { SettingsScreen } from "./screens/Settings";
 import { chose, previewOf, readSection, SECTIONS, sectionNamed } from "./settings-model";
 import { announceSettings, changed, followSettings } from "./settings-channel";
 import { useTableViewOwner } from "./table-view-owner";
-import { openRoute, type ScreenRoute } from "./open-route";
+import { openRoute, openDetached, screenRoute, type ScreenRoute } from "./open-route";
 import { topLine, type SessionContext } from "./session-model";
 import { useWindowWorkspace } from "./window-workspace";
 import { Hints } from "./Hints";
+import { WindowWorkspacePicker } from "./WindowWorkspacePicker";
 import { MonoLine } from "./MonoLine";
 import "./surface.css";
 
@@ -39,8 +37,6 @@ export function ScreenWindow({ route }: { readonly route: ScreenRoute }) {
   useEffect(() => followSettings((change) => setSettings((was) => ({ ...was, ...change }))), []);
   useTableViewOwner(settings.tables, (tables) => { announceSettings({ tables }); setSettings((was) => ({ ...was, tables })); });
 
-  const handles = (route.screen === "spec" ? [] : workspace.nodes).flatMap((node) => (node.handle ? [node.handle] : []));
-  const { held } = useResults(engine, generation, handles);
   const context: SessionContext = { workspace: workspace.identity?.name ?? "workspace", connection };
   const top = topLine(context);
   const close = () => window.close();
@@ -61,13 +57,13 @@ export function ScreenWindow({ route }: { readonly route: ScreenRoute }) {
   // The window opened on a section; its tabs move between them without a new window.
   const [section, setSection] = useState(() => sectionNamed(route.section));
   useEffect(() => { setSection(sectionNamed(route.section)); }, [route.section]);
+  useEffect(() => { setStaleOnly(route.screen === "stale"); }, [route.screen]);
   useEffect(() => {
     document.title = `${route.screen === "settings" ? `/settings ${section}` : route.screen === "spec" ? "/spec" : "/graph"} · wes`;
   }, [route.screen, section]);
 
   const palette = settings.surfacePalette === "system" ? resolveSurfacePalette("system") : settings.surfacePalette;
-  const selectedNode = chosenNode ?? workspace.nodes[workspace.nodes.length - 1]?.id;
-  const graph = readGraph(workspace, { selected: selectedNode, staleOnly, connectedOnly, held });
+  const selectedNode = workspace.nodes.some(node => node.id === chosenNode) ? chosenNode : workspace.nodes[workspace.nodes.length - 1]?.id;
   const view = readSection(section, { settings, workspace, ...(pack ? { pack } : {}) });
 
   return (
@@ -79,7 +75,8 @@ export function ScreenWindow({ route }: { readonly route: ScreenRoute }) {
       style={surfaceTypeStyle(settings)}
     >
       <Hints />
-      {route.screen === "spec" ? <SpecScreen key={`${workspace.identity?.name}:${generation}`} {...(workspace.identity?.name&&generation?{binding:{workspace:workspace.identity.name,generation}}:{})} top={top} onClose={close} onSubmit={submitSpec} /> : route.screen === "settings" ? (
+      <WindowWorkspacePicker key={route.workspace} binding={route.workspace} workspace={workspace} onChoose={name => window.__WES_RETARGET__?.(screenRoute(route.screen === "graph" || route.screen === "stale" ? staleOnly ? "stale" : "graph" : route.screen, name, section))} />
+      {route.screen === "spec" ? <SpecScreen {...(workspace.identity?.name&&generation?{binding:{workspace:workspace.identity.name,generation}}:{})} top={top} onClose={close} onSubmit={submitSpec} /> : route.screen === "settings" ? (
         <SettingsScreen
           top={top}
           sections={[...SECTIONS]}
@@ -93,22 +90,16 @@ export function ScreenWindow({ route }: { readonly route: ScreenRoute }) {
           onClose={close}
         />
       ) : (
-        <GraphScreen
-          top={top}
-          nodes={graph.nodes}
-          edges={graph.edges}
-          cycles={graph.cycles}
-          {...(graph.selected ? { selected: graph.selected } : {})}
+        <GraphWorkbench
+          top={top} workspace={workspace} engine={engine} generation={generation} selectedId={selectedNode} onSelect={setChosenNode}
           staleOnly={staleOnly}
           connectedOnly={connectedOnly}
-          {...(graph.hidden ? { hidden: graph.hidden } : {})}
           direction={settings.direction}
           onStaleOnly={setStaleOnly}
           onConnectedOnly={setConnectedOnly}
           onDirection={(direction) => choose({ ...settings, direction })}
-          onOpenResult={() => { if (selectedNode) window.open(openRoute(selectedNode, "result", route.workspace), "_blank"); }}
+          onOpenResult={() => { if (selectedNode) openDetached(openRoute(selectedNode, "result", engine.binding ?? route.workspace ?? workspace.identity?.name)); }}
           onClose={close}
-          canvas={<GraphCanvas nodes={graph.nodes} edges={graph.edges} direction={settings.direction} onSelect={setChosenNode} />}
         />
       )}
       {trouble && <MonoLine segments={[{ text: trouble, role: "mono-bad" }]} className="surface-trouble" />}

@@ -100,9 +100,9 @@ export class ResultObservations {
 }
 
 /** Generation-scoped demand and presentation observations; no retained handle history. */
-export function useResults(engine: Engine, generation: string | undefined, handles: readonly string[], nodes: readonly WorkspaceNode[] = []) {
+export function useResults(engine: Engine, generation: string | undefined, handles: readonly string[], nodes: readonly WorkspaceNode[] = [], maximumBytes?: number) {
   const [revision, redraw] = useReducer((n: number) => n + 1, 0);
-  const demand = useMemo(() => new ResultDemand(handle => engine.fetch(handle), redraw), [engine, generation]);
+  const demand = useMemo(() => new ResultDemand(handle => maximumBytes === undefined ? engine.fetch(handle) : engine.fetch(handle, maximumBytes), redraw), [engine, generation, maximumBytes]);
   const observations = useMemo(() => new ResultObservations(), [engine, generation]);
   const wanted = JSON.stringify([...new Set(handles)]);
   useEffect(() => { demand.resume(); return () => demand.dispose(); }, [demand]);

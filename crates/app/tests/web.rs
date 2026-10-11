@@ -26,6 +26,8 @@ mod sandbox;
 mod scan;
 #[path = "web/telemetry.rs"]
 mod telemetry;
+#[path = "web/value_previews.rs"]
+mod value_previews;
 #[path = "web/view_instances.rs"]
 mod view_instances;
 #[path = "web/view_packages.rs"]

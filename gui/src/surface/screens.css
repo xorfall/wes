@@ -541,8 +541,6 @@
 
 /* The minimap: the graph's shapes in miniature, and where the view is. */
 .wes-terminal .react-flow__minimap {
-  width: 124px;
-  height: 74px;
   /* Keep the minimap inside the canvas, inset 12px from both edges, clear of the footer. */
   bottom: 12px;
   right: 12px;
@@ -560,5 +558,26 @@
   fill: var(--ground);
   fill-opacity: 0.6;
   stroke: var(--mono-ref);
-  stroke-width: 2;
+}
+.wes-terminal .react-flow__node.graph-node.graph-node-active { box-shadow: 0 0 0 2px var(--mono-ref); }
+.wes-terminal .react-flow__minimap-node.graph-mini-selected { stroke: var(--mono-ref); }
+.wes-terminal .react-flow__minimap-node.graph-mini-stale { fill: var(--mono-warn); }
+.wes-terminal .react-flow__minimap-node.graph-mini-failed { fill: var(--mono-bad); }
+.wes-terminal .react-flow__minimap-node.graph-mini-running { fill: var(--mono-param); }
+.wes-terminal .graph-edge-selection .react-flow__edge-path { stroke-dasharray: 2 5; stroke: var(--mono-ref); }
+.wes-terminal .graph-selected-name { overflow-wrap: anywhere; font-size: var(--type-mono-size); }
+.wes-terminal .graph-preview, .wes-terminal .graph-relations { margin-top: var(--space-md); }
+.wes-terminal .graph-preview p { margin: var(--space-xs) 0; }
+.wes-terminal .graph-preview-value { margin: var(--space-sm) 0; max-height: 12em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.5; }
+.wes-terminal .graph-relation { display: block; width: 100%; text-align: left; overflow-wrap: anywhere; padding: var(--space-xs) 0; cursor: pointer; }
+.wes-terminal .graph-search { flex: 0 1 220px; width: min(220px, 100%); }
+.wes-terminal .graph-legend { margin-top: auto; padding-top: var(--space-md); font-size: var(--type-sans-small-size); line-height: 1.5; }
+.wes-terminal .window-workspace-toolbar, .wes-terminal .window-result-picker { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-md); padding: var(--space-sm) var(--page-gutter); flex: 0 0 auto; }
+.wes-terminal .window-workspace-toolbar label, .wes-terminal .window-result-picker label { display: flex; align-items: baseline; gap: var(--space-sm); min-width: 0; }
+.wes-terminal .window-workspace-toolbar select, .wes-terminal .window-result-picker select { max-width: min(360px, 70vw); }
+.wes-terminal .window-result-empty { padding: var(--space-md) var(--page-gutter); }
+@media (max-width: 760px) {
+  .wes-terminal .graph-layout { flex-direction: column; height: auto; min-height: 100%; }
+  .wes-terminal .graph-canvas { height: 360px; flex: 0 0 360px; }
+  .wes-terminal .graph-panel { flex: 1 0 auto; max-width: 100%; }
 }

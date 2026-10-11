@@ -262,6 +262,25 @@ impl StoreWorker {
         }
         Ok(snapshot)
     }
+    /// Bounded whole-result inspection. Size admission precedes descriptor fallbacks that decode
+    /// ordinary payloads; native segmented descriptors retain their metadata-only path.
+    pub async fn describe_bounded(
+        &self,
+        handle: ValueHandle,
+        maximum: u64,
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        let limit = self.limits.bytes.get();
+        let maximum = maximum.min(u64::from(limit));
+        let snapshot = self
+            .request(limit, move |store| store.describe_bounded(&handle, maximum))
+            .await?
+            .wait()
+            .await?;
+        if let Some(snapshot) = &snapshot {
+            self.residency.admit_snapshot(snapshot)?;
+        }
+        Ok(snapshot)
+    }
     pub async fn source_range(
         &self,
         snapshot: StoredSnapshot,

@@ -18,7 +18,7 @@ import { typeLine } from "../presentation/type-shape";
 import { presentationType } from "../presentation/prepare";
 import { useScrollMemory } from "./scroll-memory";
 import { resultAccess } from "./result-access";
-import { openRoute } from "./open-route";
+import { openRoute, openDetached } from "./open-route";
 import { creationInputOf } from "./graph-model";
 import { useWithdrawn, WITHDRAWN_TITLE } from "./render/dataset-source";
 import { ResultWithdrawnError } from "../result-reader";
@@ -132,6 +132,6 @@ export function Inspector({engine,workspace,generation,cell,selection,active,onT
 export function openInspectorWindow(node:WorkspaceNode|undefined,tab:InspectorTab,workspace?:string):boolean {
   if(!node)return false;
   const windowTab=tab==="json" ? "json" : "result";
-  const result=window.open(openRoute(node.id,windowTab,workspace),"_blank");
+  const result=openDetached(openRoute(node.id,windowTab,workspace));
   return Boolean(result || window.__WES_DESKTOP__);
 }

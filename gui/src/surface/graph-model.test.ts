@@ -67,7 +67,7 @@ describe("the graph the workspace is", () => {
 
   it("should_MarkTheChosenNodeSelected_When_ItIsStaleAsWell", () => {
     const view = readGraph(workspace, { selected: "totals" });
-    expect(view.nodes.find((it) => it.id === "totals")?.state).toBe("selected");
+    expect(view.nodes.find((it) => it.id === "totals")).toMatchObject({ state: "stale", selected: true });
   });
 
   it("should_NameANodeWithADollar_When_SomebodyNamedIt", () => {
@@ -203,6 +203,25 @@ describe("connected only", () => {
     // Assert
     expect(view.nodes).toHaveLength(4);
     expect(view.hidden).toBeUndefined();
+  });
+});
+
+describe("explicit selection relationships", () => {
+  const source = node({ id: "rows", name: "rows", command: "fixture rows" });
+  const detail = node({ id: "detail", name: "detail", command: "fixture detail", selectionSources: ["rows", "rows", "gone"] });
+  const selectedWorkspace = { ...emptyWorkspace, nodes: [source, detail] };
+  it("shows one selection edge while leaving update reachability empty", () => {
+    const edges = edgesOf(selectedWorkspace.nodes);
+    expect(edges).toEqual([{ from: "rows", to: "detail", kind: "selection" }]);
+    expect(dependentsOf(edges, "rows").size).toBe(0);
+    expect(readGraph(selectedWorkspace, { connectedOnly: true }).nodes.map(node => node.id)).toEqual(["rows", "detail"]);
+    expect(readGraph({ ...selectedWorkspace, nodes: [{ ...source, state: "stale" }, detail] }, { staleOnly: true }).nodes.map(node => node.id)).toEqual(["rows"]);
+  });
+  it("does not invent an execution cycle from a reverse selection relationship", () => {
+    const nodes = [{ ...source, dependsOn: ["detail"] }, detail];
+    expect(cyclesIn(nodes, edgesOf(nodes))).toEqual([]);
+    const cycle = [...nodes, node({ id: "a", command: "x", dependsOn: ["b"] }), node({ id: "b", command: "y", dependsOn: ["a"] })];
+    expect(cyclesIn(cycle, edgesOf(cycle))).toEqual([["a", "b"]]);
   });
 });
 

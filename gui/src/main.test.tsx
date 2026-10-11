@@ -10,7 +10,7 @@ vi.mock("./surface/Gallery", () => ({ Gallery: "gallery", readGalleryRoute: star
 vi.mock("./surface/SurfaceApp", () => ({ SurfaceApp: "surface" }));
 vi.mock("./surface/OpenWindow", () => ({ OpenWindow: "opened" }));
 vi.mock("./surface/ScreenWindow", () => ({ ScreenWindow: "summoned" }));
-vi.mock("./surface/open-route", () => ({ readOpenRoute: startup.opened, readScreenRoute: startup.summoned }));
+vi.mock("./surface/open-route", async original => ({ ...await original<typeof import("./surface/open-route")>(), readOpenRoute: startup.opened, readScreenRoute: startup.summoned }));
 vi.mock("./Boundary", () => ({ Boundary: "boundary" }));
 
 beforeEach(() => {

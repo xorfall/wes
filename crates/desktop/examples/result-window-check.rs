@@ -16,19 +16,21 @@ use std::{
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, webview::NewWindowResponse};
 
-const PAGE: &str = r#"<!doctype html><title>native fixture</title>
+const PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>native fixture</title>
 <input id="draft" value="synthetic unsent draft">
 <script>
-const route = location.hash;
-if (!route) {
-  fetch('/ready');
-} else {
-  const tab = route.split('/').pop();
-  document.title = 'synthetic ' + tab;
+function draw() {
+  if (!location.hash) { fetch('/ready'); return; }
+  const [path, query] = location.hash.slice(1).split('?');
+  const tab = path.split('/').pop();
+  const workspace = new URLSearchParams(query).get('workspace') || 'none';
+  document.title = 'synthetic ' + tab + ' · ' + workspace;
   const valid = window.__WES_DESKTOP__ === true &&
     window.opener?.document.getElementById('draft').value === 'synthetic unsent draft';
-  setTimeout(() => fetch(valid ? '/loaded/' + tab : '/failed'), 100);
+  setTimeout(() => fetch(valid ? '/loaded/' + tab + '/' + workspace : '/failed'), 100);
 }
+window.__WES_RETARGET__ = address => { history.replaceState(null, '', address); draw(); };
+draw();
 </script>"#;
 
 fn next(messages: &Receiver<String>, expected: &str) -> Result<(), String> {
@@ -67,50 +69,111 @@ fn check(app: &tauri::AppHandle, messages: Receiver<String>) -> Result<(), Strin
         return Err("native window identity changed on reload".into());
     }
     println!("PASS reload: native window ownership survives document recreation");
-    for tab in ["result", "json", "details", "result", "json", "details"] {
-        main.eval(&format!("window.open('#open/synthetic/{tab}', '_blank');"))
+    let mut previous = String::new();
+    for round in 0..2 {
+        let mut opened = None;
+        for (tab, workspace) in [("result", "alpha"), ("json", "beta"), ("details", "alpha")] {
+            main.eval(&format!(
+                "window.open('#open/synthetic/{tab}?workspace={workspace}', '_blank');"
+            ))
             .map_err(|e| e.to_string())?;
-        next(&messages, &format!("/loaded/{tab}"))?;
-        let mut results = app
-            .webview_windows()
-            .into_iter()
-            .filter(|(label, _)| label != "main");
-        let (label, result) = results.next().ok_or("result window missing")?;
-        if identity(&result, &messages)? == owner {
-            return Err("result window inherited terminal ownership".into());
-        }
-        if results.next().is_some() {
-            return Err("unexpected extra result window".into());
-        }
-        let address = result.url().map_err(|e| e.to_string())?;
-        if address.fragment() != Some(format!("open/synthetic/{tab}").as_str()) {
-            return Err(format!("incorrect route: {address}"));
-        }
-        if result.title().map_err(|e| e.to_string())? != format!("synthetic {tab}") {
-            return Err("native title did not follow the result".into());
-        }
-        result.eval("window.close()").map_err(|e| e.to_string())?;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while app.get_webview_window(&label).is_some() {
-            if Instant::now() >= deadline {
-                return Err("result window did not close".into());
+            next(&messages, &format!("/loaded/{tab}/{workspace}"))?;
+            let mut results = app
+                .webview_windows()
+                .into_iter()
+                .filter(|(label, _)| label != "main");
+            let (label, result) = results.next().ok_or("result window missing")?;
+            let client = identity(&result, &messages)?;
+            if client == owner || client == previous {
+                return Err("result window inherited old ownership".into());
             }
-            std::thread::sleep(Duration::from_millis(20));
+            if let Some((old_label, old_client)) = &opened {
+                if old_label != &label || old_client != &client {
+                    return Err("retarget replaced the native window or owner".into());
+                }
+            } else {
+                opened = Some((label.clone(), client));
+            }
+            if results.next().is_some() {
+                return Err("unexpected extra result window".into());
+            }
+            let address = result.url().map_err(|e| e.to_string())?;
+            if address.fragment()
+                != Some(format!("open/synthetic/{tab}?workspace={workspace}").as_str())
+            {
+                return Err(format!("incorrect route: {address}"));
+            }
+            let title = result.title().map_err(|e| e.to_string())?;
+            if title != format!("synthetic {tab} · {workspace}") {
+                return Err(format!("native title did not follow the result: {title:?}"));
+            }
+            println!(
+                "PASS retarget {round}/{tab}: one window, same ownership, requested workspace and title"
+            );
         }
-        if app.get_webview_window("main").is_none() {
-            return Err("main window was closed".into());
-        }
+        let (label, client) = opened.unwrap();
+        close(app, &label)?;
+        previous = client;
         main.eval("fetch(document.getElementById('draft').value === 'synthetic unsent draft' && !location.hash ? '/main-ok' : '/failed')")
             .map_err(|e| e.to_string())?;
         next(&messages, "/main-ok")?;
-        println!("PASS {tab}: route, title, desktop script, close and main draft");
     }
+    main.eval("window.open('#graph?workspace=alpha', '_blank')")
+        .map_err(|e| e.to_string())?;
+    next(&messages, "/loaded/graph/alpha")?;
+    let graph = app
+        .webview_windows()
+        .into_iter()
+        .find(|(label, _)| label != "main")
+        .ok_or("graph missing")?;
+    let graph_owner = identity(&graph.1, &messages)?;
+    main.eval("window.open('#stale?workspace=beta', '_blank')")
+        .map_err(|e| e.to_string())?;
+    next(&messages, "/loaded/stale/beta")?;
+    if app.webview_windows().len() != 2 || identity(&graph.1, &messages)? != graph_owner {
+        return Err("graph reuse changed its ownership".into());
+    }
+    main.eval("window.open('#open/synthetic/result?workspace=beta', '_blank')")
+        .map_err(|e| e.to_string())?;
+    next(&messages, "/loaded/result/beta")?;
+    if app.webview_windows().len() != 3 {
+        return Err("different purposes do not have their own windows".into());
+    }
+    let result = app
+        .webview_windows()
+        .into_iter()
+        .find(|(label, _)| label != "main" && label != &graph.0)
+        .unwrap();
+    if identity(&result.1, &messages)? == graph_owner {
+        return Err("different purposes share ownership".into());
+    }
+    close(app, &result.0)?;
+    close(app, &graph.0)?;
+    println!("PASS graph workspace switch: purpose reuse, separate result owner and close/reopen");
     main.eval("location.reload()").map_err(|e| e.to_string())?;
     next(&messages, "/ready")?;
     if identity(&main, &messages)? != owner {
         return Err("child configuration changed the main window's reload identity".into());
     }
     println!("PASS reload after child windows: main ownership remains unchanged");
+    Ok(())
+}
+
+fn close(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
+    app.get_webview_window(label)
+        .ok_or("window missing")?
+        .eval("window.close()")
+        .map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.get_webview_window(label).is_some() {
+        if Instant::now() >= deadline {
+            return Err("detached window did not close".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if app.get_webview_window("main").is_none() {
+        return Err("main window was closed".into());
+    }
     Ok(())
 }
 
@@ -158,17 +221,12 @@ fn main() {
                 .initialization_script(windows::SHELL)
                 .on_page_load(windows::window_client())
                 .on_new_window(move |url, features| {
-                    match windows::result_window(&opener, url.as_str(), features, true, &origin) {
-                        Ok(window) => {
-                            let _ = window.hide();
-                            NewWindowResponse::Create { window }
-                        }
-                        Err(error) => {
-                            eprintln!("FAIL create: {error}");
-                            opener.exit(1);
-                            NewWindowResponse::Deny
-                        }
+                    let response =
+                        windows::requested_window(&opener, &url, features, true, &origin);
+                    if let NewWindowResponse::Create { window } = &response {
+                        let _ = window.hide();
                     }
+                    response
                 })
                 .build()?;
             let handle = app.handle().clone();

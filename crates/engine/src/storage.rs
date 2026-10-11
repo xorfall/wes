@@ -283,6 +283,24 @@ pub trait ValueStore: Send {
         snapshot = snapshot.with_selection(fields.to_vec());
         Ok(Some(snapshot))
     }
+    /// Inspect a whole result with a conservative stored-representation byte bound. Descriptor
+    /// fallback can decode ordinary encodings, so size refusal must precede that fallback.
+    fn describe_bounded(
+        &self,
+        handle: &ValueHandle,
+        maximum: u64,
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        if maximum == 0 {
+            return Err(StoreError::Limit("snapshot inspection bytes"));
+        }
+        let Some(bytes) = self.size(handle)? else {
+            return Ok(None);
+        };
+        if bytes > maximum {
+            return Err(StoreError::Limit("snapshot inspection bytes"));
+        }
+        self.describe(handle, &[])
+    }
     /// Immutable physical members that must be held with a composed result. This grants no read
     /// authority; the shared owner validates every member's current policy and Dataset roots.
     fn dependencies(&self, _handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {

@@ -577,9 +577,12 @@ export class Engine {
    * Deliberately separate from hearing that a result exists. A node announces itself as "Bars, 4.1 MB,
    * adjusted" for a couple of hundred bytes; this is what it costs to actually look.
    */
-  async fetch(handle: string): Promise<StoredValue> {
+  async fetch(handle: string, maximumBytes?: number): Promise<StoredValue> {
     const generation=this.generation;
-    const value=await this.results.read(handle);
+    const value=await this.results.read(handle, maximumBytes);
+    if (generation !== this.generation) throw new Error("Workspace changed; the result read was discarded.");
+    if (this.results.isWithdrawn(handle)) throw new ResultWithdrawnError();
+    if (maximumBytes !== undefined) return value;
     let modules=builtinValueViews;
     try { modules=await this.valuePackages.modules(value); } catch { /* Renderer failure leaves the stored data readable. */ }
     if(generation!==this.generation)throw new Error("Workspace changed; the result read was discarded.");

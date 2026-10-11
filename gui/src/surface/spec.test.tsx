@@ -15,6 +15,7 @@ it("routes spec panes and rejects removed model settings",()=>{
  expect(importSpecCommand('/tmp/a"b.json','inventory','https://example.test',true)).toBe(':import spec file:"/tmp/a\\"b.json" as:inventory endpoint:"https://example.test" replace:true');
 });
 it("reviews real revisions, blocks dirty navigation and imports only explicitly",async()=>{
+ const events=new EventTarget();vi.stubGlobal("window",events);
  const p={key:{service:"inventory",apiVersion:"v1",scope:"all"},revision:"a".repeat(64),accepted:false,origin:"fixture"};
  const descriptor={version:1,provider:"inventory",operations:[],types:{}};const source=JSON.stringify(descriptor);
  const fetch=vi.fn(async(_url,init)=>{const req=JSON.parse(init.body);return {ok:true,json:async()=>req.action==="list"?{packages:[p]}:{package:p,descriptor,source,descriptorPath:"/tmp/fixture.json"}};});vi.stubGlobal("fetch",fetch);
@@ -28,6 +29,14 @@ it("reviews real revisions, blocks dirty navigation and imports only explicitly"
  act(()=>button("keep editing").props.onClick());expect(submit).not.toHaveBeenCalled();
  expect(tree!.root.findAllByProps({"aria-label":"API library"})).toHaveLength(0);
  expect(tree!.root.findAllByProps({"aria-label":"Import OpenAPI"})).toHaveLength(0);
+ // Native retargeting uses the same dirty-editor guard as navigation inside the screen.
+ const proceed=vi.fn();const retarget=new CustomEvent("wes:before-route",{cancelable:true,detail:{proceed}});
+ act(()=>{events.dispatchEvent(retarget);});
+ expect(retarget.defaultPrevented).toBe(true);expect(proceed).not.toHaveBeenCalled();
+ act(()=>button("keep editing").props.onClick());expect(proceed).not.toHaveBeenCalled();
+ act(()=>{events.dispatchEvent(new CustomEvent("wes:before-route",{cancelable:true,detail:{proceed}}));});
+ act(()=>button("discard").props.onClick());expect(proceed).toHaveBeenCalledOnce();
+ act(()=>tree!.root.findByType("textarea").props.onChange({target:{value:"{}"}}));
  act(()=>button("Back to library").props.onClick());
  expect(tree!.root.findByProps({role:"alertdialog"})).toBeDefined();
  act(()=>button("discard").props.onClick());
@@ -301,4 +310,24 @@ it("reports stale workspace captures without displaying mismatched source",async
  await act(async()=>{tree!.root.findByProps({"aria-label":"Open imported demo in default"}).props.onClick();});
  expect(tree!.root.findByProps({role:"status"}).children.join("")).toContain("Workspace changed");
  expect(tree!.root.findAllByProps({"aria-label":"Imported API snapshot"})).toHaveLength(0);
+});
+
+it("preserves unsaved editor text while refreshing imports for a changed workspace generation",async()=>{
+ const p={key:{service:"inventory",apiVersion:"v1",scope:"all"},revision:"a".repeat(64),accepted:false,origin:"fixture"};
+ const descriptor={version:1,provider:"inventory",operations:[],types:{}};
+ const requested:string[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
+  if(url.startsWith('/workspace-specs')) {const generation=(init.headers as Record<string,string>)["X-Wes-Session"]!;requested.push(generation);return {ok:true,json:async()=>({workspace:'alpha',generation,specs:[]})};}
+  const req=JSON.parse(init.body as string);return {ok:true,json:async()=>req.action==='list'?{packages:[p]}:{package:p,descriptor,source:JSON.stringify(descriptor),descriptorPath:'/tmp/fixture.json'}};
+ }));
+ const close=vi.fn(),submit=vi.fn();
+ await act(async()=>{tree=create(<SpecScreen binding={{workspace:'alpha',generation:'g1'}} top={[]} onClose={close} onSubmit={submit}/>);});
+ await act(async()=>{tree!.root.findByProps({"aria-label":"Open inventory API r1"}).props.onClick();});
+ const source=tree!.root.findAllByType("button").find(b=>b.children.join('')==='source')!;
+ act(()=>source.props.onClick());
+ act(()=>tree!.root.findByType('textarea').props.onChange({target:{value:'UNSAVED FIXTURE'}}));
+ await act(async()=>{tree!.update(<SpecScreen binding={{workspace:'alpha',generation:'g2'}} top={[]} onClose={close} onSubmit={submit}/>);});
+ expect(tree!.root.findByType('textarea').props.value).toBe('UNSAVED FIXTURE');
+ expect(requested).toEqual(['g1','g2']);
+ expect(submit).not.toHaveBeenCalled();
 });
