@@ -400,3 +400,45 @@ async fn source_readiness_is_bound_to_the_current_run_and_never_uses_a_retained_
     handle.command(Command::Shutdown).await.unwrap();
     task.join().await.unwrap();
 }
+
+#[tokio::test]
+async fn reconnect_clears_runtime_readiness_until_the_new_open_acknowledgement() {
+    let (handle, task, mut entered, finite) = fixture(None);
+    let node = add(&handle, "stream", vec![]).await;
+    handle.command(Command::Start).await.unwrap();
+    let source = started(&mut entered).await;
+    seen(&handle, |s| s.streaming.contains(&node)).await;
+    let fresh = source.sink.reopening().await.unwrap();
+    seen(&handle, |s| !s.streaming.contains(&node)).await;
+    assert_eq!(
+        handle
+            .wait_source_ready(
+                node.clone(),
+                source.run.id().clone(),
+                Duration::from_millis(10),
+                CancellationToken::new()
+            )
+            .await,
+        Ok(false)
+    );
+    assert_eq!(
+        source.sink.push(value(9)),
+        Err(streams::StreamError::Closed)
+    );
+    fresh.opened().unwrap();
+    assert_eq!(
+        handle
+            .wait_source_ready(
+                node.clone(),
+                source.run.id().clone(),
+                Duration::from_secs(2),
+                CancellationToken::new()
+            )
+            .await,
+        Ok(true)
+    );
+    assert_eq!(finite.load(Ordering::SeqCst), 0);
+    source.finish.send(Ok(())).unwrap();
+    handle.command(Command::Shutdown).await.unwrap();
+    task.join().await.unwrap();
+}

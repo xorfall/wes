@@ -92,7 +92,7 @@ impl Waiters {
                         Some(Err(DriverError::SourceChanged))
                     } else if runtime.is_streaming(node) {
                         Some(Ok(true))
-                    } else if !runtime.has_lease(node) {
+                    } else if runtime.stream_phase(node) == "closing" || !runtime.has_lease(node) {
                         Some(Err(DriverError::SourceClosed))
                     } else if now >= *until {
                         Some(Ok(false))
