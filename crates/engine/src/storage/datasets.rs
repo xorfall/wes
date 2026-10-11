@@ -13,6 +13,13 @@ pub struct DatasetAccess {
     pub closed: bool,
 }
 impl DatasetAccess {
+    pub fn blocks_policy(&self, policy: &FlowPolicy) -> bool {
+        policy
+            .dataset_reads()
+            .iter()
+            .any(|o| self.closed || self.withdrawn.contains(o.dataset()))
+    }
+
     pub fn blocks(&self, value: &Value) -> bool {
         if value
             .provenance()
@@ -300,7 +307,14 @@ pub struct CapturedValue {
     pub handle: String,
     pub digest: String,
     pub bytes: u64,
+    pub selection: Vec<String>,
 }
+impl CapturedValue {
+    pub fn same_storage(&self, other: &Self) -> bool {
+        self.handle == other.handle && self.digest == other.digest && self.bytes == other.bytes
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DatasetKind {
     Analysis,
@@ -438,6 +452,7 @@ pub struct DatasetContinuation {
     pub reference: DatasetRef,
     pub checkpoint: AnalysisCheckpoint,
     pub source: Value,
+    pub stored_source: Option<(crate::storage::StoredSnapshot, u64)>,
 }
 #[derive(Clone, Debug)]
 pub struct DatasetDeletePlan {

@@ -36,6 +36,15 @@ pub enum InvocationError {
 /// Cancellation is cooperative; implementations obey the Executor lease contract.
 pub trait Invoker: Send + Sync + 'static {
     fn invoke(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture;
+    fn invoke_acquired(
+        &self,
+        call: Call,
+        cancellation: CancellationToken,
+        _context: crate::storage::AcquisitionContext,
+    ) -> crate::storage::AcquiredFuture {
+        let future = self.invoke(call, cancellation);
+        Box::pin(async move { future.await.map(crate::storage::AcquiredOutput::Value) })
+    }
     fn supports_trace(&self, _profile: &str) -> bool {
         false
     }
@@ -321,6 +330,34 @@ struct CallContext {
     traces: Option<crate::trace::Traces>,
 }
 impl BoundCall {
+    pub(crate) fn stored_field_paths(&self, node: &NodeId) -> Option<Vec<Vec<String>>> {
+        if self
+            .context
+            .pipe_input
+            .as_ref()
+            .is_some_and(|p| &p.node == node)
+        {
+            return None;
+        }
+        let mut paths = std::collections::BTreeSet::new();
+        for input in self.invocation.inputs.values() {
+            input.stored_paths(node, &mut paths);
+        }
+        if paths.is_empty() || paths.contains(&vec![]) {
+            None
+        } else {
+            Some(paths.into_iter().collect())
+        }
+    }
+    pub(crate) fn prepare_fields(
+        &mut self,
+        node: &NodeId,
+        values: &std::collections::BTreeMap<Vec<String>, Value>,
+    ) {
+        for input in self.invocation.inputs.values_mut() {
+            input.prepare_fields(node, values);
+        }
+    }
     pub fn selection_sources(&self) -> Vec<&crate::graph::OutputRef> {
         self.invocation
             .inputs
@@ -671,8 +708,13 @@ impl fmt::Debug for BoundCall {
 #[derive(Clone)]
 pub struct CallExecutor {
     journal: Option<CallJournal>,
+    storage: Option<crate::storage::StoreWorker>,
 }
 impl CallExecutor {
+    pub(crate) fn with_storage(mut self, storage: Option<crate::storage::StoreWorker>) -> Self {
+        self.storage = storage;
+        self
+    }
     pub(crate) fn prepare_stream(
         &self,
         ticket: RunTicket<BoundCall>,
@@ -681,11 +723,15 @@ impl CallExecutor {
         streaming::prepare_source(self.journal.clone(), ticket, cancellation)
     }
     pub fn ephemeral() -> Self {
-        Self { journal: None }
+        Self {
+            journal: None,
+            storage: None,
+        }
     }
     pub fn recorded(journal: CallJournal) -> Self {
         Self {
             journal: Some(journal),
+            storage: None,
         }
     }
 }
@@ -717,6 +763,7 @@ impl Executor<BoundCall> for CallExecutor {
         cancellation: CancellationToken,
     ) -> ExecutionFuture {
         let journal = self.journal.clone();
+        let storage = self.storage.clone();
         let policy = ticket.payload.failure_policy(&ticket.inputs);
         let work = async move {
             if ticket.payload.streaming() || ticket.payload.interactive() {
@@ -777,6 +824,21 @@ impl Executor<BoundCall> for CallExecutor {
             } else {
                 None
             };
+            let acquisition = storage
+                .filter(|s| {
+                    s.transient_identity().is_some()
+                        && !protected.policy().is_private()
+                        && !protected.policy().is_unknown()
+                })
+                .map(|s| {
+                    crate::storage::AcquisitionContext::new(
+                        s,
+                        protected
+                            .clone()
+                            .cautioned(bound.invocation.cautions.iter().cloned()),
+                    )
+                });
+            let mut output_hold = None;
             let observation = trace.clone();
             let outcome = if bound.invocation.trace_profile.is_some() && trace.is_none() {
                 Outcome::Failed(RuntimeCode::ExecutionFailed.error(
@@ -802,18 +864,33 @@ impl Executor<BoundCall> for CallExecutor {
                         return Err(InvocationError::Cancelled);
                     }
                     match observation {
-                        Some(trace) => {
-                            provider
+                        Some(trace) => provider
+                            .invoker
+                            .invoke_observed(call, cancellation, trace)
+                            .await
+                            .map(crate::storage::AcquiredOutput::Value),
+                        None => match acquisition {
+                            Some(context) => {
+                                provider
+                                    .invoker
+                                    .invoke_acquired(call, cancellation, context)
+                                    .await
+                            }
+                            None => provider
                                 .invoker
-                                .invoke_observed(call, cancellation, trace)
+                                .invoke(call, cancellation)
                                 .await
-                        }
-                        None => provider.invoker.invoke(call, cancellation).await,
+                                .map(crate::storage::AcquiredOutput::Value),
+                        },
                     }
                 })
                 .await;
                 match result {
-                    Ok(Ok(value)) => {
+                    Ok(Ok(crate::storage::AcquiredOutput::Stored { output, hold })) => {
+                        output_hold = Some(hold);
+                        Outcome::Stored(output)
+                    }
+                    Ok(Ok(crate::storage::AcquiredOutput::Value(value))) => {
                         let provenance = value
                             .provenance()
                             .inheriting(&protected)
@@ -832,6 +909,11 @@ impl Executor<BoundCall> for CallExecutor {
                 }
             };
             let mut report: ExecutionReport = outcome.with_policy(protected.policy()).into();
+            if let Some(hold) = output_hold {
+                report
+                    .holds
+                    .push(crate::driver::ExecutionHold::retain(hold));
+            }
             if let Outcome::Failed(error) = &report.outcome
                 && error.code() == wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN
             {
@@ -861,7 +943,7 @@ impl Executor<BoundCall> for CallExecutor {
                     ),
                 );
                 trace.finish(match &report.outcome {
-                    Outcome::Produced(_) => "completed",
+                    Outcome::Produced(_) | Outcome::Stored(_) => "completed",
                     Outcome::Failed(_) | Outcome::Incomplete { .. } => "failed",
                     _ => "cancelled",
                 });

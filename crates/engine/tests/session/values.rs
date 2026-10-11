@@ -1323,7 +1323,7 @@ async fn slow_old_publication_never_overwrites_a_new_run_and_evictions_are_run_g
     .unwrap();
     submit(&handle, "first", "catalog echo value:old > answer").await;
     storage_entered.await.unwrap();
-    let ValuePublication::Pending { run: old } = handle
+    let ValuePublication::Pending { run: old, .. } = handle
         .values()
         .await
         .unwrap()
@@ -1341,7 +1341,7 @@ async fn slow_old_publication_never_overwrites_a_new_run_and_evictions_are_run_g
     let new = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let values = handle.values().await.unwrap().unwrap();
-            if let Some(ValuePublication::Pending { run }) = values.outputs.values().next()
+            if let Some(ValuePublication::Pending { run, .. }) = values.outputs.values().next()
                 && run != &old
             {
                 break run.clone();

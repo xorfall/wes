@@ -6,7 +6,9 @@ use thiserror::Error;
 
 use crate::{DurationValue, Primitive, Provenance, Shape, Timestamp, numeric};
 mod arithmetic;
+mod memory;
 pub use arithmetic::{DecimalOp, NumericError};
+pub use memory::{Allocation, AllocationKey};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ModelError {

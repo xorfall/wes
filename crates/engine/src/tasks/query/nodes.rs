@@ -106,7 +106,9 @@ pub(super) fn capture_nodes(
                 launch.source.invocation().provider.clone(),
                 launch.source.invocation().capability.clone(),
             ),
-            BoundTask::Input(_) | BoundTask::SavedInput(_) => TaskLabel::Input,
+            BoundTask::Input(_) | BoundTask::StoredInput(_) | BoundTask::SavedInput(_) => {
+                TaskLabel::Input
+            }
             BoundTask::Call(call) => TaskLabel::Call(
                 call.invocation().provider.clone(),
                 call.invocation().capability.clone(),

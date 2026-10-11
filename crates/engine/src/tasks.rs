@@ -34,6 +34,8 @@ pub(crate) use query::types::completion_names as type_completion_names;
 pub enum BoundTask {
     /// Immutable native input installed only in an isolated execution scope.
     Input(wes_core::Value),
+    /// The same immutable input after decoded residency was released. No acquisition/replay.
+    StoredInput(crate::storage::StoredSnapshot),
     /// Explicit immutable storage read; a saved record grants no provider execution authority.
     SavedInput(crate::history::SavedSelection),
     Call(BoundCall),
@@ -66,6 +68,29 @@ pub struct CompletionNotice {
     pub grants_changed: bool,
 }
 impl BoundTask {
+    pub(crate) fn stored_field_paths(
+        &self,
+        node: &crate::graph::NodeId,
+    ) -> Option<Vec<Vec<String>>> {
+        match self {
+            Self::Call(call) => call.stored_field_paths(node),
+            Self::Calculation(calc) => calc.stored_field_paths(node),
+            Self::View(view) => view.stored_field_paths(node),
+            _ => None,
+        }
+    }
+    pub(crate) fn prepare_fields(
+        &mut self,
+        node: &crate::graph::NodeId,
+        values: &std::collections::BTreeMap<Vec<String>, wes_core::Value>,
+    ) {
+        match self {
+            Self::Call(call) => call.prepare_fields(node, values),
+            Self::Calculation(calc) => calc.prepare_fields(node, values),
+            Self::View(view) => view.prepare_fields(node, values),
+            _ => {}
+        }
+    }
     pub fn completion_notice(&self) -> Option<CompletionNotice> {
         match self {
             Self::Describe(task) => Some(CompletionNotice {
@@ -190,6 +215,7 @@ impl BoundTask {
             Self::Call(call) => Some(call),
             Self::SourceLaunch(launch) => Some(&launch.source),
             Self::Input(_)
+            | Self::StoredInput(_)
             | Self::SavedInput(_)
             | Self::Describe(_)
             | Self::Stream(_)
@@ -243,6 +269,7 @@ impl BoundTask {
                 bounded: true,
             },
             Self::Input(_)
+            | Self::StoredInput(_)
             | Self::SavedInput(_)
             | Self::Management(_)
             | Self::ImportPlan(_)
@@ -269,6 +296,13 @@ impl BoundTask {
                 crate::runtime::DependencyLifetime::Creation
             }
             _ => crate::runtime::DependencyLifetime::Continuous,
+        }
+    }
+    /// Reads for eager edits are prepared without adding scheduling or refresh dependencies.
+    pub(crate) fn entry_read_sources(&self) -> Vec<OutputRef> {
+        match self {
+            Self::View(view) => view.read_sources(),
+            _ => vec![],
         }
     }
     pub fn dependencies(&self) -> impl Iterator<Item = OutputRef> + '_ {
@@ -452,6 +486,7 @@ impl TaskExecutor {
         self
     }
     pub(crate) fn with_storage(mut self, storage: Option<crate::storage::StoreWorker>) -> Self {
+        self.calls = self.calls.with_storage(storage.clone());
         self.storage = storage;
         self
     }
@@ -472,6 +507,9 @@ impl Executor<BoundTask> for TaskExecutor {
                     run: ticket.run,
                     inputs: ticket.inputs,
                     input_origins: ticket.input_origins,
+                    deferred_inputs: ticket.deferred_inputs,
+                    prepared_fields: ticket.prepared_fields,
+                    input_holds: ticket.input_holds,
                 },
                 cancellation,
             ),
@@ -523,6 +561,9 @@ impl Executor<BoundTask> for TaskExecutor {
                     run: ticket.run,
                     inputs: ticket.inputs,
                     input_origins: ticket.input_origins,
+                    deferred_inputs: ticket.deferred_inputs,
+                    prepared_fields: ticket.prepared_fields,
+                    input_holds: ticket.input_holds,
                 },
                 cancellation,
             ),
@@ -658,11 +699,12 @@ impl Executor<BoundTask> for TaskExecutor {
 impl TaskExecutor {
     fn execute_owned(
         &self,
-        ticket: RunTicket<BoundTask>,
+        mut ticket: RunTicket<BoundTask>,
         cancellation: CancellationToken,
         progress: crate::driver::progress::Reporter,
         values: crate::driver::lifetime::Reporter,
     ) -> ExecutionFuture {
+        let input_holds = std::mem::take(&mut ticket.input_holds);
         let mut policy = ticket
             .inputs
             .values()
@@ -670,6 +712,9 @@ impl TaskExecutor {
                 p.join(v.provenance().policy())
             });
         match &ticket.payload {
+            BoundTask::Call(call) => policy = policy.join(&call.captured_policy()),
+            BoundTask::Calculation(calc) => policy = policy.join(&calc.literal_policy()),
+            BoundTask::View(view) => policy = policy.join(&view.prepared_policy()),
             BoundTask::Scan(scan) => policy = policy.join(&scan.literal_policy()),
             BoundTask::Dataset(read) => policy = policy.join(&read.policy()),
             BoundTask::Recording(recording) => policy = policy.join(&recording.policy()),
@@ -709,6 +754,18 @@ impl TaskExecutor {
         let values = values.with_policy(&policy);
         let work: ExecutionFuture = match ticket.payload {
             BoundTask::Input(value) => Box::pin(async move { Outcome::Produced(value).into() }),
+            BoundTask::StoredInput(snapshot) => {
+                let storage = self.storage.clone();
+                Box::pin(async move {
+                    match storage {
+                        Some(storage) => match storage.materialize(snapshot).await {
+                            Ok((loaded, hold)) => { let mut report: crate::driver::ExecutionReport = Outcome::Produced(loaded.value).into(); report.holds.push(crate::driver::ExecutionHold::retain(hold)); report }
+                            Err(error) => Outcome::Failed(if matches!(error, crate::storage::StoreError::Limit(_)) { RuntimeCode::ResultCapacity } else { RuntimeCode::ResultUnavailable }.error(format!("Stored input read refused: {error}. No source was replayed."), None)).into(),
+                        },
+                        None => Outcome::Failed(RuntimeCode::ResultUnavailable.error("Stored input requires the owning storage worker.", None)).into(),
+                    }
+                })
+            }
             BoundTask::SavedInput(saved) => {
                 let storage = self.storage.clone();
                 Box::pin(async move {
@@ -758,6 +815,9 @@ impl TaskExecutor {
                     run: ticket.run,
                     inputs: ticket.inputs,
                     input_origins: ticket.input_origins,
+                    deferred_inputs: ticket.deferred_inputs,
+                    prepared_fields: ticket.prepared_fields,
+                    input_holds: ticket.input_holds,
                 },
                 cancellation,
             ),
@@ -773,6 +833,9 @@ impl TaskExecutor {
                     run: ticket.run,
                     inputs: ticket.inputs,
                     input_origins: ticket.input_origins,
+                    deferred_inputs: ticket.deferred_inputs,
+                    prepared_fields: ticket.prepared_fields,
+                    input_holds: ticket.input_holds,
                 },
                 self.scan_memory.clone(),
                 self.storage.clone(),
@@ -863,6 +926,9 @@ impl TaskExecutor {
         };
         Box::pin(async move {
             let mut report = work.await;
+            report
+                .holds
+                .push(crate::driver::ExecutionHold::retain(input_holds));
             report.notices = report
                 .notices
                 .into_iter()

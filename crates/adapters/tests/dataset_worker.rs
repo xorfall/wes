@@ -250,6 +250,7 @@ async fn scan_candidate_advances_only_after_the_shared_store_confirms_its_output
             }
             Poll::Yield => {}
             Poll::Grant | Poll::Settle => panic!("non-durable sink does not need a disk grant"),
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
             Poll::Commit => {
                 let before = runner.progress();
@@ -642,6 +643,7 @@ async fn values_and_dataset_pages_share_shutdown_and_owned_directory_lifetimes()
         DatasetStore::open(&path, Durability::FileAndDirectory, StoreLimits::default()).is_err()
     );
     let drain = worker.shutdown().await.unwrap();
+    // Store, read, page and inspect share four serial jobs.
     assert_eq!((drain.attempted, drain.failed), (4, 0));
     task.join().await.unwrap();
     let restored =
@@ -1424,6 +1426,7 @@ async fn forensic_scan(
                 assert_eq!(runner.progress().committed_position, cp.next_position);
                 final_ref = Some(reference);
             }
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
         }
     }
@@ -1964,6 +1967,7 @@ async fn paged_read_renewal(
                     .unwrap();
                 runner.acknowledge_dataset(reference.clone()).unwrap();
             }
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
         }
     }

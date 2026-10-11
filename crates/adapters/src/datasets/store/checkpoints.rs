@@ -91,7 +91,7 @@ impl DatasetStore {
             coverage: state.coverage.clone(),
             stop: state.stop,
             budget: state.budget.clone(),
-            version: 4,
+            version: 5,
             store: manifest.store.clone(),
             dataset: manifest.dataset.clone(),
             analysis: state.analysis.clone(),
@@ -105,6 +105,7 @@ impl DatasetStore {
                 source_handle: state.source.handle.clone(),
                 source_digest: state.source.digest.clone(),
                 source_bytes: state.source.bytes,
+                source_selection: state.source.selection.clone(),
                 source: manifest.source.clone(),
                 item_schema,
                 item_schema_digest: state.item_schema.digest().into(),
@@ -180,6 +181,7 @@ impl DatasetStore {
                 handle: saved.bindings.source_handle,
                 digest: saved.bindings.source_digest,
                 bytes: saved.bindings.source_bytes,
+                selection: saved.bindings.source_selection.clone(),
             },
             item_schema,
             state_schema,
@@ -292,6 +294,7 @@ impl DatasetStore {
                     handle: saved.bindings.source_handle.clone(),
                     digest: saved.bindings.source_digest.clone(),
                     bytes: saved.bindings.source_bytes,
+                    selection: saved.bindings.source_selection.clone(),
                 }],
                 retention: if manifest.lifetime == wes_engine::storage::DatasetLifetime::Durable {
                     RootRetention::Protected

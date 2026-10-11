@@ -72,6 +72,41 @@ impl Workspace {
             let Some(output) = self.resolve(name) else {
                 continue;
             };
+            if let Some(stored) = self
+                .runtime
+                .stored_output(&output.node)
+                .filter(|_| self.runtime.output(&output).accessible())
+            {
+                let snapshot = stored.snapshot;
+                if snapshot.provenance.policy().is_private()
+                    || snapshot.provenance.policy().is_unknown()
+                    || snapshot.shape.contains_meta()
+                {
+                    return Err(rejected(
+                        "AUT001",
+                        Span::at(0),
+                        "An external stored analysis input is not authorized.",
+                    ));
+                }
+                let id = child.install_stored_input(name, snapshot)?;
+                if let Some(BoundTask::SavedInput(saved)) =
+                    self.runtime.graph().node(&output.node).map(|n| n.payload())
+                {
+                    child
+                        .runtime
+                        .replace_residency_payload(&id, BoundTask::SavedInput(saved.clone()))?;
+                }
+                child.native_origins.insert(
+                    id,
+                    crate::history::SavedEdge {
+                        node: output.node.to_string(),
+                        run: self.runtime.run_of(&output.node).map(ToString::to_string),
+                        revision: self.runtime.display_revision(&output.node),
+                        port: output.port.selector().into(),
+                    },
+                );
+                continue;
+            }
             let OutputState::Available(value) = self.runtime.output(&output) else {
                 return Err(rejected(
                     "TRN002",
@@ -165,6 +200,42 @@ impl Workspace {
                 provenance: value.provenance().clone(),
             }),
         );
+        self.bindings
+            .bind(name, OutputRef::data(id.clone()), self.runtime.graph())
+            .map_err(binding_error)?;
+        self.native_inputs.insert(id.clone());
+        Ok(id)
+    }
+    fn install_stored_input(
+        &mut self,
+        name: &str,
+        snapshot: crate::storage::StoredSnapshot,
+    ) -> Result<NodeId, WorkspaceError> {
+        if self.runtime.graph().len() >= wes_budgets::get("values.outputs") as usize {
+            return Err(rejected(
+                "TRN002",
+                Span::at(0),
+                "Native snapshot capacity is full.",
+            ));
+        }
+        let id = NodeId::new(uuid::Uuid::new_v4().to_string()).expect("uuid");
+        let typing = wes_core::capability::Typing {
+            shape: snapshot.shape.clone(),
+            provenance: snapshot.provenance.clone(),
+        };
+        self.runtime.restore(
+            id.clone(),
+            BoundTask::StoredInput(snapshot.clone()),
+            [],
+            ExecutionTraits {
+                pure: false,
+                repeatable: true,
+                bounded: true,
+            },
+            RestoredState::ReadyStored(snapshot),
+            None,
+        )?;
+        self.predictions.insert(id.clone(), Arc::new(typing));
         self.bindings
             .bind(name, OutputRef::data(id.clone()), self.runtime.graph())
             .map_err(binding_error)?;

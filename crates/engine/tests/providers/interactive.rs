@@ -198,6 +198,9 @@ async fn captured_conversations_survive_provider_replacement_and_dispatch_withou
             run: ticket.run,
             inputs: ticket.inputs,
             input_origins: ticket.input_origins,
+            deferred_inputs: ticket.deferred_inputs,
+            input_holds: ticket.input_holds,
+            prepared_fields: ticket.prepared_fields,
         };
         assert!(executor.interactive(&work.payload));
         assert!(!executor.streaming(&work.payload));

@@ -95,6 +95,7 @@ pub struct CheckpointBindings {
     pub source_handle: String,
     pub source_digest: String,
     pub source_bytes: u64,
+    pub source_selection: Vec<String>,
     pub source: SourceRange,
     pub item_schema: ObjectRef,
     pub item_schema_digest: String,
@@ -170,7 +171,7 @@ impl Checkpoint {
         Ok(checkpoint)
     }
     fn check(&self, limits: CheckpointLimits) -> Result<(), FormatError> {
-        if self.version != 4 {
+        if self.version != 5 {
             return Err(FormatError::Version);
         }
         if [
@@ -231,7 +232,14 @@ impl Checkpoint {
                 return Err(FormatError::Corrupt);
             }
         }
-        if self.bindings.source_bytes == 0 {
+        if self.bindings.source_selection.len() > 128
+            || self
+                .bindings
+                .source_selection
+                .iter()
+                .any(|s| s.is_empty() || s.len() > 1024)
+            || self.bindings.source_bytes == 0
+        {
             return Err(FormatError::Corrupt);
         }
         validate_reference(&self.bindings.item_schema)?;

@@ -62,8 +62,14 @@ async fn shared_memory_evictions_wake_readers_and_are_delivered_only_to_the_owne
     .with_memory_budget(NonZeroU64::new(4096).unwrap(), 1)
     .unwrap();
     let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
-    let a = worker.transient_scope().unwrap();
-    let b = worker.transient_scope().unwrap();
+    let a = worker
+        .transient_scope()
+        .unwrap()
+        .with_placement(wes_engine::storage::ValuePlacement::Memory);
+    let b = worker
+        .transient_scope()
+        .unwrap()
+        .with_placement(wes_engine::storage::ValuePlacement::Memory);
     let first = a
         .publish(value(2), PublicationPolicy::Temporary)
         .await
@@ -1098,4 +1104,63 @@ fn a_value_store_opens_only_with_a_durability_this_host_establishes() {
     drop(strong);
     let store = open(&path, None);
     assert!(store.read(&handle).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn spill_keeps_exact_owned_snapshot_without_a_loss_notice_and_cleanup_removes_it() {
+    use wes_engine::storage::{PublicationPolicy, StoreWorkerLimits, spawn_store};
+    let root = private_temp();
+    let live = root.path().join("live");
+    let backend = tiered(&live, &root.path().join("archive"), None)
+        .with_memory_budget(NonZeroU64::new(4096).unwrap(), 1)
+        .unwrap();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    let scope = worker.transient_scope().unwrap();
+    let first = scope
+        .publish(value(21), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    scope
+        .publish(value(22), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(
+        scope
+            .take_evicted(std::num::NonZeroUsize::new(16).unwrap())
+            .await
+            .unwrap()
+            .handles
+            .is_empty()
+    );
+    let (loaded, hold) = scope
+        .materialize(first.snapshot.clone().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(loaded.value, value(21));
+    assert!(matches!(
+        worker.read(first.handle.clone()).await,
+        Err(StoreError::ScopeUnavailable)
+    ));
+    assert!(matches!(
+        scope.release(first.handle.clone()).await,
+        Err(StoreError::Limit(_))
+    ));
+    drop(hold);
+    drop(loaded);
+    scope.close_transient_scope().await.unwrap();
+    assert!(matches!(
+        scope.read(first.handle).await,
+        Err(StoreError::Closed)
+    ));
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+    assert!(
+        !std::fs::read_dir(&live)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".wes-transient-"))
+    );
 }

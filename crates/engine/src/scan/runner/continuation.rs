@@ -89,16 +89,11 @@ impl Recipe {
         {
             return Err(invalid());
         }
-        let mut revision = sha2::Sha256::new();
-        use sha2::Digest;
-        for binding in [
+        let revision = Self::task_revision(
             &checkpoint.captured_program,
-            &checkpoint.source.digest,
+            &checkpoint.source,
             &checkpoint.profile_digest,
-        ] {
-            revision.update((binding.len() as u64).to_le_bytes());
-            revision.update(binding.as_bytes());
-        }
+        );
         if !checkpoint.budget.valid()
             || checkpoint.budget.analysis != checkpoint.analysis
             || recipe.version != 3
@@ -106,7 +101,7 @@ impl Recipe {
             || recipe.identity.analysis != checkpoint.analysis
             || recipe.identity.profile_revision != checkpoint.profile_digest
             || !recipe.settings.restore(checkpoint.budget.totals).valid()
-            || format!("sha256:{:x}", revision.finalize()) != checkpoint.task_revision
+            || revision != checkpoint.task_revision
         {
             return Err(invalid());
         }

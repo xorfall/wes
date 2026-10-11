@@ -378,9 +378,9 @@ pub fn browser_services(home: PathBuf, base: PathBuf) -> Result<web::Services, E
     inventory.add(
         "live",
         &home.join("values/live"),
-        "Evictable values and live-store metadata",
+        "Evictable values, temporary result payloads and live-store metadata",
         false,
-        0,
+        1,
     )?;
     let api_library = crate::api_library::ApiLibrary::new(std::fs::canonicalize(&home)?);
     let services = web::Services {

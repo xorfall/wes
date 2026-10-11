@@ -52,6 +52,9 @@ pub trait LocalServices: Send + Sync + std::fmt::Debug + 'static {
 pub struct BoundCalculation {
     pub compiled: Arc<Compiled>,
     inputs: IndexMap<String, Input>,
+    /// Original source identity/policy dependencies survive pruning of unreachable payload reads.
+    captured_sources: Vec<OutputRef>,
+    prepared_provenance: Option<wes_core::Provenance>,
     guards: crate::plan::Guards,
     definition: Option<Arc<wes_language::templates::CalculationDefinition>>,
     pipe_input: Option<OutputRef>,
@@ -59,6 +62,54 @@ pub struct BoundCalculation {
     json: Option<Arc<dyn LocalServices>>,
 }
 impl BoundCalculation {
+    pub(crate) fn literal_policy(&self) -> wes_core::flow::FlowPolicy {
+        self.inputs
+            .values()
+            .flat_map(Input::literal_values)
+            .fold(Default::default(), |p: wes_core::flow::FlowPolicy, v| {
+                p.join(v.provenance().policy())
+            })
+            .join(self.prepared_provenance.as_ref().map_or(
+                &wes_core::flow::FlowPolicy::default(),
+                wes_core::Provenance::policy,
+            ))
+    }
+    pub(crate) fn stored_field_paths(&self, node: &NodeId) -> Option<Vec<Vec<String>>> {
+        if self.pipe_input.as_ref().is_some_and(|p| &p.node == node) {
+            return None;
+        }
+        let mut paths = std::collections::BTreeSet::new();
+        for input in self.inputs.values() {
+            input.stored_paths(node, &mut paths);
+        }
+        if paths.contains(&vec![]) {
+            None
+        } else if paths.is_empty()
+            && !self
+                .captured_sources
+                .iter()
+                .any(|source| &source.node == node)
+        {
+            None
+        } else {
+            Some(paths.into_iter().collect())
+        }
+    }
+    pub(crate) fn capture_source_provenance(&mut self, provenance: &wes_core::Provenance) {
+        self.prepared_provenance = Some(match &self.prepared_provenance {
+            Some(previous) => wes_core::Provenance::agreed_by([previous, provenance]),
+            None => provenance.clone(),
+        });
+    }
+    pub(crate) fn prepare_fields(
+        &mut self,
+        node: &NodeId,
+        values: &std::collections::BTreeMap<Vec<String>, Value>,
+    ) {
+        for input in self.inputs.values_mut() {
+            input.prepare_fields(node, values);
+        }
+    }
     pub(crate) fn safe_observation(&self) -> bool {
         self.calls.values().all(|call| call.invocation().capability.safety == wes_core::capability::Safety::Safe && !call.interactive())
         // All effectful operations currently lower to captured calls. Fail closed if this grows.
@@ -128,12 +179,17 @@ impl BoundCalculation {
                 Ok((*id, call))
             })
             .collect::<Result<_, _>>()?;
+        let captured_sources = inputs.values().cloned().collect();
+        let inputs = inputs
+            .into_iter()
+            .map(|(name, output)| (name, Input::FromNode(output)))
+            .collect();
+        let (compiled, inputs) = super::projection::capture(compiled, inputs);
         Ok(Self {
             compiled,
-            inputs: inputs
-                .into_iter()
-                .map(|(name, output)| (name, Input::FromNode(output)))
-                .collect(),
+            inputs,
+            captured_sources,
+            prepared_provenance: None,
             guards: IndexMap::new(),
             definition: None,
             pipe_input: None,
@@ -145,6 +201,7 @@ impl BoundCalculation {
         self.inputs
             .values()
             .flat_map(Input::dependencies)
+            .chain(self.captured_sources.iter())
             .chain(self.pipe_input.iter())
             .cloned()
     }
@@ -197,6 +254,7 @@ impl BoundCalculation {
             let arguments = self.inputs;
             let guards = self.guards;
             let pipe_input = self.pipe_input;
+            let prepared_provenance = self.prepared_provenance;
             let initialized = tokio::task::spawn_blocking(move || {
                 let control = pipe_input
                     .as_ref()
@@ -241,6 +299,9 @@ impl BoundCalculation {
                     Machine::new_with_token(program, captured, Limits::default(), cancel)?;
                 if let Some(control) = control {
                     machine.capture_control_provenance(control);
+                }
+                if let Some(provenance) = prepared_provenance {
+                    machine.capture_control_provenance(provenance);
                 }
                 Ok::<_, Failure>(machine)
             })
@@ -367,12 +428,17 @@ impl BoundCalculation {
                             }
                         };
                         let report = calls
+                            .clone()
+                            .with_storage(None)
                             .execute(
                                 RunTicket {
                                     run: run.calculation_child(id),
                                     payload: bound,
                                     inputs: IndexMap::new(),
                                     input_origins: IndexMap::new(),
+                                    deferred_inputs: IndexMap::new(),
+                                    prepared_fields: Default::default(),
+                                    input_holds: vec![],
                                 },
                                 token.clone(),
                             )
@@ -387,6 +453,11 @@ impl BoundCalculation {
                                 notices.push(error.clone());
                                 Err(Failure::provider(span, error))
                             }
+                            Outcome::Stored(_) => Err(Failure::new(
+                                "CAL009",
+                                span,
+                                "This invocation produced a stored result; materialize it in a separate finite node within the input budget.",
+                            )),
                             Outcome::Cancelled(_) => Err(Failure::cancelled(span)),
                         }
                     }

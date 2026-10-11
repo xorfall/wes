@@ -6,6 +6,7 @@ use wes_engine::storage::ValueLease;
 struct Entry {
     bytes: Arc<[u8]>,
     used: Cell<u64>,
+    spill_allowed: bool,
 }
 pub(super) struct MemoryValues {
     entries: HashMap<ValueHandle, Entry>,
@@ -35,6 +36,23 @@ impl MemoryValues {
         &mut self,
         value: &Value,
         limits: Limits,
+    ) -> Result<ValueHandle, StoreError> {
+        self.insert(value, limits, false, |_, _| Ok(()))
+    }
+    pub(super) fn store_with_spill(
+        &mut self,
+        value: &Value,
+        limits: Limits,
+        spill: impl FnMut(&ValueHandle, &[u8]) -> Result<(), StoreError>,
+    ) -> Result<ValueHandle, StoreError> {
+        self.insert(value, limits, true, spill)
+    }
+    fn insert(
+        &mut self,
+        value: &Value,
+        limits: Limits,
+        spill_allowed: bool,
+        mut spill: impl FnMut(&ValueHandle, &[u8]) -> Result<(), StoreError>,
     ) -> Result<ValueHandle, StoreError> {
         if value.shape().contains_meta() || !value.data().is_storable_snapshot() {
             return Err(StoreError::NonMaterialized);
@@ -96,6 +114,9 @@ impl MemoryValues {
             return Err(StoreError::Limit("pending memory evictions"));
         }
         for (candidate, _, _) in candidates.into_iter().take(needed) {
+            if self.entries[&candidate].spill_allowed {
+                spill(&candidate, &self.entries[&candidate].bytes)?;
+            }
             self.remove(&candidate);
             self.evicted.push_back(candidate);
         }
@@ -103,6 +124,7 @@ impl MemoryValues {
         let entry = Entry {
             bytes: bytes.into(),
             used: Cell::new(0),
+            spill_allowed,
         };
         self.touch(&entry);
         self.bytes += size;

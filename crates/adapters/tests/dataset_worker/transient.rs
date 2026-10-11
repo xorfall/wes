@@ -275,6 +275,7 @@ async fn scan(worker: &StoreWorker) -> (Value, AnalysisCheckpoint) {
         let poll = runner.poll();
         match poll {
             Poll::Yield => {}
+            Poll::ReadRange => panic!("materialized fixture cannot request storage ranges"),
             Poll::Terminal => break,
             Poll::ReadPage | Poll::ReadHead => panic!("inline input"),
             Poll::Grant | Poll::Settle | Poll::Commit => {

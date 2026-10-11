@@ -427,6 +427,7 @@ mod tests {
             displays.observe(
                 &workspace,
                 &Observation {
+                    stored: None,
                     node: run.node().clone(),
                     run: Some(run.id().clone()),
                     revision: 99,

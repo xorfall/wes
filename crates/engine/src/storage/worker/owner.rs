@@ -203,6 +203,138 @@ impl<V: ValueStore> Owner<V> {
     }
 }
 impl<V: ValueStore> ValueStore for Owner<V> {
+    fn compose(
+        &mut self,
+        handle: &ValueHandle,
+        members: &[super::super::SnapshotMember],
+    ) -> Result<crate::storage::StoredSnapshot, StoreError> {
+        for member in members {
+            let child = ValueHandle::new(&member.handle)?;
+            if &child == handle || !self.is_kept(&child)? {
+                return Err(StoreError::Restricted);
+            }
+            let snapshot = self
+                .describe(&child, &member.selection)?
+                .ok_or(StoreError::MissingValue)?;
+            if snapshot.digest != member.digest {
+                return Err(StoreError::Conflict);
+            }
+        }
+        self.values.compose(handle, members)
+    }
+    fn begin_acquisition(
+        &mut self,
+        maximum: u64,
+        owner: std::sync::Weak<()>,
+    ) -> Result<ValueHandle, StoreError> {
+        let scope = self
+            .scope
+            .as_ref()
+            .filter(|s| s.is_open())
+            .ok_or(StoreError::ScopeUnavailable)?;
+        if self.value_scopes.len() >= wes_budgets::get("values.outputs") as usize {
+            return Err(StoreError::Limit("transient values"));
+        }
+        let handle = self.values.begin_acquisition(maximum, owner)?;
+        self.value_scopes
+            .insert(handle.clone(), (scope.id().into(), scope.witness()));
+        Ok(handle)
+    }
+    fn append_acquisition(
+        &mut self,
+        handle: &ValueHandle,
+        port: &str,
+        bytes: &[u8],
+    ) -> Result<(), StoreError> {
+        if !self.owns_transient(handle) {
+            return Err(StoreError::ScopeUnavailable);
+        }
+        self.values.append_acquisition(handle, port, bytes)
+    }
+    fn seal_acquisition(
+        &mut self,
+        handle: &ValueHandle,
+        shell: &Value,
+        leaves: &[super::super::LeafSelection],
+    ) -> Result<crate::storage::StoredSnapshot, StoreError> {
+        if !self.owns_transient(handle) {
+            return Err(StoreError::ScopeUnavailable);
+        }
+        self.validate_prefixes(shell)?;
+        if !shell.data().is_inline()
+            || !shell.shape().is_inline()
+            || shell.shape().contains_meta()
+            || shell.provenance().policy().is_private()
+            || shell.provenance().policy().is_unknown()
+        {
+            return Err(StoreError::Restricted);
+        }
+        self.values.seal_acquisition(handle, shell, leaves)
+    }
+    fn abort_acquisition(&mut self, handle: &ValueHandle) -> Result<(), StoreError> {
+        if !self.owns_transient(handle) {
+            return Err(StoreError::ScopeUnavailable);
+        }
+        self.values.abort_acquisition(handle)?;
+        self.value_scopes.remove(handle);
+        Ok(())
+    }
+    fn describe(
+        &self,
+        handle: &ValueHandle,
+        fields: &[String],
+    ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
+        self.check_scope(handle)?;
+        let snapshot = self.values.describe(handle, fields)?;
+        if let Some(snapshot) = &snapshot {
+            if snapshot.provenance.policy().is_private()
+                || snapshot.provenance.policy().is_unknown()
+            {
+                // These values keep their existing bounded read/hold path; they cannot become
+                // public deferred snapshots or acquire persistence permission through metadata.
+                return Ok(None);
+            }
+            if !snapshot.provenance.policy().dataset_reads().is_empty() {
+                self.datasets()?
+                    .check_read_origins(snapshot.provenance.policy().dataset_reads())?;
+            }
+        }
+        Ok(snapshot)
+    }
+    fn read_selected(
+        &self,
+        handle: &ValueHandle,
+        fields: &[String],
+        limit: u64,
+    ) -> Result<Option<LoadedValue>, StoreError> {
+        self.check_scope(handle)?;
+        let loaded = self.values.read_selected(handle, fields, limit)?;
+        if let Some(loaded) = &loaded {
+            self.validate_prefixes(&loaded.value)?;
+        }
+        Ok(loaded)
+    }
+    fn source_range(
+        &self,
+        snapshot: &crate::storage::StoredSnapshot,
+        from: u64,
+        maximum: usize,
+    ) -> Result<crate::storage::SourceRange, StoreError> {
+        let current = self
+            .describe(&snapshot.handle, &snapshot.selection)?
+            .ok_or(StoreError::MissingValue)?;
+        if current.handle != snapshot.handle
+            || current.digest != snapshot.digest
+            || current.selection != snapshot.selection
+            || current.shape != snapshot.shape
+            || current.provenance != snapshot.provenance
+            || current.metadata != snapshot.metadata
+        {
+            return Err(StoreError::Conflict);
+        }
+        self.values.source_range(snapshot, from, maximum)
+    }
+
     fn retained_persistence(&self) -> crate::history::Persistence {
         self.values.retained_persistence()
     }
@@ -214,7 +346,12 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         value: &Value,
         placement: ValuePlacement,
     ) -> Result<ValueHandle, StoreError> {
-        if self.scope.is_some() && placement != ValuePlacement::Memory {
+        if self.scope.is_some()
+            && !matches!(
+                placement,
+                ValuePlacement::Memory | ValuePlacement::MemoryAndDisk
+            )
+        {
             return Err(StoreError::Restricted);
         }
         let refs = self.validate_prefixes(value)?;
@@ -256,21 +393,49 @@ impl<V: ValueStore> ValueStore for Owner<V> {
     }
     fn hold(&mut self, handle: &ValueHandle) -> Result<Option<ValueLease>, StoreError> {
         self.check_scope(handle)?;
-        let Some(value) = self.values.read(handle)? else {
-            return Ok(None);
-        };
-        let prefixes = self.validate_prefixes(&value.value)?;
-        let Some(value) = self.values.hold(handle)? else {
-            return Ok(None);
-        };
-        let mut leases = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for prefix in prefixes {
-            if seen.insert(prefix.clone()) {
-                leases.push(self.datasets()?.hold(&prefix)?);
-            }
+        if self.holding.len() >= 128 || !self.holding.insert(handle.clone()) {
+            return Err(StoreError::Limit("value hold dependency traversal"));
         }
-        Ok(Some(ValueLease::retain((value, leases))))
+        let result = (|| {
+            let snapshot = self.describe(handle, &[])?;
+            let dependencies = self.values.dependencies(handle)?;
+            if dependencies.len() > wes_budgets::get("values.outputs") as usize {
+                return Err(StoreError::Limit("value hold dependencies"));
+            }
+            let mut members = Vec::new();
+            for child in &dependencies {
+                members.push(self.hold(child)?.ok_or(StoreError::MissingValue)?);
+            }
+            if !dependencies.is_empty()
+                || snapshot.as_ref().is_some_and(|snapshot| {
+                    snapshot.shape.is_inline()
+                        && snapshot.shape != Shape::Unknown
+                        && !snapshot.shape.contains_meta()
+                })
+            {
+                return Ok(self
+                    .values
+                    .hold(handle)?
+                    .map(|hold| ValueLease::retain((hold, members))));
+            }
+            let Some(value) = self.values.read(handle)? else {
+                return Ok(None);
+            };
+            let prefixes = self.validate_prefixes(&value.value)?;
+            let Some(value) = self.values.hold(handle)? else {
+                return Ok(None);
+            };
+            let mut leases = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for prefix in prefixes {
+                if seen.insert(prefix.clone()) {
+                    leases.push(self.datasets()?.hold(&prefix)?);
+                }
+            }
+            Ok(Some(ValueLease::retain((value, leases))))
+        })();
+        self.holding.remove(handle);
+        result
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
         self.check_scope(handle)?;
@@ -290,6 +455,10 @@ impl<V: ValueStore> ValueStore for Owner<V> {
     fn size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {
         self.check_scope(handle)?;
         self.values.size(handle)
+    }
+    fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
+        self.check_scope(handle)?;
+        self.values.digest(handle)
     }
     fn retention_size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {
         let Some(mut size) = self.values.size(handle)? else {

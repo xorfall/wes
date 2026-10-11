@@ -3,13 +3,22 @@ use std::{fmt, sync::Arc};
 use thiserror::Error;
 use uuid::Uuid;
 use wes_core::Value;
+mod acquisition;
 mod analysis_attempt;
 mod analysis_budget;
 mod analysis_coverage;
 pub mod datasets;
 mod private;
+mod residency;
 mod scope;
+mod snapshot;
+pub use acquisition::{
+    AcquiredFuture, AcquiredOutput, Acquisition, AcquisitionContext, CHUNK_BYTES, LeafSelection,
+    SnapshotFinalizer, SnapshotMember, SourceRange, acquisition_error,
+};
+pub use residency::ResidentMemory;
 pub use scope::{DatasetLifetime, TransientScope, TransientScopeWitness};
+pub use snapshot::{SnapshotDescriptor, StoredSnapshot};
 mod worker;
 pub use worker::{
     AutoKeep, PendingStore, PublicationPolicy, StoreDrain, StoreWorker, StoreWorkerLimits,
@@ -193,6 +202,8 @@ pub enum ValuePlacement {
     #[default]
     ManagedFile,
     Memory,
+    /// Explicit permission to spill cold memory copies into bounded temporary storage.
+    MemoryAndDisk,
 }
 
 /// A bounded reader/retention hold. Dropping the hold requires no storage I/O.
@@ -216,6 +227,116 @@ impl fmt::Debug for ValueLease {
 
 /// Synchronous I/O port, called on storage workers rather than the runtime state owner.
 pub trait ValueStore: Send {
+    /// Compose already retained immutable members without decoding their payloads.
+    fn compose(
+        &mut self,
+        _handle: &ValueHandle,
+        _members: &[SnapshotMember],
+    ) -> Result<StoredSnapshot, StoreError> {
+        Err(StoreError::Limit("stored composition unavailable"))
+    }
+    fn begin_acquisition(
+        &mut self,
+        _maximum: u64,
+        _owner: std::sync::Weak<()>,
+    ) -> Result<ValueHandle, StoreError> {
+        Err(StoreError::Limit("bounded acquisition unavailable"))
+    }
+    fn append_acquisition(
+        &mut self,
+        _handle: &ValueHandle,
+        _port: &str,
+        _bytes: &[u8],
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Limit("bounded acquisition unavailable"))
+    }
+    fn seal_acquisition(
+        &mut self,
+        _handle: &ValueHandle,
+        _shell: &Value,
+        _leaves: &[LeafSelection],
+    ) -> Result<StoredSnapshot, StoreError> {
+        Err(StoreError::Limit("bounded acquisition unavailable"))
+    }
+    fn abort_acquisition(&mut self, _handle: &ValueHandle) -> Result<(), StoreError> {
+        Err(StoreError::Limit("bounded acquisition unavailable"))
+    }
+    fn describe(
+        &self,
+        handle: &ValueHandle,
+        fields: &[String],
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        let Some(loaded) = self.read(handle)? else {
+            return Ok(None);
+        };
+        let value =
+            crate::plan::project_value(&loaded.value, fields).map_err(|_| StoreError::Conflict)?;
+        let Some(digest) = self.digest(handle)? else {
+            return Ok(None);
+        };
+        let mut snapshot = StoredSnapshot::capture(handle.clone(), digest, &value)
+            .ok_or(StoreError::Limit("snapshot metadata"))?;
+        snapshot = snapshot.with_selection(fields.to_vec());
+        Ok(Some(snapshot))
+    }
+    /// Immutable physical members that must be held with a composed result. This grants no read
+    /// authority; the shared owner validates every member's current policy and Dataset roots.
+    fn dependencies(&self, _handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+        Ok(vec![])
+    }
+    fn read_selected(
+        &self,
+        handle: &ValueHandle,
+        fields: &[String],
+        limit: u64,
+    ) -> Result<Option<LoadedValue>, StoreError> {
+        let Some(loaded) = self.read(handle)? else {
+            return Ok(None);
+        };
+        let value =
+            crate::plan::project_value(&loaded.value, fields).map_err(|_| StoreError::Conflict)?;
+        crate::value_size::value_charge(&value, limit)
+            .ok_or(StoreError::Limit("selected result"))?;
+        Ok(Some(LoadedValue { value }))
+    }
+    fn source_range(
+        &self,
+        snapshot: &StoredSnapshot,
+        from: u64,
+        maximum: usize,
+    ) -> Result<SourceRange, StoreError> {
+        if maximum == 0 || maximum > CHUNK_BYTES {
+            return Err(StoreError::Limit("source range"));
+        }
+        if self.digest(&snapshot.handle)?.as_ref() != Some(&snapshot.digest) {
+            return Err(StoreError::Conflict);
+        }
+        let loaded = self
+            .read_selected(
+                &snapshot.handle,
+                &snapshot.selection,
+                wes_budgets::get("storage.bytes"),
+            )?
+            .ok_or(StoreError::MissingValue)?;
+        if !snapshot.matches(&loaded.value) {
+            return Err(StoreError::Conflict);
+        }
+        let (bytes, text) = match loaded.value.data() {
+            wes_core::Data::Text(s) => (s.as_bytes(), true),
+            wes_core::Data::Bytes(b) => (b.as_ref(), false),
+            _ => return Err(StoreError::NonMaterialized),
+        };
+        let extent = bytes.len() as u64;
+        let start = usize::try_from(from)
+            .ok()
+            .filter(|n| *n <= bytes.len())
+            .ok_or(StoreError::Conflict)?;
+        Ok(SourceRange {
+            bytes: bytes[start..start.saturating_add(maximum).min(bytes.len())].to_vec(),
+            extent,
+            text,
+        })
+    }
     /// Minimum persistence established by a successful `keep`. Unspecified/memory stores MUST
     /// remain volatile; a journal receipt cannot make their retained bytes durable.
     fn retained_persistence(&self) -> crate::history::Persistence {
@@ -230,7 +351,9 @@ pub trait ValueStore: Send {
     ) -> Result<ValueHandle, StoreError> {
         match placement {
             ValuePlacement::ManagedFile => self.store(value),
-            ValuePlacement::Memory => Err(StoreError::Limit("memory placement unavailable")),
+            ValuePlacement::Memory | ValuePlacement::MemoryAndDisk => {
+                Err(StoreError::Limit("memory placement unavailable"))
+            }
         }
     }
     /// Whether this handle owns a temporary file requiring durable cleanup evidence.
@@ -247,6 +370,14 @@ pub trait ValueStore: Send {
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError>;
     fn encoded(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError>;
+    /// Immutable snapshot digest. Large adapters hash with bounded buffers rather than exporting
+    /// the entire encoding. The digest includes any checksummed payload dependencies.
+    fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
+        use sha2::{Digest, Sha256};
+        Ok(self
+            .encoded(handle)?
+            .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes))))
+    }
     fn size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError>;
     /// Automatic retention must account for referenced data, not just the descriptor encoding.
     fn retention_size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {

@@ -56,6 +56,30 @@ impl Failure {
                 "Result access was withdrawn; no command was rerun.",
                 false,
             ),
+            Self::Storage(StoreError::Limit(_)) => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "VALUE_CAPACITY",
+                "This read exceeds its memory or storage budget. Select a smaller field or use a bounded source scan; the stored result remains available and no command was rerun.",
+                false,
+            ),
+            Self::Storage(StoreError::Restricted | StoreError::ScopeUnavailable) => (
+                StatusCode::FORBIDDEN,
+                "VALUE_ACCESS_REFUSED",
+                "This result is outside the current read authority; no command was rerun.",
+                false,
+            ),
+            Self::Storage(StoreError::Conflict) => (
+                StatusCode::CONFLICT,
+                "VALUE_REVISION_CONFLICT",
+                "The captured result could not be verified. Read a fresh selection; no command was rerun.",
+                false,
+            ),
+            Self::Storage(StoreError::MissingValue) => (
+                StatusCode::NOT_FOUND,
+                "VALUE_UNAVAILABLE",
+                "The stored result is unavailable; no command was rerun.",
+                false,
+            ),
             Self::Storage(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "VALUE_READ_FAILED",
@@ -123,6 +147,24 @@ mod tests {
         for (failure, status, code, retryable) in [
             (Failure::Busy, 503, "VALUE_READ_BUSY", true),
             (Failure::Missing, 404, "VALUE_UNAVAILABLE", false),
+            (
+                Failure::Storage(StoreError::Limit("materialized input")),
+                413,
+                "VALUE_CAPACITY",
+                false,
+            ),
+            (
+                Failure::Storage(StoreError::Restricted),
+                403,
+                "VALUE_ACCESS_REFUSED",
+                false,
+            ),
+            (
+                Failure::Storage(StoreError::Conflict),
+                409,
+                "VALUE_REVISION_CONFLICT",
+                false,
+            ),
             (
                 Failure::Storage(StoreError::DatasetWithdrawn),
                 403,

@@ -19,6 +19,20 @@ pub(super) struct Recipe {
     pub framing: Option<Profile>,
     pub identity: Identity,
 }
+impl Recipe {
+    pub(super) fn task_revision(program: &str, source: &CapturedValue, profile: &str) -> String {
+        let mut revision = Sha256::new();
+        for binding in [program, &source.digest, profile] {
+            revision.update((binding.len() as u64).to_le_bytes());
+            revision.update(binding.as_bytes());
+        }
+        for field in &source.selection {
+            revision.update((field.len() as u64).to_le_bytes());
+            revision.update(field.as_bytes());
+        }
+        format!("sha256:{:x}", revision.finalize())
+    }
+}
 pub(super) struct Durable {
     pub checkpoint: AnalysisCheckpoint,
     pub grant_start_work: u64,
@@ -93,6 +107,22 @@ impl Runner {
         token: CancellationToken,
         span: Span,
     ) -> Result<PreparedResume, Failure> {
+        Self::prepare_stored_resume(
+            source, None, follow, reference, checkpoint, run, pool, services, token, span,
+        )
+    }
+    pub(crate) fn prepare_stored_resume(
+        source: Value,
+        stored: Option<(crate::storage::StoredSnapshot, u64)>,
+        follow: bool,
+        reference: wes_core::DatasetRef,
+        checkpoint: AnalysisCheckpoint,
+        run: String,
+        pool: &MemoryPool,
+        services: Option<Arc<dyn LocalServices>>,
+        token: CancellationToken,
+        span: Span,
+    ) -> Result<PreparedResume, Failure> {
         Self::prepare_attempt(
             source,
             follow,
@@ -105,6 +135,7 @@ impl Runner {
             span,
             None,
             Settings::capture(),
+            stored,
         )
     }
     pub fn prepare_continue(
@@ -153,6 +184,7 @@ impl Runner {
             span,
             Some(requested),
             active,
+            captured.stored_source,
         )
     }
     fn prepare_attempt(
@@ -167,6 +199,7 @@ impl Runner {
         span: Span,
         raised: Option<crate::scan::Totals>,
         active: Settings,
+        stored: Option<(crate::storage::StoredSnapshot, u64)>,
     ) -> Result<PreparedResume, Failure> {
         let invalid = || {
             Failure::new(
@@ -336,6 +369,7 @@ impl Runner {
             services,
             token,
             span,
+            stored,
         )?;
         runner.elapsed_prior = Duration::from_millis(checkpoint.duration.spent_ms);
         if let Some(followed) = &checkpoint.followed_source {
@@ -395,15 +429,8 @@ impl Runner {
                 .map_err(|_| self.durable_failure("scan schema capture failed"))
         };
         let measured = self.ledger.usage().work;
-        let mut revision = Sha256::new();
-        for binding in [
-            &captured_program,
-            &source.digest,
-            &self.identity.profile_revision,
-        ] {
-            revision.update((binding.len() as u64).to_le_bytes());
-            revision.update(binding.as_bytes());
-        }
+        let revision =
+            Recipe::task_revision(&captured_program, &source, &self.identity.profile_revision);
         let attempt = uuid::Uuid::new_v4().to_string();
         let spent_ms = self.elapsed_ms();
         Ok(AnalysisCheckpoint {
@@ -423,7 +450,7 @@ impl Runner {
             attempt,
             previous_attempt: None,
             run: self.identity.analysis.clone(),
-            task_revision: format!("sha256:{:x}", revision.finalize()),
+            task_revision: revision,
             source,
             followed_source: self.source.followed_source().cloned(),
             item_schema: capture(self.step.input.clone())?,

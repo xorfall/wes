@@ -319,6 +319,81 @@ impl MappedInvoker {
     }
 }
 impl Invoker for MappedInvoker {
+    fn invoke_acquired(
+        &self,
+        call: Call,
+        token: CancellationToken,
+        context: wes_engine::storage::AcquisitionContext,
+    ) -> wes_engine::storage::AcquiredFuture {
+        let this = self.clone();
+        Box::pin(async move {
+            let op = this
+                .definition
+                .operations
+                .iter()
+                .find(|op| op.path == call.capability.path)
+                .ok_or_else(|| failed("PRV001", "unknown captured provider operation"))?;
+            let eligible = match op.format {
+                schema::OutputFormat::Process => true,
+                schema::OutputFormat::Json => false,
+                schema::OutputFormat::Text | schema::OutputFormat::Bytes => {
+                    op.result.as_ref().is_some_and(|c| {
+                        let limits = c.constraints();
+                        matches!(c.kind(), wes_core::contracts::ContractKind::Scalar(_))
+                            && limits.enumeration.is_empty()
+                            && limits.patterns.is_empty()
+                            && limits.min.is_none()
+                            && limits.max.is_none()
+                            && limits.min_length.is_none()
+                            && limits.max_length.is_none()
+                            && limits.min_items.is_none()
+                            && limits.max_items.is_none()
+                    })
+                }
+            };
+            if !eligible {
+                return this
+                    .invoke(call, token)
+                    .await
+                    .map(wes_engine::storage::AcquiredOutput::Value);
+            }
+            let arguments = this.arguments(op, &call, &token)?;
+            let delegated = Call {
+                capability: this.capability.clone(),
+                arguments,
+                ..call
+            };
+            let mapped = this.clone();
+            let captured = op.clone();
+            let cancel = token.clone();
+            let context = context.with_finalizer(Arc::new(move |value, leaves| {
+                let output = mapped.output(&captured, value, &cancel)?;
+                if matches!(captured.format, schema::OutputFormat::Process) {
+                    Ok((output, leaves))
+                } else {
+                    Ok((
+                        output,
+                        vec![wes_engine::storage::LeafSelection {
+                            port: "stdout".into(),
+                            fields: vec![],
+                            text: matches!(captured.format, schema::OutputFormat::Text),
+                        }],
+                    ))
+                }
+            }));
+            match this
+                .base
+                .invoke_acquired(delegated, token.clone(), context)
+                .await?
+            {
+                wes_engine::storage::AcquiredOutput::Value(value) => this
+                    .output(op, value, &token)
+                    .map(wes_engine::storage::AcquiredOutput::Value),
+                stored @ wes_engine::storage::AcquiredOutput::Stored { .. } => Ok(stored),
+            }
+        })
+    }
+
     fn invoke(&self, call: Call, token: CancellationToken) -> InvocationFuture {
         let this = self.clone();
         Box::pin(async move {

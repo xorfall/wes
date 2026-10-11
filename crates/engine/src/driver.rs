@@ -14,7 +14,7 @@ use tokio::{
 pub use tokio_util::sync::CancellationToken;
 use wes_core::{ErrorValue, Value, capability::Typing};
 pub(crate) mod conversations;
-mod io;
+pub(crate) mod io;
 pub mod lifetime;
 pub mod progress;
 pub use conversations::ConversationEvent;
@@ -168,6 +168,7 @@ pub struct Snapshot<T> {
     pub captured_inputs: IndexMap<NodeId, bool>,
     pub graph: DependencyGraph<T>,
     pub values: IndexMap<NodeId, Value>,
+    pub stored_values: IndexMap<NodeId, crate::runtime::StoredOutputRef>,
     pub evidence_values: IndexMap<NodeId, crate::runtime::EvidenceValue>,
     pub actual_typings: IndexMap<NodeId, Arc<Typing>>,
     pub errors: IndexMap<NodeId, ErrorValue>,
@@ -513,6 +514,7 @@ impl<T: Clone> Snapshot<T> {
         let mut captured_inputs = IndexMap::new();
         let mut waiting_inputs = IndexMap::new();
         let mut values = IndexMap::new();
+        let mut stored_values = IndexMap::new();
         let mut evidence_values = IndexMap::new();
         let mut progress = IndexMap::new();
         let mut actual_typings = IndexMap::new();
@@ -549,6 +551,9 @@ impl<T: Clone> Snapshot<T> {
             if let Some(value) = runtime.value_of(node.id()) {
                 values.insert(node.id().clone(), value.clone());
             }
+            if let Some(value) = runtime.stored_output(node.id()) {
+                stored_values.insert(node.id().clone(), value);
+            }
             if let Some(error) = runtime.error_of(node.id()) {
                 errors.insert(node.id().clone(), error.clone());
             }
@@ -571,6 +576,7 @@ impl<T: Clone> Snapshot<T> {
             captured_inputs,
             graph,
             values,
+            stored_values,
             evidence_values,
             actual_typings,
             errors,

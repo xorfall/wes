@@ -214,7 +214,7 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         path: &["transient"],
         operation: Transient,
         short: None,
-        summary: "Run a named finite analysis with auto-Keep off and bounded RAM/temporary Dataset and checkpoint storage. Ordinary workspace auto-Keep is unchanged. Unsaved data does not return after reopening; the definition never runs automatically. Existing completed-input requirements apply to View edits. Example: :transient { :calc pure { return 1; } > value } > study",
+        summary: "Run a named finite analysis with auto-Keep off and bounded RAM/temporary Dataset and checkpoint storage. Permitted local finite Process/Text/Bytes outputs can be acquired in chunks; whole-value consumers still obey memory limits. Select fields or use :scan for larger sources. Ordinary workspace auto-Keep is unchanged. Unsaved data does not return after reopening; the definition never runs automatically. Existing completed-input requirements apply to View edits. Example: :transient { :calc pure { return 1; } > value } > study",
     },
     CommandPath {
         path: &["keep"],

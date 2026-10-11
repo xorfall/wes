@@ -16,6 +16,7 @@ struct State {
     kept: HashSet<ValueHandle>,
     evicted: Vec<ValueHandle>,
     calls: usize,
+    reads: usize,
     encoded_bytes: usize,
     fail_size: bool,
     reject_keep: bool,
@@ -49,6 +50,94 @@ fn value(text: &str) -> Value {
         Provenance::default(),
     )
     .unwrap()
+}
+
+#[tokio::test]
+async fn ordinary_handle_read_decodes_the_result_once() {
+    let backend = memory();
+    let state = backend.state.clone();
+    let handle = ValueHandle::fresh();
+    let value = Value::new(
+        Shape::Primitive(wes_core::Primitive::Text),
+        Data::Text("synthetic finite input".into()),
+        Provenance::default(),
+    )
+    .unwrap();
+    state
+        .lock()
+        .unwrap()
+        .values
+        .insert(handle.clone(), value.clone());
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    assert_eq!(worker.read(handle).await.unwrap().unwrap().value, value);
+    assert_eq!(state.lock().unwrap().reads, 1);
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn ordinary_reads_register_payload_ownership_before_delivery() {
+    let backend = memory();
+    let state = backend.state.clone();
+    let first = ValueHandle::fresh();
+    let second = ValueHandle::fresh();
+    let typed = |text: &str| {
+        Value::new(
+            Shape::Primitive(wes_core::Primitive::Text),
+            Data::Text(text.into()),
+            Provenance::default(),
+        )
+        .unwrap()
+    };
+    let first_value = typed(&"a".repeat(4096));
+    let charge = first_value
+        .allocations(100)
+        .unwrap()
+        .iter()
+        .map(|allocation| allocation.bytes() + 96)
+        .sum();
+    {
+        let mut state = state.lock().unwrap();
+        state.values.insert(first.clone(), first_value);
+        state
+            .values
+            .insert(second.clone(), typed(&"b".repeat(4096)));
+    }
+    let residency = super::super::ResidentMemory::new(charge, 100);
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    let worker = worker.with_resident_memory(residency.clone());
+    let loaded = worker.read(first.clone()).await.unwrap().unwrap();
+    assert_eq!(state.lock().unwrap().reads, 1);
+    assert_eq!(residency.used(), charge);
+
+    assert!(matches!(
+        worker.read(second.clone()).await,
+        Err(StoreError::Limit(_))
+    ));
+    assert_eq!(residency.used(), charge);
+    assert_eq!(
+        worker.budget.available_permits(),
+        worker.limits.bytes.get() as usize
+    );
+
+    let reader = loaded.value.clone();
+    state.lock().unwrap().values.remove(&first);
+    drop(loaded);
+    assert_eq!(
+        residency.used(),
+        charge,
+        "the remaining reader owns the decoded payload"
+    );
+    drop(reader);
+    assert_eq!(residency.used(), 0);
+    let next = worker.read(second).await.unwrap().unwrap();
+    assert_eq!(residency.used(), charge);
+    assert_eq!(state.lock().unwrap().reads, 3);
+    drop(next);
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+    drop(state);
+    assert_eq!(residency.used(), 0);
 }
 #[tokio::test]
 async fn unsupported_memory_placement_refuses_without_calling_the_backing_store() {
@@ -116,6 +205,67 @@ async fn private_memory_holds_do_not_permit_export_and_release_waits_for_the_las
     worker.shutdown().await.unwrap();
     task.join().await.unwrap();
 }
+#[tokio::test]
+async fn unleased_backend_reads_are_bounded_but_cannot_prepare_a_deferred_consumer() {
+    let (worker, task) = spawn_store(memory(), StoreWorkerLimits::default()).unwrap();
+    let value = Value::new(
+        Shape::Primitive(wes_core::Primitive::Text),
+        Data::Text("synthetic finite input".into()),
+        Default::default(),
+    )
+    .unwrap();
+    let output = worker
+        .publish(value.clone(), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert_eq!(
+        worker
+            .read(output.handle.clone())
+            .await
+            .unwrap()
+            .unwrap()
+            .value,
+        value
+    );
+    assert!(matches!(
+        worker.materialize(output.snapshot.unwrap()).await,
+        Err(StoreError::MissingValue)
+    ));
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
+async fn unknown_policy_keeps_bounded_reads_without_becoming_a_deferred_public_snapshot() {
+    let (worker, task) = spawn_store(memory(), StoreWorkerLimits::default()).unwrap();
+    let value = Value::new(
+        Shape::Primitive(wes_core::Primitive::Text),
+        Data::Text("synthetic bounded input".into()),
+        Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().unknown()),
+    )
+    .unwrap();
+    let output = worker
+        .publish(value.clone(), PublicationPolicy::Temporary)
+        .await
+        .unwrap();
+    assert!(output.snapshot.is_none());
+    assert!(
+        worker
+            .describe(output.handle.clone(), vec![])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // This synthetic backend has no leases; unknown policy must still reach that normal path.
+    assert!(worker.hold(output.handle.clone()).await.unwrap().is_none());
+    assert_eq!(
+        worker.read(output.handle).await.unwrap().unwrap().value,
+        value
+    );
+    worker.shutdown().await.unwrap();
+    task.join().await.unwrap();
+}
+
 #[tokio::test]
 async fn recovery_requires_retention_and_bounds_decoded_replies() {
     let backend = memory();
@@ -203,10 +353,9 @@ impl ValueStore for Memory {
         Ok(handle)
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
-        Ok(self
-            .state
-            .lock()
-            .unwrap()
+        let mut state = self.state.lock().unwrap();
+        state.reads += 1;
+        Ok(state
             .values
             .get(handle)
             .cloned()
@@ -458,7 +607,7 @@ async fn publication_uncertainty_preserves_its_handle_and_is_never_automatically
     );
     assert_eq!(state.lock().unwrap().calls, 1);
     let report = store.shutdown().await.unwrap();
-    assert_eq!(report.attempted, 2);
+    assert_eq!(report.attempted, 2); // one publication and one read
     assert_eq!(report.failed, 1);
     task.join().await.unwrap();
 }
