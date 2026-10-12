@@ -13,6 +13,155 @@ impl Drop for Cleanup {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn recovery_pages_are_frozen_authorized_and_followed_by_a_new_resize_epoch() {
+    use base64::Engine;
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let runtime = launch(RuntimeOptions::new(home.clone(), root.path().into()))
+        .await
+        .unwrap();
+    let manager = Manager::default();
+    let _cleanup = Cleanup(manager.clone());
+    let current = runtime.handle.current().unwrap();
+    let client = "recovery-fixture";
+    let config = crate::runtime::browser_services(home, root.path().into())
+        .unwrap()
+        .terminal
+        .unwrap();
+    let id = manager
+        .start(
+            config,
+            current.clone(),
+            client.into(),
+            0,
+            runtime.handle.clone(),
+        )
+        .await
+        .unwrap();
+    let terminal = manager.owned(&id, &current.generation, client).unwrap();
+    // Join only this test's freshly created synthetic shell before replacing its
+    // presentation with deterministic bytes; no producer can race the fixture.
+    terminal.stopped.cancel();
+    terminal.finished.cancelled().await;
+    {
+        let mut out = terminal.output.lock().unwrap();
+        out.bytes.clear();
+        out.start = 0;
+        out.epoch = 0;
+        out.screen = screen::Screen::new(400000);
+    }
+    let mut payload = b"\x1b[?2026h".to_vec();
+    payload.extend(
+        (0..20000).flat_map(|index| format!("line {index:05} {}\r\n", "x".repeat(60)).into_bytes()),
+    );
+    terminal.append(&payload);
+    let first = manager.poll(&id, &current.generation, client, 0).unwrap();
+    let page = first.recovery.as_ref().unwrap();
+    assert_eq!(first.start, payload.len() as u64);
+    assert_eq!(first.next, first.start);
+    assert!(page.total > 65536);
+    assert_eq!(page.offset, 0);
+    let expected = terminal
+        .output
+        .lock()
+        .unwrap()
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .bytes
+        .clone();
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(&first.data)
+            .unwrap(),
+        expected[..page.next]
+    );
+    assert!(manager.poll(&id, "foreign-generation", client, 0).is_err());
+    assert!(
+        manager
+            .poll(&id, &current.generation, "foreign-client", 0)
+            .is_err()
+    );
+    terminal.append(b"\x1b[?2026lnew output");
+    terminal.resized(TerminalSize {
+        cols: 100,
+        rows: 30,
+    });
+    let mut offset = page.next;
+    while offset < page.total {
+        let read = DisplayRead {
+            epoch: Some(first.epoch),
+            recovery: Some(RecoveryCursor {
+                id: Some(page.id.clone()),
+                offset,
+            }),
+        };
+        let part = manager
+            .poll_wait(&id, &current.generation, client, 0, 0, read.clone())
+            .await
+            .unwrap();
+        let retry = manager
+            .poll_wait(&id, &current.generation, client, 0, 0, read)
+            .await
+            .unwrap();
+        assert_eq!(part.data, retry.data);
+        let current_page = part.recovery.as_ref().unwrap();
+        assert_eq!((part.next, part.epoch), (first.next, first.epoch));
+        assert_eq!((current_page.cols, current_page.rows), (80, 24));
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&part.data)
+                .unwrap(),
+            expected[offset..current_page.next]
+        );
+        offset = current_page.next;
+    }
+    let resized = manager
+        .poll_wait(
+            &id,
+            &current.generation,
+            client,
+            first.next,
+            0,
+            DisplayRead {
+                epoch: Some(first.epoch),
+                recovery: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(resized.epoch, first.epoch);
+    let new_page = resized.recovery.as_ref().unwrap();
+    assert_ne!(new_page.id, page.id);
+    assert_eq!((new_page.cols, new_page.rows), (100, 30));
+    assert_eq!(
+        resized.next,
+        payload.len() as u64 + b"\x1b[?2026lnew output".len() as u64
+    );
+    assert!(
+        manager
+            .poll_wait(
+                &id,
+                &current.generation,
+                client,
+                0,
+                0,
+                DisplayRead {
+                    epoch: None,
+                    recovery: Some(RecoveryCursor {
+                        id: Some(new_page.id.clone()),
+                        offset: usize::MAX
+                    })
+                }
+            )
+            .await
+            .is_err()
+    );
+    manager.shutdown().await;
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn command_publication_skips_unchanged_metadata_and_follows_client_selection() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
@@ -520,16 +669,19 @@ fn generic_transport_loop_preserves_partial_input_resize_output_and_authority_st
     send.send(Input::Write(b"hello".to_vec())).unwrap();
     let mut endpoint = Synthetic::default();
     let mut output = vec![];
+    let mut applied_sizes = vec![];
     pump(
         &CancellationToken::new(),
         &mut endpoint,
         &receive,
         &CancellationToken::new(),
         |bytes| output.extend_from_slice(bytes),
+        |size| applied_sizes.push((size.cols, size.rows)),
     )
     .unwrap();
     assert_eq!(endpoint.received, b"hello");
     assert_eq!(endpoint.sizes, [(99, 33)]);
+    assert_eq!(applied_sizes, [(99, 33)]);
     assert_eq!(output, b"out");
     let cancelled = CancellationToken::new();
     cancelled.cancel();
@@ -540,6 +692,7 @@ fn generic_transport_loop_preserves_partial_input_resize_output_and_authority_st
         &receive,
         &cancelled,
         |_| panic!("revoked output"),
+        |_| panic!("revoked resize"),
     )
     .unwrap();
     assert_eq!(endpoint.writes, 0);

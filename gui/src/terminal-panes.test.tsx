@@ -15,7 +15,10 @@ vi.mock("@xterm/xterm", () => ({ Terminal: class {
   registerLinkProvider() { const registration = { dispose: vi.fn() }; this.links.push(registration); return registration; }
   parser = { registerOscHandler: (_: number, fn: (value: string) => boolean) => { directoryHandlers.push(fn); return { dispose() {} }; } };
   constructor(options: { theme?: ITheme; fontFamily?: string }) { this.options = options; terminals.push(this); }
-  loadAddon() {} open() {} dispose() {} reset() {} writeln() {}
+  buffer = { active: { type: "normal", baseY: 100, viewportY: 60 } };
+  reset = vi.fn(); scrollLines = vi.fn();
+  resize(cols: number, rows: number) { this.cols = cols; this.rows = rows; resizeHandlers.at(-1)?.({cols,rows}); }
+  loadAddon() {} open() {} dispose() {} writeln() {}
   onData(handler: (value: string) => void) { dataHandlers.push(handler); return { dispose() {} }; } onResize(handler: (size: { cols: number; rows: number }) => void) { resizeHandlers.push(handler); return { dispose() {} }; }
 } }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = vi.fn(); constructor() { fits.push(this.fit); } } }));
@@ -53,6 +56,23 @@ it("reattaches the existing owned shell after UI recreation without starting or 
   expect(terminal.mock.calls.map(([r]) => r.action)).toEqual(["find", "resize", "find", "resize"]);
   await act(async () => dataHandlers.at(-1)!("new input"));
   expect(terminal.mock.calls.filter(([r]) => r.action === "write").map(([r]) => r)).toEqual([{ action: "write", id: "existing", text: "new input" }]);
+});
+
+it("restores viewport and geometry without echoing a resize or input while loading a screen", async () => {
+  const terminal = vi.fn().mockImplementation(async (request: {action:string}) => request.action === "start" ? {id:"owned"} : {});
+  await mount({terminal} as unknown as Engine);
+  const reader = output.mock.calls.at(-1)![0];
+  const emulator = terminals[0] as unknown as {reset:ReturnType<typeof vi.fn>;scrollLines:ReturnType<typeof vi.fn>};
+  const count = terminal.mock.calls.length, fitted = fits[0]!.mock.calls.length;
+  act(() => reader.restore({cols:100,rows:30}));
+  expect(emulator.reset).toHaveBeenCalledTimes(2); // Initial attach, then coherent recovery.
+  expect(tree!.root.findAllByProps({role:"status"})).toHaveLength(1);
+  act(() => resized[0]!()); act(() => dataHandlers[0]!("not replayed"));
+  expect(terminal).toHaveBeenCalledTimes(count); expect(fits[0]).toHaveBeenCalledTimes(fitted);
+  act(() => reader.restored());
+  expect(emulator.scrollLines).toHaveBeenCalledWith(-40);
+  expect(tree!.root.findAllByProps({role:"status"})).toHaveLength(0);
+  expect(fits[0]).toHaveBeenCalledTimes(fitted + 1);
 });
 
 it("starts once after a confirmed empty lookup, and recovers a lost start reply on explicit retry", async () => {
