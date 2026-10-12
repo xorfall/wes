@@ -26,13 +26,19 @@ class SelectionTests(unittest.TestCase):
 
     def test_core_change_selects_all_core_consumers_and_contract_suites(self):
         plan = self.model.plan(["crates/core/src/value.rs"])
-        self.assertEqual(set(plan["rust"]), set(self.model.crates) - {"wes-budgets"})
+        self.assertEqual(set(plan["rust"]), set(self.model.crates) - {"wes-budgets", "avt"})
         self.assertEqual(set(plan["suites"]), SUITES)
 
     def test_gui_change_does_not_run_engine_or_go_tests(self):
         plan = self.model.plan(["gui/src/surface/Cell.tsx"])
         self.assertEqual(plan["rust"], ["wes-desktop"])
         self.assertEqual(plan["suites"], ["gui"])
+
+    def test_vendored_terminal_model_selects_its_owner_and_endpoint_consumers(self):
+        plan = self.model.plan(["vendor/avt/src/cell.rs"])
+        self.assertEqual(plan["rust"], ["avt", "wes", "wes-desktop"])
+        self.assertIn("examples", plan["suites"])
+        self.assertFalse(plan["full"])
 
     def test_transport_change_includes_gui(self):
         plan = self.model.plan(["crates/app/src/web/value.rs"])
