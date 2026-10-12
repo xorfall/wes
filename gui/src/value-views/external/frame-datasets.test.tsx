@@ -1,5 +1,5 @@
 import {act,create,type ReactTestRenderer} from "react-test-renderer";
-import {afterEach,expect,it,vi} from "vitest";
+import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {startFrame} from "../../../../packages/view-sdk/frame";
 import {ViewDatasetError,type ViewDatasets} from "../../../../packages/view-sdk/datasets";
 
@@ -7,7 +7,12 @@ import {ViewDatasetError,type ViewDatasets} from "../../../../packages/view-sdk/
 
 const host=vi.hoisted(()=>({render:vi.fn()}));
 vi.mock("react-dom/client",()=>({createRoot:()=>({render:host.render})}));
-afterEach(()=>{vi.unstubAllGlobals();vi.useRealTimers();host.render.mockReset();});
+const roots:ReactTestRenderer[]=[];
+beforeEach(()=>vi.useFakeTimers());
+afterEach(()=>{
+  for(const root of roots.splice(0))act(()=>root.unmount());
+  vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();host.render.mockReset();
+});
 
 function frame(){
   let connect:(event:unknown)=>void=()=>{};
@@ -20,7 +25,7 @@ function frame(){
   vi.stubGlobal("ResizeObserver",class{observe(){} disconnect(){}});
   const port={onmessage:undefined as undefined|((message:{data:string})=>void),postMessage:vi.fn(),start:vi.fn()};
   let renderer:ReactTestRenderer|undefined,seen:ViewDatasets|undefined;
-  host.render.mockImplementation(element=>act(()=>{if(renderer)renderer.update(element);else renderer=create(element);}));
+  host.render.mockImplementation(element=>act(()=>{if(renderer)renderer.update(element);else {renderer=create(element);roots.push(renderer);}}));
   const Component=({context}:{context:{datasets?:ViewDatasets}})=>{seen=context.datasets;return <p>view</p>;};
   startFrame({definition:{interaction:null,digest:"fixture"},Component} as unknown as Parameters<typeof startFrame>[0]);
   connect({source:parent,data:"wes-view-connect",ports:[port]});
