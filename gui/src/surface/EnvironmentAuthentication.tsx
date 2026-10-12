@@ -1,11 +1,12 @@
 /**
  * An open environment card's providers: one table (provider, kind, runs on → contacts, credentials,
- * access), where a provider with an HTTP authentication contract opens its own row into its setup,
+ * access), where a provider with authentication choices or credential bindings opens its own setup,
  * so the list and the setup never repeat each other.
  *
- * The setup is three steps: Method (which authentication each operation uses), Credentials (the
+ * HTTP setup has three steps: Method (which authentication each operation uses), Credentials (the
  * values, masked, kept in this session unless remembered on this device) and Access (this provider
- * may use the credentials for five minutes). Where it runs is table metadata, not a step, and
+ * may use the credentials for five minutes). Fixed declarative bindings use Credentials and Access.
+ * Where it runs is table metadata, not a step, and
  * execution belongs to the environment card. A step's actions wait until the steps before it are
  * done; the guards themselves are the service's and are unchanged: save before credentials, grant
  * only when bound, resolved, enabled and supplied.
@@ -202,6 +203,7 @@ function ProviderSetup({ provider, seconds, busy, onChange, vault, onVaultChange
   const dirty = JSON.stringify(choices) !== JSON.stringify(savedChoices(provider));
   const { required, unbound, unresolved, supplied } = setupFacts(provider, choices);
   const slots = provider.credentials;
+  const hasMethods = provider.operations.length > 0;
   const selection = { environment: provider.environment, revision: provider.revision, provider: provider.provider };
   const persistence = provider.persistenceSupported ?? false;
   const needs = persistence ? vaultNeeds(vault.report) : undefined;
@@ -231,7 +233,7 @@ function ProviderSetup({ provider, seconds, busy, onChange, vault, onVaultChange
   const state = (done: boolean, ready: boolean): StepState => done ? "done" : ready ? "current" : "waiting";
 
   return <div className="env-provider" aria-label={`${provider.provider} authentication`}>
-    <Step number={1} title="Method" state={state(method, true)}>
+    {hasMethods && <Step number={1} title="Method" state={state(method, true)}>
       {provider.operations.map(op => {
         const name = op.operation.join(" ");
         return <div className="env-auth-method" key={name}>
@@ -254,8 +256,8 @@ function ProviderSetup({ provider, seconds, busy, onChange, vault, onVaultChange
         <button type="button" className="screen-chip chip-chosen" disabled={busy || (!dirty && !unbound)} onClick={() => void onChange({ ...selection, action: "configure", auth: choices })}>save authentication</button>
         {dirty ? <span className="mono-warn">unsaved choice</span> : unresolved ? <span className="mono-warn">choose a method for each operation you use</span> : unbound ? <span className="mono-warn">save to create credential bindings</span> : <span className="mono-ok">saved</span>}
       </div>
-    </Step>
-    <Step number={2} title="Credentials" state={state(credentials, saved && known)}>
+    </Step>}
+    <Step number={hasMethods ? 2 : 1} title="Credentials" state={state(credentials, saved && known)}>
       {needs === "unlock" && slots.length > 0 && <VaultUnlock busy={busy || vault.busy} unlock={openVault} />}
       {vault.message?.failed && <span className="mono-bad" role="status">{vault.message.text}</span>}
       {slots.length === 0
@@ -264,7 +266,7 @@ function ProviderSetup({ provider, seconds, busy, onChange, vault, onVaultChange
           save={(value, remember) => onChange({ ...selection, action: "supply", slot: credential.slot, value, remember })}
           forget={() => onChange({ ...selection, action: "forget", slot: credential.slot })} />)}
     </Step>
-    {required.length > 0 && <Step number={3} title="Access" state={state(access, credentials && execution)}>
+    {required.length > 0 && <Step number={hasMethods ? 3 : 2} title="Access" state={state(access, credentials && execution)}>
       <div className="env-step-actions">
         <span className={access ? "mono-ok" : "mono-faint"}>{access ? `granted · ${seconds}s remaining` : "not granted"}</span>
         <button type="button" className="screen-chip cell-action" disabled={busy || dirty || unbound || unresolved || !execution || !supplied} onClick={() => void onChange({ ...selection, action: "grant" })}>allow for 5 minutes</button>

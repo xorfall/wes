@@ -159,7 +159,9 @@ export function savedChoices(provider: ProviderAuthentication): Record<string, s
  * bound slot is supplied. The service's guards are the authority; these only order the steps.
  */
 export function setupFacts(provider: ProviderAuthentication, choices: Record<string, string[]> = savedChoices(provider)) {
-  const required = Array.from(new Set(provider.operations.flatMap(operation => operation.state === "fixed"
+  const required = provider.operations.length === 0
+    ? provider.credentials.map(credential => credential.slot)
+    : Array.from(new Set(provider.operations.flatMap(operation => operation.state === "fixed"
     ? operation.options[0]?.credentialSlots ?? []
     : operation.options.find(option => sameMethod(choices[operation.operation.join(" ")], option.schemes))?.credentialSlots ?? [])));
   const slots = provider.credentials;

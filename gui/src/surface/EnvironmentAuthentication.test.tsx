@@ -20,6 +20,42 @@ const textOf=(node:unknown):string=>typeof node==="string"?node:(node as {childr
 const option=(label:string)=>tree!.root.findByProps({"aria-label":"demo latest authentication method"}).findAllByType("button").find(b=>textOf(b).includes(label))!;
 const fixedKey=(state:AuthenticationReport,present:boolean)=>{const p=state.providers[0]!;p.credentials=[{slot:"key",reference:"ref",present}];p.operations=[{operation:["latest"],state:"fixed",selected:null,options:[{schemes:[],credentialSlots:["key"],methods:["header"]}]}];return p;};
 
+it("opens fixed declarative credential bindings without HTTP methods and keeps access explicit", async () => {
+ const state=report(), p=state.providers[0]!;
+ p.operations=[];
+ p.credentials=[{slot:"Username",reference:"fixture/user",present:false},{slot:"Password",reference:"fixture/password",present:false}];
+ const requests:any[]=[];
+ vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
+  expect(url).toBe("/environment-authentication");
+  if(init.method==="GET")return {ok:true,json:async()=>structuredClone(state)};
+  const body=JSON.parse(init.body);requests.push(body);
+  if(body.action==="supply")p.credentials.find(c=>c.slot===body.slot)!.present=true;
+  if(body.action==="grant")p.grantSeconds=299;
+  return {ok:true,json:async()=>({...binding,applied:true})};
+ }));
+ await mount();
+ expect(text()).toContain("1 Credentials");
+ expect(text()).toContain("2 Access");
+ expect(text()).not.toContain("1 Method");
+ expect(tree!.root.findAllByProps({"aria-label":"demo latest authentication method"})).toHaveLength(0);
+ expect(tree!.root.findAllByType("button").some(b=>b.children.join("")==="save authentication")).toBe(false);
+ expect(button("allow for 5 minutes").props.disabled).toBe(true);
+ for(const slot of ["Username","Password"]){
+  const input=tree!.root.findByProps({"aria-label":`${slot} credential`});
+  expect(input.props.type).toBe("password");
+  act(()=>input.props.onChange({target:{value:`synthetic-${slot}`}}));
+  await act(async()=>input.parent!.parent!.props.onSubmit({preventDefault(){}}));
+  expect(input.props.value).toBe("");
+ }
+ expect(button("allow for 5 minutes").props.disabled).toBe(false);
+ expect(text()).not.toContain("granted ·");
+ await act(async()=>button("allow for 5 minutes").props.onClick());
+ expect(requests.map(r=>r.action)).toEqual(["supply","supply","grant"]);
+ expect(requests.at(-1)).toEqual({environment:"default",revision:"r1",provider:"demo",action:"grant"});
+ expect(text()).toContain("granted ·");
+ expect(text()).not.toContain("synthetic-");
+});
+
 it("selects methods, sends masked credentials outside source, grants and revokes with exact binding",async()=>{
  let state=report();const requests:any[]=[];
  vi.stubGlobal("fetch",vi.fn(async(url,init)=>{
