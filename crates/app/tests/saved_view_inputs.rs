@@ -29,7 +29,10 @@ async fn saved_members_are_readonly_view_inputs_before_and_after_reopen() {
         ":transient { :calc pure { return {view:'metric',value:17}; } > metric } > study",
     )
     .await;
-    session.read_sandbox_export("study.metric", false).await.unwrap();
+    session
+        .read_sandbox_export("study.metric", false)
+        .await
+        .unwrap();
     submit(&session, ":keep $study.metric > saved_metric").await;
     submit(&session, ":keep $study > saved_study").await;
     for text in [
