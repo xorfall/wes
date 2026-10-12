@@ -46,6 +46,14 @@ pub(crate) fn build(
     let remote = driver.namespace() == crate::execution_targets::ProcessNamespace::Target;
     let (definition, _) =
         super::importer::reconstruct(binding.import().source().bytes(), remote, Some(alias))?;
+    if definition.session.is_some() {
+        return super::session::bound(definition, alias, binding, authority);
+    }
+    if binding.import().endpoint().is_some() {
+        return Err(ImportError::Input(
+            "Finite process providers cannot bind an endpoint; use a session backend",
+        ));
+    }
     let base = driver
         .build_process(alias, binding, authority)
         .map_err(ImportError::Input)?;

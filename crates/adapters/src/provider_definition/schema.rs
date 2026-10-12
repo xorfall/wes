@@ -20,7 +20,14 @@ struct Document {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 enum Backend {
-    Process { bin: String },
+    Process {
+        bin: String,
+    },
+    Session {
+        bin: String,
+        #[serde(default)]
+        credentials: Vec<String>,
+    },
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +41,15 @@ struct OperationDoc {
     result: ResultDoc,
     #[serde(default = "success_codes")]
     success_codes: Vec<i64>,
+    #[serde(default)]
+    streaming: bool,
+    control: Option<ControlDoc>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlDoc {
+    input: String,
+    output: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,7 +178,26 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             "expected version 1, a provider name, types and 1–256 operations",
         ));
     }
-    let Backend::Process { bin } = doc.backend;
+    let (bin, session) = match doc.backend {
+        Backend::Process { bin } => (bin, None),
+        Backend::Session { bin, credentials } => {
+            if credentials.len() > 16
+                || credentials
+                    .iter()
+                    .any(|s| !identifier(s) || s.contains('-'))
+                || credentials
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != credentials.len()
+            {
+                return Err(DefinitionError(
+                    "session credential slots must be 0–16 distinct identifiers",
+                ));
+            }
+            (bin, Some(credentials))
+        }
+    };
     if bin.is_empty() || bin.len() > 4096 || bin.chars().any(char::is_control) {
         return Err(DefinitionError(
             "process backend requires an explicit executable path",
@@ -175,6 +210,40 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
     let mut capabilities = Vec::new();
     let mut operations = Vec::new();
     for op in doc.operations {
+        if session.is_none() && (op.streaming || op.control.is_some()) {
+            return Err(DefinitionError(
+                "streaming and live control require a session backend",
+            ));
+        }
+        if session.is_some()
+            && (!matches!(op.result.format, OutputFormat::Json)
+                || op.argv.iter().any(|a| !matches!(a, Argument::Literal(_)))
+                || op.success_codes != [0])
+        {
+            return Err(DefinitionError(
+                "session operations require JSON results, literal argv and success code 0",
+            ));
+        }
+        let control = op
+            .control
+            .map(|control| {
+                if !op.streaming {
+                    return Err(DefinitionError(
+                        "live control requires a streaming operation",
+                    ));
+                }
+                let input = registry
+                    .resolve(&control.input)
+                    .map_err(|_| DefinitionError("unknown control input contract"))?;
+                let output = registry
+                    .resolve(&control.output)
+                    .map_err(|_| DefinitionError("unknown control output contract"))?;
+                if !materialized(&input) || !materialized(&output) {
+                    return Err(DefinitionError("control contracts must be materialized"));
+                }
+                Ok((input, output))
+            })
+            .transpose()?;
         if op.path.is_empty()
             || op.path.len() > 16
             || op.path.iter().any(|p| !identifier(p))
@@ -239,6 +308,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             .map_or_else(crate::process::output_shape, |c| c.shape());
         let mut cap = Capability::new(op.path.clone(), result_shape, Safety::Unsafe);
         cap.summary = op.summary;
+        cap.streaming = op.streaming;
         let mut params = Vec::new();
         for parameter in op.parameters {
             if !identifier(&parameter.name) || params.iter().any(|(n, _, _)| n == &parameter.name) {
@@ -299,11 +369,13 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                 }
             }
         }
-        if params.iter().any(|(n, _, _)| {
-            !op.argv.iter().any(
+        if session.is_none()
+            && params.iter().any(|(n, _, _)| {
+                !op.argv.iter().any(
                 |a| matches!(a,Argument::Parameter(ArgumentFields{parameter,..}) if parameter == n),
             )
-        }) {
+            })
+        {
             return Err(DefinitionError(
                 "every parameter must have an explicit argv mapping",
             ));
@@ -316,14 +388,20 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             result: contract,
             format: op.result.format,
             success_codes: op.success_codes,
+            streaming: op.streaming,
+            control,
         });
     }
-    let description =
-        ProviderDescription::new(alias.unwrap_or(&doc.provider), capabilities, vec![])
-            .map_err(|_| DefinitionError("invalid or duplicate operation paths"))?;
+    let description = ProviderDescription::new(
+        alias.unwrap_or(&doc.provider),
+        capabilities,
+        session.clone().unwrap_or_default(),
+    )
+    .map_err(|_| DefinitionError("invalid or duplicate operation paths"))?;
     Ok(Definition {
         description,
         executable: bin,
         operations,
+        session,
     })
 }

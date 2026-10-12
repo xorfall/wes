@@ -2,7 +2,7 @@
 mod acquired;
 mod interactive;
 mod launch;
-mod ownership;
+pub(crate) mod ownership;
 use indexmap::IndexMap;
 pub use interactive::{ProcessConversation, TerminalHandover};
 pub(crate) use launch::local_directory;

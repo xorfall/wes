@@ -10,7 +10,7 @@ pub(crate) struct CleanupError {
     source: io::Error,
 }
 impl CleanupError {
-    pub(super) fn summary(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         // Only host error classification is public; never copy arbitrary I/O error text.
         match self.source.raw_os_error() {
             Some(code) => format!("{}: {:?} (OS error {code})", self.phase, self.source.kind()),
@@ -53,14 +53,14 @@ fn confirm_cleanup(
     })
 }
 
-pub(super) struct LocalChild {
+pub(crate) struct LocalChild {
     child: Box<dyn ChildWrapper>,
     completed: bool,
     #[cfg(unix)]
     group: Option<rustix::process::Pid>,
 }
 impl LocalChild {
-    pub(super) fn spawn(command: Command, inherited_terminal: bool) -> io::Result<Self> {
+    pub(crate) fn spawn(command: Command, inherited_terminal: bool) -> io::Result<Self> {
         let mut wrapped = CommandWrap::from(command);
         // A foreground terminal handover borrows its host's job-control group. Creating a
         // different group there would stop reads with SIGTTIN; its host keeps terminal ownership.
@@ -91,7 +91,7 @@ impl LocalChild {
             group,
         })
     }
-    pub(super) fn inner(&mut self) -> &mut Child {
+    pub(crate) fn inner(&mut self) -> &mut Child {
         let mut child = self.child.as_mut();
         loop {
             if (&*child as &dyn Any).is::<Child>() {
@@ -104,7 +104,7 @@ impl LocalChild {
         // No KillOnDrop wrapper: successful background effects keep their previous lifetime.
         self.completed = true;
     }
-    pub(super) async fn cancel(&mut self) -> Result<(), CleanupError> {
+    pub(crate) async fn cancel(&mut self) -> Result<(), CleanupError> {
         let signalled = self.child.start_kill();
         let reaped = self.child.wait().await.map(|_| ());
         confirm_cleanup(signalled, reaped, || {
