@@ -40,13 +40,14 @@ impl ProviderImporter {
 impl Importer for ProviderImporter {
     fn metadata(&self) -> ImporterMetadata {
         ImporterMetadata {
+            declaration: Some("provider"),
             parameters: vec![Parameter::new(
                 "file",
                 Shape::Primitive(Primitive::Text),
                 true,
             )],
             summary: Some(
-                "Import a declarative YAML executable provider. Process operations use typed literal argv mappings; session operations use versioned bounded duplex frames, scoped credential handoff, actual readiness and typed events/controls. Optional read_access declares required Text scope parameters and one finite Bool revalidate operation. Only explicit native revalidation returning true opens that captured scope; credentials, retained bytes and re-enabling do not grant reads or revive a source. Read domains require managed environment binding. No executable is launched by import. Session targets must be local. Replacing a definition requires replace:true; previous work keeps its captured revision.",
+                "Import a declarative YAML executable provider from file:. Read declaration for accepted fields, variants, defaults and semantic constraints. Relative executables resolve from the declaration file directory. Process operations use typed literal argv mappings; session operations use versioned bounded duplex frames, scoped credential handoff, actual readiness and typed events/controls. Optional read_access declares required Text scope parameters and one finite Bool revalidate operation. Only explicit native revalidation returning true opens that captured scope; credentials, retained bytes and re-enabling do not grant reads or revive a source. Read domains require managed environment binding. No executable is launched by import. Session targets must be local. Replacing a definition requires replace:true; previous work keeps its captured revision.",
             ),
             ..Default::default()
         }
@@ -127,7 +128,7 @@ pub(crate) fn capture_file(
             crate::input_files::InputFileError::TooLarge { .. } => ImportError::Capacity,
             _ => ImportError::Unavailable,
         })?;
-    let definition = super::schema::compile(&source, None).map_err(|e| ImportError::Input(e.0))?;
+    let definition = super::schema::compile(&source, None).map_err(ImportError::from)?;
     let executable = if target_namespace {
         if !definition.executable.starts_with('/') {
             return Err(ImportError::Input(
@@ -178,7 +179,7 @@ pub(crate) fn reconstruct(
 ) -> Result<(Definition, String), ImportError> {
     let capture = read_capture(source, target_namespace)?;
     let mut definition =
-        super::schema::compile(&capture.source, alias).map_err(|e| ImportError::Input(e.0))?;
+        super::schema::compile(&capture.source, alias).map_err(ImportError::from)?;
     if target_namespace && definition.executable != capture.executable {
         return Err(ImportError::InvalidRecipe);
     }

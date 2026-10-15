@@ -1015,20 +1015,26 @@ pub(super) fn importer_help_command(
                 ("required", Data::Bool(parameter.required)),
             ]));
         }
+        let mut invocation = fields([
+            ("command", budget.text(&format!(":{path}"))?),
+            ("usage", budget.text(&usage)?),
+            ("parameters", Data::List(rows)),
+        ]);
+        if let Some(root) = metadata.declaration {
+            let schema = wes_core::package_schema::declarations()
+                .describe_root(root)
+                .ok_or(Failure::Unsupported)?;
+            if let Data::Record(fields) = &mut invocation {
+                fields.insert("declaration".into(), budget.schema_data(schema, 0)?);
+            }
+        }
         Ok::<_, Failure>(fields([
             ("path", budget.text(&path)?),
             (
                 "summary",
                 budget.text(metadata.summary.unwrap_or(common.summary))?,
             ),
-            (
-                "invocation",
-                fields([
-                    ("command", budget.text(&format!(":{path}"))?),
-                    ("usage", budget.text(&usage)?),
-                    ("parameters", Data::List(rows)),
-                ]),
-            ),
+            ("invocation", invocation),
             (
                 "requirements",
                 Data::List(
@@ -1162,6 +1168,36 @@ impl Budget<'_> {
         let mut output = String::new();
         self.append(&mut output, text)?;
         Ok(Data::Text(output.into()))
+    }
+    /// Registered declaration metadata uses the same cancellation, work and byte budget.
+    fn schema_data(&mut self, value: serde_json::Value, depth: usize) -> Result<Data, Failure> {
+        self.step()?;
+        if depth > 64 {
+            return Err(Failure::Limit);
+        }
+        Ok(match value {
+            serde_json::Value::Null => Data::Option(None),
+            serde_json::Value::Bool(v) => Data::Bool(v),
+            serde_json::Value::Number(v) => {
+                Data::Int(v.as_i64().ok_or(Failure::Unsupported)?.into())
+            }
+            serde_json::Value::String(v) => self.text(&v)?,
+            serde_json::Value::Array(items) => Data::List(
+                items
+                    .into_iter()
+                    .map(|v| self.schema_data(v, depth + 1))
+                    .collect::<Result<_, _>>()?,
+            ),
+            serde_json::Value::Object(fields) => Data::Record(
+                fields
+                    .into_iter()
+                    .map(|(key, value)| {
+                        self.text(&key)?;
+                        Ok((key, self.schema_data(value, depth + 1)?))
+                    })
+                    .collect::<Result<_, Failure>>()?,
+            ),
+        })
     }
     /// A shape as structured data, the way the wire types a value (`kind`, `name`, `element`,
     /// `fields`), so a client presents it with the same printer it uses for every type and an
@@ -1475,6 +1511,53 @@ mod registry_laws {
 #[cfg(test)]
 mod import_help_tests {
     use super::*;
+    #[test]
+    fn registered_declarations_are_generic_inert_and_cancelable_help_metadata() {
+        let metadata = crate::imports::ImporterMetadata {
+            declaration: Some("provider"),
+            ..Default::default()
+        };
+        let Outcome::Produced(value) = importer_help_command(
+            "synthetic_yaml",
+            &metadata,
+            MetaCommand::ImportPlan,
+            &CancellationToken::new(),
+        ) else {
+            panic!("registered schema help")
+        };
+        let Data::Record(root) = value.data() else {
+            panic!("help")
+        };
+        let Data::Record(invocation) = &root["invocation"] else {
+            panic!("invocation")
+        };
+        let Data::Record(declaration) = &invocation["declaration"] else {
+            panic!("schema")
+        };
+        let Data::Record(roots) = &declaration["roots"] else {
+            panic!("roots")
+        };
+        assert_eq!(roots["provider"], Data::Text("provider.document".into()));
+        let token = CancellationToken::new();
+        token.cancel();
+        assert!(matches!(
+            importer_help_command("synthetic_yaml", &metadata, MetaCommand::Import, &token),
+            Outcome::Cancelled(_)
+        ));
+        let missing = crate::imports::ImporterMetadata {
+            declaration: Some("missing"),
+            ..Default::default()
+        };
+        assert!(matches!(
+            importer_help_command(
+                "synthetic_yaml",
+                &missing,
+                MetaCommand::Import,
+                &CancellationToken::new()
+            ),
+            Outcome::Failed(_)
+        ));
+    }
     #[test]
     fn importer_help_includes_common_alias_and_explicit_replace_semantics() {
         let Outcome::Produced(value) = importer_help(

@@ -39,6 +39,20 @@ struct Control {
     policy: wes_core::flow::OutputPolicy,
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error)]
-#[error("invalid provider definition: {0}")]
-pub struct DefinitionError(pub &'static str);
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("invalid provider definition: {message}")]
+pub struct DefinitionError {
+    message: std::borrow::Cow<'static, str>,
+}
+impl DefinitionError {
+    fn new(message: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+impl From<DefinitionError> for wes_engine::imports::ImportError {
+    fn from(error: DefinitionError) -> Self {
+        Self::Declaration(error.message.into_owned())
+    }
+}

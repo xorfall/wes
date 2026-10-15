@@ -128,7 +128,7 @@ fn json(node: &Node) -> Result<Json, DefinitionError> {
         Node::Scalar(Scalar::Text, s) => Json::String(s.clone()),
         Node::Scalar(Scalar::Bool, s) => Json::Bool(s.eq_ignore_ascii_case("true")),
         Node::Scalar(Scalar::Int | Scalar::Decimal, s) => serde_json::from_str(s)
-            .map_err(|_| DefinitionError("numeric fields require JSON decimal spelling"))?,
+            .map_err(|_| DefinitionError::new("numeric fields require JSON decimal spelling"))?,
         Node::Sequence(values) => Json::Array(values.iter().map(json).collect::<Result<_, _>>()?),
         Node::Mapping(values) => Json::Object(
             values
@@ -172,13 +172,18 @@ fn materialized(contract: &Contract) -> bool {
 }
 pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, DefinitionError> {
     if source.len() > wes_core::environments::MAX_SOURCE_BYTES {
-        return Err(DefinitionError("definition exceeds its source byte limit"));
+        return Err(DefinitionError::new(
+            "definition exceeds its source byte limit",
+        ));
     }
     let node = wes_core::contracts::read_strict_package(source)
-        .map_err(|_| DefinitionError("expected one bounded strict YAML document"))?;
+        .map_err(|_| DefinitionError::new("expected one bounded strict YAML document"))?;
+    wes_core::package_schema::declarations()
+        .validate("provider.document", &node)
+        .map_err(|issue| DefinitionError::new(issue.message))?;
     let document = json(&node)?;
     let doc: Document = serde_json::from_value(document)
-        .map_err(|_| DefinitionError("unknown or malformed provider fields"))?;
+        .map_err(|_| DefinitionError::new("unknown or malformed provider fields"))?;
     if doc.version != 1
         || !identifier(&doc.provider)
         || !identifier(alias.unwrap_or(&doc.provider))
@@ -186,7 +191,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         || doc.operations.len() > 256
         || !doc.types.is_object()
     {
-        return Err(DefinitionError(
+        return Err(DefinitionError::new(
             "expected version 1, a provider name, types and 1–256 operations",
         ));
     }
@@ -203,7 +208,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                     .len()
                     != credentials.len()
             {
-                return Err(DefinitionError(
+                return Err(DefinitionError::new(
                     "session credential slots must be 0–16 distinct identifiers",
                 ));
             }
@@ -211,19 +216,19 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         }
     };
     if bin.is_empty() || bin.len() > 4096 || bin.chars().any(char::is_control) {
-        return Err(DefinitionError(
+        return Err(DefinitionError::new(
             "process backend requires an explicit executable path",
         ));
     }
     let mut registry = ContractRegistry::new();
     registry
         .load(&serde_json::json!({"version":1,"types":doc.types}).to_string())
-        .map_err(|_| DefinitionError("invalid type contracts"))?;
+        .map_err(|_| DefinitionError::new("invalid type contracts"))?;
     let mut capabilities = Vec::new();
     let mut operations = Vec::new();
     for op in doc.operations {
         if session.is_none() && (op.streaming || op.control.is_some()) {
-            return Err(DefinitionError(
+            return Err(DefinitionError::new(
                 "streaming and live control require a session backend",
             ));
         }
@@ -232,7 +237,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                 || op.argv.iter().any(|a| !matches!(a, Argument::Literal(_)))
                 || op.success_codes != [0])
         {
-            return Err(DefinitionError(
+            return Err(DefinitionError::new(
                 "session operations require JSON results, literal argv and success code 0",
             ));
         }
@@ -240,18 +245,20 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             .control
             .map(|control| {
                 if !op.streaming {
-                    return Err(DefinitionError(
+                    return Err(DefinitionError::new(
                         "live control requires a streaming operation",
                     ));
                 }
                 let input = registry
                     .resolve(&control.input)
-                    .map_err(|_| DefinitionError("unknown control input contract"))?;
+                    .map_err(|_| DefinitionError::new("unknown control input contract"))?;
                 let output = registry
                     .resolve(&control.output)
-                    .map_err(|_| DefinitionError("unknown control output contract"))?;
+                    .map_err(|_| DefinitionError::new("unknown control output contract"))?;
                 if !materialized(&input) || !materialized(&output) {
-                    return Err(DefinitionError("control contracts must be materialized"));
+                    return Err(DefinitionError::new(
+                        "control contracts must be materialized",
+                    ));
                 }
                 let policy = match control.output_policy {
                     ControlPolicy::Public => wes_core::flow::OutputPolicy::Public,
@@ -281,14 +288,14 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                 .iter()
                 .any(|code| !(0..=u32::MAX as i64).contains(code))
         {
-            return Err(DefinitionError(
+            return Err(DefinitionError::new(
                 "operation metadata exceeds its limits or contains invalid names",
             ));
         }
         let contract = match op.result.format {
             OutputFormat::Process if op.result.contract.is_none() => None,
             OutputFormat::Process => {
-                return Err(DefinitionError(
+                return Err(DefinitionError::new(
                     "process format has the fixed ProcessOutput contract",
                 ));
             }
@@ -298,9 +305,9 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                         op.result
                             .contract
                             .as_deref()
-                            .ok_or(DefinitionError("JSON output requires a type"))?,
+                            .ok_or(DefinitionError::new("JSON output requires a type"))?,
                     )
-                    .map_err(|_| DefinitionError("unknown result contract"))?,
+                    .map_err(|_| DefinitionError::new("unknown result contract"))?,
             ),
             OutputFormat::Text | OutputFormat::Bytes => Some(
                 registry
@@ -311,7 +318,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                             "Bytes"
                         },
                     ))
-                    .map_err(|_| DefinitionError("unknown result contract"))?,
+                    .map_err(|_| DefinitionError::new("unknown result contract"))?,
             ),
         };
         if let Some(contract) = &contract {
@@ -322,7 +329,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                 || (matches!(op.result.format, OutputFormat::Bytes)
                     && shape != Shape::Primitive(Primitive::Bytes))
             {
-                return Err(DefinitionError(
+                return Err(DefinitionError::new(
                     "output format and materialized contract must agree",
                 ));
             }
@@ -336,13 +343,15 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         let mut params = Vec::new();
         for parameter in op.parameters {
             if !identifier(&parameter.name) || params.iter().any(|(n, _, _)| n == &parameter.name) {
-                return Err(DefinitionError("invalid or duplicate parameter name"));
+                return Err(DefinitionError::new("invalid or duplicate parameter name"));
             }
             let contract = registry
                 .resolve(&parameter.contract)
-                .map_err(|_| DefinitionError("unknown parameter contract"))?;
+                .map_err(|_| DefinitionError::new("unknown parameter contract"))?;
             if !materialized(&contract) {
-                return Err(DefinitionError("parameters require materialized contracts"));
+                return Err(DefinitionError::new(
+                    "parameters require materialized contracts",
+                ));
             }
             cap.parameters.push(
                 Parameter::new(&parameter.name, contract.shape(), parameter.required)
@@ -353,7 +362,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         for arg in &op.argv {
             match arg {
                 Argument::Literal(s) if s.contains('\0') => {
-                    return Err(DefinitionError("argv literals cannot contain NUL"));
+                    return Err(DefinitionError::new("argv literals cannot contain NUL"));
                 }
                 Argument::Literal(_) => {}
                 Argument::Parameter(ArgumentFields {
@@ -361,13 +370,9 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                     prefix,
                     encoding,
                 }) => {
-                    let (_, contract, _) =
-                        params
-                            .iter()
-                            .find(|(n, _, _)| n == parameter)
-                            .ok_or(DefinitionError(
-                                "argv mapping names an undeclared parameter",
-                            ))?;
+                    let (_, contract, _) = params.iter().find(|(n, _, _)| n == parameter).ok_or(
+                        DefinitionError::new("argv mapping names an undeclared parameter"),
+                    )?;
                     let shape = contract.shape();
                     let shape = if let Shape::Option(inner) = &shape {
                         inner.as_ref()
@@ -386,7 +391,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                         || prefix.len() >= crate::process::MAX_ARGUMENTS
                         || prefix.iter().any(|p| p.contains('\0'))
                     {
-                        return Err(DefinitionError(
+                        return Err(DefinitionError::new(
                             "argv encoding, parameter type or prefix is invalid",
                         ));
                     }
@@ -400,7 +405,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             )
             })
         {
-            return Err(DefinitionError(
+            return Err(DefinitionError::new(
                 "every parameter must have an explicit argv mapping",
             ));
         }
@@ -421,9 +426,11 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         capabilities,
         session.clone().unwrap_or_default(),
     )
-    .map_err(|_| DefinitionError("invalid or duplicate operation paths"))?;
+    .map_err(|_| DefinitionError::new("invalid or duplicate operation paths"))?;
     if let Some(domain) = &doc.read_access {
-        domain.validate(&description).map_err(DefinitionError)?;
+        domain
+            .validate(&description)
+            .map_err(DefinitionError::new)?;
     }
     Ok(Definition {
         description,
