@@ -1,8 +1,9 @@
-//! Declarative finite CLI providers. Compilation, target execution and output decoding are
+//! Declarative executable providers. Compilation, target execution and output decoding are
 //! separate boundaries; definitions contain no shell programs or ambient provider references.
 mod importer;
 mod invocation;
 mod schema;
+mod session;
 #[cfg(test)]
 mod tests;
 pub use importer::ProviderImporter;
@@ -17,6 +18,7 @@ pub(crate) struct Definition {
     description: ProviderDescription,
     executable: String,
     operations: Vec<Operation>,
+    session: Option<Vec<String>>,
 }
 #[derive(Clone)]
 struct Operation {
@@ -26,6 +28,14 @@ struct Operation {
     result: Option<Arc<Contract>>,
     format: schema::OutputFormat,
     success_codes: Vec<i64>,
+    streaming: bool,
+    control: Option<Control>,
+}
+#[derive(Clone)]
+struct Control {
+    input: Arc<Contract>,
+    output: Arc<Contract>,
+    policy: wes_core::flow::OutputPolicy,
 }
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]

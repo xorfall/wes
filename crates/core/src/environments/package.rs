@@ -430,7 +430,7 @@ fn imports(node: &Node) -> Result<BTreeMap<String, ImportDefinition>, Environmen
         }
         let endpoint = bind.get("endpoint").map(setting).transpose()?;
         let timeout_ms = bind.get("timeout_ms").map(setting).transpose()?;
-        if matches!(kind, "process" | "provider") && endpoint.is_some() {
+        if kind == "process" && endpoint.is_some() {
             return Err(error(
                 "ENV001",
                 "process imports cannot bind an HTTP endpoint",

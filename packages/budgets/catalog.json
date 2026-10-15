@@ -2198,5 +2198,38 @@
     "min": 65536,
     "max": 8388608,
     "source": "crates/engine/src/driver/lifetime.rs"
+  },
+  {
+    "id": "provider.session.frame.bytes",
+    "label": "Provider session frame bytes",
+    "description": "Maximum one external provider frame before allocation; transport credit is bounded separately from the stream window.",
+    "group": "Providers",
+    "unit": "bytes",
+    "default": 1048576,
+    "min": 1024,
+    "max": 1048576,
+    "source": "crates/adapters/src/provider_definition/session/protocol.rs"
+  },
+  {
+    "id": "provider.session.stderr.bytes",
+    "label": "Provider session diagnostic bytes",
+    "description": "Cumulative stderr allowance per executable session; contents never enter result or public error channels.",
+    "group": "Providers",
+    "unit": "bytes",
+    "default": 65536,
+    "min": 1024,
+    "max": 1048576,
+    "source": "crates/adapters/src/provider_definition/session/protocol.rs"
+  },
+  {
+    "id": "provider.session.ready.ms",
+    "label": "Provider session startup wait",
+    "description": "Wait for actual external readiness, also capped by the captured operation deadline; elapsed time never means ready.",
+    "group": "Providers",
+    "unit": "milliseconds",
+    "default": 60000,
+    "min": 1,
+    "max": 60000,
+    "source": "crates/adapters/src/provider_definition/session.rs"
   }
 ]

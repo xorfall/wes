@@ -2829,6 +2829,7 @@ mod tests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeCode {
     ExecutionFailed,
+    ExternalOutcomeUnknown,
     TimedOut,
     Cancelled,
     InputFailed,
@@ -2853,6 +2854,7 @@ impl RuntimeCode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ExecutionFailed => "RUN001",
+            Self::ExternalOutcomeUnknown => ErrorValue::REMOTE_OUTCOME_UNKNOWN,
             Self::TimedOut => "RUN002",
             Self::Cancelled => "RUN003",
             Self::InputFailed => "RUN004",

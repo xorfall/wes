@@ -46,7 +46,7 @@ impl Importer for ProviderImporter {
                 true,
             )],
             summary: Some(
-                "Import a declarative YAML CLI provider with typed commands, literal argv mappings and checked outputs. No executable is launched. Replacing a definition requires replace:true; previous work keeps its captured revision.",
+                "Import a declarative YAML executable provider. Process operations use typed literal argv mappings; session operations use versioned bounded duplex frames, scoped credential handoff, actual readiness and typed events/controls. No executable is launched by import. Session targets must be local. Replacing a definition requires replace:true; previous work keeps its captured revision.",
             ),
             ..Default::default()
         }
@@ -90,6 +90,9 @@ impl Importer for ProviderImporter {
             false,
             snapshot.request().alias(),
         )?;
+        if definition.session.is_some() {
+            return super::session::unbound(definition, self.config);
+        }
         let (base, invoker) =
             crate::process::wrapping(definition.description.name(), executable, self.config)
                 .map_err(|_| ImportError::InvalidRecipe)?;
