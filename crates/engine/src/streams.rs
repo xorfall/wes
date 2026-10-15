@@ -22,6 +22,7 @@ use wes_core::{ErrorValue, Provenance, Value};
 pub(crate) mod archive;
 pub(crate) const MAX_ARCHIVES: usize = 4;
 mod controls;
+pub(crate) use controls::ControlGate;
 pub(crate) mod delivery;
 mod readiness;
 mod recording;

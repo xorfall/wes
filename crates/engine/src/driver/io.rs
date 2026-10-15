@@ -17,6 +17,8 @@ use tokio::{
     time::Instant,
 };
 use tracing::Instrument;
+#[cfg(test)]
+mod tests;
 
 pub(crate) struct Enter<T> {
     pub(crate) prepared: bool,
@@ -158,7 +160,7 @@ pub(crate) struct ExecutionIo<T> {
     stream_receiver: mpsc::Receiver<Update>,
     open_streams: HashSet<Run>,
     published_results: HashMap<Run, wes_core::flow::FlowPolicy>,
-    source_handles: HashMap<Run, crate::streams::StreamHandle>,
+    source_handles: HashMap<Run, streaming::Registration>,
     conversation_permits: Arc<Semaphore>,
     conversation_updates: mpsc::Sender<conversations::Update>,
     conversation_receiver: mpsc::Receiver<conversations::Update>,
@@ -292,31 +294,54 @@ impl<T: Send + 'static> ExecutionIo<T> {
         runtime: &Runtime<T>,
         source: &crate::graph::NodeId,
         caller: crate::environments::InvocationAuthority,
-    ) -> Result<crate::streams::LiveControls, crate::streams::ControlError>
+    ) -> Result<(crate::streams::LiveControls, wes_core::Provenance), crate::streams::ControlError>
     where
         T: Clone,
     {
-        let (run, handle) = self
+        let (run, registration) = self
             .source_handles
             .iter()
-            .find(|(run, _)| {
+            .find(|(run, registration)| {
                 run.node() == source
-                    && runtime.accepts_live_io(run)
+                    && if registration.auxiliary {
+                        runtime.accepts_auxiliary_source(run)
+                    } else {
+                        runtime.accepts_live_io(run)
+                    }
                     && runtime.run_of(source) == Some(run.id())
             })
             .ok_or(crate::streams::ControlError::Changed)?;
-        handle.live_controls(run, caller)
+        let handle = &registration.handle;
+        let port = handle
+            .live_controls(run, caller)?
+            .restricted(registration.gate.clone());
+        let provenance = port.provenance()?;
+        if !handle.read_access_current() || runtime.blocks_source_reads(provenance.policy()) {
+            registration.gate.retire();
+            return Err(crate::streams::ControlError::Changed);
+        }
+        Ok((port, provenance))
     }
-    pub(crate) fn blocked_source_reads(
-        &self,
-        readers: &crate::provider_reads::Readers,
+    pub(crate) fn withdraw_source_reads(
+        &mut self,
+        access: &crate::storage::datasets::DatasetAccess,
     ) -> Vec<crate::graph::NodeId> {
         self.source_handles
             .iter()
-            .filter_map(|(run, handle)| {
-                (!handle.read_access_current()
-                    || readers.blocks_policy(handle.snapshot().window.provenance().policy()))
-                .then(|| run.node().clone())
+            .filter_map(|(run, registration)| {
+                let handle = &registration.handle;
+                if handle.read_access_current()
+                    && !access.blocks_policy(handle.snapshot().window.provenance().policy())
+                {
+                    return None;
+                }
+                registration.gate.retire();
+                if registration.auxiliary {
+                    handle.cancel();
+                    None
+                } else {
+                    Some(run.node().clone())
+                }
             })
             .collect()
     }
@@ -547,7 +572,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 Some(executor.execute_lifetime(ticket, token, progress, values).await)
             } else if joined {
                 let slot = Arc::new(std::sync::Mutex::new(Some(permit)));
-                let result = super::publication::Reporter::new(ticket.run.clone(), publications, publication_credit, slot.clone());
+                let result = super::publication::Reporter::new(ticket.run.clone(), publications, publication_credit, slot.clone()).with_sources(updates);
                 let report = executor.execute_joined(ticket, token, progress, result).await;
                 drop(slot);
                 Some(report)

@@ -697,6 +697,23 @@ impl<T: Clone> Runtime<T> {
                 .get(run.node())
                 .is_some_and(|lease| lease.entered && lease.run == *run)
     }
+    /// Attach a separate native source only before the joined ordinary outcome.
+    pub(crate) fn admits_auxiliary_source(&self, run: &Run) -> bool {
+        self.accepts_live_io(run)
+            && self
+                .leases
+                .get(run.node())
+                .is_some_and(|lease| lease.kind == WorkKind::JoinedFinite)
+    }
+    /// Source-specific authority may survive ordinary publication, never parent retirement.
+    pub(crate) fn accepts_auxiliary_source(&self, run: &Run) -> bool {
+        self.admits_auxiliary_source(run)
+            || (!self.closed
+                && self.run_of(run.node()) == Some(run.id())
+                && self.leases.get(run.node()).is_some_and(|lease| {
+                    lease.entered && lease.run == *run && lease.kind == WorkKind::Finalizing
+                }))
+    }
     pub fn run_of(&self, node: &NodeId) -> Option<&RunId> {
         self.entries.get(node)?.last_run.as_ref()
     }
@@ -2387,6 +2404,9 @@ impl<T: Clone> Runtime<T> {
     }
     pub(crate) fn blocks_provider_reads(&self, policy: &wes_core::flow::FlowPolicy) -> bool {
         self.read_access.providers.blocks_policy(policy)
+    }
+    pub(crate) fn blocks_source_reads(&self, policy: &wes_core::flow::FlowPolicy) -> bool {
+        self.read_access.blocks_policy(policy)
     }
     /// No terminal branch handlers are launched during shutdown.
     pub fn close(&mut self) -> Vec<Effect<T>> {
