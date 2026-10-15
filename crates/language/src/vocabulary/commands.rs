@@ -771,6 +771,7 @@ pub fn signature(path: &[String]) -> Option<CommandSpec> {
 /// Family prose is shared by root discovery and family help, never inferred from its first child.
 pub fn help_summary(path: &[&str]) -> &'static str {
     match path {
+        ["keep"] => Keep.spec(&[]).summary,
         ["read"] => Read.spec(&[]).summary,
         ["source"] => {
             "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority."
