@@ -217,17 +217,9 @@ impl Session {
         token: &CancellationToken,
         session: &str,
     ) -> Result<(Zeroizing<Vec<u8>>, CredentialSnapshot), InvocationError> {
-        if call
-            .arguments
-            .keys()
-            .any(|k| !operation.parameters.iter().any(|(n, _, _)| n == k))
-        {
-            return Err(error(
-                "Undeclared session argument; no executable was launched",
-            ));
-        }
+        let arguments = operation.bind_arguments(&call.arguments).map_err(error)?;
         for (name, contract, required) in &operation.parameters {
-            match call.arguments.get(name) {
+            match arguments.get(name) {
                 None if *required => {
                     return Err(error(
                         "Required session argument is missing; no executable was launched",
@@ -240,7 +232,7 @@ impl Session {
             }
         }
         let data = Data::Record(
-            call.arguments
+            arguments
                 .iter()
                 .map(|(n, v)| (n.clone(), v.data().clone()))
                 .collect(),
@@ -356,7 +348,13 @@ impl Session {
         let variables = self.variables.clone();
         let launch_authority = self.clone();
         let launch_credentials = credentials.clone();
-        let carried = Provenance::agreed_by(call.arguments.values().map(Value::provenance));
+        let carried = Provenance::agreed_by(
+            operation
+                .fixed_arguments
+                .values()
+                .chain(call.arguments.values())
+                .map(Value::provenance),
+        );
         let launch_token = token.clone();
         let launch_availability = availability.clone();
         let mut raw = match operation.recording.as_ref() {
@@ -662,6 +660,9 @@ impl StreamingInvoker for Session {
             .iter()
             .find(|op| op.path == call.capability.path)
             .ok_or(StreamError::InvalidResource)?;
+        let arguments = operation
+            .bind_arguments(&call.arguments)
+            .map_err(|_| StreamError::InvalidResource)?;
         operation
             .exclusive
             .iter()
@@ -670,8 +671,7 @@ impl StreamingInvoker for Session {
                     .fields
                     .iter()
                     .map(|path| {
-                        let mut data = call
-                            .arguments
+                        let mut data = arguments
                             .get(&path[0])
                             .ok_or(StreamError::InvalidResource)?
                             .data();

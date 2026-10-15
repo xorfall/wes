@@ -121,6 +121,9 @@ elif mode == "stderr":
     sys.stderr.write("synthetic-session-private-diagnostic " * 3000)
     sys.stderr.flush()
 else:
+    if mode == "fixed-hold":
+        assert start["arguments"] == {"scope": {"name": "synthetic-resource"}}
+        assert set(start["contracts"]["parameters"]) == {"scope"}
     send({"kind": "ready"})
     if mode == "read-domain":
         assert start["credentials"] == {"Token": "synthetic-provider-session-secret"}
@@ -164,6 +167,9 @@ else:
         os.close(0)  # A valid peer may finish without reading the final replenishment credit.
         send({"kind": "event", "sequence": 2, "data": 8})
         send({"kind": "end"})
+    elif mode == "fixed-hold":
+        while True:
+            read()
     elif mode == "hold":
         while True:
             read()
