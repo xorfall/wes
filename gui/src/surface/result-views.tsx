@@ -14,7 +14,6 @@ import type { ReactNode } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
 import type { WorkspaceNode } from "../workspace";
-import { httpTrace, HttpInspection, LiveHttpInspection } from "../views/HttpInspection";
 import { ValueView } from "../views/Result";
 import { valueViewModules } from "../value-views/registry";
 import { SourceView } from "./SourceView";
@@ -23,14 +22,12 @@ import { registryStore } from "../presentation/registry-store";
 
 /**
  * What there is to look at: the node the engine reported, the value read back when it has been,
- * and the engine itself for a view that keeps asking — a live trace is still arriving.
+ * and the engine a value's own view reads further through.
  */
 export interface ViewSubject {
   readonly value?: StoredValue;
   readonly node?: WorkspaceNode;
   readonly engine?: Engine;
-  /** Which run this is, so a view that polls starts again rather than continuing an old one. */
-  readonly generation?: string;
   /** The stored result `value` was read from, in this session; absent for live samples. */
   readonly stored?: import("./render/dataset-source").StoredIdentity;
 }
@@ -58,25 +55,6 @@ function moduleViews(): ResultView[] {
 }
 
 /**
- * What the client observed while the call was made.
- *
- * A retained trace is in the value itself; a traced node that is still running has one only the
- * engine can answer for, which is what the live inspection keeps asking it.
- */
-const traceView: ResultView = {
-  name: "trace",
-  matches: ({ value, node }) => (value !== undefined && httpTrace(value.data) !== undefined) || node?.traced === true,
-  Draw: ({ subject }) => {
-    const { value, node, engine, generation } = subject;
-    if (value && httpTrace(value.data)) return <HttpInspection data={value.data} />;
-    if (engine && node?.traced) {
-      return <LiveHttpInspection key={`${generation}:${node.id}:${node.run}`} engine={engine} node={node.id} run={node.run} state={node.state} />;
-    }
-    return null;
-  },
-};
-
-/**
  * The command as it was written — any command, so ⌘click on any command row reaches one; but
  * pointed at from the cell only when the row could not show it whole.
  */
@@ -86,8 +64,8 @@ const sourceView: ResultView = {
   Draw: ({ subject }) => (subject.node ? <SourceView key={subject.node.command} source={subject.node.command} /> : null),
 };
 
-/** Most particular first: an HTTP response outranks the trace of the call that made it. */
-const supplementaryViews = [traceView, sourceView];
+/** After the value's own views: a typed result outranks the command that produced it. */
+const supplementaryViews = [sourceView];
 export const RESULT_VIEWS: readonly ResultView[] = [...moduleViews(), ...supplementaryViews];
 
 export const RESULT_VIEW_NAMES: readonly string[] = RESULT_VIEWS.map((view) => view.name);

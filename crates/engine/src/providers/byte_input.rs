@@ -62,7 +62,7 @@ impl BoundCall {
         let Some(spec) = self.byte_input_spec() else {
             return Ok(());
         };
-        if !self.provider.invoker.supports_byte_input() || self.invocation.trace_profile.is_some() {
+        if !self.provider.invoker.supports_byte_input() {
             return Err(RuntimeCode::ExecutionFailed.error("This target or observation mode does not support owned byte input; no provider was invoked.", None));
         }
         let captured = match self.invocation.inputs.get(&spec.parameter) {
@@ -158,7 +158,6 @@ mod tests {
         let provider = providers.catalogue().provider("writer").unwrap().clone();
         let capability = provider.capabilities().next().unwrap().clone();
         let invocation = Invocation {
-            trace_profile: None,
             provider,
             capability,
             inputs: [

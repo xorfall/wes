@@ -1,5 +1,7 @@
 //! Shared read-only semantic preparation for live declarations and non-executing drafts.
+mod capture;
 mod stream;
+mod trace;
 use super::{Change, Preparation, PreparedChange, PreparedMeta, Stamp, WorkspaceError, rejected};
 use crate::{
     bindings::{BindingError, Bindings},
@@ -218,13 +220,24 @@ impl Analysis<'_> {
         }
     }
     pub fn prepare(&self, statement: &Statement) -> Result<Preparation, WorkspaceError> {
+        if statement
+            .annotations
+            .iter()
+            .any(|a| a.name.text != "trace" && !a.arguments.is_empty())
+        {
+            return Err(rejected(
+                "CHK014",
+                statement.span,
+                "This annotation does not accept named arguments.",
+            ));
+        }
         if statement.annotations.iter().any(|a| a.name.text == "trace")
             && !matches!(statement.expression, Expression::Call(_))
         {
             return Err(rejected(
                 "TRC001",
                 statement.span,
-                "Use @trace(profile) on a finite provider call.",
+                "Use @trace(tcp) or @trace(capture:\"name\", tail:\"5s\") on a finite provider call.",
             ));
         }
         match &statement.expression {
@@ -531,12 +544,23 @@ impl Analysis<'_> {
                                 .preceded_by(&diagnostics)
                         })?;
                         (
-                            BoundTask::Call(
+                            self.capture_companion(
                                 call.with_recording_schema(self.contracts)
                                     .with_pipe_input(self.pipe_input.cloned()),
-                            ),
+                                &expanded_statement,
+                            )?,
                             typing,
                         )
+                    }
+                    Task::Meta(task)
+                        if matches!(
+                            task.spec.command,
+                            MetaCommand::TraceImport
+                                | MetaCommand::TraceAnalyze
+                                | MetaCommand::TraceExport
+                        ) =>
+                    {
+                        self.trace_finite(task, &expanded_statement)?
                     }
                     Task::Meta(task) if task.spec.command == MetaCommand::Keep => {
                         if self.pipe_input.is_some() || !statement.annotations.is_empty() {
@@ -554,6 +578,9 @@ impl Analysis<'_> {
                                 .unwrap_or_else(|| Typing::new(Shape::Unknown)),
                         );
                         (BoundTask::Retention(keep), typing)
+                    }
+                    Task::Meta(task) if task.spec.command == MetaCommand::TraceStart => {
+                        self.capture_start(task, &expanded_statement)?
                     }
                     Task::Meta(task)
                         if crate::tasks::view::BoundView::supports(task.spec.command) =>
@@ -613,7 +640,9 @@ impl Analysis<'_> {
                     Task::Meta(task)
                         if matches!(
                             task.spec.command,
-                            MetaCommand::SourceBind | MetaCommand::SourceSend
+                            MetaCommand::SourceBind
+                                | MetaCommand::SourceSend
+                                | MetaCommand::TraceStop
                         ) =>
                     {
                         if self.pipe_input.is_some() || !statement.annotations.is_empty() {

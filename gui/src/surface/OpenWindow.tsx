@@ -52,12 +52,11 @@ export function OpenWindow({ route }: { readonly route: OpenRoute }) {
     document.title = cell ? `${cell.id} · source · wes` : node ? `${node.name ? `$${node.name}` : node.id} · wes` : "wes";
   }, [node, cell]);
 
-  /* What every view is asked about. The engine is here too: a traced node's trace is still coming. */
+  /* What every view is asked about. The engine is here too: a value's own view may read further. */
   const viewing: ViewSubject = {
     ...(stored ? { value: stored } : {}),
     ...(node ? { node } : {}),
     engine,
-    ...(generation ? { generation } : {}),
     ...(identity ? { stored: identity } : {}),
   };
 

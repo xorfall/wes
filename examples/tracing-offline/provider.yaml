@@ -1,0 +1,26 @@
+version: 1
+provider: capture
+backend: {kind: process, bin: capture_adapter.py}
+types:
+  CaptureCoordinate: {base: Text, pattern: '^(0|[1-9][0-9]*)$', maxLength: 20}
+  CaptureInterface:
+    base: Record
+    fields: {id: Int, section: Int, linkType: Int, snapLength: Int, timestampScale: Text, timestampOffset: Text}
+  CaptureInterfaces: {base: 'List<CaptureInterface>', maxItems: 256}
+  CapturePacket:
+    base: Record
+    fields: {number: Int, interface: Int, recordOffset: CaptureCoordinate, dataOffset: CaptureCoordinate, capturedLength: Int, originalLength: Int, timestampTicks: 'Option<CaptureCoordinate>'}
+  CapturePackets: {base: 'List<CapturePacket>', maxItems: 512}
+  CaptureIndex:
+    base: Record
+    fields: {format: Text, rawBytes: CaptureCoordinate, sha256: Text, packetCount: CaptureCoordinate, indexComplete: Bool, skippedBlocks: Int, interfaces: CaptureInterfaces, packets: CapturePackets}
+  CaptureImport:
+    base: Record
+    fields: {index: CaptureIndex, raw: Bytes}
+operations:
+  - path: [import]
+    finite_profile: {name: pcap, kind: capture.import, arguments: {file: file}}
+    summary: Reads one regular local PCAP v2.4 or PCAPNG v1.0 file; imports exact original bytes and a bounded first 512 packet index, without acquiring traffic. Unknown block bodies remain uninterpreted raw bytes. Changed, malformed, unsupported or over-budget input refuses. Large results use existing finite transient storage. Confidentiality and retention are declared by the environment binding.
+    parameters: [{name: file, type: Text}]
+    argv: [import, {parameter: file, prefix: [--file]}]
+    result: {format: record-bytes, type: CaptureImport, byte_field: [raw]}

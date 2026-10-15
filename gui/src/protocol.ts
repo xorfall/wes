@@ -309,7 +309,6 @@ export type Event =
       readonly repeatable?: boolean;
       /** Engine-recorded RUNNING time for this node's current run; absent without retained evidence. */
       readonly startedAt?: string | null;
-      readonly traced?: boolean;
       readonly node: string;
       readonly dependsOn: string[];
       /** Authored selection sources. Display evidence only; updates do not execute this call. */
@@ -570,7 +569,7 @@ export function describeSize(bytes: number): string {
 
 export interface WorkRun {
   readonly node: string; readonly run: string; readonly state: string; readonly at: string;
-  readonly handle: string | null; readonly protected: boolean; readonly trace: boolean;
+  readonly handle: string | null; readonly protected: boolean;
 }
 export interface WorkHistory {
   readonly attempts: readonly { readonly id: string; readonly source: string; readonly revisionOf: string | null;
@@ -582,7 +581,7 @@ export interface WorkRunDetail {
   readonly canProtect: boolean;
   readonly error: Pick<ErrorRecord, "code" | "message" | "issues" | "locations"> | null;
   readonly run: WorkRun; readonly definition: { readonly text: string; readonly [field: string]: unknown };
-  readonly trace: StoredValue | null; readonly contextNote: string; readonly traceNote: string;
+  readonly contextNote: string;
 }
 
 /** Exact native source locator; values never interpolate into source text. */

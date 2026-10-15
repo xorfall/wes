@@ -955,7 +955,6 @@ export function SurfaceApp({ binding, host, renderWorkspace }: { readonly bindin
         ...(value ? { value } : {}),
         ...(node ? { node } : {}),
         engine,
-        ...(generation ? { generation } : {}),
         ...(stored ? { stored } : {}),
       } satisfies ViewSubject,
       ...readOpen({

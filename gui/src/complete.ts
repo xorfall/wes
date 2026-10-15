@@ -88,6 +88,8 @@ const NOTHING: Completion = { from: 0, items: [] };
  * @return whether there is enough to answer
  */
 const LETTERS = 3;
+/** `@trace`'s two written forms: a named capture profile (its name is the author's), or the target's tcp default. */
+const TRACE_FORMS: readonly string[] = ['@trace(capture:"', "@trace(tcp)"];
 
 export function wantsSuggestions(line: string, caret: number): boolean {
   const before = line.slice(0, Math.max(0, Math.min(caret, line.length)));
@@ -152,7 +154,7 @@ export function complete(
   if (word.startsWith("@")) {
     return offer(
       from,
-      catalogue.annotations.map((name) => ({ text: name === "trace" ? "@trace(http)" : `@${name}{`, kind: "annotation" as const })),
+      catalogue.annotations.flatMap((name) => (name === "trace" ? TRACE_FORMS : [`@${name}{`]).map((text) => ({ text, kind: "annotation" as const }))),
       word,
     );
   }

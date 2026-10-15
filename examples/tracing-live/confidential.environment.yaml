@@ -1,0 +1,9 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  captures:
+    imports:
+      capture:
+        source: {kind: provider, file: provider.yaml}
+        bind: {target: local, output: confidential-temporary}

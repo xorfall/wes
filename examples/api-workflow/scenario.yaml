@@ -5,7 +5,7 @@ steps:
   - name: Discover the operation
     run: ':help sensor_demo history > demo_help'
   - name: Fetch LAB1 readings
-    run: '@trace(http) sensor_demo history sensor:LAB1 > demo_readings'
+    run: 'sensor_demo history sensor:LAB1 > demo_readings'
     expect:
       - {name: Three rows, condition: 'length($demo_readings.body) == 3'}
       - {name: Exact middle reading, condition: '$demo_readings.body[1].reading == 19.5'}
@@ -18,12 +18,12 @@ steps:
     expect:
       - {name: All points retained, condition: 'length($demo_chart.points) == 3 && $demo_chart.dropped == 0'}
       - {name: Correct middle point, condition: '$demo_chart.points[1].x == "09:01" && $demo_chart.points[1].y == 19.5'}
-  - name: Capture HTTP evidence
-    run: ':read trace:$demo_readings > demo_trace'
-  - name: Analyze HTTP evidence
-    run: ':calc pure { return httpAnalysis($demo_trace); } > demo_analysis'
+  - name: Read original HTTP response
+    run: ':read $demo_readings > demo_response'
+  - name: Classify received status
+    run: ':calc pure { return httpStatus($demo_response.status); } > demo_status'
     expect:
-      - {name: Successful HTTP response, condition: '$demo_analysis.executionState == "completed" && $demo_analysis.statuses[0].code == 200'}
+      - {name: Successful response status, condition: '$demo_status.code == 200 && $demo_status.class == "success"'}
   - name: Unknown sensor is an expected 404
     run: 'sensor_demo history sensor:UNKNOWN > demo_missing'
     expect:

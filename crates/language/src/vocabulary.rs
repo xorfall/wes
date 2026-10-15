@@ -93,7 +93,12 @@ pub enum MetaCommand {
     For,
     If,
     Use,
-    Trace,
+    TraceStart,
+    TraceStop,
+    TraceRead,
+    TraceImport,
+    TraceAnalyze,
+    TraceExport,
     Read,
     Alias,
     Def,
@@ -167,7 +172,12 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::For,
     MetaCommand::If,
     MetaCommand::Use,
-    MetaCommand::Trace,
+    MetaCommand::TraceStart,
+    MetaCommand::TraceStop,
+    MetaCommand::TraceRead,
+    MetaCommand::TraceImport,
+    MetaCommand::TraceAnalyze,
+    MetaCommand::TraceExport,
     MetaCommand::Read,
     MetaCommand::Alias,
     MetaCommand::Def,
@@ -295,7 +305,12 @@ impl MetaCommand {
             Self::For => "for",
             Self::If => "if",
             Self::Use => "use",
-            Self::Trace => "trace",
+            Self::TraceStart => "trace-start",
+            Self::TraceStop => "trace-stop",
+            Self::TraceRead => "trace-read",
+            Self::TraceImport => "trace-import",
+            Self::TraceAnalyze => "trace-analyze",
+            Self::TraceExport => "trace-export",
             Self::Read => "read",
             Self::Alias => "alias",
             Self::Def => "def",
@@ -320,6 +335,8 @@ impl MetaCommand {
                     | Self::DatasetSnapshot
                     | Self::DatasetInspect
                     | Self::DatasetPlanDelete
+                    | Self::TraceAnalyze
+                    | Self::TraceExport
             ),
             parameters: Vec::new(),
             open_arguments: false,
@@ -834,14 +851,12 @@ impl MetaCommand {
                 spec.open_arguments = true;
             }
             Self::Read => {
-                spec.summary = "reads selected output or retained trace content. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency.";
+                spec.summary = "reads selected output. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency.";
                 spec.operands = Arity::bounded(0, 1);
                 spec.produces_value = true;
                 spec.parameters = vec![
                     Parameter::new("value", Shape::Unknown, false),
-                    Parameter::new("trace", Shape::Unknown, false),
                     Parameter::new("bytes", Shape::Unknown, false),
-                    text("run", false),
                     text("select", false),
                     Parameter::new("offset", Shape::Primitive(Primitive::Int), false),
                     Parameter::new("limit", Shape::Primitive(Primitive::Int), false),
@@ -855,10 +870,58 @@ impl MetaCommand {
                     ];
                 }
             }
-            Self::Trace => {
-                spec.summary = "reads retained observations without repeating a call";
+            Self::TraceStart => {
+                spec.summary = "Start one captured named profile with optional narrowing only. Does not discover an interface or infer a filter from a command. Raw protected storage is required before source entry.";
+                spec.parameters = vec![
+                    text("capture", true),
+                    text("filter", false),
+                    text("duration", false),
+                    Parameter::new("packets", Shape::Primitive(Primitive::Int), false),
+                    Parameter::new("bytes", Shape::Primitive(Primitive::Int), false),
+                ];
+                spec.produces_value = true;
+            }
+            Self::TraceImport => {
+                spec.summary = "Import one existing local capture file with an explicit frozen finite profile: :trace import file:\"synthetic.pcap\" using:\"pcap\" > imported. Profile kind is capture.import; no traffic acquisition. Optional options:{...} contains typed literals. Large imports require an explicit :transient scope; privacy and retention remain independent.";
+                spec.parameters = vec![
+                    text("file", true),
+                    text("using", true),
+                    Parameter::new("options", Shape::Unknown, false),
+                ];
+                spec.produces_value = true;
+            }
+            Self::TraceAnalyze => {
+                spec.summary = "Analyze one explicit original Bytes selection without producer replay: :trace analyze $imported.raw using:\"headers\" options:{packets:128,headerBytes:256} > decoded. Requires a local capture.analyze finite profile with owned byte input. Decoder identity, supported protocols and limitations come from the selected provider. For live evidence first :trace read after physical join, then select its value.raw.";
                 spec.operands = Arity::bounded(1, 1);
-                spec.parameters.push(text("run", false));
+                spec.parameters = vec![
+                    text("using", true),
+                    Parameter::new("options", Shape::Unknown, false),
+                ];
+                spec.produces_value = true;
+            }
+            Self::TraceExport => {
+                spec.summary = "Explicitly export an original Bytes selection: :trace export $imported.raw using:\"pcap\" file:\"/owned/output.pcap\" allow_confidential:true > receipt. Requires a local bytes.export finite profile with owned input and file_egress. No overwrite or automatic retry; private memory-only and unknown data refuse. Confidential approval is separate from reading or Keep; a failed acknowledgement may leave a published file.";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![
+                    text("using", true),
+                    text("file", true),
+                    Parameter::new(
+                        "allow_confidential",
+                        Shape::Primitive(Primitive::Bool),
+                        false,
+                    ),
+                    Parameter::new("options", Shape::Unknown, false),
+                ];
+                spec.produces_value = true;
+            }
+            Self::TraceRead => {
+                spec.summary = "Read the original physically joined capture evidence of this Run, independently of its business result. This does not start, stop, wait for or replay a source; Keep and byte-read policy remain separate.";
+                spec.operands = Arity::bounded(1, 1);
+                spec.produces_value = true;
+            }
+            Self::TraceStop => {
+                spec.summary = "Explicit native stop using the original source profile's typed action and current Run/connection. A receipt does not itself publish raw evidence; read only after physical cleanup. Unknown outcomes never replay.";
+                spec.operands = Arity::bounded(1, 1);
                 spec.produces_value = true;
             }
             Self::For | Self::If | Self::Use | Self::Alias | Self::Let | Self::Set => {
@@ -876,7 +939,7 @@ pub const ANNOTATIONS: &[(&str, &str)] = &[
     ),
     (
         "trace",
-        "collects bounded observations using an explicit provider-supported profile: @trace(profile)",
+        "attaches one original-run capture companion: @trace(capture:\"name\", tail:\"5s\") or @trace(tcp) with an explicit target default",
     ),
     (
         "env",

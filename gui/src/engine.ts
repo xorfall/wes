@@ -150,15 +150,6 @@ export class Engine {
   private readonly windowClient = desktopClient();
   readonly client: string = this.windowClient ?? crypto.randomUUID();
   readonly terminalRecovery = this.windowClient !== undefined;
-  async trace(node: string, signal?: AbortSignal): Promise<StoredValue | undefined> {
-    const generation = this.generation;
-    if (!generation) throw new Error("Wait for the workspace connection.");
-    const response = await fetch(`/traces/${encodeURIComponent(node)}`, { headers: this.headers({ "X-Wes-Session": generation }), signal, cache: "no-store" });
-    if (generation !== this.generation) throw new Error("Workspace changed; inspection was discarded.");
-    if (response.status === 404) return undefined;
-    if (!response.ok) throw new Error("HTTP inspection is unavailable.");
-    return withValidMeta(await readExactJson(response) as StoredValue);
-  }
   async terminal<T = Record<string, unknown>>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     if (!this.generation) throw new Error("Wait for the workspace connection.");
     const generation = this.generation;

@@ -621,53 +621,6 @@ async fn field_arguments_are_selected_before_provider_validation_without_numeric
     }
 }
 
-#[test]
-fn selected_trace_profile_is_bound_exactly_and_replacement_cannot_retarget_it() {
-    struct Profiles;
-    impl Invoker for Profiles {
-        fn supports_trace(&self, profile: &str) -> bool {
-            matches!(profile, "binary" | "grpc")
-        }
-        fn invoke(&self, _: Call, _: CancellationToken) -> InvocationFuture {
-            panic!("binding never invokes")
-        }
-    }
-    let mut providers =
-        Providers::local(wes_engine::providers::LocalScope::new("fixture").unwrap());
-    providers.register(metadata(), Arc::new(Profiles));
-    let call = invocation(&providers, "@trace(grpc) catalog echo value:hello", &|_| {
-        None
-    });
-    assert_eq!(call.trace_profile.as_deref(), Some("grpc"));
-    let bound = providers.bind_finite(call.clone()).unwrap();
-    for profile in ["http".to_owned(), String::new(), "a".repeat(65)] {
-        let mut rejected = call.clone();
-        rejected.trace_profile = Some(profile.into());
-        assert_eq!(
-            providers.bind_finite(rejected).unwrap_err(),
-            BindError::UnsupportedTrace
-        );
-    }
-    register(&mut providers, None);
-    assert_eq!(bound.invocation().trace_profile.as_deref(), Some("grpc"));
-    assert_eq!(
-        providers.bind_finite(call).unwrap_err(),
-        BindError::ProviderChanged
-    );
-    let current = invocation(
-        &providers,
-        "@trace(binary) catalog echo value:hello",
-        &|_| None,
-    );
-    assert_eq!(
-        providers.bind_finite(current).unwrap_err(),
-        BindError::UnsupportedTrace
-    );
-    let plain = invocation(&providers, "catalog echo value:hello", &|_| None);
-    assert!(plain.trace_profile.is_none());
-    assert!(providers.bind_finite(plain).is_ok());
-}
-
 #[tokio::test]
 async fn rejected_projections_never_enter_provider_and_preserve_structured_reasons() {
     use wes_core::RecordShape;

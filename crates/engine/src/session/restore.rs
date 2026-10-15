@@ -30,8 +30,6 @@ pub enum RestoreError {
     Views(String),
     #[error("history contains invalid live snapshot evidence")]
     LiveSnapshot,
-    #[error("history contains invalid or conflicting trace evidence")]
-    Trace,
     #[error("historical environment change {index} could not be reconstructed: {source}")]
     Environment {
         index: usize,
@@ -255,19 +253,10 @@ pub async fn restore(
     let mut definitions_changed_at = IndexMap::new();
     let mut remaining_changes = 1_000_000usize;
     let mut environment_records = IndexMap::new();
-    let mut trace_records = IndexMap::new();
     let mut invocation_records = IndexMap::new();
     let mut saved_intents = std::collections::BTreeMap::new();
     let mut saved_names = std::collections::BTreeMap::new();
     let mut saved_commits = std::collections::BTreeSet::new();
-    let traced_attempts: IndexSet<_> = history
-        .recovery()
-        .iter()
-        .filter_map(|entry| match entry {
-            RecoveryEntry::Calling(call) => Some((&call.node, &call.run)),
-            _ => None,
-        })
-        .collect();
     for (position, entry) in history.journal().iter().enumerate() {
         if let JournalEntry::SaveIntent(saved) = entry {
             saved.validate().map_err(|_| RestoreError::Saved)?;
@@ -341,22 +330,6 @@ pub async fn restore(
             replay
                 .restore_invocation(record)
                 .map_err(|_| RestoreError::Invocation)?;
-            continue;
-        }
-        if let JournalEntry::Trace(record) = entry {
-            if let Some(previous) = trace_records.insert(record.run.clone(), record) {
-                if previous != record {
-                    return Err(RestoreError::Trace);
-                }
-                continue;
-            }
-            if !traced_attempts.contains(&(&record.node, &record.run)) {
-                return Err(RestoreError::Trace);
-            }
-            if !created_at.contains_key(&record.node) || !replay.workspace().traces.restore(record)
-            {
-                return Err(RestoreError::Trace);
-            }
             continue;
         }
         let JournalEntry::Command(command) = entry else {

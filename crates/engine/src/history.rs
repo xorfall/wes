@@ -339,7 +339,7 @@ pub enum JournalEntry {
     Invocation(crate::selection::InvocationRecord),
     Views(crate::views::ViewRecord),
     Snapshot(LiveSnapshot),
-    /// Explicit retention of one immutable execution's existing result, trace and declaration evidence.
+    /// Explicit retention of one immutable execution's existing result and declaration evidence.
     /// Never a hydration candidate: protecting an older run cannot replace today's output.
     ProtectedRun {
         node: NodeId,
@@ -356,7 +356,6 @@ pub enum JournalEntry {
     Retired(RetiredWork),
     Requested(RequestRecord),
     Submitted(SubmissionRecord),
-    Trace(crate::trace::TraceRecord),
     Environments(crate::environments::EnvironmentRecord),
     Command(CommandRecord),
     Result(RetainedResult),
@@ -821,7 +820,6 @@ impl<'a> RestoreIndex<'a> {
                 | JournalEntry::Requested(_)
                 | JournalEntry::Submitted(_)
                 | JournalEntry::Invocation(_)
-                | JournalEntry::Trace(_)
                 | JournalEntry::Result(_)
                 | JournalEntry::Noticed(_)
                 | JournalEntry::Environments(_)

@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "provider": "analyze",
+  "backend": {
+    "kind": "process",
+    "bin": "analyze_capture.py"
+  },
+  "types": {
+    "CaptureCoordinate": {
+      "base": "Text",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 20
+    },
+    "CaptureInterface": {
+      "base": "Record",
+      "fields": {
+        "id": "Int",
+        "section": "Int",
+        "linkType": "Int",
+        "snapLength": "Int",
+        "timestampScale": "Text",
+        "timestampOffset": "Text"
+      }
+    },
+    "CaptureInterfaces": {
+      "base": "List<CaptureInterface>",
+      "maxItems": 256
+    },
+    "CapturePacket": {
+      "base": "Record",
+      "fields": {
+        "number": "Int",
+        "interface": "Int",
+        "recordOffset": "CaptureCoordinate",
+        "dataOffset": "CaptureCoordinate",
+        "capturedLength": "Int",
+        "originalLength": "Int",
+        "timestampTicks": "Option<CaptureCoordinate>"
+      }
+    },
+    "CapturePackets": {
+      "base": "List<CapturePacket>",
+      "maxItems": 512
+    },
+    "CaptureIndex": {
+      "base": "Record",
+      "fields": {
+        "format": "Text",
+        "rawBytes": "CaptureCoordinate",
+        "sha256": "Text",
+        "packetCount": "CaptureCoordinate",
+        "indexComplete": "Bool",
+        "skippedBlocks": "Int",
+        "interfaces": "CaptureInterfaces",
+        "packets": "CapturePackets"
+      }
+    },
+    "DecoderIdentity": {
+      "base": "Record",
+      "fields": {
+        "name": "Text",
+        "version": "Text",
+        "runtime": "Text",
+        "codeSha256": "Text",
+        "containerSha256": "Text",
+        "schemaSha256": "Text"
+      }
+    },
+    "PacketLimit": {
+      "base": "Int",
+      "min": 1,
+      "max": 512
+    },
+    "HeaderBytes": {
+      "base": "Int",
+      "min": 64,
+      "max": 65536
+    },
+    "AnalysisOptions": {
+      "base": "Record",
+      "fields": {
+        "packetLimit": "PacketLimit",
+        "headerBytes": "HeaderBytes"
+      }
+    },
+    "DecodedField": {
+      "base": "Record",
+      "fields": {
+        "layer": "Text",
+        "key": "Text",
+        "label": "Text",
+        "value": "Text",
+        "offset": "CaptureCoordinate",
+        "length": "Int"
+      }
+    },
+    "DecodedFields": {
+      "base": "List<DecodedField>",
+      "maxItems": 64
+    },
+    "DecodeNotes": {
+      "base": "List<Text>",
+      "maxItems": 8
+    },
+    "DecodeStatus": {
+      "base": "Text",
+      "enum": [
+        "decoded",
+        "unsupported",
+        "truncated",
+        "fragmented",
+        "malformed"
+      ]
+    },
+    "DecodedPacket": {
+      "base": "Record",
+      "fields": {
+        "number": "Int",
+        "interface": "Int",
+        "dataOffset": "CaptureCoordinate",
+        "capturedLength": "Int",
+        "originalLength": "Int",
+        "protocol": "Text",
+        "source": "Option<Text>",
+        "destination": "Option<Text>",
+        "sourcePort": "Option<Int>",
+        "destinationPort": "Option<Int>",
+        "status": "DecodeStatus",
+        "inspectedBytes": "Int",
+        "fields": "DecodedFields",
+        "notes": "DecodeNotes"
+      }
+    },
+    "DecodedPackets": {
+      "base": "List<DecodedPacket>",
+      "maxItems": 512
+    },
+    "AnalysisLimitations": {
+      "base": "List<Text>",
+      "maxItems": 16
+    },
+    "CaptureAnalysis": {
+      "base": "Record",
+      "fields": {
+        "decoder": "DecoderIdentity",
+        "options": "AnalysisOptions",
+        "index": "CaptureIndex",
+        "packets": "DecodedPackets",
+        "sampleComplete": "Bool",
+        "limitations": "AnalysisLimitations"
+      }
+    },
+    "PacketScanStep": {
+      "base": "Record",
+      "fields": {
+        "state": "Int",
+        "outputs": "List<DecodedPacket>"
+      }
+    }
+  },
+  "operations": [
+    {
+      "finite_profile": {"name":"headers", "kind":"capture.analyze", "arguments":{"source":"source","packets":"packets","headerBytes":"headerBytes"}},
+      "path": [
+        "decode"
+      ],
+      "summary": "Finite offline fixed Ethernet/IPv4/TCP/UDP header analysis over owned original Bytes. Explicit first-packet and header-prefix budgets, exact original field ranges, code/container/schema identity and raw hash accompany typed rows. Unknown, truncated, malformed and fragmented packets stay explicit; no payload, flow, RTT, checksum validation, reassembly, decryption or traffic coverage. No capture, file staging or network. Native stored input ownership and Keep preserve the original dependency closure. Other dissectors require their own explicit finite provider.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "Bytes"
+        },
+        {
+          "name": "packets",
+          "type": "PacketLimit"
+        },
+        {
+          "name": "headerBytes",
+          "type": "HeaderBytes"
+        }
+      ],
+      "byte_input": {
+        "parameter": "source",
+        "max_bytes": 536870912
+      },
+      "argv": [
+        "decode",
+        "--decoder-sha256",
+        "sha256:deb128e38004a4ac7b025c0ef8464213e4430cd8b3e1f34f78d44884a98f9a90",
+        "--container-sha256",
+        "sha256:82a2fcdfe550bc2fcf826e23756df1a8cab0e8a4d9a88cd4e937edd9e1e97383",
+        "--schema-sha256",
+        "sha256:2343ce6b683449e3dc65f238107c166bbeae496d8255d0f98248a9bf6904e18a",
+        {
+          "parameter": "packets",
+          "prefix": [
+            "--packets"
+          ]
+        },
+        {
+          "parameter": "headerBytes",
+          "prefix": [
+            "--header-bytes"
+          ]
+        }
+      ],
+      "result": {
+        "format": "json",
+        "type": "CaptureAnalysis"
+      }
+    }
+  ]
+}

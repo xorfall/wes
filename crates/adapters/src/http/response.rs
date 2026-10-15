@@ -1,9 +1,9 @@
 //! Finite response interpretation. Receiving a response and validating its body are separate facts.
-use super::{inspection, transport};
+use super::{headers, transport};
 use crate::codec::{Limits, decode_json_for_contract, decode_json_preserving};
 use wes_core::contracts::Contract;
 use wes_core::{Data, Primitive, Provenance, RecordShape, Shape, ValidationIssue, Value};
-use wes_engine::trace::{integer, record, text};
+use wes_engine::values::{integer, record, text};
 
 pub(super) enum Expectation<'a> {
     Contract(&'a Contract),
@@ -42,7 +42,7 @@ pub(crate) fn shape() -> Shape {
             [
                 ("status".into(), Shape::Primitive(Primitive::Int)),
                 ("version".into(), Shape::Primitive(Primitive::Text)),
-                ("headers".into(), inspection::header_shape()),
+                ("headers".into(), headers::header_shape()),
                 ("body".into(), Shape::Unknown),
                 ("bodyKind".into(), Shape::Primitive(Primitive::Text)),
                 ("originalBody".into(), Shape::Primitive(Primitive::Bytes)),
@@ -231,10 +231,7 @@ pub(super) fn envelope(
         [
             ("status".into(), integer(response.status.into())),
             ("version".into(), text(response.version)),
-            (
-                "headers".into(),
-                inspection::headers(&response.headers, None),
-            ),
+            ("headers".into(), headers::headers(&response.headers)),
             ("body".into(), body),
             ("bodyKind".into(), text(kind)),
             ("originalBody".into(), original),

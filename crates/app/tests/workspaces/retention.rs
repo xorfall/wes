@@ -1158,13 +1158,7 @@ async fn old_run_protection_keeps_exact_evidence_through_revision_reopen_and_wor
         protected["definition"]["text"],
         "catalog echo value:original > finding"
     );
-    assert!(protected["trace"].is_null());
-    assert!(
-        protected["traceNote"]
-            .as_str()
-            .unwrap()
-            .contains("No recorded trace")
-    );
+    assert!(protected.get("trace").is_none());
     assert_eq!(
         f.worker.retention(old_handle.clone()).await.unwrap(),
         Retention::Protected

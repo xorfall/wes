@@ -20,7 +20,6 @@ use wes_core::{
     Data, ErrorValue, Provenance, Shape, Value,
     capability::{Capability, Parameter, Safety},
 };
-use wes_engine::trace::Traces;
 use wes_engine::{
     credentials::{Credentials, SecretString},
     driver::CancellationToken,
@@ -498,7 +497,7 @@ async fn missing_invalid_and_colliding_credentials_fail_before_a_request() {
 }
 
 #[tokio::test]
-async fn received_error_status_is_data_without_retry_and_trace_is_redacted() {
+async fn received_error_status_is_data_without_retry() {
     for status in [400, 429, 500] {
         let secret = "fixture +/secret";
         let body = "fixture +/secret fixture+%2B%2Fsecret cmVhZGVyOmZpeHR1cmUgKy9zZWNyZXQ= ordinary explanation";
@@ -519,11 +518,8 @@ async fn received_error_status_is_data_without_retry_and_trace_is_redacted() {
             operation("POST", "/items", &[]),
         );
         let request = call(cap, IndexMap::new());
-        let run = request.run.clone();
-        let traces = Traces::default();
-        let sink = traces.begin(&run, "http", Provenance::default()).unwrap();
         let result = invoker
-            .invoke_observed(request, CancellationToken::new(), sink)
+            .invoke(request, CancellationToken::new())
             .await
             .unwrap();
         let Data::Record(fields) = result.data() else {
@@ -531,46 +527,8 @@ async fn received_error_status_is_data_without_retry_and_trace_is_redacted() {
         };
         assert_eq!(fields["status"], Data::Int(status.into()));
         assert_eq!(fields["originalBody"], Data::Bytes(body.as_bytes().into()));
-        let trace = format!("{:?}", traces.get(run.node(), None).unwrap().data());
-        assert!(!trace.contains(secret));
-        assert!(!trace.contains("fixture+%2B"));
-        assert!(!trace.contains("cmVhZGVyOmZpeHR1cmUgKy9zZWNyZXQ="));
         server.next().await;
         assert!(server.requests.is_empty());
-        server.finish().await;
-    }
-}
-
-#[tokio::test]
-async fn secrets_crossing_excerpt_boundary_or_surrounded_by_significant_space_do_not_leak() {
-    for secret in [" leading-private ", "fixture-long-private"] {
-        let body = format!("{}{secret} tail", "x".repeat(495));
-        let server = Server::start(vec![reply(400, &body)]).await;
-        let store = secrets();
-        store
-            .remember("token".into(), SecretString::from(secret))
-            .unwrap();
-        let (cap, invoker) = provider(
-            &server.base,
-            Some(Auth::Query {
-                parameter: "key".into(),
-                secret: "token".into(),
-            }),
-            store,
-            HttpConfig::default(),
-            finite(),
-            operation("GET", "/items", &[]),
-        );
-        let request = call(cap, IndexMap::new());
-        let run = request.run.clone();
-        let traces = Traces::default();
-        let sink = traces.begin(&run, "http", Provenance::default()).unwrap();
-        invoker
-            .invoke_observed(request, CancellationToken::new(), sink)
-            .await
-            .unwrap();
-        let trace = format!("{:?}", traces.get(run.node(), None).unwrap().data());
-        assert!(!trace.contains("private"));
         server.finish().await;
     }
 }
@@ -1136,8 +1094,8 @@ async fn typed_template_runtime_and_real_http_share_the_existing_execution_bound
 mod streams;
 
 #[tokio::test]
-async fn traced_transport_timeout_redaction_and_bounded_body_evidence() {
-    use wes_engine::trace::Traces;
+async fn ordinary_transport_preserves_original_body_and_times_out_without_returning_partial_success()
+ {
     let secret = "inspection-canary-123";
     let credentials = secrets();
     credentials
@@ -1161,19 +1119,11 @@ async fn traced_transport_timeout_redaction_and_bounded_body_evidence() {
         operation("GET", "/items", &[]),
     );
     let request_call = call(cap, IndexMap::new());
-    let run = request_call.run.clone();
-    let traces = Traces::default();
-    let sink = traces.begin(&run, "http", Provenance::default()).unwrap();
     let result = invoker
-        .invoke_observed(request_call, CancellationToken::new(), sink)
+        .invoke(request_call, CancellationToken::new())
         .await
         .unwrap();
     assert!(format!("{:?}", result.data()).contains(secret));
-    let shown = format!("{:?}", traces.get(run.node(), None).unwrap().data());
-    assert!(!shown.contains(secret));
-    assert!(shown.contains("REDACTED"));
-    assert!(shown.contains("Http") || shown.contains("http.body"));
-    assert!(shown.len() < 15_000);
     server.requests.recv().await.unwrap();
     server.finish().await;
     let gate = Arc::new(Notify::new());
@@ -1195,22 +1145,10 @@ async fn traced_transport_timeout_redaction_and_bounded_body_evidence() {
         operation("GET", "/items", &[]),
     );
     let request_call = call(cap, IndexMap::new());
-    let run = request_call.run.clone();
-    let traces = Traces::default();
-    let sink = traces.begin(&run, "http", Provenance::default()).unwrap();
     assert_eq!(
-        failure(
-            invoker
-                .invoke_observed(request_call, CancellationToken::new(), sink)
-                .await
-        )
-        .code(),
+        failure(invoker.invoke(request_call, CancellationToken::new()).await).code(),
         "HTTP004"
     );
-    let trace = format!("{:?}", traces.get(run.node(), None).unwrap().data());
-    assert!(trace.contains("http.response"));
-    assert!(trace.contains("http.progress"));
-    assert!(!trace.contains("http.body"));
     gate.notify_one();
     server.requests.recv().await.unwrap();
     server.finish().await;

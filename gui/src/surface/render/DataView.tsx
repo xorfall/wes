@@ -1,5 +1,5 @@
 /**
- * Arbitrary data — an HTTP trace event's details, a panel's value — through the same presentation
+ * Arbitrary data — a panel's value — through the same presentation
  * pipeline as a result, in the window's paged mode, with its captured contract metadata when given. Small values only: nothing is cached, and
  * preparing them is cheap.
  */

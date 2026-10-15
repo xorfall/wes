@@ -37,7 +37,6 @@ enum Failure {
     Limit,
     Missing { kind: &'static str, target: String },
     OutputUnavailable(String),
-    TraceMissing,
     Unsupported,
     Uncaptured,
     Cancelled,
@@ -107,7 +106,7 @@ fn output_unavailable(workspace: &Workspace, output: &OutputRef) -> Failure {
 enum Capture {
     Bytes(bytes::CapturedBytes),
     Recorded(recording::CapturedRecording),
-    Trace(Value),
+    Value(Value),
     Information(Value),
     Help(super::BoundHelp),
     Data(Data),
@@ -134,8 +133,14 @@ pub struct BoundQuery {
     read_policy: wes_core::flow::FlowPolicy,
 }
 impl BoundQuery {
+    fn recording_read(&self) -> bool {
+        matches!(
+            self.task.spec.command,
+            MetaCommand::SourceResult | MetaCommand::TraceRead
+        )
+    }
     pub(crate) fn session_request(&self) -> Option<SessionQuery> {
-        if self.task.spec.command == MetaCommand::SourceResult {
+        if self.recording_read() {
             if let [Input::FromNode(subject)] = self.task.subjects.as_slice() {
                 return Some(SessionQuery::SourceResult(subject.clone()));
             }
@@ -173,7 +178,7 @@ impl BoundQuery {
             MetaCommand::Info
             | MetaCommand::Inspect
             | MetaCommand::Read
-            | MetaCommand::Trace
+            | MetaCommand::TraceRead
             | MetaCommand::SourceResult => true,
             _ => false,
         }
@@ -195,7 +200,7 @@ impl BoundQuery {
             && self.task.tail.first().is_some_and(|kind| kind == "bytes")
     }
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if self.task.spec.command == MetaCommand::SourceResult {
+        if self.recording_read() {
             if !self.task.inputs.is_empty()
                 || !matches!(self.task.subjects.as_slice(), [Input::FromNode(subject)] if subject.port == OutputPort::Data)
             {
@@ -211,7 +216,7 @@ impl BoundQuery {
         }
     }
     pub(crate) fn read_sources(&self) -> Vec<OutputRef> {
-        if !self.byte_read() && self.task.spec.command != MetaCommand::SourceResult {
+        if !self.byte_read() && !self.recording_read() {
             return vec![];
         }
         self.task
@@ -222,7 +227,7 @@ impl BoundQuery {
             .collect()
     }
     pub(crate) fn stored_source_for(&self, node: &NodeId) -> bool {
-        (self.byte_read() || self.task.spec.command == MetaCommand::SourceResult)
+        (self.byte_read() || self.recording_read())
             && self
                 .read_sources()
                 .iter()
@@ -232,7 +237,7 @@ impl BoundQuery {
         let policy = match &self.captured {
             Some(Ok(Capture::Bytes(bytes))) => bytes.policy(),
             Some(Ok(Capture::Recorded(recorded))) => recorded.policy(),
-            Some(Ok(Capture::Trace(value) | Capture::Information(value))) => {
+            Some(Ok(Capture::Value(value) | Capture::Information(value))) => {
                 value.provenance().policy().clone()
             }
             _ => Default::default(),
@@ -267,7 +272,7 @@ impl BoundQuery {
             .filter(move |_| {
                 !matches!(
                     self.task.spec.command,
-                    MetaCommand::Trace
+                    MetaCommand::TraceRead
                         | MetaCommand::Inspect
                         | MetaCommand::Read
                         | MetaCommand::SourceResult
@@ -279,7 +284,7 @@ impl BoundQuery {
     pub(crate) fn predicted_typing(&self) -> Typing {
         let shape = match self.task.spec.command {
             MetaCommand::Read if self.byte_read() => bytes::shape(),
-            MetaCommand::Trace
+            MetaCommand::TraceRead
             | MetaCommand::Read
             | MetaCommand::Inspect
             | MetaCommand::SourceResult => Shape::Unknown,
@@ -411,51 +416,25 @@ impl BoundQuery {
             if self.byte_read() {
                 return bytes::CapturedBytes::capture(self, workspace, output).map(Capture::Bytes);
             }
-            let value = if self.task.tail.first().is_some_and(|v| v == "trace") {
-                let run = self.literal_text("run")?;
-                workspace
-                    .traces
-                    .get(&output.node, run)
-                    .ok_or(Failure::TraceMissing)?
-            } else {
-                match workspace.runtime().output(output) {
-                    crate::runtime::OutputState::Available(value) => value,
-                    _ if output.port == OutputPort::Data => workspace
-                        .runtime()
-                        .evidence_value(&output.node)
-                        .map(|v| {
-                            v.value.clone().with_provenance(
-                                v.value
-                                    .provenance()
-                                    .clone()
-                                    .with_fact("wes.observation.state", "stopped")
-                                    .with_fact("wes.observation.run", v.run.as_str())
-                                    .with_fact("wes.observation.source", v.source.as_str()),
-                            )
-                        })
-                        .ok_or_else(|| output_unavailable(workspace, output))?,
-                    _ => return Err(output_unavailable(workspace, output)),
-                }
+            let value = match workspace.runtime().output(output) {
+                crate::runtime::OutputState::Available(value) => value,
+                _ if output.port == OutputPort::Data => workspace
+                    .runtime()
+                    .evidence_value(&output.node)
+                    .map(|v| {
+                        v.value.clone().with_provenance(
+                            v.value
+                                .provenance()
+                                .clone()
+                                .with_fact("wes.observation.state", "stopped")
+                                .with_fact("wes.observation.run", v.run.as_str())
+                                .with_fact("wes.observation.source", v.source.as_str()),
+                        )
+                    })
+                    .ok_or_else(|| output_unavailable(workspace, output))?,
+                _ => return Err(output_unavailable(workspace, output)),
             };
-            return self.project_read(&value).map(Capture::Trace);
-        }
-        if self.task.spec.command == MetaCommand::Trace {
-            let Some(Input::FromNode(output)) = self.task.subjects.first() else {
-                return Err(Failure::missing("query target", "unspecified"));
-            };
-            let run = match self.task.inputs.get("run") {
-                Some(Input::Literal(v)) => match v.data() {
-                    Data::Text(s) => Some(s.as_ref()),
-                    _ => return Err(Failure::missing("query target", "unspecified")),
-                },
-                None => None,
-                _ => return Err(Failure::missing("query target", "unspecified")),
-            };
-            return workspace
-                .traces
-                .get(&output.node, run)
-                .map(Capture::Trace)
-                .ok_or(Failure::TraceMissing);
+            return self.project_read(&value).map(Capture::Value);
         }
         if self.task.spec.command == MetaCommand::Inspect {
             if let Some(target) = &self.task.target {
@@ -941,7 +920,7 @@ impl BoundQuery {
                 token,
             };
             budget.step()?;
-            if let Capture::Trace(value) | Capture::Information(value) = captured {
+            if let Capture::Value(value) | Capture::Information(value) = captured {
                 return Ok(value.clone());
             }
             let data = match captured {
@@ -983,7 +962,7 @@ impl BoundQuery {
                     }
                 }
                 Capture::Bytes(_) | Capture::Recorded(_) => return Err(Failure::Uncaptured),
-                Capture::Trace(_) | Capture::Information(_) | Capture::Help(_) => unreachable!(),
+                Capture::Value(_) | Capture::Information(_) | Capture::Help(_) => unreachable!(),
                 Capture::Data(data) => data.clone(),
                 Capture::Nodes(nodes) => {
                     let mut descriptions = nodes.iter().map(|node| node.describe(&mut budget));
@@ -1024,7 +1003,6 @@ impl BoundQuery {
                 let message = match error {
                     Failure::Session(message) | Failure::Selection(message) => message.into(),
                     Failure::Limit => "The inspection exceeds its supported size or work budget.".into(),
-                    Failure::TraceMissing => "No trace retained for that node and run. Use @trace(profile) on a supported call; old attempts may have been evicted.".into(),
                     Failure::Missing { kind, target } => format!("Missing {kind}: {target:?}. Inspect the current workspace/catalogue; the query did not rerun the target."),
                     Failure::OutputUnavailable(message) => message,
                     Failure::Unsupported => "This workspace query is not implemented yet.".into(),

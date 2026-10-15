@@ -25,7 +25,7 @@
  *
  * Prose wraps — it is a finding to read, not a column to line up — and each finding is one row:
  * its kind, operation and source lines on a head line, its message under them, a hairline at its
- * left the way an HTTP inspection's steps have. In the cell the rows sit under a scroll ceiling so
+ * left. In the cell the rows sit under a scroll ceiling so
  * a long report does not stretch the scrollback; the peek gives them all the room.
  */
 .wes-terminal .describe-failure { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
@@ -57,9 +57,6 @@
 .wes-terminal .http-headers th,
 .wes-terminal .http-headers td { text-align: left; vertical-align: top; padding: var(--space-xs) var(--space-sm); overflow-wrap: anywhere; }
 .wes-terminal .http-headers th { width: 24%; }
-.wes-terminal .result-inspection .http-inspection { max-height: 34rem; overflow: auto; }
-.wes-terminal .result-inspection .http-inspection > ol > li { border-left: var(--stroke-thin) solid var(--mono-faint); padding-left: var(--space-sm); margin-top: var(--space-sm); }
-.wes-terminal .result-inspection .live-http-inspection { margin-top: var(--space-sm); }
 
 /*
  * The source, wherever it is read.

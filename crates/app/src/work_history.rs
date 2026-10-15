@@ -25,7 +25,6 @@ struct Run {
     at: String,
     handle: Option<String>,
     protected: bool,
-    trace: bool,
 }
 fn nodes(
     observation: &SessionObservation,
@@ -58,7 +57,6 @@ fn runs(image: &HistoryImage, nodes: &BTreeSet<String>) -> BTreeMap<String, Run>
                 at: String::new(),
                 handle: None,
                 protected: false,
-                trace: false,
             });
             if !matches!(
                 o.state(),
@@ -84,12 +82,6 @@ fn runs(image: &HistoryImage, nodes: &BTreeSet<String>) -> BTreeMap<String, Run>
         {
             item.handle = Some(handle.to_string());
             item.protected |= matches!(e, JournalEntry::ProtectedRun { .. });
-        }
-        if let JournalEntry::Trace(t) = e
-            && let Some(item) = runs.get_mut(t.run.as_str())
-            && item.node == t.node.as_str()
-        {
-            item.trace = true;
         }
     }
     runs
@@ -129,21 +121,6 @@ fn detail(image: &HistoryImage, run: &Run) -> Result<Value, Error> {
             return Err(Error::EvidenceMissing);
         }
     }
-    let trace = image.journal().iter().find_map(|e| match e {
-        JournalEntry::Trace(t) if t.run.as_str() == run.run && t.node.as_str() == run.node => {
-            Some(&t.value)
-        }
-        _ => None,
-    });
-    let trace = trace
-        .map(|v| {
-            encode_display_value(v, Limits::default())
-                .map_err(|_| Error::EvidenceMissing)
-                .and_then(|v| {
-                    serde_json::from_slice::<Value>(&v).map_err(|_| Error::EvidenceMissing)
-                })
-        })
-        .transpose()?;
     let invocation = image.journal().iter().find_map(|entry| match entry {
         JournalEntry::Invocation(record) if record.node.as_str() == run.node && record.run.as_str() == run.run => Some(record),
         _ => None,
@@ -169,9 +146,8 @@ fn detail(image: &HistoryImage, run: &Run) -> Result<Value, Error> {
                 "code":issue.code,"message":issue.message})).collect::<Vec<_>>() })
         });
     Ok(
-        json!({"run":run,"definition":definition["entry"],"invocation":invocation,"trace":trace,"error":error,
-        "contextNote":"Captured source references and environment revisions. Evaluated historical input payloads and old name resolution are not reconstructed.",
-        "traceNote":if trace.is_some() {"Recorded trace for this run."} else {"No recorded trace for this run; it cannot be recovered by protecting the result."}}),
+        json!({"run":run,"definition":definition["entry"],"invocation":invocation,"error":error,
+        "contextNote":"Captured source references and environment revisions. Evaluated historical input payloads and old name resolution are not reconstructed."}),
     )
 }
 impl ApplicationHandle {

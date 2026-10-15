@@ -80,7 +80,7 @@ export interface More {
 }
 
 /** Other ways to read this node. An offer grants nothing and runs nothing by itself. */
-export type OfferName = "http" | "source" | "follow" | "copy" | "trace" | (string & {});
+export type OfferName = "http" | "source" | "follow" | "copy" | (string & {});
 
 export interface ChartBinding {
   readonly as: "line" | "spark";

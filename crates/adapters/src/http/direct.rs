@@ -1,5 +1,5 @@
 //! Ad-hoc HTTP is an ordinary, unsafe finite provider; environment resolution still controls access.
-use super::{Failure, HttpConfig, HttpConfigError, auth::Redactor, client_builder, inspection};
+use super::{Failure, HttpConfig, HttpConfigError, client_builder};
 use indexmap::IndexMap;
 use wes_core::{
     Data, Primitive, Shape, Value,
@@ -8,7 +8,6 @@ use wes_core::{
 use wes_engine::{
     driver::CancellationToken,
     providers::{Call, InvocationError, InvocationFuture, Invoker},
-    trace::TraceSink,
 };
 
 pub fn direct(config: HttpConfig) -> Result<(ProviderDescription, DirectHttp), HttpConfigError> {
@@ -56,60 +55,31 @@ pub struct DirectHttp {
     config: HttpConfig,
 }
 impl Invoker for DirectHttp {
-    fn supports_trace(&self, profile: &str) -> bool {
-        profile == "http"
-    }
     fn invoke(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture {
-        self.run(call, cancellation, None)
-    }
-    fn invoke_observed(
-        &self,
-        call: Call,
-        cancellation: CancellationToken,
-        trace: TraceSink,
-    ) -> InvocationFuture {
-        self.run(call, cancellation, Some(trace))
+        self.run(call, cancellation)
     }
 }
+
 impl DirectHttp {
     pub(crate) fn with_transport(mut self, transport: super::transport::Transport) -> Self {
         self.transport = transport;
         self
     }
-    fn run(
-        &self,
-        call: Call,
-        cancellation: CancellationToken,
-        trace: Option<TraceSink>,
-    ) -> InvocationFuture {
+    fn run(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture {
         let this = self.clone();
         super::timed(async move {
             let config = this.config;
-            let (request, redactor) =
-                tokio::task::spawn_blocking(move || prepare(call.arguments, config))
-                    .await
-                    .map_err(|_| Failure::Internal.error())?
-                    .map_err(Failure::error)?;
+            let request = tokio::task::spawn_blocking(move || prepare(call.arguments, config))
+                .await
+                .map_err(|_| Failure::Internal.error())?
+                .map_err(Failure::error)?;
             if cancellation.is_cancelled() {
                 return Err(InvocationError::Cancelled);
             }
-            if let Some(trace) = &trace {
-                inspection::request(trace, &request, &redactor);
-            }
             let response = this
                 .transport
-                .send(
-                    &this.client,
-                    request,
-                    config,
-                    cancellation.clone(),
-                    trace.as_ref(),
-                    &redactor,
-                )
+                .send(&this.client, request, config, cancellation.clone())
                 .await?;
-            if let Some(trace) = &trace {
-                trace.emit("http.body", inspection::body(&response.body, &redactor));
-            }
             let value = tokio::task::spawn_blocking(move || {
                 super::response::envelope(response, None, config.response)
             })
@@ -125,7 +95,7 @@ impl DirectHttp {
 fn prepare(
     mut args: IndexMap<String, Value>,
     config: HttpConfig,
-) -> Result<(reqwest::Request, Redactor), Failure> {
+) -> Result<reqwest::Request, Failure> {
     crate::codec::check_arguments(&args, config.request)
         .map_err(|_| Failure::Request("HTTP arguments exceed their encoding budget"))?;
     let url = args
@@ -161,12 +131,6 @@ fn prepare(
     if method == reqwest::Method::CONNECT {
         return Err(Failure::Request("HTTP tunneling is unsupported"));
     }
-    let mut redactor = Redactor::empty();
-    for (_, value) in url.query_pairs() {
-        if !value.is_empty() {
-            redactor.remember(&value);
-        }
-    }
     let mut request = reqwest::Request::new(method, url);
     if let Some(headers) = args.shift_remove("headers") {
         let Data::Record(fields) = headers.data() else {
@@ -189,13 +153,9 @@ fn prepare(
             ) {
                 return Err(Failure::Request("transport-owned header is unsupported"));
             }
-            if !matches!(name.as_str(), "accept" | "content-type" | "cache-control")
-                && !value.is_empty()
-            {
-                redactor.remember(value);
-            }
-            let value = reqwest::header::HeaderValue::from_str(value)
+            let mut value = reqwest::header::HeaderValue::from_str(value)
                 .map_err(|_| Failure::Request("invalid header value"))?;
+            value.set_sensitive(true);
             request.headers_mut().insert(name, value);
         }
     }
@@ -210,5 +170,5 @@ fn prepare(
         }
         *request.body_mut() = Some(bytes.into());
     }
-    Ok((request, redactor))
+    Ok(request)
 }

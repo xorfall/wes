@@ -23,7 +23,6 @@ mod services;
 mod site;
 mod telemetry;
 mod terminals;
-mod traces;
 mod value_errors;
 mod view_commands;
 mod view_evidence;
@@ -213,7 +212,6 @@ pub async fn listen(mut config: Config) -> io::Result<Server> {
         .route("/data-home", get(data_home::read).post(data_home::switch))
         .route("/terminals", post(terminals::action))
         .route("/terminal-bridge", post(terminals::bridge))
-        .route("/traces/{node}", get(traces::read))
         .route("/workspace-specs", get(workspace_specs::read))
         .route("/events", get(events))
         .route("/events/socket", get(event_socket::open))

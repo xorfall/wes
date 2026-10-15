@@ -334,9 +334,6 @@ pub(super) struct Redactor {
     forms: Vec<SecretString>,
 }
 impl Redactor {
-    pub(super) fn empty() -> Self {
-        Self { forms: vec![] }
-    }
     pub(super) fn remember(&mut self, secret: &str) {
         self.forms.push(SecretString::from(secret.to_owned()));
         self.forms.push(SecretString::from(

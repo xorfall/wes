@@ -198,39 +198,6 @@
     "source": "crates/engine/src/driver/waiting.rs"
   },
   {
-    "id": "trace.bytes",
-    "label": "Trace bytes",
-    "description": "Maximum charge of one execution trace.",
-    "group": "Diagnostics",
-    "unit": "bytes",
-    "default": 131072,
-    "min": 1024,
-    "max": 1048576,
-    "source": "crates/engine/src/trace.rs"
-  },
-  {
-    "id": "trace.count",
-    "label": "Retained traces",
-    "description": "Retained execution traces.",
-    "group": "Diagnostics",
-    "unit": "count",
-    "default": 64,
-    "min": 1,
-    "max": 512,
-    "source": "crates/engine/src/trace.rs"
-  },
-  {
-    "id": "trace.events",
-    "label": "Trace events",
-    "description": "Events retained in one trace.",
-    "group": "Diagnostics",
-    "unit": "count",
-    "default": 64,
-    "min": 1,
-    "max": 512,
-    "source": "crates/engine/src/trace.rs"
-  },
-  {
     "id": "conversation.input.bytes",
     "label": "Conversation input bytes",
     "description": "Maximum one interactive input chunk.",

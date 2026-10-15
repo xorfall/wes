@@ -118,7 +118,6 @@ fn business(providers: &Providers, alias: &str) -> BoundCall {
             inputs: Default::default(),
             cautions: Default::default(),
             interactive: false,
-            trace_profile: None,
             guards: Default::default(),
         })
         .unwrap()

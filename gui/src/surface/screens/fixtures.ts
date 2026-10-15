@@ -51,7 +51,7 @@ export const openDetails: readonly Segment[][] = factLines(
       id: "id7", name: "orders", command: "acme orders.list since:2026-09-01",
       dependsOn: [], state: "ready", startedAt: "2026-09-20T09:12:00.000Z",
       run: "2f1c6b90-4d2e-4a11-9c33-7b0f6d2a8e41", type: "List<Order>", bytes: 24_576,
-      kept: true, retention: "automatic", repeatable: true, traced: true,
+      kept: true, retention: "automatic", repeatable: true,
       provenance: {}, cautions: [],
       environment: {
         event: "node-environment", node: "id7", environment: "DEV", revision: "rev 14",

@@ -81,7 +81,7 @@ def tool(name, args=None, error=False):
 def completed(request_id):
     end = time.monotonic()+10
     while time.monotonic()<end:
-        reply = tool('execution_read', {'request_id':request_id, 'trace':True})
+        reply = tool('execution_read', {'request_id':request_id})
         if reply.get('nodes') and all(n['state'] not in ['pending','running'] for n in reply['nodes']):
             return reply
         time.sleep(.02)
@@ -125,9 +125,9 @@ try:
     if os.environ.get('WES_FIXTURE_PRIVATE') == '1':
         old_context = captured.read_text()
         tool('execute', {'request_id':'changed-context','context':old_context,'source':':calc { return 1; }'}, error=True)
-        tool('execute', {'request_id':'private-call','context':context,'source':'@trace(http) sensor history sensor:LAB1 > private_mcp_readings'})
+        tool('execute', {'request_id':'private-call','context':context,'source':'sensor history sensor:LAB1 > private_mcp_readings'})
         private = completed('private-call')['nodes'][0]
-        assert not private['result']['available'] and not private['trace']['available'], private
+        assert not private['result']['available'] and 'trace' not in private, private
         assert 'private_mcp_readings' not in tool('values_list')
         tool('value_read', {'name':'private_mcp_readings'}, error=True)
         print('ASSISTANT_PRIVATE_OK', flush=True)
@@ -209,13 +209,13 @@ try:
     tool('execute', {'request_id':'stale', 'context':'old-context', 'source':':calc { return 1; }'}, error=True)
     tool('execution_read', {'request_id':'not-owned'}, error=True)
     tool('cancel', {'request_id':'not-owned'}, error=True)
-    request = {'request_id':kind+'-call', 'context':context, 'source':f'@trace(http) sensor history sensor:LAB1 > {kind}_readings'}
+    request = {'request_id':kind+'-call', 'context':context, 'source':f'sensor history sensor:LAB1 > {kind}_readings'}
     first = tool('execute',request)
     second = tool('execute',request)
     assert not first['duplicate'] and second['duplicate'] and first['execution']['cell']==second['execution']['cell']
     result = completed(request['request_id'])
     assert result['nodes'][0]['result']['value']['body'][1]['reading']==19.5, result
-    assert result['nodes'][0]['trace']['available'], result
+    assert 'trace' not in result['nodes'][0], result
     tool('execute',{**request,'source':':calc { return 99; }'},error=True)
     chart = {'request_id':kind+'-chart','context':context,'source':f':calc pure {{ return {{view: "line", x: "time", y: "reading", points: ${kind}_readings.body.map(row => {{ return {{x: text(row.time), y: decimal(row.reading)}}; }}), dropped: 0}}; }} > {kind}_chart'}
     tool('execute',chart)

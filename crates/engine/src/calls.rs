@@ -211,13 +211,6 @@ impl CallJournal {
         self.append(Record::Journal(JournalEntry::Invocation(record)))
             .await
     }
-    pub(crate) async fn record_trace(
-        &self,
-        record: crate::trace::TraceRecord,
-    ) -> Result<(), CallJournalError> {
-        self.append(Record::Journal(JournalEntry::Trace(record)))
-            .await
-    }
     async fn append(&self, record: Record) -> Result<(), CallJournalError> {
         let receipt = self.recorder.append(Arc::new(record)).await?;
         if !self.required.accepts(receipt.persistence) {

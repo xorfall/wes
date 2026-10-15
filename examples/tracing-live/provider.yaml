@@ -1,0 +1,55 @@
+version: 1
+provider: capture
+backend: {kind: session, bin: capture_session.py}
+types:
+  CaptureName: {base: Text, minLength: 1, maxLength: 64, pattern: '^[^\x00-\x1f\x7f]+$'}
+  CaptureBackend: {base: Text, minLength: 2, maxLength: 4096, pattern: '^/[^\x00-\x1f\x7f]+$'}
+  CaptureLocalInterface: {base: Text, minLength: 1, maxLength: 1024, pattern: '^[^-\\/:@\x00-\x1f\x7f][^\\/:@\x00-\x1f\x7f]*$'}
+  CaptureFilter: {base: Text, minLength: 1, maxLength: 4096, pattern: '^[^\x00\x0b\x0c\x0e-\x1f\x7f]+$'}
+  CaptureDuration: {base: Int, min: 1, max: 120000}
+  CaptureByteLimit: {base: Int, min: 24, max: 536870912}
+  CapturePacketLimit: {base: Int, min: 1, max: 1000000}
+  CaptureSnapLength: {base: Int, min: 1, max: 65535}
+  CaptureProfile:
+    base: Record
+    fields: {name: CaptureName, backend: CaptureBackend, interface: CaptureLocalInterface, filter: CaptureFilter, durationMs: CaptureDuration, maxBytes: CaptureByteLimit, packets: CapturePacketLimit, snapLength: CaptureSnapLength, promiscuous: Bool}
+  CaptureCoordinate: {base: Text, pattern: '^(0|[1-9][0-9]*)$', maxLength: 20}
+  CapturePhase: {base: Text, enum: [opening, ready, stopping, ended, incomplete]}
+  CaptureUnknownCoverage: {base: Bool, enum: [false]}
+  CaptureStatus:
+    base: Record
+    fields: {profile: CaptureProfile, phase: CapturePhase, rawBytes: CaptureCoordinate, packetCount: CaptureCoordinate, truncatedPackets: CaptureCoordinate, drops: 'Option<CaptureCoordinate>', containerComplete: Bool, indexComplete: Bool, coverageKnown: CaptureUnknownCoverage}
+  CaptureInterface:
+    base: Record
+    fields: {id: Int, section: Int, linkType: Int, snapLength: Int, timestampScale: Text, timestampOffset: Text}
+  CaptureInterfaces: {base: 'List<CaptureInterface>', maxItems: 256}
+  CapturePacket:
+    base: Record
+    fields: {number: Int, interface: Int, recordOffset: CaptureCoordinate, dataOffset: CaptureCoordinate, capturedLength: Int, originalLength: Int, timestampTicks: 'Option<CaptureCoordinate>'}
+  CapturePackets: {base: 'List<CapturePacket>', maxItems: 512}
+  CaptureIndex:
+    base: Record
+    fields: {format: Text, rawBytes: CaptureCoordinate, sha256: Text, packetCount: CaptureCoordinate, indexComplete: Bool, skippedBlocks: Int, interfaces: CaptureInterfaces, packets: CapturePackets}
+  CaptureEndReason: {base: Text, enum: [opening, ended, stopped, duration, bytes, packets, backend-failed, malformed, startup-timeout]}
+  CaptureRecording:
+    base: Record
+    fields: {profile: CaptureProfile, summary: CaptureStatus, reason: CaptureEndReason, index: 'Option<CaptureIndex>', raw: Bytes}
+  CaptureControlOperation: {base: Text, enum: [stop]}
+  CaptureControl:
+    base: Record
+    fields: {operation: CaptureControlOperation}
+  CaptureStopReceipt:
+    base: Record
+    fields: {stopped: Bool}
+operations:
+  - path: [start]
+    summary: Starts one independent local Unix capture using an explicit absolute dumpcap-compatible executable, local interface, BPF filter and frozen profile budgets. Raw original PCAP v2.4 bytes travel over credited pipes to protected native storage; no plaintext capture file is created. Ready requires the backend's post-setup acknowledgement and an admitted valid PCAP header, including idle captures. Status counts describe the acknowledged prefix; drops stay unknown and traffic coverage is never proven. Use :source bind and a typed stop action for graceful backend stop, then :source result on the original physically joined run. Forced/error prefixes remain explicit and never restart. The environment binding controls confidentiality and the residence ceiling; this disk acquisition refuses private/unknown or unavailable protected storage before launch. Native :read bytes reads value.raw explicitly. Keeping follows the existing captured ceiling. Only the first 512 packet headers are indexed; no protocol dissection, discovery, remote target or application trace is implied.
+    parameters: [{name: profile, type: CaptureProfile}]
+    exclusive:
+      - {namespace: wes.capture.profile, fields: [[profile, name]]}
+      - {namespace: wes.capture.interface, fields: [[profile, interface]]}
+    argv: [start]
+    streaming: true
+    result: {format: json, type: CaptureStatus}
+    control: {input: CaptureControl, output: CaptureStopReceipt}
+    recording: {type: CaptureRecording, byte_field: [raw], max_bytes: 536870912, max_duration_ms: 125000}

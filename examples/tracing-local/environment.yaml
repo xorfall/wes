@@ -1,0 +1,15 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  local-traces:
+    imports:
+      files:
+        source: {kind: provider, file: ../tracing-offline/provider.yaml}
+        bind: {target: local, output: confidential}
+      decoder:
+        source: {kind: provider, file: ../tracing-analysis/provider.yaml}
+        bind: {target: local, output: confidential}
+      writer:
+        source: {kind: provider, file: ../byte-export/provider.yaml}
+        bind: {target: local, output: public}

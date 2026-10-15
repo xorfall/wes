@@ -2,7 +2,10 @@ import { packagedViews } from "./generated";
 import type { StoredValue, TypeShape } from "../protocol";
 import type { ValueViewModule } from "./contract";
 import { httpViewModule } from "./http/module";
+import { captureIndexViewModule } from "./capture-index/module";
+import { captureAnalysisViewModule } from "./capture-analysis/module";
 import { byteRangeViewModule } from "./byte-range/module";
+import { captureStatusViewModule } from "./capture-status/module";
 
 /** Trusted host adapters and checked, isolated package renderers share one registry. */
 export function createValueViewRegistry(initial: readonly ValueViewModule[] = []) {
@@ -33,11 +36,11 @@ export function createValueViewRegistry(initial: readonly ValueViewModule[] = []
   };
 }
 
-export const valueViewModules = createValueViewRegistry([byteRangeViewModule, httpViewModule, ...packagedViews]);
+export const valueViewModules = createValueViewRegistry([httpViewModule, captureIndexViewModule, captureAnalysisViewModule, byteRangeViewModule, captureStatusViewModule, ...packagedViews]);
 
 /** Renderer availability belongs to the observed workspace value, not the global code cache. */
 const valueModules = new WeakMap<StoredValue, readonly ValueViewModule[]>();
-export const builtinValueViews = [byteRangeViewModule, httpViewModule, ...packagedViews] as readonly ValueViewModule[];
+export const builtinValueViews = [httpViewModule, captureIndexViewModule, captureAnalysisViewModule, byteRangeViewModule, captureStatusViewModule, ...packagedViews] as readonly ValueViewModule[];
 export function bindValueViews(value: StoredValue, modules: readonly ValueViewModule[]) { valueModules.set(value, modules); }
 export function viewsOfValue(value: Pick<StoredValue, "type" | "data">): readonly ValueViewModule[] | undefined {
   return valueModules.get(value as StoredValue);

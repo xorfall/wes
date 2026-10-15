@@ -311,8 +311,6 @@ pub struct Invocation {
     pub inputs: IndexMap<String, Input>,
     pub cautions: BTreeSet<String>,
     pub interactive: bool,
-    /// Explicit profile selected by the annotation; adapters decide which profiles they support.
-    pub trace_profile: Option<Arc<str>>,
     pub guards: Guards,
 }
 impl Invocation {
@@ -506,12 +504,6 @@ pub fn plan_with_expectations(
                     .annotations
                     .iter()
                     .any(|a| a.name.text == "interactive"),
-                trace_profile: statement
-                    .annotations
-                    .iter()
-                    .find(|a| a.name.text == "trace")
-                    .and_then(|a| a.targets.first())
-                    .map(|name| Arc::from(name.text.as_str())),
                 guards: guards.clone(),
             });
             Ok(new_node(task, dependencies, statement))
@@ -585,21 +577,25 @@ pub fn plan_with_expectations(
                     targets,
                 });
             }
-            let dependencies = if spec.command == wes_language::vocabulary::MetaCommand::Trace {
-                if !matches!(subjects.as_slice(), [Input::FromNode(_)]) {
-                    return Err(PlanError::diagnostic(Diagnostic::error(
-                        "TRC002",
-                        statement.span,
-                        ":trace requires a node reference",
-                    )));
-                }
-                if inputs.get("run").is_some_and(|v| !matches!(v, Input::Literal(value) if matches!(value.data(), wes_core::Data::Text(_)))) { return Err(PlanError::diagnostic(Diagnostic::error("TRC002",statement.span,"trace run must be a literal run identity"))); }
-                IndexMap::new()
-            } else if matches!(
+            if matches!(
+                spec.command,
+                wes_language::vocabulary::MetaCommand::TraceRead
+                    | wes_language::vocabulary::MetaCommand::TraceStop
+            ) && !matches!(subjects.as_slice(),[Input::FromNode(output)] if output.port==OutputPort::Data)
+            {
+                return Err(PlanError::diagnostic(Diagnostic::error(
+                    "TRC002",
+                    statement.span,
+                    "Capture read/stop requires one whole original data reference; nothing was started.",
+                )));
+            }
+            let dependencies = if matches!(
                 spec.command,
                 wes_language::vocabulary::MetaCommand::Inspect
                     | wes_language::vocabulary::MetaCommand::SourceResult
                     | wes_language::vocabulary::MetaCommand::Keep
+                    | wes_language::vocabulary::MetaCommand::TraceRead
+                    | wes_language::vocabulary::MetaCommand::TraceStop
                     | wes_language::vocabulary::MetaCommand::SourceBind
                     | wes_language::vocabulary::MetaCommand::SourceSend
                     | wes_language::vocabulary::MetaCommand::ScanResume

@@ -1,5 +1,5 @@
 version: 1
-name: HTTP domain definitions and observed failures
+name: HTTP response definitions and validation
 steps:
   - name: Status definition
     run: ':calc pure { return httpStatus("404"); } > not_found'
@@ -10,44 +10,32 @@ steps:
     expect:
       - {name: Response boundary category, condition: '$response_error.known && $response_error.category == "response"'}
   - name: Successful call
-    run: '@trace(http) sensor sample > sample'
-  - name: Capture success evidence
-    run: ':read trace:$sample > successful_trace'
-  - name: Analyze success
-    run: ':calc pure { return httpAnalysis($successful_trace); } > successful_analysis'
+    run: 'sensor sample > sample'
+  - name: Classify success
+    run: ':calc pure { return httpStatus($sample.status); } > successful_analysis'
     expect:
-      - {name: Response and business result accepted, condition: '$successful_analysis.executionState == "completed" && $successful_analysis.statuses[0].code == 200 && !$successful_analysis.partial'}
+      - {name: Received success status, condition: '$successful_analysis.code == 200 && $successful_analysis.class == "success"'}
   - name: Missing resource
-    run: '@trace(http) sensor missing > missing *> missing_error'
+    run: 'sensor missing > missing *> missing_error'
     expect:
       - {name: Received status, condition: '$missing.status == 404'}
-  - name: Capture missing evidence
-    run: ':read trace:$missing > missing_trace'
-  - name: Analyze missing
-    run: ':calc pure { return httpAnalysis($missing_trace); } > missing_analysis'
+  - name: Classify missing
+    run: ':calc pure { return httpStatus($missing.status); } > missing_analysis'
     expect:
-      - {name: Received 404 is not transport failure, condition: '$missing_analysis.statuses[0].code == 404 && $missing_analysis.executionState == "completed"'}
+      - {name: Received 404 is data, condition: '$missing_analysis.code == 404 && $missing_analysis.class == "client-error"'}
   - name: Invalid request
-    run: '@trace(http) sensor invalid > invalid'
+    run: 'sensor invalid > invalid'
     expect:
       - {name: Received validation response, condition: '$invalid.status == 422'}
-  - name: Capture invalid evidence
-    run: ':read trace:$invalid > invalid_trace'
-  - name: Analyze invalid
-    run: ':calc pure { return httpAnalysis($invalid_trace); } > invalid_analysis'
-    expect:
-      - {name: Received 422 retained, condition: '$invalid_analysis.statuses[0].code == 422'}
   - name: Invalid response JSON
-    run: '@trace(http) sensor bad > bad'
+    run: 'sensor bad > bad'
     expect:
       - {name: Original unreadable body retained, condition: '$bad.validation.state == "unreadable" && $bad.bodyKind == "bytes"'}
-  - name: Capture rejected response evidence
-    run: ':read trace:$bad > bad_trace'
-  - name: Analyze rejected response
-    run: ':calc pure { return httpAnalysis($bad_trace); } > bad_analysis'
+  - name: Classify received status independently from body validity
+    run: ':calc pure { return httpStatus($bad.status); } > bad_analysis'
     expect:
-      - {name: Response received despite unreadable body, condition: '$bad_analysis.statuses[0].code == 200 && $bad_analysis.executionState == "completed"'}
-  - name: Extract findings
-    run: ':calc { return $bad_analysis.findings; } > findings'
-  - name: Tabulate findings
+      - {name: Response status does not prove a valid body, condition: '$bad_analysis.code == 200 && $bad.validation.state == "unreadable"'}
+  - name: Extract received validation facts
+    run: ':calc pure { return [{status:$bad.status,validation:$bad.validation.state}]; } > findings'
+  - name: Tabulate facts
     run: '$findings > findings_table'

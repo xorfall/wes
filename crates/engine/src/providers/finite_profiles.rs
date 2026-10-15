@@ -163,7 +163,6 @@ impl Providers {
             guards.insert(arg.parameter.clone(), vec![arg.contract.clone()]);
         }
         self.bind_finite(Invocation {
-            trace_profile: None,
             provider: provider.description.clone(),
             capability: capability.clone(),
             inputs: arguments,
@@ -175,6 +174,14 @@ impl Providers {
     }
 }
 impl BoundCall {
+    pub(crate) fn finite_profile_parameter(&self, canonical: &str) -> Option<String> {
+        self.provider
+            .invoker
+            .finite_profile(&self.invocation.capability)?
+            .arguments()
+            .get(canonical)
+            .map(|argument| argument.parameter.clone())
+    }
     /// Local execution location, not provider alias, endpoint or working directory.
     pub fn is_local_target(&self) -> bool {
         match &self.provider.scope {

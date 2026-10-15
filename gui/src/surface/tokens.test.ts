@@ -134,7 +134,7 @@ describe("the surface's roles", () => {
       "surface-terminal", "surface-sunk",
       "frame-default", "frame-focus", "frame-stale", "frame-failed", "frame-pinned", "frame-live",
       "rail-default", "rail-focus", "rail-stale", "rail-failed", "rail-pinned", "rail-live", "rail-output",
-      "badge-environment", "badge-revision", "badge-grant", "badge-target", "badge-traced",
+      "badge-environment", "badge-revision", "badge-grant", "badge-target",
       "badge-effects",
       ...Object.keys(viewTheme.roles),
       "graph-node-ok", "graph-node-running", "graph-node-stale", "graph-node-failed", "graph-node-selected",

@@ -3,6 +3,14 @@
 :help inspect
 :help list
 :help read
+:help trace
+:help trace start
+:help trace stop
+:help trace read
+:help trace import
+:help trace analyze
+:help trace export
+:help trace retain
 :help node
 :help name
 :help workspace

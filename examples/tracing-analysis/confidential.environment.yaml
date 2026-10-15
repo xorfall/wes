@@ -1,0 +1,12 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  analysis:
+    imports:
+      capture:
+        source: {kind: provider, file: ../tracing-offline/provider.yaml}
+        bind: {target: local, output: confidential}
+      analyze:
+        source: {kind: provider, file: provider.yaml}
+        bind: {target: local, output: confidential}

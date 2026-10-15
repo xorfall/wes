@@ -1,4 +1,4 @@
-use super::super::{auth::Redactor, transport::Transport};
+use super::super::transport::Transport;
 use super::*;
 use std::{os::unix::fs::PermissionsExt, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -125,8 +125,6 @@ async fn local_internal_curl_and_ssh_preserve_binary_body_status_and_duplicate_h
                 request,
                 config,
                 CancellationToken::new(),
-                None,
-                &Redactor::empty(),
             )
             .await
             .unwrap();

@@ -1,11 +1,8 @@
 //! One HTTP contract; target execution and protocol interpretation remain separate.
-use super::{Failure, HttpConfig, auth::Redactor, inspection};
+use super::{Failure, HttpConfig};
 use reqwest::{Request, header::HeaderMap};
 use wes_core::environments::{Binding, TargetKind};
-use wes_engine::{
-    driver::CancellationToken, environments::Authority, providers::InvocationError,
-    trace::TraceSink,
-};
+use wes_engine::{driver::CancellationToken, environments::Authority, providers::InvocationError};
 
 #[derive(Clone)]
 pub(crate) enum Transport {
@@ -51,20 +48,14 @@ impl Transport {
         request: Request,
         config: HttpConfig,
         token: CancellationToken,
-        trace: Option<&TraceSink>,
-        redactor: &Redactor,
     ) -> Result<Response, InvocationError> {
         match self {
             Self::Internal => {
                 let work = async {
                     let response = client.execute(request).await.map_err(Failure::transport)?;
-                    if let Some(trace) = trace {
-                        inspection::response(trace, &response, redactor);
-                    }
                     let headers = response.headers().clone();
                     let version = format!("{:?}", response.version());
-                    let (status, body) =
-                        super::read_body(response, config.response.bytes, trace).await?;
+                    let (status, body) = super::read_body(response, config.response.bytes).await?;
                     Ok(Response {
                         status,
                         version,
@@ -79,25 +70,6 @@ impl Transport {
             }
             Self::Curl { binding, authority } => {
                 let result = super::curl::send(binding, authority, request, config, token).await?;
-                if let Some(trace) = trace {
-                    use wes_engine::trace::{integer, record, text};
-                    trace.emit(
-                        "http.response",
-                        record(
-                            "HttpResponseHead",
-                            [
-                                ("status".into(), integer(result.status.into())),
-                                ("version".into(), text(&result.version)),
-                                ("headerCount".into(), integer(result.headers.len() as i64)),
-                                (
-                                    "headers".into(),
-                                    inspection::headers(&result.headers, Some(redactor)),
-                                ),
-                            ],
-                            Default::default(),
-                        ),
-                    );
-                }
                 Ok(result)
             }
         }

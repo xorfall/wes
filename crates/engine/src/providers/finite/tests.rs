@@ -173,7 +173,7 @@ impl Fixture {
         let scope = domain
             .digest(&IndexMap::from([(
                 "scope".into(),
-                crate::trace::text("lab"),
+                crate::values::text("lab"),
             )]))
             .unwrap();
         self.authority

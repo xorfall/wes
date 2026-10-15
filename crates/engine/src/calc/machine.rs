@@ -1095,15 +1095,12 @@ impl Machine {
                             span,
                         }));
                     }
-                    Operation::HttpStatus
-                    | Operation::HttpError
-                    | Operation::HttpCatalogue
-                    | Operation::HttpAnalysis => {
+                    Operation::HttpStatus | Operation::HttpError | Operation::HttpCatalogue => {
                         let operation = match spec.operation {
                             Operation::HttpStatus => super::HttpOperation::Status,
                             Operation::HttpError => super::HttpOperation::Error,
                             Operation::HttpCatalogue => super::HttpOperation::Catalogue,
-                            _ => super::HttpOperation::Analysis,
+                            _ => unreachable!("matched HTTP definition operation"),
                         };
                         let data = args[0].data(&mut self.budget, span, 0)?;
                         let input =

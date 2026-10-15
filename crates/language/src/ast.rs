@@ -71,6 +71,7 @@ pub struct Argument {
 pub struct Annotation {
     pub name: Name,
     pub targets: Vec<Name>,
+    pub arguments: Vec<Argument>,
     pub span: Span,
 }
 
@@ -248,7 +249,7 @@ impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for annotation in &self.annotations {
             write!(f, "@{}", annotation.name.text)?;
-            if !annotation.targets.is_empty() {
+            if !annotation.targets.is_empty() || !annotation.arguments.is_empty() {
                 f.write_str(if annotation.name.text == "trace" {
                     "("
                 } else {
@@ -259,6 +260,12 @@ impl fmt::Display for Statement {
                         f.write_str(", ")?;
                     }
                     f.write_str(&target.text)?;
+                }
+                for (i, argument) in annotation.arguments.iter().enumerate() {
+                    if i > 0 || !annotation.targets.is_empty() {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}:{}", argument.key.text, argument.value)?;
                 }
                 f.write_str(if annotation.name.text == "trace" {
                     ")"

@@ -346,7 +346,6 @@ pub struct Workspace {
     pub(crate) safe_observation: Option<observation::Kind>,
     sandbox_leases: Vec<Arc<()>>,
     pub(crate) target_leases: crate::execution::TargetLeases,
-    pub(crate) traces: crate::trace::Traces,
     environments: crate::environments::Registry,
     pub(crate) environment_managed: bool,
     pub(crate) default_environment: Option<String>,
@@ -562,7 +561,6 @@ impl Workspace {
             safe_observation: None,
             sandbox_leases: vec![],
             target_leases: Default::default(),
-            traces: crate::trace::Traces::default(),
             environments: crate::environments::Registry::default(),
             environment_managed: false,
             default_environment: None,
@@ -1159,7 +1157,6 @@ impl Workspace {
             if let Some(node) = self.runtime.graph().node(ticket.run.node()) {
                 call.set_source_definition(node.definition());
             }
-            call.set_traces(self.traces.clone());
             call.set_stream_budget(self.runtime.stream_delivery_budget(ticket.run.node()));
         }
         if let BoundTask::View(view) = &mut ticket.payload {

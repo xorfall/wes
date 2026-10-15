@@ -8,10 +8,6 @@ import type { WorkspaceNode } from "../workspace";
 const node = (over: Partial<WorkspaceNode> = {}): WorkspaceNode => ({
   id: "n1", command: "acme orders.list", dependsOn: [], state: "ready", provenance: {}, cautions: [], kept: true, ...over,
 });
-const trace = {
-  type: { kind: "unknown" as const }, provenance: {},
-  data: { schema: 1, profile: "http", run: "synthetic", state: "ready", events: [] },
-};
 const plain = { type: { kind: "unknown" as const }, provenance: {}, data: "ordinary" };
 
 describe("which views a result admits", () => {
@@ -27,21 +23,24 @@ describe("which views a result admits", () => {
     expect(viewsFor({ value: plain }).map(view => view.name)).toEqual([]);
   });
 
-  it("names the HTTP response, the retained trace, the declared View and the written source", () => {
+  it("names the HTTP response, the declared View and the written source", () => {
     const cases: [ViewSubject, string][] = [
       [{ value: httpValue() }, "http"],
-      [{ value: trace }, "trace"],
-      [{ node: node({ traced: true }) }, "trace"],
       [{ value: { type: { kind: "record", name:"Histogram",fields:[{name:"view",type:{kind:"primitive",name:"TEXT"}},{name:"bins",type:{kind:"list",element:{kind:"record",name:"Bin",fields:[{name:"lower",type:{kind:"primitive",name:"DECIMAL"}},{name:"upper",type:{kind:"primitive",name:"DECIMAL"}},{name:"count",type:{kind:"primitive",name:"INT"}}]}}},{name:"total",type:{kind:"primitive",name:"INT"}}]}, provenance: {}, data: { view: "histogram", bins: [], total: 0 } } }, "histogram"],
       [{ node: node({ command: ":calc {\n  return 1;\n}" }) }, "source"],
     ];
     for (const [subject, name] of cases) expect(viewsFor(subject)[0]?.name, name).toBe(name);
   });
 
-  it("puts the response ahead of the trace of the call that fetched it", () => {
-    const both = { value: httpValue(), node: node({ traced: true, command: "acme orders.list\n> orders" }) };
-    expect(viewsFor(both).map(view => view.name)).toEqual(["http", "trace", "source"]);
+  it("puts the response ahead of the command that fetched it", () => {
+    const captured = { value: httpValue(), node: node({ command: '@trace(capture:"synthetic-http",tail:"5s") acme orders.list\n> orders' }) };
+    expect(viewsFor(captured).map(view => view.name)).toEqual(["http", "source"]);
     expect(viewsFor({ value: httpValue(), node: node() }).map(view => view.name)).toEqual(["http", "source"]);
+  });
+
+  it("offers no trace view: capture evidence is read explicitly, not attached to the result", () => {
+    expect(RESULT_VIEW_NAMES).not.toContain("trace");
+    expect(readOpenRoute("#open/n1/trace")).toEqual({ node: "n1", tab: "result" });
   });
 
   it("gives every registered view a name the address can carry, and no two the same", () => {

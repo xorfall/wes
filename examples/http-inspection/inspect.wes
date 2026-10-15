@@ -1,2 +1,2 @@
-:read trace:$sample > inspection
-:calc pure { return {trace: $inspection}; } > readable
+:read $sample > inspection
+:calc pure { return $inspection; } > readable

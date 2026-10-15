@@ -1,0 +1,23 @@
+/* Reported capture status: a frozen profile and exact prefix counts, never a live control surface. */
+.wes-terminal .capture-status-view { min-width:0; color:var(--mono-ink); font:inherit; }
+.wes-terminal .capture-status-view p { margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .capture-status-header { display:flex; align-items:baseline; gap:10px; min-width:0; white-space:nowrap; overflow:hidden; }
+.wes-terminal .capture-status-header strong { font-weight:500; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .capture-status-dim { color:var(--mono-dim); }
+.wes-terminal .capture-status-ok { color:var(--mono-ok); }
+.wes-terminal .capture-status-warn { color:var(--mono-warn); }
+.wes-terminal .capture-status-unknown { color:var(--mono-warn); }
+.wes-terminal .capture-status-tabs { display:flex; flex-wrap:nowrap; gap:10px; border-bottom:1px solid var(--line); overflow:hidden; }
+.wes-terminal .capture-status-view .cell-action { color:var(--mono-dim); }
+.wes-terminal .capture-status-tabs [aria-selected=true] { border-bottom:2px solid var(--mono-meta); color:var(--mono-ink); }
+.wes-terminal .capture-status-panel { min-width:0; }
+.wes-terminal .capture-status-profile,.wes-terminal .capture-status-history { width:100%; border-collapse:collapse; }
+.wes-terminal .capture-status-profile th { width:16ch; text-align:left; color:var(--key); font-weight:400; white-space:nowrap; padding:0 8px 0 0; vertical-align:top; }
+.wes-terminal .capture-status-profile td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
+.wes-terminal .capture-status-history { font-variant-numeric:tabular-nums; }
+.wes-terminal .capture-status-history th { text-align:right; color:var(--key); font-weight:400; border-bottom:1px solid var(--line); padding:0 8px 0 0; white-space:nowrap; }
+.wes-terminal .capture-status-history td { text-align:right; padding:0 8px 0 0; white-space:nowrap; }
+.wes-terminal .capture-status-history th:first-child,.wes-terminal .capture-status-history td:first-child,
+.wes-terminal .capture-status-history th:nth-child(2),.wes-terminal .capture-status-history td:nth-child(2) { text-align:left; }
+.wes-terminal .capture-status-selected { background:var(--sel); }
+.wes-terminal .capture-status-selected .cell-action { color:var(--mono-ref); }

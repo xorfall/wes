@@ -189,8 +189,8 @@ async fn delete_preview_reports_blocking_downstream_identity_and_lifecycle_witho
 }
 
 #[tokio::test]
-async fn retirement_fence_refuses_result_trace_and_history_inspection_but_preserves_internal_observation()
- {
+async fn retirement_fence_refuses_result_and_history_inspection_but_preserves_internal_observation()
+{
     let f = Fixture::new().await;
     let current = f.app.current().unwrap();
     f.app
@@ -226,16 +226,6 @@ async fn retirement_fence_refuses_result_trace_and_history_inspection_but_preser
     let body: Value = serde_json::from_str(&result.text().await.unwrap()).unwrap();
     assert_eq!(body["error"]["code"], "VALUE_RETIREMENT_BUSY");
     assert_eq!(body["error"]["retryable"], false);
-    let trace = f
-        .client
-        .get(f.url(&format!("/traces/{node}")))
-        .header("X-Wes-Session", &current.generation)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(trace.status(), 503);
-    let body: Value = serde_json::from_str(&trace.text().await.unwrap()).unwrap();
-    assert_eq!(body["code"], "STO015");
     let history = f
         .post(
             &current.generation,

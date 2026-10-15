@@ -134,7 +134,7 @@ async function submit(text: string) {
 const submits = () => requests.filter((request): request is Extract<Request, { request: "submit" }> => request.request === "submit");
 const last = () => submits().at(-1)!;
 function created(id: string, extra = {}): Event {
-  return { event: "created", dependencyLifetime: "continuous", node: id, name: id, command: ":calc 1", dependsOn: [], repeatable: true, traced: false, interactive: false, ...extra };
+  return { event: "created", dependencyLifetime: "continuous", node: id, name: id, command: ":calc 1", dependsOn: [], repeatable: true, interactive: false, ...extra };
 }
 function ready(node: string, handle: string): Event {
   return { event: "ready", node, handle, type: "Text", bytes: 1, provenance: {} } as Event;

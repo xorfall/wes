@@ -229,11 +229,14 @@ it("round trips newline, carriage return and tab escapes in inner-language compl
   expect(foreignAt(inserted, inserted.length, shell)?.written).toBe("echo\n\tİstanbul\r\n");
 });
 
-it("offers the complete HTTP annotation and continues provider completion after it", () => {
+it("offers both capture annotation forms and continues provider completion after either", () => {
   const vocabulary = { ...shell, annotations: ["trace", "unchecked"] };
-  expect(complete("@tr", 3, vocabulary, []).items.map(i => i.text)).toEqual(["@trace(http)"]);
-  const line = "@trace(http) sh ";
-  expect(complete(line, line.length, vocabulary, []).items.map(i => i.text)).toContain("run");
+  expect(complete("@tr", 3, vocabulary, []).items.map(i => i.text)).toEqual(['@trace(capture:"', "@trace(tcp)"]);
+  expect(complete("@trace(t", 8, vocabulary, []).items.map(i => i.text)).toEqual(["@trace(tcp)"]);
+  expect(complete("@trace(http", 11, vocabulary, []).items).toEqual([]);
+  for (const line of ['@trace(capture:"synthetic-http",tail:"5s") sh ', "@trace(tcp) sh "]) {
+    expect(complete(line, line.length, vocabulary, []).items.map(i => i.text)).toContain("run");
+  }
 });
 
 describe("advertised subcommand parameters", () => {
@@ -256,7 +259,7 @@ describe("advertised subcommand parameters", () => {
     expect(offer(":import spec ")).toEqual(["as:", "file:", "url:", "endpoint:"]);
     expect(offer(":import process ")).toEqual(["as:", "bin:"]);
     expect(offer(':import as:"demo" spec f')).toEqual(["file:"]);
-    expect(offer("@trace(http) :import spec end")).toEqual(["endpoint:"]);
+    expect(offer("@trace(tcp) :import spec end")).toEqual(["endpoint:"]);
     expect(offer(":package load ")).toEqual(["path:"]);
     expect(offer(":type check ")).toEqual(["as:"]);
   });
