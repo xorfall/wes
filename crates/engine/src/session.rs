@@ -2814,6 +2814,11 @@ impl Actor {
                     .unwrap_or_default();
             }
             let mut ticket = self.workspace.enter_ticket(enter.ticket);
+            if enter.joined
+                && let Ok(Some(ticket)) = &ticket
+            {
+                self.workspace.retain_joined(&ticket.run);
+            }
             if let Ok(Some(ticket)) = &mut ticket {
                 ticket.payload.set_authority(
                     self.execution_principals
@@ -2864,7 +2869,14 @@ impl Actor {
             let _ = enter.reply.send(ticket);
             return;
         }
-        if let crate::driver::RuntimeInput::Completed(run, report) = &mut input
+        let handoff = match &mut input {
+            crate::driver::RuntimeInput::Completed(run, report) => Some((run, report)),
+            crate::driver::RuntimeInput::Published(update) => {
+                Some((&mut update.run, &mut update.report))
+            }
+            _ => None,
+        };
+        if let Some((run, report)) = handoff
             && matches!(&report.outcome, crate::runtime::Outcome::Stored(_))
             && let Some(values) = &mut self.values
         {

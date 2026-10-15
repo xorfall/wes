@@ -248,6 +248,7 @@ pub(super) async fn execute<T: Send + 'static>(
                 stream_start: Some(final_.omitted),
                 holds: vec![],
                 progress: None,
+                publication_guard: None,
             }
         }
         Phase::Failed(error) => Outcome::Failed(error.clone()).into(),

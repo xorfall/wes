@@ -1202,6 +1202,20 @@ impl Workspace {
         }
         self.runtime.lifetime_value(run, value, now)
     }
+    pub(crate) fn retain_joined(&mut self, run: &Run) -> bool {
+        self.runtime.retain_joined(run)
+    }
+    pub(crate) fn publish_result(
+        &mut self,
+        run: &Run,
+        outcome: Outcome,
+        now: Duration,
+    ) -> Option<Vec<Effect<BoundTask>>> {
+        let outcome = self.checked_outcome(outcome);
+        let effects = self.runtime.publish_result(run, outcome, now)?;
+        self.retire_failed_view(run);
+        Some(effects)
+    }
     pub(crate) fn stream_update(
         &mut self,
         update: crate::driver::streaming::Update,
@@ -1215,7 +1229,13 @@ impl Workspace {
         outcome: Outcome,
         now: Duration,
     ) -> Vec<Effect<BoundTask>> {
-        let outcome = match outcome {
+        let outcome = self.checked_outcome(outcome);
+        let effects = self.runtime.complete(run, outcome, now);
+        self.retire_failed_view(run);
+        effects
+    }
+    fn checked_outcome(&self, outcome: Outcome) -> Outcome {
+        match outcome {
             Outcome::Produced(value) | Outcome::Incomplete { value, .. }
                 if self.dataset_access.blocks(&value) =>
             {
@@ -1226,8 +1246,9 @@ impl Workspace {
             }
             Outcome::Stored(stored) if stored.snapshot.as_ref().is_some_and(|s|self.dataset_access.blocks_policy(s.provenance.policy())) => Outcome::Failed(crate::runtime::RuntimeCode::ResultForbidden.error("Stored result access was withdrawn before publication; no source was replayed.",None)),
             outcome => outcome,
-        };
-        let effects = self.runtime.complete(run, outcome, now);
+        }
+    }
+    fn retire_failed_view(&mut self, run: &Run) {
         if self.views.contains(run.node())
             && self.runtime.value_of(run.node()).is_none()
             && self.runtime.graph().node(run.node()).is_some_and(|node| {
@@ -1241,7 +1262,6 @@ impl Workspace {
         {
             self.views.retire_node(run.node());
         }
-        effects
     }
     pub(crate) fn apply_dataset_access(
         &mut self,
@@ -1311,13 +1331,14 @@ impl Workspace {
         report: crate::driver::ExecutionReport,
         now: Duration,
     ) -> Vec<Effect<BoundTask>> {
+        let outcome = crate::driver::publication::checked(&report);
         if let Some(start) = report.stream_start {
             self.runtime.set_stream_start(run, start);
         }
         if let Some(progress) = report.progress {
             self.update_execution_progress(run, progress);
         }
-        self.complete(run, report.outcome, now)
+        self.complete(run, outcome, now)
     }
     pub(crate) fn supersede_invocation(
         &mut self,
