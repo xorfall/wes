@@ -106,6 +106,16 @@ adapter advisories whose detailed text may be private. Read provider information
 through help/inspect for permitted details; never infer a warning's cause from its
 code alone or bypass a withheld result through a different tool.
 
+Environment authoring: help command env tail [plan] includes the complete YAML
+declaration schema from the validator, inline source examples and plan/review/apply
+steps. Use execute with :env plan source:<quoted YAML Text> > proposed, then inspect
+the plan and submit :env apply $proposed separately using the returned fresh context.
+No file or filesystem write tool is required for inline declarations. Relative
+package inputs need an explicit absolute base:. Plans and apply do not run providers
+or grant credentials. Read workspace_context after applying. Native execution and
+credential permissions remain separate. After uncertain replies read the original
+request before submitting further work.
+
 API contracts: :describe reads a file or URL and saves an editable draft revision.
 OpenAPI 3.0/3.1 JSON and YAML are converted deterministically. Prose and HTML
 are unsupported; no model configuration or key is needed. Describe results are

@@ -40,6 +40,16 @@ async fn environment_help_explains_confidential_residence_without_execution() {
     ] {
         assert!(syntax.contains(phrase), "{phrase}: {syntax}");
     }
+    let Data::Record(schema) = &fields["declaration"] else {
+        panic!("environment declaration schema");
+    };
+    let Data::Record(roots) = &schema["roots"] else {
+        panic!("schema roots");
+    };
+    assert_eq!(roots["env"], Data::Text("env.package".into()));
+    assert!(
+        matches!(&fields["authoring"], Data::Text(text) if text.contains("no filesystem write tool"))
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 

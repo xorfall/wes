@@ -136,3 +136,16 @@ it("treats malformed primitive names as text without reading object prototypes",
   expect(printed(value)).toContain("__proto__");
   expect(readHelp(value).rows.find(row => row.label === "value:")?.text).toBe("constructor · optional");
 });
+
+it("keeps inline authoring steps and examples visible before bounded declaration details", () => {
+  const value = { ...captures.workspace!, data: { path: "env plan", children: [], invocation: {
+    declaration: { definitions: Object.fromEntries(Array.from({ length: 500 }, (_, n) => [`field${n}`, { kind: "scalar", type: "Text" }])) },
+    authoring: "Submit inline YAML, review the plan, then apply separately.",
+    examples: [':env plan source:"version: 1\\nenvironments: {}" > proposed', ":env apply $proposed"],
+  } } };
+  const model = readHelp(value);
+  expect(model.rows.find(row => row.label === "Authoring")?.text).toContain("inline YAML");
+  expect(model.rows.find(row => row.label === "Examples")?.text).toContain(":env apply $proposed");
+  expect(model.truncated).toBe(true);
+  expect(model.rows.length).toBeLessThanOrEqual(MAX_HELP_ROWS);
+});
