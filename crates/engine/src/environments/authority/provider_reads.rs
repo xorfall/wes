@@ -16,6 +16,7 @@ pub(super) struct KnownScope {
     pub(super) labels: BTreeMap<String, String>,
     pub(super) draft: Option<String>,
 }
+#[derive(Clone)]
 pub(super) struct ReadGrant {
     identity: Arc<()>,
     pub(super) scope: Scope,
@@ -345,6 +346,20 @@ impl ReadProbe {
             );
         }
     }
+    /// Read-only check for the final worker admission. This cannot confirm or
+    /// duplicate a probe; the original single-use receipt still owns confirmation.
+    pub(crate) fn dispatch_guard(&self) -> crate::provider_reads::ReadGuard {
+        let authority = self.authority.clone();
+        let origin = self.origin.clone();
+        let proof = self.proof.clone();
+        crate::provider_reads::ReadGuard::new(move || {
+            authority.0.read().is_ok_and(|state| {
+                state.probe_current(&origin, &proof.identity)
+                    && state.namespace.as_deref() == Some(origin.realm())
+                    && proof.current(&state, &authority.1)
+            })
+        })
+    }
     pub(crate) fn current(&self) -> bool {
         self.authority.0.read().is_ok_and(|s| {
             s.probe_current(&self.origin, &self.proof.identity)
@@ -569,13 +584,23 @@ mod tests {
             let b = authority
                 .provider_read_origin(&binding, "api", &"b".repeat(64))
                 .unwrap();
+            let first_dispatch = first.dispatch_guard();
+            let second_dispatch = second.dispatch_guard();
+            assert!(first_dispatch.current());
+            assert!(second_dispatch.current());
             if reverse {
                 second.confirm().unwrap();
+                assert!(!second_dispatch.current());
+                assert!(first_dispatch.current());
                 first.confirm().unwrap();
             } else {
                 first.confirm().unwrap();
+                assert!(!first_dispatch.current());
+                assert!(second_dispatch.current());
                 second.confirm().unwrap();
             }
+            assert!(!first_dispatch.current());
+            assert!(!second_dispatch.current());
             assert!(authority.permits_provider_read(&a));
             assert!(authority.permits_provider_read(&b));
         }

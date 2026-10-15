@@ -26,6 +26,8 @@ use wes_engine::{
     runtime::{Effect, Outcome, RunTicket, Runtime},
 };
 use wes_language::{Expression, SourceText, parse, resolve::resolve};
+#[path = "calls/admission.rs"]
+mod admission;
 #[path = "calls/batches.rs"]
 mod batches;
 

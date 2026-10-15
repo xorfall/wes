@@ -76,6 +76,13 @@ impl BoundCall {
     }
 }
 impl Attempt {
+    pub(super) fn dispatch_guard(&self) -> Option<crate::provider_reads::ReadGuard> {
+        match self {
+            Self::Probe(Some(probe)) => Some(probe.dispatch_guard()),
+            Self::Probe(None) => Some(crate::provider_reads::ReadGuard::new(|| false)),
+            _ => self.stream_guard(),
+        }
+    }
     pub(super) fn is_probe(&self) -> bool {
         matches!(self, Self::Probe(_))
     }

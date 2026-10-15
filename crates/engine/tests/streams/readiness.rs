@@ -66,6 +66,12 @@ async fn closing_admission_retires_ready_proof_without_an_early_physical_close()
         .unwrap();
     started.sink.closing().unwrap();
     assert!(matches!(
+        handle
+            .wait_ready(&run, Duration::from_secs(1), CancellationToken::new())
+            .await,
+        Err(ReadyError::Closed)
+    ));
+    assert!(matches!(
         ready.admit(&run, || panic!("closed admission")),
         Err(ReadyError::Closed)
     ));
