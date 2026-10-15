@@ -1,0 +1,26 @@
+version: 1
+provider: bytes
+backend: {kind: process, bin: export_bytes.py}
+types:
+  ByteExportReceipt:
+    base: Record
+    fields: {file: Text, bytes: Text, sha256: Text, device: Text, inode: Text, published: Bool}
+operations:
+  - path: [export]
+    summary: Explicit finite local export of the exact owned Bytes selection into an existing user-owned directory. No overwrite, directory creation, producer replay or policy promotion. Refuses symlink path components. Confidential export needs native literal approval; memory-only and unknown policy refuse. A failed acknowledgement may leave a published target and is never automatically replayed.
+    parameters:
+      - {name: source, type: Bytes}
+      - {name: file, type: Text}
+      - {name: allow_confidential, type: Bool, required: false}
+    byte_input:
+      parameter: source
+      max_bytes: 536870912
+      file_egress: {destination: file, approval: allow_confidential}
+    finite_profile:
+      name: pcap
+      kind: bytes.export
+      arguments: {source: source, file: file, allow_confidential: allow_confidential}
+    argv:
+      - {parameter: file, prefix: [--file]}
+      - {parameter: allow_confidential, encoding: flag, prefix: [--allow-confidential]}
+    result: {format: json, type: ByteExportReceipt}

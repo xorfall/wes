@@ -70,6 +70,13 @@ struct ExclusiveDoc {
 struct ByteInputDoc {
     parameter: String,
     max_bytes: u64,
+    file_egress: Option<FileEgressDoc>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileEgressDoc {
+    destination: String,
+    approval: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -493,7 +500,20 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             if fixed_arguments.contains_key(&input.parameter) {
                 return Err(DefinitionError::new("byte_input requires a captured native source, not a configured literal"));
             }
-            Ok(wes_engine::byte_input::ByteInputSpec {parameter:input.parameter, maximum:input.max_bytes})
+            let file_egress = input.file_egress.map(|egress| {
+                if egress.destination == egress.approval || egress.destination == input.parameter || egress.approval == input.parameter {
+                    return Err(DefinitionError::new("file_egress requires distinct source, destination and approval parameters"));
+                }
+                for (name, primitive, required) in [(&egress.destination, Primitive::Text, true), (&egress.approval, Primitive::Bool, false)] {
+                    if !params.iter().any(|(n,c,r)|n==name && c.shape()==Shape::Primitive(primitive) && (!required || *r))
+                        || fixed_arguments.contains_key(name)
+                        || !op.argv.iter().any(|a|matches!(a,Argument::Parameter(fields) if &fields.parameter==name)) {
+                        return Err(DefinitionError::new("file_egress requires caller-supplied Text destination and Bool approval parameters mapped to argv; neither can be fixed"));
+                    }
+                }
+                Ok(wes_engine::byte_input::FileEgress { destination:egress.destination, approval:egress.approval })
+            }).transpose()?;
+            Ok(wes_engine::byte_input::ByteInputSpec {parameter:input.parameter, maximum:input.max_bytes, file_egress})
         }).transpose()?;
         let exclusive = op
             .exclusive

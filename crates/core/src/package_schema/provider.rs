@@ -168,7 +168,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
         ("max_bytes", "int", true),
         ("max_duration_ms", "int", true),
     ]), "Streaming session only. Captured materialized record type and a required unconstrained Bytes leaf. max_bytes is positive and at most the native acquisition budget; duration is 1–86400000 ms. Native storage supplies placement/policy. Ordered byte credits, an initial shell before readiness and a final shell plus exact End distinguish complete data from an acknowledged incomplete prefix. Physical join is required; no peer-selected paths or replay."));
-    d.insert("provider.byte-input", hint(object(&[("parameter", "text", true),("max_bytes", "int", true)]), "Finite local process only; parameter names one required Bytes input without an argv mapping. max_bytes is positive and at most the native acquisition ceiling. Native entry captures the acknowledged exact source and scope; bounded stdin reads retain ownership and join cleanup. No implicit producer dependency or replay."));
+    d.insert("provider.byte-input", hint(object(&[("parameter", "text", true),("max_bytes", "int", true),("file_egress", "provider.file-egress", false)]), "Finite local process only; parameter names one required Bytes input without an argv mapping. max_bytes is positive and at most the native acquisition ceiling. Native entry captures the acknowledged exact source and scope; bounded stdin reads retain ownership and join cleanup. No implicit producer dependency or replay."));
     d.insert("provider.exclusive-list", list("provider.exclusive"));
 
     d.insert("provider.field-paths", list("provider.text-list"));
@@ -206,6 +206,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
     d.insert("provider.profile-arguments", named("text"));
 
     d.insert("provider.finite-profile", hint(object(&[("name", "text", true),("kind", "text", true),("arguments", "provider.profile-arguments", true)]), "Finite operation only. Bounded name/kind identifiers and at most 32 canonical-to-declared parameter mappings; the map covers exactly all nonfixed caller parameters without duplicate targets. Frozen types, required flags, input limits, target admission and native byte/egress checks remain authoritative. No executable or credential lookup during resolution."));
+    d.insert("provider.file-egress", hint(object(&[("destination", "text", true),("approval", "text", true)]), "Names distinct declared Text destination and Bool approval parameters, independent of the Bytes source. Both require native literal intent before scheduling; confidential disclosure requires explicit approval. Reading or Keep grants no export authority. Process local target only; no overwrite/retry policy is delegated implicitly."));
 }
 
 pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)> {

@@ -385,6 +385,15 @@ impl Invoker for MappedInvoker {
                     "owned byte input requires an explicit native user and a supporting execution target; no provider was invoked",
                 ));
             }
+            if let Some(egress) = op
+                .byte_input
+                .as_ref()
+                .and_then(|spec| spec.file_egress.as_ref())
+            {
+                egress
+                    .validate(&call.arguments, input.provenance().policy())
+                    .map_err(|message| failed("PRV001", message))?;
+            }
             let arguments = this.arguments(op, &call, &token)?;
             let delegated = Call {
                 capability: this.capability.clone(),

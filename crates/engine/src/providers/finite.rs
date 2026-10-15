@@ -103,6 +103,15 @@ pub(super) fn prepare_call(
                 let Some(source) = input_source.clone() else {
                     return Err(Outcome::Failed(RuntimeCode::InputFailed.error("Original byte input was not captured at native entry; no provider was invoked.", None)).into());
                 };
+                if let Some(egress) = &spec.file_egress {
+                    egress
+                        .validate(&arguments, source.provenance.policy())
+                        .map_err(|message| {
+                            ExecutionReport::from(Outcome::Failed(
+                                RuntimeCode::ResultForbidden.error(message, None),
+                            ))
+                        })?;
+                }
                 match source.open(storage.clone(), spec.maximum).await {
                     Ok(input) => Some(input),
                     Err(error) => return Err(error.outcome().into()),

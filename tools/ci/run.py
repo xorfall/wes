@@ -46,6 +46,7 @@ def commands(suite, plan, model):
                 argv += ["--binary", str(ROOT / "target/debug/wes")]
             result.append((ROOT, argv))
         result.insert(6, (ROOT, ["python3", "examples/prometheus-workspace/run.py", "--check"]))
+        result.append((ROOT, ["python3", "examples/byte-export/test_export.py"]))
         return result
     raise ValueError("Unknown suite")
 
