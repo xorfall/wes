@@ -413,7 +413,9 @@ impl Session {
                             result.map_err(|_|error("Session event admission closed or exceeded its budget"))?;
                             delivery=None;
                             if ended {return Ok(());}
-                            protocol::write_until(&mut stdin,&protocol::credit(&session),&token,tokio::time::Instant::now()+wes_engine::streams::MAX_READY_WAIT,None).await?;
+                            if protocol::credit_or_end(&mut stdin,&session,&token,&mut read,pending.is_none()).await? {
+                                return Ok(());
+                            }
                         },
                         request=requests.recv(), if pending.is_none() && operation.control.is_some() && opened && !ended=>{
                             let Some(Request{action, reply, cancellation})=request else {return Err(error("Session control owner ended"));};
