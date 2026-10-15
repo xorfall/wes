@@ -1,6 +1,7 @@
 //! serde_json owns all JSON grammar/escaping. RawValue preserves numeric lexemes and lets
 //! domain decoding avoid an intermediate tree, floating point, and reserved serde object keys.
 use super::{CodecError, Limits};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use indexmap::IndexMap;
 use serde::{
     Deserialize, Deserializer,
@@ -219,8 +220,8 @@ pub(crate) fn present(
     present_for_contract(raw, context, depth, None)
 }
 
-/// HTTP response numbers are interpreted from their original JSON tokens. A declared Decimal
-/// accepts any JSON number, without converting native Int data or accepting numeric strings.
+/// Foreign JSON is interpreted from original tokens with captured contract context.
+/// Declared Bytes use canonical padded standard base64; plain Text/Unknown stay text.
 pub(super) fn present_for_contract(
     raw: &RawValue,
     context: &mut Context,
@@ -230,6 +231,14 @@ pub(super) fn present_for_contract(
     context.visit(depth)?;
     if let Some(contract) = contract {
         match contract.kind() {
+            ContractKind::Scalar(Primitive::Bytes) if raw.get().starts_with('"') => {
+                let text = string(raw)?;
+                let bytes = STANDARD.decode(&text).map_err(|_| CodecError::Contract)?;
+                if STANDARD.encode(&bytes) != text {
+                    return Err(CodecError::Contract);
+                }
+                return Ok(Data::Bytes(bytes.into()));
+            }
             ContractKind::Scalar(
                 kind @ (Primitive::Instant | Primitive::Duration | Primitive::Interval),
             ) if raw.get().starts_with('"') => {

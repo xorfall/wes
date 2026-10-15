@@ -145,3 +145,69 @@ fn response_contract_issues_preserve_escaped_paths_without_values() {
     assert_eq!(issues[0].path, "/a~1b~0");
     assert!(!format!("{issues:?}").contains("private-value"));
 }
+
+#[test]
+fn binary_json_needs_captured_contract_and_canonical_bounded_base64() {
+    let mut types = registry();
+    types.load(r#"types: {Body: {base: Record, fields: {payload: Bytes, optional: 'Option<Bytes>', chunks: 'Map<Text, List<Bytes>>', label: Text}}}"#).unwrap();
+    let contract = types.resolve("Body").unwrap();
+    let bytes = br#"{"payload":"AP8K","optional":null,"chunks":{"a":["","YQ=="]},"label":"YQ=="}"#;
+    let data = decode_json_for_contract(bytes, Limits::default(), &contract).unwrap();
+    assert!(contract.issues(&data).is_empty());
+    assert_eq!(
+        fingerprint(&data)["value"]["payload"],
+        json!({"kind":"Bytes","value":"AP8K"})
+    );
+    assert_eq!(
+        fingerprint(&data)["value"]["label"],
+        json!({"kind":"Text","value":"YQ=="})
+    );
+    assert_eq!(
+        wes_adapters::codec::encode_request_data(&data, Limits::default()).unwrap(),
+        br#"{"chunks":{"a":["","YQ=="]},"label":"YQ==","optional":null,"payload":"AP8K"}"#
+    );
+    assert!(
+        decode_json_for_contract(
+            bytes,
+            Limits {
+                bytes: bytes.len() - 1,
+                nodes: 100
+            },
+            &contract
+        )
+        .is_err()
+    );
+    assert!(
+        decode_json_for_contract(
+            bytes,
+            Limits {
+                bytes: bytes.len(),
+                nodes: 2
+            },
+            &contract
+        )
+        .is_err()
+    );
+    let binary = types.resolve("Bytes").unwrap();
+    for invalid in [
+        br#""YQ""#.as_slice(),
+        br#""YR==""#,
+        br#""YQ==\n""#,
+        br#""_w==""#,
+        br#""private plaintext""#,
+    ] {
+        assert!(decode_json_for_contract(invalid, Limits::default(), &binary).is_err());
+    }
+    assert_eq!(
+        decode_json_preserving(br#""YQ==""#, Limits::default()).unwrap(),
+        Data::Text("YQ==".into())
+    );
+    assert!(
+        decode_json_for_contract(
+            br#""YQ==""#,
+            Limits::default(),
+            &types.resolve("Union<Text, Bytes>").unwrap()
+        )
+        .is_err()
+    );
+}
