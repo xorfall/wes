@@ -522,9 +522,9 @@ impl MetaCommand {
                 spec.recorded = false;
             }
             Self::Keep => {
-                spec.summary = "Save an exact transient member and its dependencies, or the jointly captured named members of an analysis. Example: :keep $study.value > savedValue or :keep $study > savedStudy";
+                spec.summary = "Explicitly protect one acknowledged ordinary result, an exact transient member and its dependencies, or jointly captured named analysis members. No producer is run. Private/temporary policy is never promoted. Example: :keep $evidence > savedEvidence or :keep $study.value > savedValue";
                 spec.operands = Arity::bounded(1, 1);
-                spec.recorded = false;
+                spec.produces_value = true;
             }
             Self::Fork => {
                 spec.summary = "Branch a preceding value or event with ordered, isolated pipelines; blocks may select on success/failed/cancelled or when a pure Bool definition.";

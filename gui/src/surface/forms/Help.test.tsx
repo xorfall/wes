@@ -162,3 +162,9 @@ it("describes physically joined recording reads without presenting a live capabi
   expect(markup).toContain("physically joined");
   expect(markup).toContain("Incomplete prefixes");
 });
+
+it("explains ordinary Keep and residence ceilings in actual native help", () => {
+  const markup = printed(captures.keep!);
+  expect(markup).toContain("acknowledged ordinary result");
+  expect(markup).toContain("Private/temporary");
+});
