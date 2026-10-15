@@ -22,6 +22,7 @@ mod byte_input;
 mod finite;
 mod interactive;
 mod lifecycle;
+pub mod profiles;
 mod read_access;
 mod streaming;
 pub use finite::{FinitePreparationFuture, PreparedCall};

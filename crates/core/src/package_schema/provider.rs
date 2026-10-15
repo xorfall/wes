@@ -68,6 +68,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
                 ("success_codes", "provider.success-codes", false),
                 ("streaming", "bool", false),
                 ("control", "provider.control", false),
+                ("source_profile", "provider.source-profile", false),
                 ("fixed_arguments", "provider.fixed-arguments", false),
                 ("exclusive", "provider.exclusive-list", false),
                 ("byte_input", "provider.byte-input", false),
@@ -173,6 +174,34 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
 
     d.insert("provider.exclusive", hint(object(&[("namespace", "text", true),("fields", "provider.field-paths", true)]), "Streaming session only; at most four distinct resources. namespace is a bounded literal physical-resource namespace shared by aliases. fields has 1–8 bounded static paths through required records ending at required Text parameters. Captured argument values form exact lexical resource keys; reservation is atomic and held until physical producer/controller join. This grants no invocation or read authority."));
     d.insert("provider.fixed-arguments", hint(named("datum"), "Defaults to an empty map. Captured typed constants for declared parameters, at most 256 entries, 65536 encoded bytes and 10000 decoding nodes. Validate exact native literals against captured contracts. Omit fixed fields from caller parameters and refuse overrides. Fixed native byte-input sources are forbidden. Import/reconstruction never rereads mutable configuration."));
+    d.insert("provider.profile-options", named("provider.profile-option"));
+
+    d.insert(
+        "provider.profile-option",
+        variants(
+            "kind",
+            &[
+                ("maximum", "provider.profile-option.maximum"),
+                ("backend-condition", "provider.profile-option.condition"),
+            ],
+        ),
+    );
+
+    d.insert(
+        "provider.kind.maximum",
+        choices(ScalarType::Text, &["maximum"]),
+    );
+
+    d.insert(
+        "provider.kind.condition",
+        choices(ScalarType::Text, &["backend-condition"]),
+    );
+
+    d.insert("provider.profile-option.maximum", hint(object(&[("kind", "provider.kind.maximum", true),("parameter", "text", true),("maximum_from", "provider.text-list", true)]), "maximum_from selects a positive Int through a captured fixed argument. The mapped optional Int caller parameter may only narrow that maximum."));
+
+    d.insert("provider.profile-option.condition", hint(object(&[("kind", "provider.kind.condition", true),("parameter", "text", true)]), "An optional Text caller condition is separate from fixed configuration. The external backend must validate/compose its semantics as a further restriction; the engine promises no protocol-specific intersection."));
+
+    d.insert("provider.source-profile", hint(object(&[("name", "text", true),("kind", "text", true),("default", "bool", false),("stop", "datum", true),("ready_wait_ms", "int", false),("tail_ms", "int", false),("control_ms", "int", false),("grace_ms", "int", false),("narrowing", "provider.profile-options", false)]), "Streaming session with typed controls and fixed required arguments only. name is bounded trimmed Text without control characters; kind is a bounded ASCII identifier. default is false. stop is a captured typed literal, never a live capability. ready_wait_ms defaults to 10000, control_ms/grace_ms to 5000, tail_ms to zero; positive waits and bounded tail cannot exceed native MAX_READY_WAIT. At most 16 distinct typed optional narrowing mappings. Lookup is bounded and target-aware; ambiguous/missing profiles refuse before dispatch."));
 }
 
 pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)> {

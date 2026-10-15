@@ -102,6 +102,7 @@ impl Invoker for BusinessPort {
 }
 struct SourceEntered {
     run: Run,
+    arguments: indexmap::IndexMap<String, Value>,
     sink: StreamSink,
     token: CancellationToken,
     finish: oneshot::Sender<Result<(), InvocationError>>,
@@ -111,6 +112,7 @@ struct SourcePort {
     calls: Arc<AtomicUsize>,
     contracts: ControlContracts,
     recording: Option<Arc<wes_core::contracts::Contract>>,
+    profile: Arc<crate::providers::profiles::SourceProfile>,
 }
 impl Invoker for SourcePort {
     fn invoke(&self, _: Call, _: CancellationToken) -> InvocationFuture {
@@ -118,6 +120,12 @@ impl Invoker for SourcePort {
     }
 }
 impl StreamingInvoker for SourcePort {
+    fn source_profile(
+        &self,
+        _: &Capability,
+    ) -> Option<Arc<crate::providers::profiles::SourceProfile>> {
+        Some(self.profile.clone())
+    }
     fn records_bytes(&self, _: &Capability) -> bool {
         self.recording.is_some()
     }
@@ -144,6 +152,7 @@ impl StreamingInvoker for SourcePort {
             entered
                 .send(SourceEntered {
                     run: call.run,
+                    arguments: call.arguments,
                     sink,
                     token,
                     finish,
@@ -238,6 +247,30 @@ impl Fixture {
             calls: source_calls.clone(),
             contracts: contracts.clone(),
             recording: recording.then(|| registry.resolve("RawCapture").unwrap()),
+            profile: Arc::new(
+                crate::providers::profiles::SourceProfile::new(
+                    crate::providers::profiles::ProfileDeclaration {
+                        name: "synthetic-profile".into(),
+                        kind: "metrics".into(),
+                        default: true,
+                        stop: integer(1),
+                        ready_wait: Duration::from_secs(10),
+                        finalization: FinalizationLimits::default(),
+                        options: [(
+                            "filter".into(),
+                            crate::providers::profiles::ProfileOption {
+                                parameter: "note".into(),
+                                contract: registry.resolve("Text").unwrap(),
+                                restriction:
+                                    crate::providers::profiles::Restriction::BackendCondition,
+                            },
+                        )]
+                        .into(),
+                    },
+                    contracts.clone(),
+                )
+                .unwrap(),
+            ),
         });
         let mut watch = Capability::new(["watch"], Shape::Primitive(Primitive::Int), Safety::Safe);
         watch.streaming = true;
@@ -747,5 +780,63 @@ async fn acknowledged_result_has_bounded_tail_before_one_original_stop() {
     source.finish.send(Ok(())).unwrap();
     running.joined().await;
     assert_eq!(f.controller.calls.load(Ordering::SeqCst), 1);
+    running.close().await;
+}
+
+#[tokio::test]
+async fn resolved_default_profile_executes_through_original_run_companion_with_native_principal_and_private_source_options()
+ {
+    let mut f = Fixture::new(false, false);
+    let call = f.call("business work number:7");
+    let condition = Value::new(
+        Shape::Primitive(Primitive::Text),
+        Data::Text("synthetic-condition".into()),
+        Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
+    )
+    .unwrap();
+    let profile = f
+        .providers
+        .resolve_source_profile(
+            &crate::providers::profiles::ProfileSelector::Default("metrics".into()),
+            Some(&call),
+            &[("filter".into(), condition)].into(),
+            None,
+        )
+        .unwrap();
+    let mut payload = BoundTask::Companion(Box::new(profile.into_companion(call).unwrap()));
+    // The real session stamps both captured providers at serialized native entry.
+    payload.set_authority(native());
+    let running = Running::start(payload, None).await;
+    let source = next(&mut f.sources).await;
+    assert_eq!(
+        source.arguments["note"].data(),
+        &Data::Text("synthetic-condition".into())
+    );
+    assert!(source.arguments["note"].provenance().policy().is_private());
+    f.ready(&source);
+    let business = next(&mut f.businesses).await;
+    assert_eq!(business.run, source.run);
+    business.finish.send(Ok(integer(7))).unwrap();
+    let control = next(&mut f.controls).await;
+    running.handle.wait_idle().await.unwrap();
+    assert_eq!(
+        running.snapshot().await.values[&running.node].data(),
+        integer(7).data()
+    );
+    assert!(
+        !running.snapshot().await.values[&running.node]
+            .provenance()
+            .policy()
+            .is_private()
+    );
+    control
+        .finish
+        .send(ControlOutcome::Confirmed(confirmation()))
+        .ok()
+        .unwrap();
+    source.finish.send(Ok(())).unwrap();
+    running.joined().await;
+    assert_eq!(f.business_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(f.source_calls.load(Ordering::SeqCst), 1);
     running.close().await;
 }

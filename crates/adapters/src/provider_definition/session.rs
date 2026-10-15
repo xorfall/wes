@@ -649,6 +649,17 @@ impl Invoker for Session {
     }
 }
 impl StreamingInvoker for Session {
+    fn source_profile(
+        &self,
+        capability: &wes_core::capability::Capability,
+    ) -> Option<Arc<wes_engine::providers::profiles::SourceProfile>> {
+        self.definition
+            .operations
+            .iter()
+            .find(|operation| operation.path == capability.path)?
+            .source_profile
+            .clone()
+    }
     fn control_contracts(
         &self,
         capability: &wes_core::capability::Capability,

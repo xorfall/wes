@@ -6,6 +6,7 @@ mod invocation;
 mod record_bytes;
 mod schema;
 mod session;
+mod source_profile;
 #[cfg(test)]
 mod tests;
 pub use importer::ProviderImporter;
@@ -38,6 +39,7 @@ struct Operation {
     byte_input: Option<wes_engine::byte_input::ByteInputSpec>,
     exclusive: Vec<Exclusive>,
     fixed_arguments: indexmap::IndexMap<String, wes_core::Value>,
+    source_profile: Option<Arc<wes_engine::providers::profiles::SourceProfile>>,
 }
 #[derive(Clone)]
 struct Exclusive {

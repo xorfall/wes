@@ -91,6 +91,11 @@ impl Operation {
                 "An undeclared provider argument was supplied; no executable was launched.",
             );
         }
+        if let Some(profile) = &self.source_profile {
+            profile.validate_arguments(provided).map_err(|_| {
+                "Source profile options exceed their captured contracts or ceilings; no executable was launched."
+            })?;
+        }
         let mut arguments = self.fixed_arguments.clone();
         arguments.extend(
             provided

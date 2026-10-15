@@ -1299,6 +1299,10 @@
           "schema": "provider.control",
           "required": false
         },
+        "source_profile": {
+          "schema": "provider.source-profile",
+          "required": false
+        },
         "fixed_arguments": {
           "schema": "provider.fixed-arguments",
           "required": false
@@ -1527,6 +1531,106 @@
       "kind": "map",
       "values": "datum",
       "hint": "Defaults to an empty map. Captured typed constants for declared parameters, at most 256 entries, 65536 encoded bytes and 10000 decoding nodes. Validate exact native literals against captured contracts. Omit fixed fields from caller parameters and refuse overrides. Fixed native byte-input sources are forbidden. Import/reconstruction never rereads mutable configuration."
+    },
+    "provider.profile-options": {
+      "kind": "map",
+      "values": "provider.profile-option"
+    },
+    "provider.profile-option": {
+      "kind": "discriminated",
+      "field": "kind",
+      "variants": {
+        "maximum": "provider.profile-option.maximum",
+        "backend-condition": "provider.profile-option.condition"
+      }
+    },
+    "provider.kind.maximum": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "maximum"
+      ]
+    },
+    "provider.kind.condition": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "backend-condition"
+      ]
+    },
+    "provider.profile-option.maximum": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "provider.kind.maximum",
+          "required": true
+        },
+        "parameter": {
+          "schema": "text",
+          "required": true
+        },
+        "maximum_from": {
+          "schema": "provider.text-list",
+          "required": true
+        }
+      },
+      "hint": "maximum_from selects a positive Int through a captured fixed argument. The mapped optional Int caller parameter may only narrow that maximum."
+    },
+    "provider.profile-option.condition": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "provider.kind.condition",
+          "required": true
+        },
+        "parameter": {
+          "schema": "text",
+          "required": true
+        }
+      },
+      "hint": "An optional Text caller condition is separate from fixed configuration. The external backend must validate/compose its semantics as a further restriction; the engine promises no protocol-specific intersection."
+    },
+    "provider.source-profile": {
+      "kind": "object",
+      "fields": {
+        "name": {
+          "schema": "text",
+          "required": true
+        },
+        "kind": {
+          "schema": "text",
+          "required": true
+        },
+        "default": {
+          "schema": "bool",
+          "required": false
+        },
+        "stop": {
+          "schema": "datum",
+          "required": true
+        },
+        "ready_wait_ms": {
+          "schema": "int",
+          "required": false
+        },
+        "tail_ms": {
+          "schema": "int",
+          "required": false
+        },
+        "control_ms": {
+          "schema": "int",
+          "required": false
+        },
+        "grace_ms": {
+          "schema": "int",
+          "required": false
+        },
+        "narrowing": {
+          "schema": "provider.profile-options",
+          "required": false
+        }
+      },
+      "hint": "Streaming session with typed controls and fixed required arguments only. name is bounded trimmed Text without control characters; kind is a bounded ASCII identifier. default is false. stop is a captured typed literal, never a live capability. ready_wait_ms defaults to 10000, control_ms/grace_ms to 5000, tail_ms to zero; positive waits and bounded tail cannot exceed native MAX_READY_WAIT. At most 16 distinct typed optional narrowing mappings. Lookup is bounded and target-aware; ambiguous/missing profiles refuse before dispatch."
     }
   },
   "typeConstructors": [
