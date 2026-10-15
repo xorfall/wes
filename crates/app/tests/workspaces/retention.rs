@@ -977,6 +977,12 @@ async fn disconnected_release(work: bool) {
         proceed: std::sync::mpsc::Receiver<()>,
     }
     impl ValueStore for GatedRelease {
+        fn read_policy(
+            &self,
+            h: &ValueHandle,
+        ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+            self.values.read_policy(h)
+        }
         fn retained_persistence(&self) -> wes_engine::history::Persistence {
             self.values.retained_persistence()
         }
@@ -1218,6 +1224,12 @@ async fn failed_protection_acknowledgement_never_claims_complete_run_evidence() 
     use wes_engine::storage::{LoadedValue, RetentionUsage, StoreError, ValueStore};
     struct FailProtection(TieredValues);
     impl ValueStore for FailProtection {
+        fn read_policy(
+            &self,
+            h: &ValueHandle,
+        ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+            self.0.read_policy(h)
+        }
         fn retained_persistence(&self) -> wes_engine::history::Persistence {
             self.0.retained_persistence()
         }

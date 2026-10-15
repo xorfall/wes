@@ -82,6 +82,7 @@ impl Recording {
     pub fn control(&self) -> Option<crate::tasks::recording::RecordingControl> {
         let access = self.access.borrow();
         if access.closed
+            || access.blocks_policy(&self.policy)
             || self.policy.is_private()
             || self.policy.is_unknown()
             || self
@@ -398,6 +399,12 @@ mod tests {
     use crate::storage::{LoadedValue, StoreError, StoreWorkerLimits, ValueHandle, ValueStore};
     struct NoValues;
     impl ValueStore for NoValues {
+        fn read_policy(
+            &self,
+            _: &ValueHandle,
+        ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+            Ok(None)
+        }
         fn store(&mut self, _: &wes_core::Value) -> Result<ValueHandle, StoreError> {
             Err(StoreError::Restricted)
         }

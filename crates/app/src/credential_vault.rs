@@ -152,6 +152,7 @@ pub struct CredentialVault {
     cost: VaultCost,
     open: Mutex<Option<Open>>,
     generation: AtomicU64,
+    observers: wes_engine::credentials::material::ChangeObservers,
 }
 impl CredentialVault {
     /// A locked vault handle for `home`. Nothing is read or created until it is used.
@@ -165,6 +166,7 @@ impl CredentialVault {
             cost,
             open: Mutex::new(None),
             generation: AtomicU64::new(0),
+            observers: Default::default(),
         })
     }
     fn path(&self) -> PathBuf {
@@ -177,6 +179,7 @@ impl CredentialVault {
     }
     fn changed(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        self.observers.changed();
     }
     /// Lock and announce the change when the file no longer matches the unlocked state.
     fn drop_open(&self, open: &mut Option<Open>) {
@@ -414,6 +417,12 @@ impl CredentialVault {
 }
 
 impl SecureStore for CredentialVault {
+    fn observe(
+        &self,
+        observer: std::sync::Weak<wes_engine::credentials::material::ChangeSignal>,
+    ) -> Result<(), CredentialError> {
+        self.observers.register(observer)
+    }
     fn supported(&self) -> bool {
         true
     }
@@ -611,6 +620,23 @@ mod tests {
             .get(name)
             .unwrap()
             .map(|value| value.expose_secret().to_owned())
+    }
+
+    #[test]
+    fn locking_and_unlocking_wake_read_owners_without_reading_credential_contents() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = vault(home.path());
+        vault.create(&password("synthetic password")).unwrap();
+        let signal = Arc::new(wes_engine::credentials::material::ChangeSignal::default());
+        vault.observe(Arc::downgrade(&signal)).unwrap();
+        let mut watched = signal.subscribe();
+        let generation = vault.generation();
+        vault.lock().unwrap();
+        assert!(watched.has_changed().unwrap());
+        assert_ne!(generation, vault.generation());
+        watched.borrow_and_update();
+        vault.unlock(&password("synthetic password")).unwrap();
+        assert!(watched.has_changed().unwrap());
     }
 
     #[test]

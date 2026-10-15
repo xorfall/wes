@@ -93,6 +93,7 @@ impl<V: ValueStore> Owner<V> {
         snapshot: Option<crate::storage::StoredSnapshot>,
     ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
         if let Some(snapshot) = &snapshot {
+            self.check_policy(snapshot.provenance.policy())?;
             if snapshot.provenance.policy().is_private()
                 || snapshot.provenance.policy().is_unknown()
             {
@@ -164,6 +165,7 @@ impl<V: ValueStore> Owner<V> {
             .map(Option::flatten)
     }
     pub(super) fn validate_prefixes(&self, value: &Value) -> Result<Vec<DatasetRef>, StoreError> {
+        self.check_policy(value.provenance().policy())?;
         if !value.provenance().policy().dataset_reads().is_empty() {
             self.datasets()?
                 .check_read_origins(value.provenance().policy().dataset_reads())?;
@@ -171,7 +173,7 @@ impl<V: ValueStore> Owner<V> {
         let entries = prefixes(value)?;
         let mut refs = Vec::with_capacity(entries.len());
         for entry in entries {
-            let info = self.datasets()?.inspect(entry.reference)?;
+            let info = self.dataset_info(entry.reference)?;
             if entry.element != &info.schema.root().shape() {
                 return Err(StoreError::Conflict);
             }
@@ -188,6 +190,13 @@ impl<V: ValueStore> Owner<V> {
                     .dataset_reads()
                     .iter()
                     .any(|origin| !value.provenance().policy().dataset_reads().contains(origin))
+                || info.policy.provider_reads().iter().any(|origin| {
+                    !value
+                        .provenance()
+                        .policy()
+                        .provider_reads()
+                        .contains(origin)
+                })
             {
                 return Err(StoreError::Restricted);
             }
@@ -225,6 +234,17 @@ impl<V: ValueStore> Owner<V> {
     }
 }
 impl<V: ValueStore> ValueStore for Owner<V> {
+    fn read_policy(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        self.check_scope(handle)?;
+        let policy = self.values.read_policy(handle)?;
+        if let Some(policy) = &policy {
+            self.check_policy(policy)?;
+        }
+        Ok(policy)
+    }
     fn compose(
         &mut self,
         handle: &ValueHandle,
@@ -307,6 +327,9 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         fields: &[String],
     ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
         self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Ok(None);
+        }
         self.checked_snapshot(self.values.describe(handle, fields)?)
     }
     fn describe_bounded(
@@ -315,6 +338,9 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         maximum: u64,
     ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
         self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Ok(None);
+        }
         self.checked_snapshot(self.values.describe_bounded(handle, maximum)?)
     }
     fn read_selected(
@@ -324,6 +350,9 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         limit: u64,
     ) -> Result<Option<LoadedValue>, StoreError> {
         self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Ok(None);
+        }
         let loaded = self.values.read_selected(handle, fields, limit)?;
         if let Some(loaded) = &loaded {
             self.validate_prefixes(&loaded.value)?;
@@ -458,6 +487,9 @@ impl<V: ValueStore> ValueStore for Owner<V> {
     }
     fn read(&self, handle: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
         self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Ok(None);
+        }
         let value = self.values.read(handle)?;
         if let Some(loaded) = &value {
             self.validate_prefixes(&loaded.value)?;
@@ -466,6 +498,9 @@ impl<V: ValueStore> ValueStore for Owner<V> {
     }
     fn encoded(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
         self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Ok(None);
+        }
         if let Some(loaded) = self.values.read(handle)? {
             self.validate_prefixes(&loaded.value)?;
         }

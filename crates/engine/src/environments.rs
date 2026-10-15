@@ -18,8 +18,9 @@ mod record;
 pub use record::EnvironmentRecord;
 mod authority;
 mod execution;
+pub(crate) use authority::ReadPermit;
 pub use authority::{
-    Authority, CredentialStatus, DispatchDenied, InvocationAuthority, ResourceCreation,
+    Authority, CredentialStatus, DispatchDenied, InvocationAuthority, ReadProbe, ResourceCreation,
 };
 pub(crate) use execution::ExecutionImages;
 pub use execution::{DefinitionEdit, EnvironmentDocument, EnvironmentLoader, LoadedDefinitions};

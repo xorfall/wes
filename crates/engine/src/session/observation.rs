@@ -107,6 +107,19 @@ impl SessionObservation {
 }
 
 impl Actor {
+    pub(super) fn current_snapshot(&self) -> SessionSnapshot {
+        let execution = Snapshot::capture(self.workspace.runtime(), self.io.is_idle());
+        SessionSnapshot {
+            read_epoch: execution.provider_read_epoch.clone(),
+            execution,
+            names: self.workspace.bindings().names().clone(),
+            conversations: self.io.active_conversations(self.workspace.runtime()),
+            admission_pending: self.active.is_some() || !self.environment_work.is_empty(),
+            checkpoint_pending: self.checkpoints.busy(),
+            recording_blocked: self.recording_failed,
+            restoration: self.restoration.clone(),
+        }
+    }
     pub(super) fn command_environment(
         &self,
         client: &str,
@@ -251,15 +264,7 @@ impl Actor {
                         .map(|p| (name, p.catalogue().clone()))
                 })
                 .collect(),
-            state: SessionSnapshot {
-                execution: Snapshot::capture(self.workspace.runtime(), self.io.is_idle()),
-                names: self.workspace.bindings().names().clone(),
-                conversations: self.io.active_conversations(self.workspace.runtime()),
-                admission_pending: self.active.is_some() || !self.environment_work.is_empty(),
-                checkpoint_pending: self.checkpoints.busy(),
-                recording_blocked: self.recording_failed,
-                restoration: self.restoration.clone(),
-            },
+            state: self.current_snapshot(),
             cells: self.cells.observed(),
             catalogue: self.workspace.catalogue().clone(),
             templates: self.workspace.templates().clone(),

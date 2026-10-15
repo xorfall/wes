@@ -29,6 +29,18 @@ struct State {
 }
 struct Memory(Arc<Mutex<State>>);
 impl ValueStore for Memory {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .values
+            .get(h)
+            .map(|v| v.provenance().policy().clone()))
+    }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
         let gate = self.0.lock().unwrap().gate.take();
         if let Some((entered, released)) = gate {

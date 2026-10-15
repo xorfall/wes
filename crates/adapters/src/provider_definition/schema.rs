@@ -16,6 +16,7 @@ struct Document {
     types: Json,
     backend: Backend,
     operations: Vec<OperationDoc>,
+    read_access: Option<wes_engine::provider_reads::ReadDomain>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
@@ -421,10 +422,14 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         session.clone().unwrap_or_default(),
     )
     .map_err(|_| DefinitionError("invalid or duplicate operation paths"))?;
+    if let Some(domain) = &doc.read_access {
+        domain.validate(&description).map_err(DefinitionError)?;
+    }
     Ok(Definition {
         description,
         executable: bin,
         operations,
         session,
+        read_domain: doc.read_access,
     })
 }

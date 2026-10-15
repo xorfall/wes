@@ -540,6 +540,7 @@ enum WorkKind {
 /// Not Clone: duplicating a live runtime would duplicate publication authority.
 /// Graph mutations stay here so callers cannot invalidate the lease/output invariants.
 pub struct Runtime<T> {
+    read_access: crate::storage::datasets::DatasetAccess,
     graph: DependencyGraph<T>,
     entries: IndexMap<NodeId, Entry>,
     leases: IndexMap<NodeId, Lease>,
@@ -563,6 +564,7 @@ impl<T: Clone> Default for Runtime<T> {
 impl<T: Clone> Runtime<T> {
     pub fn new() -> Self {
         Self {
+            read_access: Default::default(),
             graph: DependencyGraph::new(),
             entries: IndexMap::new(),
             leases: IndexMap::new(),
@@ -717,7 +719,12 @@ impl<T: Clone> Runtime<T> {
         }
     }
     pub fn value_of(&self, node: &NodeId) -> Option<&Value> {
-        self.entries.get(node)?.value.as_ref()
+        self.entries.get(node)?.value.as_ref().filter(|v| {
+            !self
+                .read_access
+                .providers
+                .blocks_policy(v.provenance().policy())
+        })
     }
     /// Captured result policy and attribution do not depend on decoded payload residency.
     /// This is metadata, never a read grant or a materialization operation.
@@ -729,8 +736,31 @@ impl<T: Clone> Runtime<T> {
             .map(Value::provenance)
             .or_else(|| entry.stored.as_ref().map(|snapshot| &snapshot.provenance))
     }
+    pub(crate) fn provider_read_status(&self, node: &NodeId) -> Option<bool> {
+        let entry = self.entries.get(node)?;
+        let policy = entry
+            .value
+            .as_ref()
+            .map(|v| v.provenance().policy())
+            .or_else(|| entry.stored.as_ref().map(|s| s.provenance.policy()))
+            .or_else(|| {
+                entry
+                    .evidence
+                    .as_ref()
+                    .map(|e| e.value.provenance().policy())
+            })
+            .or_else(|| entry.error.as_ref().map(ErrorValue::policy))?;
+        (!policy.provider_reads().is_empty()).then(|| !self.read_access.blocks_policy(policy))
+    }
     pub fn stored_output(&self, node: &NodeId) -> Option<StoredOutputRef> {
         let entry = self.entries.get(node)?;
+        if entry.stored.as_ref().is_some_and(|s| {
+            self.read_access
+                .providers
+                .blocks_policy(s.provenance.policy())
+        }) {
+            return None;
+        }
         Some(StoredOutputRef {
             run: entry.value_run.clone(),
             revision: entry.display_revision,
@@ -810,7 +840,11 @@ impl<T: Clone> Runtime<T> {
         &self,
         node: &NodeId,
     ) -> Option<&crate::driver::progress::ExecutionProgress> {
-        self.entries.get(node)?.progress.as_ref()
+        self.entries
+            .get(node)?
+            .progress
+            .as_ref()
+            .filter(|p| !p.blocked_by(&self.read_access))
     }
     pub(crate) fn update_progress(
         &mut self,
@@ -829,7 +863,12 @@ impl<T: Clone> Runtime<T> {
         true
     }
     pub fn evidence_value(&self, node: &NodeId) -> Option<&EvidenceValue> {
-        self.entries.get(node)?.evidence.as_ref()
+        self.entries.get(node)?.evidence.as_ref().filter(|e| {
+            !self
+                .read_access
+                .providers
+                .blocks_policy(e.value.provenance().policy())
+        })
     }
     /// Select once at cancellation, before the data branch is invalidated. Value clones share
     /// immutable payloads; no growing history or extra successful-result cache is introduced.
@@ -868,10 +907,19 @@ impl<T: Clone> Runtime<T> {
     /// Last accepted successful typing, retained even if its payload bytes are evicted. A failed,
     /// cancelled or obsolete worker cannot refine this metadata outside its publication authority.
     pub fn actual_typing(&self, node: &NodeId) -> Option<&Arc<Typing>> {
-        self.entries.get(node)?.actual_typing.as_ref()
+        self.entries.get(node)?.actual_typing.as_ref().filter(|t| {
+            !self
+                .read_access
+                .providers
+                .blocks_policy(t.provenance.policy())
+        })
     }
     pub fn error_of(&self, node: &NodeId) -> Option<&ErrorValue> {
-        self.entries.get(node)?.error.as_ref()
+        self.entries
+            .get(node)?
+            .error
+            .as_ref()
+            .filter(|e| !self.read_access.providers.blocks_policy(e.policy()))
     }
     fn open(&self) -> Result<(), RuntimeError> {
         if self.closed {
@@ -1116,6 +1164,24 @@ impl<T: Clone> Runtime<T> {
             return OutputState::Closed;
         };
         let entry = &self.entries[&reference.node];
+        if (reference.port == OutputPort::Data
+            && (entry.value.as_ref().is_some_and(|v| {
+                self.read_access
+                    .providers
+                    .blocks_policy(v.provenance().policy())
+            }) || entry.stored.as_ref().is_some_and(|s| {
+                self.read_access
+                    .providers
+                    .blocks_policy(s.provenance.policy())
+            })))
+            || (reference.port != OutputPort::Data
+                && entry
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| self.read_access.providers.blocks_policy(e.policy())))
+        {
+            return OutputState::Closed;
+        }
         match (node.state(), reference.port) {
             (NodeState::Pending | NodeState::Running | NodeState::Stale, _) => OutputState::Pending,
             (NodeState::Ready, OutputPort::Data) => match &entry.value {
@@ -2197,6 +2263,15 @@ impl<T: Clone> Runtime<T> {
         entry.stale_reason = entry.automatic_pause;
         self.transition(node, NodeState::Stale, &mut effects);
         effects
+    }
+    pub(crate) fn set_read_access(&mut self, access: crate::storage::datasets::DatasetAccess) {
+        self.read_access = access;
+    }
+    pub(crate) fn provider_read_epoch(&self) -> String {
+        self.read_access.providers.epoch()
+    }
+    pub(crate) fn blocks_provider_reads(&self, policy: &wes_core::flow::FlowPolicy) -> bool {
+        self.read_access.providers.blocks_policy(policy)
     }
     /// No terminal branch handlers are launched during shutdown.
     pub fn close(&mut self) -> Vec<Effect<T>> {

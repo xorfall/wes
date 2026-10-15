@@ -265,6 +265,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
         return change(workspace, event.node, node => ({ ...node, name: event.name || undefined, errorNames:event.errorNames,
           // Progress belongs to one run; a new run never inherits an older run's counters.
           ...(node.progress && node.progress.run !== (event.run ?? undefined) ? { progress: undefined } : {}),
+          ...(node.run !== (event.run ?? undefined) ? { accessWithdrawn: undefined } : {}),
           command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, selectionSources: event.selectionSources, dependencyLifetime: event.dependencyLifetime, inputsCaptured: event.inputsCaptured === true || undefined, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
           repeatable: event.repeatable, startedAt: event.startedAt ?? undefined,
           // Replaced by every announcement: absent or null now means no controls, whatever was said before.
@@ -308,8 +309,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
       }
       return change(workspace, event.node, (node) => ({ ...node, state: event.state, waiting:event.waiting,
         staleReason: event.state === "stale" ? event.staleReason : undefined,
-        // A new run's own state ends the withdrawal notice; it brings no old value back.
-        accessWithdrawn: event.state === "stale" ? node.accessWithdrawn : undefined,
+        accessWithdrawn: node.accessWithdrawn,
         updatePending: event.updatePending === true || undefined,
         constructionComplete: event.constructionComplete || undefined,
         ...(node.evidence ? { handle: undefined, bytes: undefined, kept: false } : {}),
@@ -322,6 +322,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
       }));
 
     case "result-access":
+      if (event.readable) return change(workspace, event.node, node => ({ ...node, accessWithdrawn: undefined }));
       // Arrives before the node's stale state. Drop what the value told us; keep the node, its
       // command and its actions. Nothing reruns.
       return change(workspace, event.node, node => ({ ...node, accessWithdrawn: true, handle: undefined, bytes: undefined,

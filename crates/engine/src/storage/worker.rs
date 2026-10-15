@@ -147,6 +147,12 @@ trait Job: Send {
     fn perform(self: Box<Self>, store: &mut dyn OwnedStorage) -> bool;
 }
 trait OwnedStorage {
+    fn check_policy(&self, policy: &wes_core::flow::FlowPolicy) -> Result<(), StoreError>;
+    fn dataset_info(&self, reference: &wes_core::DatasetRef) -> Result<DatasetInfo, StoreError> {
+        let info = self.datasets()?.inspect(reference)?;
+        self.check_policy(&info.policy)?;
+        Ok(info)
+    }
     fn enter_scope(&mut self, scope: Option<&TransientScope>) -> Result<(), StoreError>;
     fn retire_scope(&mut self, id: &str) -> Result<(), StoreError>;
     fn validate_read(&self, handle: &ValueHandle, captured: &Value) -> Result<bool, StoreError>;
@@ -161,7 +167,7 @@ trait OwnedStorage {
         limit: u32,
     ) -> Result<super::datasets::DatasetContinuation, StoreError> {
         let reference = self.datasets()?.continuation(run)?;
-        let info = self.datasets()?.inspect(&reference)?;
+        let info = self.dataset_info(&reference)?;
         let checkpoint = self
             .datasets()?
             .checkpoint(&reference)?
@@ -228,6 +234,13 @@ struct Owner<V> {
     eviction_updates: tokio::sync::watch::Sender<u64>,
 }
 impl<V: ValueStore> OwnedStorage for Owner<V> {
+    fn check_policy(&self, policy: &wes_core::flow::FlowPolicy) -> Result<(), StoreError> {
+        if self.dataset_access.borrow().providers.blocks_policy(policy) {
+            Err(StoreError::ProviderReadUnavailable)
+        } else {
+            Ok(())
+        }
+    }
     fn retire_scope(&mut self, id: &str) -> Result<(), StoreError> {
         // Route losses while the expired ownership identities still exist. They
         // must not be reassigned to the ordinary workspace after retirement.
@@ -280,10 +293,12 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
             .transpose()
         {
             Ok(withdrawn) => super::datasets::DatasetAccess {
+                providers: self.dataset_access.borrow().providers.clone(),
                 withdrawn: withdrawn.unwrap_or_default(),
                 closed: false,
             },
             Err(_) => super::datasets::DatasetAccess {
+                providers: self.dataset_access.borrow().providers.clone(),
                 withdrawn: Default::default(),
                 closed: true,
             },
@@ -304,6 +319,7 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         validate_source: bool,
         initial_admission: bool,
     ) -> Result<(), StoreError> {
+        self.check_policy(policy)?;
         if policy.join(checkpoint.state.provenance().policy()) != *policy
             || policy.join(checkpoint.context.provenance().policy()) != *policy
             || checkpoint.state.provenance().policy().is_private()
@@ -326,6 +342,14 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
                 .iter()
                 .chain(checkpoint.context.provenance().policy().dataset_reads())
                 .any(|o| !policy.dataset_reads().contains(o))
+            || checkpoint
+                .state
+                .provenance()
+                .policy()
+                .provider_reads()
+                .iter()
+                .chain(checkpoint.context.provenance().policy().provider_reads())
+                .any(|o| !policy.provider_reads().contains(o))
         {
             return Err(StoreError::Restricted);
         }
@@ -333,7 +357,7 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
             return Err(StoreError::NonMaterialized);
         }
         if let Some(followed) = &checkpoint.followed_source {
-            let info = self.datasets()?.inspect(&followed.prefix)?;
+            let info = self.dataset_info(&followed.prefix)?;
             if policy.join(&info.policy) != *policy
                 || info.recording.as_ref().map(|r| (&r.run, &r.epoch, r.first))
                     != Some((&followed.run, &followed.epoch, followed.first))
@@ -347,6 +371,11 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
                     .dataset_reads()
                     .iter()
                     .any(|o| !policy.dataset_reads().contains(o))
+                || info
+                    .policy
+                    .provider_reads()
+                    .iter()
+                    .any(|o| !policy.provider_reads().contains(o))
             {
                 return Err(StoreError::Restricted);
             }
@@ -400,6 +429,10 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
                 .dataset_reads()
                 .iter()
                 .any(|o| !policy.dataset_reads().contains(o))
+            || source_policy
+                .provider_reads()
+                .iter()
+                .any(|o| !policy.provider_reads().contains(o))
         {
             return Err(StoreError::Restricted);
         }
@@ -446,9 +479,20 @@ impl<T: Send, F: FnOnce(&mut dyn OwnedStorage) -> Result<T, StoreError> + Send> 
         } = *self;
         let result = store.enter_scope(scope.as_ref()).and_then(|()| work(store));
         let reset = store.enter_scope(None);
-        let result = result.and_then(|value| reset.map(|()| value));
+        let result = match reset {
+            Ok(()) => result,
+            Err(error) => Err(error),
+        };
         store.refresh_access();
-        let failed = result.is_err();
+        // Scope revalidation is an expected reader refusal, including during
+        // inert restore. It must not turn a later successful session shutdown
+        // into a storage-failure report. Physical/validation failures still do.
+        let failed = result.as_ref().is_err_and(|error| {
+            !matches!(
+                error,
+                StoreError::ProviderReadUnavailable | StoreError::ProviderReadChanged
+            )
+        });
         let _ = reply.send(Credited { result, credit });
         failed
     }
@@ -487,6 +531,7 @@ fn spawn_owner(
         })
         .transpose()?;
     let access = super::datasets::DatasetAccess {
+        providers: Default::default(),
         withdrawn: datasets
             .as_ref()
             .map(|port| port.read_access())
@@ -641,17 +686,55 @@ impl StoreWorker {
         reference: wes_core::DatasetRef,
         work: Option<super::datasets::ReadWork>,
     ) -> Result<DatasetInfo, StoreError> {
-        self.request_owner(
+        self.read_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
-            move |owner| owner.datasets()?.eventlog_head(&reference, work.as_ref()),
+            move |owner| {
+                owner.dataset_info(&reference)?;
+                let info = owner.datasets()?.eventlog_head(&reference, work.as_ref())?;
+                owner.check_policy(&info.policy)?;
+                let policy = info.policy.clone();
+                Ok((info, policy))
+            },
         )
-        .await?
-        .wait()
         .await
     }
     pub fn dataset_access(&self) -> tokio::sync::watch::Receiver<super::datasets::DatasetAccess> {
         self.dataset_access.clone()
+    }
+    pub fn provider_readers(&self) -> crate::provider_reads::Readers {
+        self.dataset_access.borrow().providers.clone()
+    }
+    pub fn read_epoch(&self) -> String {
+        self.provider_readers().epoch()
+    }
+    pub(super) fn check_read_epoch(
+        &self,
+        epoch: &str,
+        policy: &wes_core::flow::FlowPolicy,
+    ) -> Result<(), StoreError> {
+        if !policy.provider_reads().is_empty() && epoch != self.read_epoch() {
+            Err(StoreError::ProviderReadChanged)
+        } else {
+            Ok(())
+        }
+    }
+    /// Read-only jobs capture authority before admission and reject an old reply even
+    /// when the same scope acquired a fresh proof while the physical read ran.
+    async fn read_owner<T: Send + 'static>(
+        &self,
+        cost: u32,
+        work: impl FnOnce(&mut dyn OwnedStorage) -> Result<(T, wes_core::flow::FlowPolicy), StoreError>
+        + Send
+        + 'static,
+    ) -> Result<T, StoreError> {
+        let epoch = self.read_epoch();
+        let (result, policy) = self.request_owner(cost, work).await?.wait().await?;
+        self.check_read_epoch(&epoch, &policy)?;
+        if self.provider_readers().blocks_policy(&policy) {
+            return Err(StoreError::ProviderReadUnavailable);
+        }
+        Ok(result)
     }
     /// Retain/size an existing handle as one serial operation. Acknowledged keep must establish
     /// the store's declared persistence even for an already retained handle. Never republishes it.
@@ -899,26 +982,32 @@ impl StoreWorker {
         &self,
         reference: wes_core::DatasetRef,
     ) -> Result<DatasetInfo, StoreError> {
-        self.request_owner(
+        self.read_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
-            move |owner| owner.datasets()?.inspect(&reference),
+            move |owner| {
+                let info = owner.dataset_info(&reference)?;
+                let policy = info.policy.clone();
+                Ok((info, policy))
+            },
         )
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_head(
         &self,
         reference: wes_core::DatasetRef,
     ) -> Result<DatasetInfo, StoreError> {
-        self.request_owner(
+        self.read_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
-            move |owner| owner.datasets()?.head(&reference),
+            move |owner| {
+                owner.dataset_info(&reference)?;
+                let info = owner.datasets()?.head(&reference)?;
+                owner.check_policy(&info.policy)?;
+                let policy = info.policy.clone();
+                Ok((info, policy))
+            },
         )
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_snapshot(
@@ -926,23 +1015,28 @@ impl StoreWorker {
         reference: wes_core::DatasetRef,
         selection: super::datasets::DatasetSnapshot,
     ) -> Result<DatasetInfo, StoreError> {
-        self.request_owner(
+        self.read_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
-            move |owner| owner.datasets()?.snapshot(&reference, selection),
+            move |owner| {
+                owner.dataset_info(&reference)?;
+                let info = owner.datasets()?.snapshot(&reference, selection)?;
+                owner.check_policy(&info.policy)?;
+                let policy = info.policy.clone();
+                Ok((info, policy))
+            },
         )
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_retention_preview(
         &self,
         reference: wes_core::DatasetRef,
     ) -> Result<super::datasets::DatasetRetentionCost, StoreError> {
-        self.request_owner(
+        self.read_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
             move |owner| {
+                let policy = owner.dataset_info(&reference)?.policy;
                 let inventory = owner.datasets()?.retention_preview(&reference)?;
                 if inventory.reference != reference {
                     return Err(StoreError::Conflict);
@@ -970,18 +1064,19 @@ impl StoreWorker {
                     .checked_sub(shared)
                     .ok_or(StoreError::DatasetCorrupt)?;
                 // Both inventories were read by the same FIFO owner; no mutation/reservation was made.
-                Ok(super::datasets::DatasetRetentionCost {
-                    reference,
-                    total_bytes: total,
-                    shared_bytes: shared,
-                    exclusive_bytes: exclusive,
-                    captured_source_bytes: captured,
-                    catalog_revision: inventory.catalog_revision,
-                })
+                Ok((
+                    super::datasets::DatasetRetentionCost {
+                        reference,
+                        total_bytes: total,
+                        shared_bytes: shared,
+                        exclusive_bytes: exclusive,
+                        captured_source_bytes: captured,
+                        catalog_revision: inventory.catalog_revision,
+                    },
+                    policy,
+                ))
             },
         )
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_plan_delete(
@@ -1078,7 +1173,7 @@ impl StoreWorker {
         run: String,
     ) -> Result<super::datasets::DatasetContinuation, StoreError> {
         let limit = self.limits.bytes.get();
-        self.request_owner(limit, move |owner| {
+        self.read_owner(limit, move |owner| {
             let identity = super::datasets::DatasetWriteSelection {
                 role: super::datasets::DatasetWriteRole::Analysis,
                 run: run.clone(),
@@ -1087,10 +1182,10 @@ impl StoreWorker {
             if receipt.outcome == super::datasets::DatasetWriteOutcome::Unknown {
                 return Err(StoreError::DatasetRecoveryUnknown);
             }
-            owner.captured_analysis(&run, limit)
+            let captured = owner.captured_analysis(&run, limit)?;
+            let policy = owner.dataset_info(&captured.reference)?.policy;
+            Ok((captured, policy))
         })
-        .await?
-        .wait()
         .await
     }
     /// Bounded joined read, with no reconciliation, reservation or write admission.
@@ -1099,10 +1194,12 @@ impl StoreWorker {
         run: String,
     ) -> Result<super::datasets::DatasetContinuation, StoreError> {
         let limit = self.limits.bytes.get();
-        self.request_owner(limit, move |owner| owner.captured_analysis(&run, limit))
-            .await?
-            .wait()
-            .await
+        self.read_owner(limit, move |owner| {
+            let captured = owner.captured_analysis(&run, limit)?;
+            let policy = owner.dataset_info(&captured.reference)?.policy;
+            Ok((captured, policy))
+        })
+        .await
     }
     /// Read only the owned analysis's protected input. Range strings and ownership
     /// are selected by the workspace, not by a raw dataset or value-handle literal.
@@ -1113,7 +1210,7 @@ impl StoreWorker {
         rows_or_bytes: usize,
     ) -> Result<Value, StoreError> {
         let limit = self.limits.bytes.get();
-        self.request_owner(limit, move |owner| {
+        self.read_owner(limit, move |owner| {
             let captured = owner.captured_analysis(&run, limit)?;
             let value = if let Some((snapshot, _)) = &captured.stored_source {
                 if !(1..=super::CHUNK_BYTES).contains(&rows_or_bytes) {
@@ -1135,7 +1232,7 @@ impl StoreWorker {
                     rows_or_bytes,
                 )?
             };
-            owner.datasets()?.inspect(&captured.reference)?;
+            owner.dataset_info(&captured.reference)?;
             let current = owner
                 .values()
                 .describe(
@@ -1146,10 +1243,9 @@ impl StoreWorker {
             if current.digest != captured.checkpoint.source.digest {
                 return Err(StoreError::Conflict);
             }
-            Ok(value)
+            let policy = value.provenance().policy().clone();
+            Ok((value, policy))
         })
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_create(
@@ -1166,6 +1262,7 @@ impl StoreWorker {
     ) -> Result<PendingStore<super::datasets::DatasetWriterAdmission>, StoreError> {
         let cost = self.dataset_payload_charge(request.checkpoint.as_ref(), &[], &[])?;
         self.request_owner(cost, move |owner| {
+            owner.check_policy(&request.policy)?;
             if let Some(checkpoint) = &request.checkpoint {
                 owner.validate_checkpoint(checkpoint, &request.policy, true, true)?;
             }
@@ -1184,6 +1281,7 @@ impl StoreWorker {
             &request.coverage,
         )?;
         self.request_owner(cost, move |owner| {
+            owner.check_policy(&request.policy)?;
             if let Some(checkpoint) = &request.checkpoint {
                 owner.validate_checkpoint(checkpoint, &request.policy, false, false)?;
             }
@@ -1307,16 +1405,14 @@ impl StoreWorker {
         &self,
         reference: wes_core::DatasetRef,
     ) -> Result<Option<super::datasets::AnalysisCheckpoint>, StoreError> {
-        self.request_owner(self.limits.bytes.get(), move |owner| {
-            let info = owner.datasets()?.inspect(&reference)?;
+        self.read_owner(self.limits.bytes.get(), move |owner| {
+            let info = owner.dataset_info(&reference)?;
             let checkpoint = owner.datasets()?.checkpoint(&reference)?;
             if let Some(saved) = &checkpoint {
                 owner.validate_checkpoint(saved, &info.policy, true, false)?;
             }
-            Ok(checkpoint)
+            Ok((checkpoint, info.policy))
         })
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_page(
@@ -1333,18 +1429,20 @@ impl StoreWorker {
         stream: wes_core::DatasetStream,
         request: PageRequest,
     ) -> Result<DatasetPage, StoreError> {
-        self.request_owner(
+        self.read_owner(
             self.dataset_read_charge
                 .ok_or(StoreError::DatasetUnavailable)?,
-            move |owner| match stream {
-                wes_core::DatasetStream::Outputs => owner.datasets()?.page(&reference, request),
-                wes_core::DatasetStream::Coverage => {
-                    owner.datasets()?.coverage_page(&reference, request)
-                }
+            move |owner| {
+                let info = owner.dataset_info(&reference)?;
+                let page = match stream {
+                    wes_core::DatasetStream::Outputs => owner.datasets()?.page(&reference, request),
+                    wes_core::DatasetStream::Coverage => {
+                        owner.datasets()?.coverage_page(&reference, request)
+                    }
+                }?;
+                Ok((page, info.policy))
             },
         )
-        .await?
-        .wait()
         .await
     }
     pub async fn dataset_coverage_page(
@@ -1384,20 +1482,26 @@ impl StoreWorker {
     /// The backend bounds its decode; register the resulting ownership before delivering it.
     /// Frozen consumer inputs use `materialize` and its snapshot reservation instead.
     pub async fn read(&self, handle: ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
+        let epoch = self.read_epoch();
         let limit = self.limits.bytes.get();
         let residency = self.residency.clone();
-        self.request(limit, move |store| {
-            let result = store.read(&handle)?;
-            if let Some(loaded) = &result {
-                value_charge(&loaded.value, limit.into())
-                    .ok_or(StoreError::Limit("read response"))?;
-                residency.admit(&loaded.value)?;
-            }
-            Ok(result)
-        })
-        .await?
-        .wait()
-        .await
+        let result = self
+            .request(limit, move |store| {
+                let result = store.read(&handle)?;
+                if let Some(loaded) = &result {
+                    value_charge(&loaded.value, limit.into())
+                        .ok_or(StoreError::Limit("read response"))?;
+                    residency.admit(&loaded.value)?;
+                }
+                Ok(result)
+            })
+            .await?
+            .wait()
+            .await?;
+        if let Some(loaded) = &result {
+            self.check_read_epoch(&epoch, loaded.value.provenance().policy())?;
+        }
+        Ok(result)
     }
     /// A read tied to one immutable snapshot. Permission, digest and full captured contract are
     /// checked on the shared owner, with decoded memory reserved before the read.
@@ -1405,33 +1509,37 @@ impl StoreWorker {
         &self,
         snapshot: super::StoredSnapshot,
     ) -> Result<(LoadedValue, ValueLease), StoreError> {
+        let epoch = self.read_epoch();
         self.residency.admit_snapshot(&snapshot)?;
         let reservation = self.residency.reserve(snapshot.charge)?;
         let limit = self.limits.bytes.get();
         if snapshot.charge > u64::from(limit) {
             return Err(StoreError::Limit("materialized input"));
         }
-        self.request(limit, move |store| {
-            let hold = store
-                .hold(&snapshot.handle)?
-                .ok_or(StoreError::MissingValue)?;
-            if store.digest(&snapshot.handle)?.as_deref() != Some(&snapshot.digest) {
-                return Err(StoreError::Conflict);
-            }
-            let loaded = store
-                .read_selected(&snapshot.handle, &snapshot.selection, snapshot.charge)?
-                .ok_or(StoreError::MissingValue)?;
-            if !snapshot.matches(&loaded.value)
-                || value_charge(&loaded.value, snapshot.charge).is_none()
-            {
-                return Err(StoreError::Conflict);
-            }
-            reservation.finish(&loaded.value)?;
-            Ok((loaded, hold))
-        })
-        .await?
-        .wait()
-        .await
+        let result = self
+            .request(limit, move |store| {
+                let hold = store
+                    .hold(&snapshot.handle)?
+                    .ok_or(StoreError::MissingValue)?;
+                if store.digest(&snapshot.handle)?.as_deref() != Some(&snapshot.digest) {
+                    return Err(StoreError::Conflict);
+                }
+                let loaded = store
+                    .read_selected(&snapshot.handle, &snapshot.selection, snapshot.charge)?
+                    .ok_or(StoreError::MissingValue)?;
+                if !snapshot.matches(&loaded.value)
+                    || value_charge(&loaded.value, snapshot.charge).is_none()
+                {
+                    return Err(StoreError::Conflict);
+                }
+                reservation.finish(&loaded.value)?;
+                Ok((loaded, hold))
+            })
+            .await?
+            .wait()
+            .await?;
+        self.check_read_epoch(&epoch, result.0.value.provenance().policy())?;
+        Ok(result)
     }
     /// Revalidate current owned access after encoding without decoding an immutable handle again.
     pub async fn validate_read(
@@ -1460,35 +1568,40 @@ impl StoreWorker {
         let limit = self.limits.bytes.get();
         let captured_charge =
             value_charge(&captured, limit.into()).ok_or(StoreError::Limit("read revalidation"))?;
-        self.request(limit, move |store| {
-            let Some(loaded) = store.read(&handle)? else {
-                return Ok(false);
+        self.read_owner(limit, move |owner| {
+            let policy = captured.provenance().policy().clone();
+            owner.check_policy(&policy)?;
+            let Some(loaded) = owner.values().read(&handle)? else {
+                return Ok((false, policy));
             };
             value_charge(
                 &loaded.value,
                 u64::from(limit).saturating_sub(captured_charge),
             )
             .ok_or(StoreError::Limit("read revalidation"))?;
-            Ok(loaded.value.same_snapshot(&captured) || loaded.value == captured)
+            let policy = policy.join(loaded.value.provenance().policy());
+            Ok((
+                loaded.value.same_snapshot(&captured) || loaded.value == captured,
+                policy,
+            ))
         })
-        .await?
-        .wait()
         .await
     }
     pub async fn encoded(&self, handle: ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
         let limit = self.limits.bytes.get();
-        self.request(limit, move |store| {
-            let result = store.encoded(&handle)?;
+        self.read_owner(limit, move |owner| {
+            let Some(policy) = owner.values().read_policy(&handle)? else {
+                return Ok((None, wes_core::flow::FlowPolicy::default()));
+            };
+            let result = owner.values().encoded(&handle)?;
             if result
                 .as_ref()
                 .is_some_and(|bytes| bytes.len().saturating_add(256) > limit as usize)
             {
                 return Err(StoreError::Limit("encoded response"));
             }
-            Ok(result)
+            Ok((result, policy))
         })
-        .await?
-        .wait()
         .await
     }
     pub async fn digest(&self, handle: ValueHandle) -> Result<Option<String>, StoreError> {

@@ -48,6 +48,7 @@ pub(super) enum Failure {
     InvalidScope,
     SessionUnavailable,
     SessionChanged,
+    ReadAuthorityChanged,
     PrivateUnavailable,
     Encoding,
 }
@@ -141,6 +142,12 @@ impl Failure {
                 StatusCode::CONFLICT,
                 "VALUE_SESSION_CHANGED",
                 "The workspace session changed during this read. Select the result in the current workspace; no command was rerun.",
+                false,
+            ),
+            Self::ReadAuthorityChanged => (
+                StatusCode::CONFLICT,
+                "VALUE_READ_AUTHORITY_CHANGED",
+                "Result read authority changed during this read. Read a fresh observation after explicit revalidation; no command was rerun.",
                 false,
             ),
             Self::Encoding => (

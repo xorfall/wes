@@ -53,7 +53,23 @@ elif mode == "stderr":
     sys.stderr.flush()
 else:
     send({"kind": "ready"})
-    if mode == "credentials":
+    if mode == "read-domain":
+        assert start["credentials"] == {"Token": "synthetic-provider-session-secret"}
+        if start["operation"] == ["probe"]:
+            send({"kind": "result", "data": start["arguments"]["tenant"] != "denied" and not (root / "probe-denied").exists()})
+            send({"kind": "end"})
+        elif start["operation"] == ["read"]:
+            send({"kind": "result", "data": "synthetic protected capture"})
+            send({"kind": "end"})
+        else:
+            assert start["operation"] == ["watch"]
+            while True:
+                frame = read()
+                if frame["message"]["kind"] == "control":
+                    with (root / "actions").open("a") as file:
+                        file.write(str(frame["message"]["data"]) + "\n")
+                    send({"kind": "control", "id": frame["message"]["id"], "outcome": {"kind": "confirmed", "data": True}})
+    elif mode == "credentials":
         assert start["credentials"] == {"Token": "synthetic-provider-session-secret"}
         assert start["endpoint"] == "https://127.0.0.1:58443"
         assert "Token" not in os.environ and "WES_TOKEN" not in os.environ

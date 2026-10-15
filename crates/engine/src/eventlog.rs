@@ -489,6 +489,7 @@ pub fn spawn(
         None,
         None,
         vec![branch],
+        None,
     )?;
     let cancellation = handle.cancellation_token();
     let archive = prepared

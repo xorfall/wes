@@ -404,6 +404,8 @@ impl Serialize for Stored<'_> {
                 confidential: Option<&'static str>,
                 #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
                 dataset_reads: &'a std::collections::BTreeSet<wes_core::flow::DatasetReadOrigin>,
+                #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+                provider_reads: &'a std::collections::BTreeSet<wes_core::flow::ProviderReadOrigin>,
             }
             let policy = self.provenance.policy();
             object.serialize_field(
@@ -421,6 +423,7 @@ impl Serialize for Stored<'_> {
                             }
                         }),
                     dataset_reads: policy.dataset_reads(),
+                    provider_reads: policy.provider_reads(),
                 },
             )?;
         }

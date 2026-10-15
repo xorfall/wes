@@ -160,6 +160,8 @@ pub trait Executor<T>: Send + Sync + 'static {
 
 #[derive(Clone, Debug)]
 pub struct Snapshot<T> {
+    pub provider_read_epoch: String,
+    pub provider_read_access: IndexMap<NodeId, bool>,
     pub progress: IndexMap<NodeId, progress::ExecutionProgress>,
     pub waiting_inputs: IndexMap<NodeId, Vec<crate::runtime::WaitingInput>>,
     pub stale_reasons: IndexMap<NodeId, crate::runtime::StaleReason>,
@@ -536,6 +538,7 @@ impl<T: Clone + Send + 'static> Actor<T> {
 }
 impl<T: Clone> Snapshot<T> {
     pub(crate) fn capture(runtime: &Runtime<T>, io_idle: bool) -> Self {
+        let provider_read_epoch = runtime.provider_read_epoch();
         let graph = runtime.graph().clone();
         let mut stale_reasons = IndexMap::new();
         let mut input_updates = IndexSet::new();
@@ -543,6 +546,7 @@ impl<T: Clone> Snapshot<T> {
         let mut captured_inputs = IndexMap::new();
         let mut waiting_inputs = IndexMap::new();
         let mut values = IndexMap::new();
+        let mut provider_read_access = IndexMap::new();
         let mut stored_values = IndexMap::new();
         let mut evidence_values = IndexMap::new();
         let mut progress = IndexMap::new();
@@ -552,6 +556,9 @@ impl<T: Clone> Snapshot<T> {
         let mut executing = vec![];
         let mut streaming = vec![];
         for node in graph.nodes() {
+            if let Some(allowed) = runtime.provider_read_status(node.id()) {
+                provider_read_access.insert(node.id().clone(), allowed);
+            }
             if let Some(value) = runtime.execution_progress(node.id()) {
                 progress.insert(node.id().clone(), value.clone());
             }
@@ -596,7 +603,21 @@ impl<T: Clone> Snapshot<T> {
                 streaming.push(node.id().clone());
             }
         }
+        if provider_read_epoch != runtime.provider_read_epoch() {
+            // A revocation racing metadata capture cannot be announced as a fresh proof.
+            for (node, allowed) in &mut provider_read_access {
+                *allowed = false;
+                values.shift_remove(node);
+                stored_values.shift_remove(node);
+                evidence_values.shift_remove(node);
+                actual_typings.shift_remove(node);
+                errors.shift_remove(node);
+                progress.shift_remove(node);
+            }
+        }
         Snapshot {
+            provider_read_epoch,
+            provider_read_access,
             progress,
             waiting_inputs,
             stale_reasons,

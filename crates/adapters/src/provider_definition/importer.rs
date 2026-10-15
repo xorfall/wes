@@ -46,7 +46,7 @@ impl Importer for ProviderImporter {
                 true,
             )],
             summary: Some(
-                "Import a declarative YAML executable provider. Process operations use typed literal argv mappings; session operations use versioned bounded duplex frames, scoped credential handoff, actual readiness and typed events/controls. No executable is launched by import. Session targets must be local. Replacing a definition requires replace:true; previous work keeps its captured revision.",
+                "Import a declarative YAML executable provider. Process operations use typed literal argv mappings; session operations use versioned bounded duplex frames, scoped credential handoff, actual readiness and typed events/controls. Optional read_access declares required Text scope parameters and one finite Bool revalidate operation. Only explicit native revalidation returning true opens that captured scope; credentials, retained bytes and re-enabling do not grant reads or revive a source. Read domains require managed environment binding. No executable is launched by import. Session targets must be local. Replacing a definition requires replace:true; previous work keeps its captured revision.",
             ),
             ..Default::default()
         }

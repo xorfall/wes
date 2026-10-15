@@ -650,6 +650,15 @@ struct ReadStore {
     reads: Arc<AtomicUsize>,
 }
 impl ValueStore for ReadStore {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        Ok(self
+            .values
+            .get(h)
+            .map(|v| v.value.provenance().policy().clone()))
+    }
     fn store(&mut self, _: &Value) -> Result<ValueHandle, StoreError> {
         panic!("startup must not publish")
     }
@@ -1038,6 +1047,12 @@ struct SlowRead {
     gate: Mutex<Option<Gate>>,
 }
 impl ValueStore for SlowRead {
+    fn read_policy(
+        &self,
+        _: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        Ok(Some(value().provenance().policy().clone()))
+    }
     fn store(&mut self, _: &Value) -> Result<ValueHandle, StoreError> {
         panic!("no publication")
     }

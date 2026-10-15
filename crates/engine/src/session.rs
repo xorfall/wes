@@ -238,6 +238,8 @@ impl SessionError {
 pub type SubmissionReply = Result<Arc<SubmissionResult>, SessionError>;
 #[derive(Clone, Debug)]
 pub struct SessionSnapshot {
+    /// Payload-independent read permission epoch; never execution authority.
+    pub read_epoch: String,
     pub execution: Snapshot<BoundTask>,
     pub names: IndexMap<String, OutputRef>,
     /// Current run-bound conversation ports, without input or transient transcript data.
@@ -1040,7 +1042,7 @@ struct SessionSeed {
     restoration: Option<Arc<RestoreReport>>,
 }
 fn spawn_owned(
-    workspace: Workspace,
+    mut workspace: Workspace,
     recording: RecordingMode,
     type_reader: Arc<dyn TypeSourceReader>,
     max_concurrent: NonZeroUsize,
@@ -1054,6 +1056,11 @@ fn spawn_owned(
         values,
         restoration,
     } = seed;
+    if let Some(values) = &values {
+        workspace
+            .install_provider_readers(values.worker().provider_readers())
+            .map_err(SessionError::Management)?;
+    }
     if !workspace.runtime().is_drained() {
         return Err(DriverError::ActiveRuntime.into());
     }
@@ -1120,6 +1127,7 @@ fn spawn_owned(
         value_updates: values.as_ref().map(SessionValues::updates),
     };
     let actor = Actor {
+        provider_read_changes: workspace.dataset_access.providers.changes(),
         first_activation: None,
         selection_pending: Default::default(),
         dataset_access: values.as_ref().map(|v| v.worker().dataset_access()),
@@ -1175,6 +1183,7 @@ enum Admission {
     Recorded(Result<PreparedSource, SessionError>),
 }
 struct Actor {
+    provider_read_changes: tokio::sync::watch::Receiver<u64>,
     preparing_inputs: JoinSet<(
         crate::driver::io::Enter<BoundTask>,
         Result<(), wes_core::ErrorValue>,
@@ -1338,6 +1347,12 @@ impl Actor {
                 break;
             }
             let query_deadline = self.view_queries.deadline(&self.workspace);
+            let provider_read_deadline = self
+                .workspace
+                .dataset_access
+                .providers
+                .deadline()
+                .map(tokio::time::Instant::from_std);
             let display_deadline = self
                 .displays
                 .deadline()
@@ -1346,6 +1361,14 @@ impl Actor {
                 .min();
             let mut changed = true;
             tokio::select! {
+                _ = self.provider_read_changes.changed() => {
+                    self.provider_read_changes.borrow_and_update();
+                    self.provider_reads_changed();
+                },
+                () = async {match provider_read_deadline {Some(at)=>tokio::time::sleep_until(at).await,None=>std::future::pending().await}} => {
+                    self.workspace.dataset_access.providers.expire();
+                    self.provider_reads_changed();
+                },
                 Some(result) = self.preparing_reads.join_next(), if !self.preparing_reads.is_empty() => {
                     if let Ok(result) = result { self.complete_read(result); }
                     changed = false;
@@ -1370,7 +1393,7 @@ impl Actor {
                 result = async { self.dataset_access.as_mut().expect("configured dataset access").changed().await }, if self.dataset_access.is_some() => {
                     let access = match result {
                         Ok(()) => self.dataset_access.as_mut().expect("dataset access").borrow_and_update().clone(),
-                        Err(_) => { self.dataset_access = None; crate::storage::datasets::DatasetAccess { withdrawn: Default::default(), closed: true } },
+                        Err(_) => { self.dataset_access = None; crate::storage::datasets::DatasetAccess { withdrawn: Default::default(), closed: true,providers:self.workspace.dataset_access.providers.clone() } },
                     };
                     self.apply_dataset_access(access);
                 },
@@ -2302,15 +2325,7 @@ impl Actor {
                 let _ = reply.send(self.log.snapshot());
             }
             Control::Snapshot(reply) => {
-                let _ = reply.send(SessionSnapshot {
-                    execution: Snapshot::capture(self.workspace.runtime(), self.io.is_idle()),
-                    names: self.workspace.bindings().names().clone(),
-                    conversations: self.io.active_conversations(self.workspace.runtime()),
-                    admission_pending: self.active.is_some() || !self.environment_work.is_empty(),
-                    checkpoint_pending: self.checkpoints.busy(),
-                    recording_blocked: self.recording_failed,
-                    restoration: self.restoration.clone(),
-                });
+                let _ = reply.send(self.current_snapshot());
             }
             Control::WaitReady {
                 node,
@@ -2351,6 +2366,18 @@ impl Actor {
             values.withdraw_nodes(&nodes);
         }
         self.io.effects(effects);
+    }
+    fn provider_reads_changed(&mut self) {
+        self.displays
+            .withdraw_datasets(&self.workspace.dataset_access);
+        self.workspace.provider_reads_changed();
+        for node in self
+            .io
+            .blocked_source_reads(&self.workspace.dataset_access.providers)
+        {
+            let effects = self.workspace.cancel(&node, self.io.now());
+            self.effects(effects);
+        }
     }
     fn close(&mut self) {
         let pending = self.selection_pending.keys().cloned().collect::<Vec<_>>();

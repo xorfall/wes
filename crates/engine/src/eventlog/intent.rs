@@ -25,6 +25,12 @@ mod tests {
     use crate::storage::{LoadedValue, StoreError, StoreWorkerLimits, ValueHandle, ValueStore};
     struct NoValues;
     impl ValueStore for NoValues {
+        fn read_policy(
+            &self,
+            _: &ValueHandle,
+        ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+            Ok(None)
+        }
         fn store(&mut self, _: &wes_core::Value) -> Result<ValueHandle, StoreError> {
             Err(StoreError::Restricted)
         }

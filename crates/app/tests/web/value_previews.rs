@@ -12,6 +12,12 @@ struct CountReads {
     inspections: Arc<AtomicUsize>,
 }
 impl ValueStore for CountReads {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        self.values.read_policy(h)
+    }
     fn store(&mut self, v: &wes_core::Value) -> Result<ValueHandle, StoreError> {
         self.values.store(v)
     }

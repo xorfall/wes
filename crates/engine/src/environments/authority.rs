@@ -10,7 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 use wes_core::environments::{Binding, Revision};
+mod provider_reads;
 mod resources;
+pub(crate) use provider_reads::ReadPermit;
+pub use provider_reads::ReadProbe;
 pub use resources::{InvocationAuthority, ResourceCreation};
 
 /// Payload-independent refusal reasons from the same locked admission check.
@@ -48,11 +51,17 @@ impl DispatchDenied {
 }
 type Scope = (String, Revision, String);
 struct Grant {
+    identity: Arc<()>,
     until: Instant,
     references: BTreeSet<String>,
 }
 #[derive(Default)]
 struct State {
+    read_epoch: u64,
+    read_observers: Vec<std::sync::Weak<crate::provider_reads::Changes>>,
+    read_updates: Option<tokio::sync::watch::Sender<u64>>,
+    reads: BTreeMap<wes_core::flow::ProviderReadOrigin, provider_reads::ReadGrant>,
+    read_probes: BTreeMap<wes_core::flow::ProviderReadOrigin, std::sync::Weak<()>>,
     resources: resources::Resources,
     restored: bool,
     lifetimes: BTreeMap<String, CancellationToken>,
@@ -133,6 +142,8 @@ impl Authority {
             state.restored = true;
             state.resources = Default::default();
             state.cancel_lifetimes();
+            state.reads.clear();
+            state.read_changed();
         }
     }
     pub(crate) fn establish_namespace(&self, id: &str) {
@@ -140,6 +151,7 @@ impl Authority {
             && state.namespace.is_none()
         {
             state.namespace = Some(id.into());
+            state.read_changed();
         }
     }
     pub fn origin(&self, environment: &str) -> Option<String> {
@@ -229,10 +241,14 @@ impl Authority {
             return Err(CredentialError::Unavailable);
         }
         drop(state);
-        self.1.supply(name, secret, remember)
+        let result = self.1.supply(name.clone(), secret, remember);
+        self.invalidate_read_material(&name);
+        result
     }
     pub fn forget(&self, name: &str) -> Result<(), CredentialError> {
-        self.1.forget(name)
+        let result = self.1.forget(name);
+        self.invalidate_read_material(name);
+        result
     }
     pub fn grant(
         &self,
@@ -253,8 +269,9 @@ impl Authority {
             return Err(CredentialError::Capacity);
         }
         state.grants.insert(
-            scope,
+            scope.clone(),
             Grant {
+                identity: Arc::new(()),
                 until: Instant::now() + lifetime,
                 references: binding
                     .import()
@@ -264,14 +281,16 @@ impl Authority {
                     .collect(),
             },
         );
+        state.reads.retain(|_, g| g.scope != scope);
+        state.read_changed();
         Ok(())
     }
     pub fn revoke(&self, binding: &Binding, alias: &str) -> Result<(), CredentialError> {
-        self.0
-            .write()
-            .map_err(|_| CredentialError::Unavailable)?
-            .grants
-            .remove(&scope(binding, alias)?);
+        let scope = scope(binding, alias)?;
+        let mut state = self.0.write().map_err(|_| CredentialError::Unavailable)?;
+        state.grants.remove(&scope);
+        state.reads.retain(|_, g| g.scope != scope);
+        state.read_changed();
         Ok(())
     }
     pub fn disable(&self, name: &str) -> Result<(), CredentialError> {
@@ -287,6 +306,8 @@ impl Authority {
             token.cancel();
         }
         state.grants.retain(|scope, _| scope.0 != name);
+        state.reads.retain(|_, g| g.scope.0 != name);
+        state.read_changed();
         if let Some(namespace) = &state.namespace {
             let origin = format!("{namespace}/{name}");
             let destination = format!("{origin}@");
@@ -309,6 +330,7 @@ impl Authority {
         }
         state.disabled.remove(name);
         state.enabled.insert(name.into());
+        state.read_changed();
         Ok(())
     }
     pub fn available(&self, name: &str) -> bool {
@@ -341,6 +363,8 @@ impl Authority {
             state.cancel_lifetimes();
             state.grants.clear();
             state.transfers.clear();
+            state.reads.clear();
+            state.read_changed();
         }
     }
     pub fn credentials(
@@ -471,7 +495,7 @@ mod tests {
     use super::*;
     use crate::credentials::ExposeSecret;
     use wes_core::environments::{CapturedSource, CapturedSources, Package};
-    fn bindings() -> (Binding, Binding) {
+    pub(super) fn bindings() -> (Binding, Binding) {
         let package = Package::parse("version: 1\ntargets: {local: {kind: local}}\nenvironments:\n  dev: {secretSlots: {token: {required: true}}, secretRefs: {token: dev/key}, imports: {api: {source: {kind: spec, file: api.json}, bind: {target: local, credentials: {key: {secret: token}}}}}}\n  prod: {extends: {env: dev, track: latest}, secretRefs: {token: prod/key}}\n").unwrap();
         let mut sources = CapturedSources::default();
         for key in package.required_sources() {

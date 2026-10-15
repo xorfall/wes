@@ -36,6 +36,13 @@ impl RefusingReads {
     }
 }
 impl ValueStore for RefusingReads {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        self.check(h)?;
+        self.values.read_policy(h)
+    }
     fn store(&mut self, value: &wes_core::Value) -> Result<ValueHandle, StoreError> {
         self.values.store(value)
     }
@@ -376,6 +383,12 @@ async fn cold_ready_results_keep_their_ui_handle_and_capacity_is_not_withdrawal(
     fixture.close().await;
 }
 impl ValueStore for GatedStore {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        self.values.read_policy(h)
+    }
     fn store(&mut self, value: &wes_core::Value) -> Result<ValueHandle, StoreError> {
         // Test-only deadline guarantees cleanup even if a regression prevents a pending frame.
         if self

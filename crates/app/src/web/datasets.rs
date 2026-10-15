@@ -66,6 +66,7 @@ pub(super) async fn read(
     if request.headers().contains_key("X-Wes-Scope") && (input.head || input.extent.is_some()) {
         return error_response(Error::Invalid);
     }
+    let read_epoch = worker.read_epoch();
     let _hold = match worker.hold(handle.clone()).await {
         Ok(Some(hold)) => hold,
         Ok(None) => {
@@ -91,6 +92,12 @@ pub(super) async fn read(
         Ok(reference) => reference,
         Err(error) => return error_response(error),
     };
+    let protected_read = !before
+        .value
+        .provenance()
+        .policy()
+        .provider_reads()
+        .is_empty();
     let advanced = input.head || input.extent.is_some();
     let response = match dataset_reads::read(&worker, &before.value, input, 1024 * 1024).await {
         Ok(value) => value,
@@ -117,6 +124,14 @@ pub(super) async fn read(
         );
     }
     match worker.read_matches(handle, before.value).await {
+        Ok(true) if protected_read && read_epoch != worker.read_epoch() => {
+            return failure(
+                StatusCode::CONFLICT,
+                "DATASET_READ_AUTHORITY_CHANGED",
+                "Read authority changed during this read; obtain a fresh observation after explicit revalidation.",
+                false,
+            );
+        }
         Ok(true) => {}
         Err(error) => return error_response(Error::Storage(error)),
         Ok(false) => {
@@ -156,6 +171,14 @@ pub(super) async fn read(
             false,
         );
     }
+    if protected_read && read_epoch != worker.read_epoch() {
+        return failure(
+            StatusCode::CONFLICT,
+            "DATASET_READ_AUTHORITY_CHANGED",
+            "Read authority changed during this read; obtain a fresh observation after explicit revalidation.",
+            false,
+        );
+    }
     if let Some(shown) = advanced_extent {
         match worker.dataset_head(reference.clone()).await {
             Ok(info) if dataset_reads::extends(&info.reference, &shown) => {}
@@ -165,6 +188,14 @@ pub(super) async fn read(
     }
     if let Err(error) = worker.dataset_inspect(reference).await {
         return error_response(Error::Storage(error));
+    }
+    if protected_read && read_epoch != worker.read_epoch() {
+        return failure(
+            StatusCode::CONFLICT,
+            "DATASET_READ_AUTHORITY_CHANGED",
+            "Read authority changed during this read; obtain a fresh observation after explicit revalidation.",
+            false,
+        );
     }
     match encoded {
         Ok(Ok(bytes)) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),

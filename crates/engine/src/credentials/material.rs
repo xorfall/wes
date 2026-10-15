@@ -3,14 +3,61 @@
 use super::{CredentialError, ExposeSecret, Secret};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
+/// Payload-free wakeup. Observers cannot run callbacks under credential locks.
+pub struct ChangeSignal(tokio::sync::watch::Sender<u64>);
+impl Default for ChangeSignal {
+    fn default() -> Self {
+        Self(tokio::sync::watch::channel(0).0)
+    }
+}
+impl ChangeSignal {
+    pub fn changed(&self) {
+        self.0.send_modify(|n| *n = n.saturating_add(1));
+    }
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.subscribe()
+    }
+}
+#[derive(Clone, Default)]
+pub struct ChangeObservers(Arc<Mutex<Vec<Weak<ChangeSignal>>>>);
+impl ChangeObservers {
+    pub fn register(&self, observer: Weak<ChangeSignal>) -> Result<(), CredentialError> {
+        let mut observers = self.0.lock().map_err(|_| CredentialError::Unavailable)?;
+        observers.retain(|o| o.strong_count() > 0);
+        if observer.strong_count() == 0 || observers.iter().any(|o| o.ptr_eq(&observer)) {
+            return Ok(());
+        }
+        if observers.len() >= 128 {
+            return Err(CredentialError::Capacity);
+        }
+        observers.push(observer);
+        Ok(())
+    }
+    pub fn changed(&self) {
+        if let Ok(mut observers) = self.0.lock() {
+            observers.retain(|o| {
+                if let Some(o) = o.upgrade() {
+                    o.changed();
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+    }
+}
 pub trait SecureStore: Send + Sync {
     fn supported(&self) -> bool;
     /// Changes whenever previously read values or absences may no longer hold, for example when
     /// a vault is locked, unlocked or reset. Reading it must not perform I/O.
     fn generation(&self) -> u64 {
         0
+    }
+    /// Optional immediate notification of generation changes; payload-free and no callbacks.
+    fn observe(&self, _observer: Weak<ChangeSignal>) -> Result<(), CredentialError> {
+        Ok(())
     }
     fn get(&self, reference: &str) -> Result<Option<Secret>, CredentialError>;
     fn set(&self, reference: &str, value: &Secret) -> Result<(), CredentialError>;
@@ -23,12 +70,14 @@ struct State {
     loaded: BTreeSet<String>,
     bytes: usize,
     generation: u64,
+    revision: u64,
 }
 #[derive(Clone, Default)]
 pub struct Material {
     state: Arc<Mutex<State>>,
     operation: Arc<Mutex<()>>,
     secure: Option<Arc<dyn SecureStore>>,
+    observers: ChangeObservers,
 }
 impl Material {
     pub fn new(secure: Arc<dyn SecureStore>) -> Self {
@@ -52,6 +101,7 @@ impl Material {
             .map_err(|_| CredentialError::Unavailable)?;
         let generation = self.generation();
         if state.generation != generation {
+            state.revision = state.revision.saturating_add(1);
             for reference in std::mem::take(&mut state.saved) {
                 if let Some(value) = state.values.remove(&reference) {
                     state.bytes -= reference.len() + value.expose_secret().len();
@@ -60,6 +110,7 @@ impl Material {
             let State { values, loaded, .. } = &mut *state;
             loaded.retain(|reference| values.contains_key(reference));
             state.generation = generation;
+            self.observers.changed();
         }
         Ok(state)
     }
@@ -122,6 +173,8 @@ impl Material {
             state.saved.insert(reference.into());
         }
         state.loaded.insert(reference.into());
+        state.revision = state.revision.saturating_add(1);
+        self.observers.changed();
         Ok(())
     }
     pub fn supply(
@@ -157,6 +210,8 @@ impl Material {
         }
         state.bytes = Self::charge(&state, &reference, &value)?;
         state.values.insert(reference.clone(), value);
+        state.revision = state.revision.saturating_add(1);
+        self.observers.changed();
         state.loaded.insert(reference.clone());
         if remember {
             state.saved.insert(reference);
@@ -182,7 +237,22 @@ impl Material {
         }
         state.saved.remove(reference);
         state.loaded.remove(reference);
+        state.revision = state.revision.saturating_add(1);
+        self.observers.changed();
         Ok(())
+    }
+    pub(crate) fn observe(&self, observer: Weak<ChangeSignal>) -> Result<(), CredentialError> {
+        self.observers.register(observer.clone())?;
+        if let Some(secure) = &self.secure {
+            secure.observe(observer)?;
+        }
+        Ok(())
+    }
+    /// No I/O. Secure-store generation and cache mutations fence read probes and
+    /// late replies even across lock/unlock or replacement with the same text.
+    pub(crate) fn revision(&self) -> Result<(u64, u64), CredentialError> {
+        let state = self.state()?;
+        Ok((state.generation, state.revision))
     }
     pub fn lookup(&self, reference: &str) -> Result<Option<Secret>, CredentialError> {
         Ok(self.state()?.values.get(reference).cloned())
@@ -200,6 +270,30 @@ impl Material {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+    #[test]
+    fn observer_capacity_refuses_registration_and_recovers_without_losing_existing_wakeups() {
+        let observers = ChangeObservers::default();
+        let mut signals = (0..128)
+            .map(|_| Arc::new(ChangeSignal::default()))
+            .collect::<Vec<_>>();
+        for signal in &signals {
+            observers.register(Arc::downgrade(signal)).unwrap();
+        }
+        observers.register(Arc::downgrade(&signals[0])).unwrap();
+        let next = Arc::new(ChangeSignal::default());
+        assert!(matches!(
+            observers.register(Arc::downgrade(&next)),
+            Err(CredentialError::Capacity)
+        ));
+        let watched = signals[0].subscribe();
+        observers.changed();
+        assert!(watched.has_changed().unwrap());
+        signals.pop();
+        observers.register(Arc::downgrade(&next)).unwrap();
+        let watched = next.subscribe();
+        observers.changed();
+        assert!(watched.has_changed().unwrap());
+    }
     #[derive(Default)]
     struct Store {
         values: Mutex<BTreeMap<String, Secret>>,

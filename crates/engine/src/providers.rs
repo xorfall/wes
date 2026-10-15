@@ -20,6 +20,7 @@ use wes_core::{
 };
 mod interactive;
 mod lifecycle;
+mod read_access;
 mod streaming;
 
 pub type InvocationFuture =
@@ -103,6 +104,7 @@ enum ExecutionScope {
 
 #[derive(Clone)]
 pub struct Provider {
+    read_domain: Option<crate::provider_reads::ReadDomain>,
     scope: ExecutionScope,
     description: Arc<ProviderDescription>,
     invoker: Arc<dyn Invoker>,
@@ -130,6 +132,21 @@ pub struct Providers {
     providers: IndexMap<String, Arc<Provider>>,
 }
 impl Providers {
+    pub(crate) fn register_product(
+        &mut self,
+        product: &crate::imports::ImportProduct,
+    ) -> Option<Arc<Provider>> {
+        self.register_scoped(
+            self.local_scope
+                .clone()
+                .map_or(ExecutionScope::Unbound, ExecutionScope::Local),
+            product.description().clone(),
+            product.invoker().clone(),
+            product.streams().cloned(),
+            product.conversations().cloned(),
+            product.read_domain().cloned(),
+        )
+    }
     pub(crate) fn register_environment(
         &mut self,
         product: &crate::imports::ImportProduct,
@@ -144,6 +161,7 @@ impl Providers {
             product.invoker().clone(),
             product.streams().cloned(),
             product.conversations().cloned(),
+            product.read_domain().cloned(),
         );
         Ok(())
     }
@@ -195,6 +213,7 @@ impl Providers {
             invoker,
             streams,
             conversations,
+            None,
         )
     }
     fn register_scoped(
@@ -204,6 +223,7 @@ impl Providers {
         invoker: Arc<dyn Invoker>,
         streams: Option<Arc<dyn crate::streams::StreamingInvoker>>,
         conversations: Option<Arc<dyn crate::conversations::InteractiveInvoker>>,
+        read_domain: Option<crate::provider_reads::ReadDomain>,
     ) -> Option<Arc<Provider>> {
         let name = description.name().to_owned();
         self.catalogue.register(description);
@@ -215,6 +235,7 @@ impl Providers {
         self.providers.insert(
             name,
             Arc::new(Provider {
+                read_domain,
                 scope,
                 description,
                 invoker,
@@ -680,7 +701,13 @@ impl BoundCall {
     pub fn traits(&self) -> ExecutionTraits {
         ExecutionTraits {
             pure: false,
-            repeatable: self.invocation.capability.safety == Safety::Safe && !self.interactive(),
+            repeatable: self.invocation.capability.safety == Safety::Safe
+                && !self.interactive()
+                && !self
+                    .provider
+                    .read_domain
+                    .as_ref()
+                    .is_some_and(|domain| self.invocation.capability.path == domain.revalidate),
             bounded: !self.interactive(),
         }
     }
@@ -806,6 +833,10 @@ impl Executor<BoundCall> for CallExecutor {
                     .into();
                 }
             };
+            let mut read_access = match bound.read_access(&arguments) {
+                Ok(access) => access,
+                Err(error) => return error.outcome().into(),
+            };
             if cancellation.is_cancelled() {
                 return InvocationError::Cancelled.outcome().into();
             }
@@ -815,7 +846,7 @@ impl Executor<BoundCall> for CallExecutor {
             };
             // An accepted writer request is joined even when cancellation happens while waiting.
             // In that case close this local attempt without ever entering the provider.
-            let protected = bound.output_provenance(&carried);
+            let protected = read_access.protect(bound.output_provenance(&carried));
             let trace = if let Some(profile) = bound.invocation.trace_profile.as_deref() {
                 bound
                     .context
@@ -828,6 +859,7 @@ impl Executor<BoundCall> for CallExecutor {
             let acquisition = storage
                 .filter(|s| {
                     s.transient_identity().is_some()
+                        && !read_access.is_probe()
                         && !protected.policy().is_private()
                         && !protected.policy().is_unknown()
                 })
@@ -850,6 +882,8 @@ impl Executor<BoundCall> for CallExecutor {
                 environment_denied(reason)
             } else if cancellation.is_cancelled() {
                 InvocationError::Cancelled.outcome()
+            } else if !read_access.current() {
+                read_access::refusal().outcome()
             } else {
                 let provider = bound.provider;
                 let call = Call {
@@ -860,6 +894,7 @@ impl Executor<BoundCall> for CallExecutor {
                 };
                 // Join the actual provider future, including synchronous invoke panics. A panic
                 // payload may contain secrets and is never copied into a value or notice.
+                let probe_cancellation = cancellation.clone();
                 let result = tokio::spawn(async move {
                     if cancellation.is_cancelled() {
                         return Err(InvocationError::Cancelled);
@@ -888,19 +923,28 @@ impl Executor<BoundCall> for CallExecutor {
                 .await;
                 match result {
                     Ok(Ok(crate::storage::AcquiredOutput::Stored { output, hold })) => {
-                        output_hold = Some(hold);
-                        Outcome::Stored(output)
+                        if read_access.current() && !probe_cancellation.is_cancelled() {
+                            output_hold = Some(hold);
+                            Outcome::Stored(output)
+                        } else {
+                            read_access::refusal().outcome()
+                        }
                     }
                     Ok(Ok(crate::storage::AcquiredOutput::Value(value))) => {
-                        let provenance = value
-                            .provenance()
-                            .inheriting(&protected)
-                            .cautioned(bound.invocation.cautions.iter().cloned());
-                        Outcome::Produced(if &provenance == value.provenance() {
-                            value
-                        } else {
-                            value.with_provenance(provenance)
-                        })
+                        match read_access.finish(&value, probe_cancellation.is_cancelled()) {
+                            Err(error) => error.outcome(),
+                            Ok(()) => {
+                                let provenance = value
+                                    .provenance()
+                                    .inheriting(&protected)
+                                    .cautioned(bound.invocation.cautions.iter().cloned());
+                                Outcome::Produced(if &provenance == value.provenance() {
+                                    value
+                                } else {
+                                    value.with_provenance(provenance)
+                                })
+                            }
+                        }
                     }
                     Ok(Err(error)) => error.outcome(),
                     Err(_) => Outcome::Failed(

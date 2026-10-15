@@ -8,6 +8,7 @@ pub(super) struct Binding {
 }
 #[derive(Clone, Debug, Default)]
 pub struct InputPatches {
+    pub read_epoch: String,
     pub values: BTreeMap<NodeId, BTreeMap<String, Value>>,
     pub problems: BTreeMap<NodeId, String>,
     pub cautions: BTreeMap<NodeId, BTreeSet<String>>,
@@ -135,6 +136,7 @@ impl crate::workspace::Workspace {
             return Err("View identity changed".into());
         }
         let mut result = InputPatches::default();
+        result.read_epoch = self.dataset_access.providers.epoch();
         let mut charge = 0;
         for target in frame.instances {
             result

@@ -164,6 +164,8 @@ export type DatasetFailureKind =
   | "limit"
   /** The workspace session changed; the reply belongs to an older session and is dropped. */
   | "session"
+  /** Permission changed during the read; its old reply cannot cross a fresh proof. */
+  | "authority"
   /**
    * The followed head no longer has the saved snapshot's committed identity or analysis attempt.
    * Nothing switches to the newer attempt; the saved snapshot stays readable.
@@ -506,6 +508,7 @@ const FAILURES: Readonly<Record<string, DatasetFailureKind>> = {
   DATASET_MISSING: "missing", DATASET_SCOPE_ENDED: "missing",
   DATASET_READ_LIMIT: "limit", DATASET_REPLY_LIMIT: "limit",
   DATASET_SESSION_CHANGED: "session", DATASET_SESSION_ENDED: "session",
+  DATASET_READ_AUTHORITY_CHANGED: "authority",
   DATASET_CONTINUITY_CHANGED: "continuity",
   DATASET_INVALID: "invalid",
   DATASET_READ_FAILED: "failed", DATASET_ENCODING_FAILED: "failed",

@@ -758,6 +758,8 @@ impl DatasetStore {
         if candidate.protection != policy.is_confidential().then_some(policy.residence())
             || candidate.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
             || candidate.dataset_reads != policy.dataset_reads().iter().cloned().collect::<Vec<_>>()
+            || candidate.provider_reads
+                != policy.provider_reads().iter().cloned().collect::<Vec<_>>()
         {
             return Err(DatasetError::Restricted);
         }
@@ -962,6 +964,10 @@ impl DatasetStore {
                     .dataset_reads
                     .iter()
                     .any(|origin| !candidate.dataset_reads.contains(origin))
+                || previous
+                    .provider_reads
+                    .iter()
+                    .any(|origin| !candidate.provider_reads.contains(origin))
                 || candidate.authorization_generation < previous.authorization_generation
                 || candidate.authorization_generation
                     > previous.authorization_generation.saturating_add(1)
@@ -1183,6 +1189,10 @@ impl DatasetStore {
                     .dataset_reads
                     .iter()
                     .any(|origin| !manifest.dataset_reads.contains(origin))
+                || checkpoint
+                    .provider_reads
+                    .iter()
+                    .any(|origin| !manifest.provider_reads.contains(origin))
                 || checkpoint.bindings.output_schema != manifest.schema
                 || checkpoint.bindings.output_schema_digest != manifest.schema_digest
                 || checkpoint.bindings.source != manifest.source
@@ -1232,7 +1242,12 @@ impl DatasetStore {
                         }
                         IndexVisit::Segment(entry) => {
                             let binding = super::format::bounded_json(
-                                &(&entry, &manifest.origins, &manifest.dataset_reads),
+                                &(
+                                    &entry,
+                                    &manifest.origins,
+                                    &manifest.dataset_reads,
+                                    &manifest.provider_reads,
+                                ),
                                 self.limits.objects.manifest.bytes,
                             )?;
                             let segment_key = (
@@ -1301,6 +1316,13 @@ impl DatasetStore {
                                         .dataset_reads()
                                         .iter()
                                         .any(|origin| !manifest.dataset_reads.contains(origin))
+                                    || row
+                                        .value
+                                        .provenance()
+                                        .policy()
+                                        .provider_reads()
+                                        .iter()
+                                        .any(|origin| !manifest.provider_reads.contains(origin))
                                 {
                                     return Err(DatasetError::Restricted);
                                 }

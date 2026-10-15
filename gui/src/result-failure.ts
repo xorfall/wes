@@ -25,7 +25,7 @@ const kinds: Record<string, ResultFailureKind> = {
   RUN009: "forbidden", VALUE_ACCESS_REFUSED: "forbidden", VALUE_ACCESS_WITHDRAWN: "forbidden",
   VALUE_PRIVATE_UNAVAILABLE: "forbidden",
   ANALYSIS_ACCESS_REFUSED: "forbidden", ANALYSIS_ACCESS_WITHDRAWN: "forbidden", ANALYSIS_SCOPE_ENDED: "forbidden",
-  RUN010: "stale", VALUE_REVISION_CONFLICT: "stale", VALUE_SESSION_CHANGED: "stale", ANALYSIS_CHANGED: "stale",
+  RUN010: "stale", VALUE_REVISION_CONFLICT: "stale", VALUE_SESSION_CHANGED: "stale", VALUE_READ_AUTHORITY_CHANGED: "stale", ANALYSIS_CHANGED: "stale",
   RUN011: "closed", VALUE_OWNER_UNAVAILABLE: "closed", VALUE_SESSION_UNAVAILABLE: "closed", ANALYSIS_OWNER_UNAVAILABLE: "closed",
   RUN012: "corrupt", VALUE_CORRUPT: "corrupt", ANALYSIS_CORRUPT: "corrupt",
   RUN013: "uncertain", VALUE_STORAGE_UNCONFIRMED: "uncertain", ANALYSIS_UNCONFIRMED: "uncertain",
@@ -33,7 +33,7 @@ const kinds: Record<string, ResultFailureKind> = {
   VALUE_READ_BUSY: "busy", ANALYSIS_BUSY: "busy",
   DATASET_READ_LIMIT: "capacity", DATASET_REPLY_LIMIT: "capacity",
   DATASET_MISSING: "unavailable", DATASET_ACCESS_REFUSED: "forbidden", DATASET_WITHDRAWN: "forbidden",
-  DATASET_CONTINUITY_CHANGED: "stale", DATASET_SESSION_CHANGED: "stale",
+  DATASET_CONTINUITY_CHANGED: "stale", DATASET_SESSION_CHANGED: "stale", DATASET_READ_AUTHORITY_CHANGED: "stale",
   DATASET_OWNER_UNAVAILABLE: "closed", DATASET_CORRUPT: "corrupt", DATASET_READ_UNCONFIRMED: "uncertain",
   DATASET_READ_FAILED: "failed", DATASET_ENCODING_FAILED: "failed", DATASET_READ_BUSY: "busy",
 };

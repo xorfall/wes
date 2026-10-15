@@ -249,6 +249,7 @@ impl ImportSnapshot {
 
 /// Metadata and invoker are validated and transported together, but not registered here.
 pub struct ImportProduct {
+    read_domain: Option<crate::provider_reads::ReadDomain>,
     description: ProviderDescription,
     invoker: Arc<dyn Invoker>,
     streams: Option<Arc<dyn crate::streams::StreamingInvoker>>,
@@ -292,6 +293,7 @@ impl ImportProduct {
                 .eq(self.description.capabilities())
             || product.streams.is_some() != self.streams.is_some()
             || product.conversations.is_some() != self.conversations.is_some()
+            || product.read_domain != self.read_domain
             || product.charge > self.charge
         {
             return Err(ImportError::Input(
@@ -321,6 +323,7 @@ impl ImportProduct {
     ) -> Result<Self, ImportError> {
         let charge = metadata_charge(&description, &warnings).ok_or(ImportError::Capacity)?;
         Ok(Self {
+            read_domain: None,
             description,
             invoker,
             streams: None,
@@ -333,6 +336,25 @@ impl ImportProduct {
     pub fn with_streams(mut self, streams: Arc<dyn crate::streams::StreamingInvoker>) -> Self {
         self.streams = Some(streams);
         self
+    }
+    pub fn with_read_domain(
+        mut self,
+        domain: crate::provider_reads::ReadDomain,
+    ) -> Result<Self, ImportError> {
+        domain
+            .validate(&self.description)
+            .map_err(ImportError::Input)?;
+        if self.conversations.is_some() {
+            return Err(ImportError::Input(
+                "provider read domains do not support conversation ports",
+            ));
+        }
+        self.charge = self.charge.checked_add(4096).ok_or(ImportError::Capacity)?;
+        self.read_domain = Some(domain);
+        Ok(self)
+    }
+    pub fn read_domain(&self) -> Option<&crate::provider_reads::ReadDomain> {
+        self.read_domain.as_ref()
     }
     pub fn streams(&self) -> Option<&Arc<dyn crate::streams::StreamingInvoker>> {
         self.streams.as_ref()

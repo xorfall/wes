@@ -17,31 +17,34 @@ pub fn decode_value(bytes: &[u8], limits: Limits) -> Result<DecodedValue, CodecE
     let root = context.root(bytes)?;
     read_value_node(root, &mut context, 0)
 }
-fn read_value_node(
-    root: &RawValue,
-    context: &mut Context,
-    depth: usize,
-) -> Result<DecodedValue, CodecError> {
-    // The envelope is a format header, not a domain node. Shape, data and provenance
-    // are charged below, including those in an Iter's owned source value.
-    let options = context.options;
-    let retained = context.retained;
+/// Decode the bounded envelope policy without materializing any domain payload.
+/// This is metadata for a read gate; it neither validates nor grants the body.
+pub fn decode_policy(
+    bytes: &[u8],
+    limits: Limits,
+) -> Result<wes_core::flow::FlowPolicy, CodecError> {
+    let mut context = Context::new(limits);
+    let root = context.root(bytes)?;
     let object = context.object(root)?;
     if raw::string(raw::required(&object, "format")?)? != super::VALUE_FORMAT
         || raw::scalar::<u32>(raw::required(&object, "version")?)? != super::VALUE_VERSION
     {
         return Err(invalid("unsupported retained-value format or version"));
     }
-    context.options = true;
-    context.retained = true;
-    let shape = read_shape(raw::required(&object, "type")?, context, depth)?;
-    let data = read_tagged(raw::required(&object, "data")?, context, depth)?;
-    let mut provenance = read_provenance(raw::required(&object, "provenance")?, context)?;
-    let fields = context.object(raw::required(&object, "policy")?)?;
+    for key in ["type", "data", "provenance"] {
+        raw::required(&object, key)?;
+    }
+    read_policy_node(raw::required(&object, "policy")?, &mut context)
+}
+fn read_policy_node(
+    root: &RawValue,
+    context: &mut Context,
+) -> Result<wes_core::flow::FlowPolicy, CodecError> {
+    let fields = context.object(root)?;
     if fields.keys().any(|key| {
         !matches!(
             key.as_str(),
-            "origins" | "unknown" | "dataset_reads" | "confidential"
+            "origins" | "unknown" | "dataset_reads" | "provider_reads" | "confidential"
         )
     }) {
         return Err(invalid("invalid value policy"));
@@ -75,12 +78,54 @@ fn read_value_node(
             policy = policy.with_dataset_read(origin);
         }
     }
+    if let Some(reads) = fields.get("provider_reads") {
+        let reads = context.sequence(reads)?;
+        if reads.len() > 128 {
+            return Err(CodecError::Work);
+        }
+        for read in reads {
+            let read = context.object(read)?;
+            if read.len() != 3 {
+                return Err(invalid("invalid provider read origin"));
+            }
+            let origin = wes_core::flow::ProviderReadOrigin::new(
+                raw::string(raw::required(&read, "realm")?)?,
+                raw::string(raw::required(&read, "binding")?)?,
+                raw::string(raw::required(&read, "scope")?)?,
+            )
+            .map_err(invalid)?;
+            policy = policy.with_provider_read(origin);
+        }
+    }
     for origin in origins {
         policy = policy.from_origin(raw::string(origin)?);
     }
     if raw::scalar::<bool>(raw::required(&fields, "unknown")?)? {
         policy = policy.unknown();
     }
+    Ok(policy)
+}
+fn read_value_node(
+    root: &RawValue,
+    context: &mut Context,
+    depth: usize,
+) -> Result<DecodedValue, CodecError> {
+    // The envelope is a format header, not a domain node. Shape, data and provenance
+    // are charged below, including those in an Iter's owned source value.
+    let options = context.options;
+    let retained = context.retained;
+    let object = context.object(root)?;
+    if raw::string(raw::required(&object, "format")?)? != super::VALUE_FORMAT
+        || raw::scalar::<u32>(raw::required(&object, "version")?)? != super::VALUE_VERSION
+    {
+        return Err(invalid("unsupported retained-value format or version"));
+    }
+    context.options = true;
+    context.retained = true;
+    let shape = read_shape(raw::required(&object, "type")?, context, depth)?;
+    let data = read_tagged(raw::required(&object, "data")?, context, depth)?;
+    let mut provenance = read_provenance(raw::required(&object, "provenance")?, context)?;
+    let policy = read_policy_node(raw::required(&object, "policy")?, context)?;
     provenance = provenance.with_policy(&policy);
     context.options = options;
     context.retained = retained;

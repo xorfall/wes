@@ -889,23 +889,13 @@ impl DeclarationDraft {
         self.check_change_access(&prepared.operation)?;
         match &prepared.operation {
             Change::Provider(product) => {
-                self.providers.register_all_ports(
-                    product.description().clone(),
-                    product.invoker().clone(),
-                    product.streams().cloned(),
-                    product.conversations().cloned(),
-                );
+                self.providers.register_product(&product);
             }
             Change::DefaultProvider {
                 product,
                 publication,
             } => {
-                self.providers.register_all_ports(
-                    product.description().clone(),
-                    product.invoker().clone(),
-                    product.streams().cloned(),
-                    product.conversations().cloned(),
-                );
+                self.providers.register_product(&product);
                 self.environments = publication.registry.planning_snapshot();
                 self.environment_images = publication.images.clone();
                 self.default_configuration = Some(publication.configuration.clone());

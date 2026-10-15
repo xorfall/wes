@@ -404,12 +404,7 @@ impl Workspace {
     ) -> Result<Self, WorkspaceError> {
         let authority = self.environment_loader.as_ref().and_then(|l| l.authority());
         for product in &products {
-            self.providers.register_all_ports(
-                product.description().clone(),
-                product.invoker().clone(),
-                product.streams().cloned(),
-                product.conversations().cloned(),
-            );
+            self.providers.register_product(product);
         }
         let configuration =
             default_environment::DefaultEnvironment::new(name, products, authority.clone())?;
@@ -452,6 +447,10 @@ impl Workspace {
         mut self,
         loader: Arc<dyn crate::environments::EnvironmentLoader>,
     ) -> Self {
+        if let Some(authority) = loader.authority() {
+            let _ = self.dataset_access.providers.register(Arc::new(authority));
+        }
+        self.runtime.set_read_access(self.dataset_access.clone());
         self.environment_loader = Some(loader);
         self
     }
@@ -629,6 +628,7 @@ impl Workspace {
         child.home_identity = self.home_identity.clone();
         child.saved_names = self.saved_names.clone();
         child.dataset_access = self.dataset_access.clone();
+        child.runtime.set_read_access(child.dataset_access.clone());
         child.transient_storage = self.transient_storage.clone();
         Ok(child)
     }
@@ -883,24 +883,14 @@ impl Workspace {
         let mut diagnostics = prepared.diagnostics;
         let node = match prepared.operation {
             Change::Provider(product) => {
-                self.providers.register_all_ports(
-                    product.description().clone(),
-                    product.invoker().clone(),
-                    product.streams().cloned(),
-                    product.conversations().cloned(),
-                );
+                self.providers.register_product(&product);
                 None
             }
             Change::DefaultProvider {
                 product,
                 publication,
             } => {
-                self.providers.register_all_ports(
-                    product.description().clone(),
-                    product.invoker().clone(),
-                    product.streams().cloned(),
-                    product.conversations().cloned(),
-                );
+                self.providers.register_product(&product);
                 self.environments = publication.registry;
                 self.environment_images = publication.images;
                 self.default_configuration = Some(publication.configuration);
@@ -1058,6 +1048,31 @@ impl Workspace {
     ) -> Result<Option<crate::runtime::RunTicket<BoundTask>>, wes_core::ErrorValue> {
         if !self.runtime.accepts_prepared(&ticket) {
             return Ok(None);
+        }
+        // Resident and observational entry reads need the same root policy
+        // check as deferred/cold inputs; selection never sheds its read domain.
+        for value in ticket.inputs.values() {
+            if self
+                .dataset_access
+                .blocks_policy(value.provenance().policy())
+            {
+                return Err(crate::runtime::RuntimeCode::ResultForbidden.error(
+                    "Input read authority was withdrawn before entry; nothing was replayed.",
+                    None,
+                ));
+            }
+        }
+        for source in ticket.payload.entry_read_sources() {
+            if self
+                .runtime
+                .result_provenance(&source.node)
+                .is_some_and(|p| self.dataset_access.blocks_policy(p.policy()))
+            {
+                return Err(crate::runtime::RuntimeCode::ResultForbidden.error(
+                    "Entry read authority is unavailable; nothing was replayed.",
+                    None,
+                ));
+            }
         }
         for (source, captured) in &ticket.deferred_inputs {
             if ticket.prepared_fields.contains_key(source)
@@ -1219,8 +1234,12 @@ impl Workspace {
     }
     pub(crate) fn apply_dataset_access(
         &mut self,
-        access: crate::storage::datasets::DatasetAccess,
+        mut access: crate::storage::datasets::DatasetAccess,
     ) -> (Vec<NodeId>, Vec<Effect<BoundTask>>) {
+        access.providers = self.dataset_access.providers.clone();
+        // Dataset withdrawal retires that owned resource. Provider read expiry
+        // only hides immutable finite evidence; an explicit fresh proof can open
+        // it again without executing the original producer.
         let blocked = self
             .runtime
             .graph()
@@ -1230,25 +1249,50 @@ impl Workspace {
                     .runtime
                     .value_of(node.id())
                     .or_else(|| self.runtime.evidence_value(node.id()).map(|e| &e.value));
-                (value.is_some_and(|value| access.blocks(value))
+                (value.is_some_and(|value| access.blocks_dataset(value))
                     || self
                         .runtime
-                        .stored_output(node.id())
-                        .is_some_and(|s| access.blocks_policy(s.snapshot.provenance.policy()))
+                        .result_provenance(node.id())
+                        .is_some_and(|p| access.blocks_dataset_policy(p.policy()))
+                    || self.runtime.stored_output(node.id()).is_some_and(|s| {
+                        s.snapshot
+                            .provenance
+                            .policy()
+                            .dataset_reads()
+                            .iter()
+                            .any(|o| access.closed || access.withdrawn.contains(o.dataset()))
+                    })
                     || self
                         .runtime
                         .execution_progress(node.id())
-                        .is_some_and(|progress| progress.blocked_by(&access)))
+                        .is_some_and(|progress| progress.blocked_by_dataset(&access)))
                 .then(|| node.id().clone())
             })
             .collect::<Vec<_>>();
         self.dataset_access = access;
+        self.runtime.set_read_access(self.dataset_access.clone());
         let mut effects = Vec::new();
         for node in &blocked {
             effects.extend(self.runtime.withdraw(node));
         }
         self.views.withdraw_dataset_inputs(&self.dataset_access);
         (blocked, effects)
+    }
+    pub(crate) fn install_provider_readers(
+        &mut self,
+        readers: crate::provider_reads::Readers,
+    ) -> Result<(), String> {
+        if let Some(authority) = self.environment_loader.as_ref().and_then(|l| l.authority()) {
+            readers
+                .register(Arc::new(authority))
+                .map_err(str::to_owned)?;
+        }
+        self.dataset_access.providers = readers;
+        self.runtime.set_read_access(self.dataset_access.clone());
+        Ok(())
+    }
+    pub(crate) fn provider_reads_changed(&mut self) {
+        self.views.withdraw_dataset_inputs(&self.dataset_access);
     }
     pub(crate) fn complete_report(
         &mut self,

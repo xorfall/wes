@@ -16,6 +16,15 @@ impl<S> PolicyValues<S> {
     }
 }
 impl<S: ValueStore> ValueStore for PolicyValues<S> {
+    fn read_policy(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        match self.private.get(handle) {
+            Some((v, _)) => Ok(Some(v.provenance().policy().clone())),
+            None => self.backing.read_policy(handle),
+        }
+    }
     fn dependencies(&self, handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
         if self.private.contains_key(handle) {
             Ok(vec![])

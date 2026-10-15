@@ -98,6 +98,7 @@ function code(error: unknown): DatasetErrorCode {
     case "busy": return "busy";
     case "withdrawn": return "withdrawn";
     case "session": return "changed";
+    case "authority": return "changed";
     case "limit": return "limit";
     case "invalid": return "invalid";
     case "missing": return "unavailable";

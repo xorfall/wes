@@ -66,6 +66,12 @@ struct InputPressure {
     attempted: Arc<AtomicUsize>,
 }
 impl ValueStore for InputPressure {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        self.values.lock().unwrap().read_policy(h)
+    }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
         self.values.lock().unwrap().store(value)
     }
@@ -445,6 +451,12 @@ async fn resident_and_stored_nested_records_keep_calculation_semantics_and_paren
     }
 }
 impl ValueStore for PausedAppend {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, wes_engine::storage::StoreError> {
+        self.values.read_policy(h)
+    }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, wes_engine::storage::StoreError> {
         self.values.store(value)
     }

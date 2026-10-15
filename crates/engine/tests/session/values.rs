@@ -32,6 +32,18 @@ struct Store {
     fail_evictions: bool,
 }
 impl ValueStore for Store {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .values
+            .get(h)
+            .map(|v| v.provenance().policy().clone()))
+    }
     fn retained_persistence(&self) -> Persistence {
         self.persistence
     }

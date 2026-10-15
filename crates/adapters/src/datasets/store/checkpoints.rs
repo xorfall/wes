@@ -31,6 +31,10 @@ impl DatasetStore {
                     .dataset_reads
                     .iter()
                     .any(|origin| !policy.dataset_reads().contains(origin))
+                || source
+                    .provider_reads
+                    .iter()
+                    .any(|origin| !policy.provider_reads().contains(origin))
             {
                 return Err(DatasetError::Conflict);
             }
@@ -145,6 +149,7 @@ impl DatasetStore {
             protection: manifest.protection,
             origins: manifest.origins.clone(),
             dataset_reads: manifest.dataset_reads.clone(),
+            provider_reads: manifest.provider_reads.clone(),
         };
         Ok(self.files.publish_checkpoint(&checkpoint, policy)?)
     }

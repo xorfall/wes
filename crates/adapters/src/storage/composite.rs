@@ -37,6 +37,21 @@ fn hash(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 impl FileValues {
+    pub(super) fn composite_policy(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        let _guard = Guard::enter(self.limits)?;
+        let Some((root, _)) = self.composite_header(handle)? else {
+            return Ok(None);
+        };
+        let mut policy = wes_core::flow::FlowPolicy::default();
+        for member in root.members {
+            let child = ValueHandle::new(&member.handle)?;
+            policy = policy.join(&self.read_policy(&child)?.ok_or(StoreError::MissingValue)?);
+        }
+        Ok(Some(policy))
+    }
     pub(super) fn composite_holds(
         &mut self,
         handle: &ValueHandle,

@@ -484,7 +484,65 @@ fn write_and_sync<W: Write>(
     file.write_all(bytes)?;
     sync(&file)
 }
+impl FileValues {
+    fn read_plain_encoding(&self, handle: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(file) = self.file(handle)? else {
+            return Ok(None);
+        };
+        let size = file
+            .metadata()
+            .map_err(|e| StoreError::backend("sizing a result", e))?
+            .len();
+        let maximum = self
+            .limits
+            .bytes
+            .saturating_add(if self.protection.is_some() {
+                crate::protected_storage::OVERHEAD
+            } else {
+                0
+            });
+        if size > maximum as u64 {
+            return Err(StoreError::Limit("stored result read bytes"));
+        }
+        let mut bytes = vec![];
+        file.take((maximum as u64).saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|e| StoreError::backend("reading a result", e))?;
+        if bytes.len() > maximum {
+            return Err(StoreError::Limit("stored result read bytes"));
+        }
+        let bytes = match &self.protection {
+            Some(p) => p
+                .open("values", handle.as_str(), &bytes, self.limits.bytes)
+                .map_err(|_| StoreError::Corrupt)?
+                .to_vec(),
+            None => bytes,
+        };
+        Ok(Some(bytes))
+    }
+}
 impl ValueStore for FileValues {
+    fn read_policy(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        if let Some(policy) = self.composite_policy(handle)? {
+            return Ok(Some(policy));
+        }
+        if let Some(snapshot) = self.describe_segmented(handle, &[])? {
+            return Ok(Some(snapshot.provenance.policy().clone()));
+        }
+        self.read_plain_encoding(handle)?
+            .map(|bytes| {
+                let policy =
+                    codec::decode_policy(&bytes, self.limits).map_err(stored_decode_error)?;
+                if policy.is_confidential() && self.protection.is_none() {
+                    return Err(StoreError::Restricted);
+                }
+                Ok(policy)
+            })
+            .transpose()
+    }
     fn digest(&self, handle: &ValueHandle) -> Result<Option<String>, StoreError> {
         use sha2::{Digest, Sha256};
         if let Some((_, bytes)) = self.composite_header(handle)? {
@@ -604,37 +662,8 @@ impl ValueStore for FileValues {
                 "segmented encoding export; use bounded selections or ranges",
             ));
         }
-        let Some(file) = self.file(handle)? else {
+        let Some(bytes) = self.read_plain_encoding(handle)? else {
             return Ok(None);
-        };
-        let size = file
-            .metadata()
-            .map_err(|e| StoreError::backend("sizing a result", e))?
-            .len();
-        let maximum = self
-            .limits
-            .bytes
-            .saturating_add(if self.protection.is_some() {
-                crate::protected_storage::OVERHEAD
-            } else {
-                0
-            });
-        if size > maximum as u64 {
-            return Err(StoreError::Limit("stored result read bytes"));
-        }
-        let mut bytes = vec![];
-        file.take((maximum as u64).saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|e| StoreError::backend("reading a result", e))?;
-        if bytes.len() > maximum {
-            return Err(StoreError::Limit("stored result read bytes"));
-        }
-        let bytes = match &self.protection {
-            Some(p) => p
-                .open("values", handle.as_str(), &bytes, self.limits.bytes)
-                .map_err(|_| StoreError::Corrupt)?
-                .to_vec(),
-            None => bytes,
         };
         let value = codec::decode_value(&bytes, self.limits).map_err(stored_decode_error)?;
         if value.value.provenance().policy().is_confidential() && self.protection.is_none() {
@@ -825,6 +854,23 @@ impl TieredValues {
     }
 }
 impl ValueStore for TieredValues {
+    fn read_policy(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        if let Some(bytes) = self.memory.encoded(handle) {
+            return codec::decode_policy(&bytes, self.live.limits)
+                .map(Some)
+                .map_err(stored_decode_error);
+        }
+        if let Some(policy) = self.temporary.read_policy(handle)? {
+            return Ok(Some(policy));
+        }
+        if let Some(policy) = self.live.read_policy(handle)? {
+            return Ok(Some(policy));
+        }
+        self.archive.read_policy(handle)
+    }
     fn dependencies(&self, h: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
         if self.memory.size(h).is_some() {
             return Ok(vec![]);

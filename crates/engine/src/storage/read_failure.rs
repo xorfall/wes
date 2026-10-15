@@ -74,8 +74,8 @@ impl StoreError {
             | Self::ScopeUnavailable
             | Self::InsecureDirectory
             | Self::UnownedDirectory => Forbidden,
-            Self::DatasetWithdrawn => Withdrawn,
-            Self::Conflict | Self::DatasetNewerAttempt => Stale,
+            Self::DatasetWithdrawn | Self::ProviderReadUnavailable => Withdrawn,
+            Self::Conflict | Self::DatasetNewerAttempt | Self::ProviderReadChanged => Stale,
             Self::MissingValue | Self::DatasetMissing => Unavailable,
             Self::Closed => Closed,
             Self::Corrupt | Self::DatasetCorrupt | Self::NotRegular => Corrupt,

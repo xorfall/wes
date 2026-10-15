@@ -39,7 +39,7 @@ export function liveReader(engine: Engine): LiveViewReader {
   if (!reader) { reader = new LiveViewReader((node, generation, signal) => engine.liveView(node, generation, signal)); readers.set(engine, reader); }
   return reader;
 }
-type Watch = { node: string; generation: string; changed: (sample: LiveSample) => void; controller?: AbortController; sample: LiveSample; failed: boolean };
+type Watch = { node: string; generation: string; changed: (sample: LiveSample) => void; controller?: AbortController; sample: LiveSample; failed: boolean; accessEpoch: number };
 /** Bounded display demand. No event queue, execution, or automatic source replay. */
 export class LiveViewReader {
   private watches = new Set<Watch>();
@@ -61,15 +61,28 @@ export class LiveViewReader {
     for (const key of [...this.held.keys()]) if (key.endsWith(`:${node}`)) this.held.delete(key);
     for (const watch of this.watches) {
       if (watch.node !== node) continue;
+      watch.accessEpoch++;
       watch.controller?.abort();
       watch.failed = true;
       watch.sample = { revision: watch.sample.revision, withdrawn: true, problemCode: "withdrawn", problem: "Result · Access withdrawn" };
       watch.changed(watch.sample);
     }
   }
+  /** Revalidation resumes display reads, without restoring held bytes or starting a producer. */
+  restore(node: string) {
+    for (const watch of this.watches) {
+      if (watch.node !== node) continue;
+      watch.accessEpoch++;
+      watch.controller?.abort();
+      watch.failed = false;
+      watch.sample = { revision: watch.sample.revision };
+      watch.changed(watch.sample);
+    }
+    this.schedule();
+  }
   watch(node: string, generation: string, changed: Watch["changed"], initial?:LiveSample): () => void {
     if (this.watches.size >= 16) { changed({ revision: 0, problem: "Live view limit reached (16). Close another view before reading this one." }); return () => {}; }
-    const watch: Watch = { node, generation, changed, sample:initial??{revision:0}, failed: false };
+    const watch: Watch = { node, generation, changed, sample:initial??{revision:0}, failed: false, accessEpoch: 0 };
     this.watches.add(watch); this.schedule();
     return () => { this.watches.delete(watch); watch.controller?.abort(); if (!this.watches.size) { clearTimeout(this.timer); this.timer = undefined; } };
   }
@@ -83,9 +96,10 @@ export class LiveViewReader {
       if (watch.controller || watch.failed) continue;
       this.watches.delete(watch); this.watches.add(watch);
       const controller = new AbortController(); watch.controller = controller; this.active++;
+      const accessEpoch = watch.accessEpoch;
       const deadline = setTimeout(() => controller.abort(), 2000);
       void this.fetch(watch.node, watch.generation, controller.signal).then(read => {
-        if (!this.watches.has(watch) || controller.signal.aborted || !read) return;
+        if (!this.watches.has(watch) || watch.accessEpoch !== accessEpoch || controller.signal.aborted || !read) return;
         const previous=watch.sample.metadata;
         const changedEpoch=previous && JSON.stringify(previous.epochs)!==JSON.stringify(read.metadata.epochs);
         if(changedEpoch)this.holdCell(watch.node,watch.generation,undefined);
@@ -96,7 +110,7 @@ export class LiveViewReader {
         watch.changed(watch.sample);
       }).catch(error => {
         // A read aborted by a withdrawal already said so; its abort is not a budget failure.
-        if (!this.watches.has(watch) || watch.sample.withdrawn) return;
+        if (!this.watches.has(watch) || watch.accessEpoch !== accessEpoch || watch.sample.withdrawn) return;
         // Busy admission is transient; it does not replace or count a sample.
         if(error instanceof DisplayReadError && error.code==="busy")return;
         watch.failed = true;

@@ -82,6 +82,25 @@ impl Managed {
             doc["operations"][0]["control"] =
                 serde_json::json!({"input":"Int","output":"Text","output_policy":"private"});
         }
+        if mode == "read-domain" {
+            doc["read_access"] = serde_json::json!({"scope":["tenant"],"revalidate":["probe"]});
+            doc["operations"][0]["parameters"] =
+                serde_json::json!([{"name":"tenant","type":"Text"}]);
+            doc["operations"][0]["result"]["type"] = serde_json::json!("Text");
+            let mut probe = doc["operations"][0].clone();
+            probe["path"] = serde_json::json!(["probe"]);
+            probe["result"]["type"] = serde_json::json!("Bool");
+            probe["streaming"] = serde_json::json!(false);
+            let mut watch = doc["operations"][0].clone();
+            watch["path"] = serde_json::json!(["watch"]);
+            watch["result"]["type"] = serde_json::json!("Option<Text>");
+            watch["streaming"] = serde_json::json!(true);
+            watch["control"] = serde_json::json!({"input":"Int","output":"Bool"});
+            doc["operations"]
+                .as_array_mut()
+                .unwrap()
+                .extend([probe, watch]);
+        }
         std::fs::write(root.path().join("provider.json"), doc.to_string()).unwrap();
         let yaml = r#"version: 1
 targets: {local: {kind: local}}
@@ -239,6 +258,193 @@ environments:
         let snapshot = self.handle.snapshot().await.unwrap();
         snapshot.execution.errors[&snapshot.names[name].node].clone()
     }
+}
+
+#[tokio::test]
+async fn provider_read_proof_gates_captured_and_derived_values_without_replaying_them() {
+    let fixture = Managed::new("read-domain", false).await;
+    fixture.supply();
+    fixture.grant();
+    fixture.submit(":env use \"lab\"", false).await;
+    fixture
+        .submit("samples read tenant:\"/\" > denied", false)
+        .await;
+    assert!(
+        fixture
+            .failed("denied")
+            .await
+            .message()
+            .contains("revalidation")
+    );
+    fixture
+        .submit("samples probe tenant:\"/\" > foreign", true)
+        .await;
+    assert!(
+        fixture
+            .failed("foreign")
+            .await
+            .message()
+            .contains("revalidation")
+    );
+    assert!(!fixture.root.path().join("attempts").exists());
+    fixture
+        .submit("samples probe tenant:\"/\" > proof", false)
+        .await;
+    assert_eq!(fixture.value("proof").await.data(), &Data::Bool(true));
+    fixture
+        .submit("samples read tenant:\"/\" > captured", false)
+        .await;
+    fixture
+        .submit(
+            ":def copy(input:Text) -> Text as :calc pure { return input; }",
+            false,
+        )
+        .await;
+    fixture
+        .submit("copy input:$captured > derived", false)
+        .await;
+    let value = fixture.value("captured").await;
+    assert_eq!(
+        value.data(),
+        &Data::Text("synthetic protected capture".into())
+    );
+    assert!(!value.provenance().policy().provider_reads().is_empty());
+    assert_eq!(
+        fixture
+            .value("derived")
+            .await
+            .provenance()
+            .policy()
+            .provider_reads(),
+        value.provenance().policy().provider_reads()
+    );
+    let before = fixture.handle.snapshot().await.unwrap();
+    let node = before.names["captured"].node.clone();
+    let run = before.execution.runs[&node].clone();
+    fixture
+        .authority
+        .revoke(&fixture.binding, "samples")
+        .unwrap();
+    fixture.grant();
+    let closed = fixture.handle.snapshot().await.unwrap();
+    assert!(!closed.execution.values.contains_key(&node));
+    assert_eq!(closed.execution.provider_read_access[&node], false);
+    assert!(
+        !closed
+            .execution
+            .values
+            .contains_key(&closed.names["derived"].node)
+    );
+    fixture
+        .submit("samples probe tenant:\"elsewhere\" > different", false)
+        .await;
+    assert_eq!(fixture.value("different").await.data(), &Data::Bool(true));
+    assert!(
+        !fixture
+            .handle
+            .snapshot()
+            .await
+            .unwrap()
+            .execution
+            .values
+            .contains_key(&node)
+    );
+    fixture
+        .submit("samples probe tenant:\"/\" > renewed", false)
+        .await;
+    let opened = fixture.handle.snapshot().await.unwrap();
+    assert_eq!(opened.execution.runs[&node], run);
+    assert_eq!(opened.execution.values[&node], value);
+    assert_eq!(fixture.value("derived").await.data(), value.data());
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("attempts"))
+            .unwrap()
+            .lines()
+            .count(),
+        4
+    );
+    std::fs::write(fixture.root.path().join("probe-denied"), []).unwrap();
+    fixture
+        .submit("samples probe tenant:\"/\" > refused", false)
+        .await;
+    assert_eq!(fixture.value("refused").await.data(), &Data::Bool(false));
+    assert!(
+        !fixture
+            .handle
+            .snapshot()
+            .await
+            .unwrap()
+            .execution
+            .values
+            .contains_key(&node)
+    );
+    std::fs::remove_file(fixture.root.path().join("probe-denied")).unwrap();
+    fixture
+        .submit("samples probe tenant:\"/\" > verified", false)
+        .await;
+    let reopened = fixture.handle.snapshot().await.unwrap();
+    assert_eq!(reopened.execution.runs[&node], run);
+    assert_eq!(reopened.execution.values[&node], value);
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("attempts"))
+            .unwrap()
+            .lines()
+            .count(),
+        6
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn read_revocation_before_first_event_retires_the_owned_source_and_its_controls() {
+    let fixture = Managed::new("read-domain", false).await;
+    fixture.supply();
+    fixture.grant();
+    fixture.submit(":env use \"lab\"", false).await;
+    fixture
+        .submit("samples probe tenant:\"/\" > proof", false)
+        .await;
+    fixture
+        .submit("samples watch tenant:\"/\" > events", false)
+        .await;
+    fixture
+        .submit(":source bind $events > controls", false)
+        .await;
+    fixture
+        .authority
+        .revoke(&fixture.binding, "samples")
+        .unwrap();
+    fixture.grant();
+    fixture
+        .submit("samples probe tenant:\"/\" > renewed", false)
+        .await;
+    fixture
+        .submit(":source send $controls action:7 > old", false)
+        .await;
+    assert!(
+        fixture.failed("old").await.message().contains("authority")
+            || fixture
+                .failed("old")
+                .await
+                .message()
+                .contains("unavailable")
+    );
+    assert!(!fixture.root.path().join("actions").exists());
+    let snapshot = fixture.handle.snapshot().await.unwrap();
+    assert!(
+        !snapshot
+            .execution
+            .streaming
+            .contains(&snapshot.names["events"].node)
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("attempts"))
+            .unwrap()
+            .lines()
+            .count(),
+        3
+    );
+    fixture.stop().await;
 }
 
 #[tokio::test]

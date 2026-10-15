@@ -9,6 +9,48 @@ fn value(shape: Shape, data: Data) -> Value {
 }
 
 #[test]
+fn provider_read_labels_roundtrip_and_gate_metadata_without_decoding_domain_data() {
+    let origin = wes_core::flow::ProviderReadOrigin::new(
+        "00000000-0000-4000-8000-000000000073".into(),
+        "a".repeat(64),
+        "b".repeat(64),
+    )
+    .unwrap();
+    let captured = value(Shape::Primitive(Primitive::Int), Data::Int(7)).with_provenance(
+        Provenance::default()
+            .with_policy(&wes_core::flow::FlowPolicy::default().with_provider_read(origin)),
+    );
+    let bytes = encode_value(&captured, Limits::default()).unwrap();
+    assert_eq!(
+        decode_value(&bytes, Limits::default()).unwrap().value,
+        captured
+    );
+    assert_eq!(
+        &decode_policy(&bytes, Limits::default()).unwrap(),
+        captured.provenance().policy()
+    );
+    let mut damaged: Json = serde_json::from_slice(&bytes).unwrap();
+    damaged["data"] = json!({"invalid":"Int payload"});
+    let bytes = serde_json::to_vec(&damaged).unwrap();
+    assert!(decode_value(&bytes, Limits::default()).is_err());
+    assert_eq!(
+        &decode_policy(&bytes, Limits::default()).unwrap(),
+        captured.provenance().policy()
+    );
+    for field in ["realm", "binding", "scope"] {
+        let mut invalid = damaged.clone();
+        invalid["policy"]["provider_reads"][0][field] = json!("invalid");
+        assert!(decode_policy(&serde_json::to_vec(&invalid).unwrap(), Limits::default()).is_err());
+    }
+    let mut invalid = damaged.clone();
+    invalid["policy"]["provider_reads"][0]["authority"] = json!(true);
+    assert!(decode_policy(&serde_json::to_vec(&invalid).unwrap(), Limits::default()).is_err());
+    invalid["policy"]["provider_reads"] =
+        Json::Array(vec![damaged["policy"]["provider_reads"][0].clone(); 129]);
+    assert!(decode_policy(&serde_json::to_vec(&invalid).unwrap(), Limits::default()).is_err());
+}
+
+#[test]
 fn pretty_display_preserves_exact_numbers_and_respects_output_and_depth_budgets() {
     let data = Data::Record(
         [(

@@ -42,6 +42,11 @@ fn charge_shell(value: &Value, budget: &mut Budget) -> Option<()> {
         budget.text(origin.store())?;
         budget.text(origin.dataset())?;
     }
+    for origin in value.provenance().policy().provider_reads() {
+        budget.text(origin.realm())?;
+        budget.text(origin.binding())?;
+        budget.text(origin.scope())?;
+    }
     if let Some(meta) = value.metadata() {
         budget.add(meta.charge())?;
     }

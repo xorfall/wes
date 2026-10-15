@@ -976,6 +976,8 @@ pub(super) fn revalidate_read(
         Some((output, run))
     };
     if !a.same_snapshot(b)
+        || (!a.provenance().policy().provider_reads().is_empty()
+            && before.state.read_epoch != after.state.read_epoch)
         || identity(stopped_a) != identity(stopped_b)
         || publication(before) != publication(after)
     {

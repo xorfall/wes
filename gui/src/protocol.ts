@@ -359,6 +359,7 @@ export type Event =
    * cached value, value-derived fact and display of that node is dropped. Never a request to rerun.
    */
   | { readonly event: "result-access"; readonly node: string; readonly readable: false }
+  | { readonly event: "result-access"; readonly node: string; readonly readable: true; readonly handle: string | null; readonly epoch: string }
   | {
       /**
        * The rule in force: what this session keeps without being asked, and up to what size.
