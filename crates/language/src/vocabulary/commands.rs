@@ -773,7 +773,7 @@ pub fn help_summary(path: &[&str]) -> &'static str {
     match path {
         ["read"] => Read.spec(&[]).summary,
         ["source"] => {
-            "Bind and explicitly control a current owned source connection; stored projections do not restore live authority."
+            "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority."
         }
         ["node"] => "Refresh, change, cancel or configure existing work.",
         ["workspace"] => "Save, open, configure or plan deletion of a workspace.",

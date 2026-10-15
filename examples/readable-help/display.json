@@ -31,7 +31,7 @@
       "children": [
         {
           "name": "source",
-          "summary": "Bind and explicitly control a current owned source connection; stored projections do not restore live authority."
+          "summary": "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority."
         },
         {
           "name": "scan",
@@ -1114,6 +1114,112 @@
         "operands": {
           "min": 0,
           "max": 0
+        }
+      },
+      "children": []
+    }
+  },
+  "source": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "source",
+      "summary": "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority.",
+      "invocation": {
+        "kind": "none"
+      },
+      "children": [
+        {
+          "name": "bind",
+          "summary": "Bind the current exact owned connection without sending: :source bind $events > controls. A restored or stored projection grants no live authority."
+        },
+        {
+          "name": "result",
+          "summary": "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority."
+        },
+        {
+          "name": "send",
+          "summary": "Explicitly send one typed action: :source send $controls action:$action budget:PT5S > receipt. Native View templates only prepare reviewable drafts. Unknown outcomes never replay automatically."
+        }
+      ]
+    }
+  },
+  "source result": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "source result",
+      "summary": "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority.",
+      "invocation": {
+        "command": ":source result",
+        "usage": ":source result",
+        "summary": "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [],
+        "otherArguments": false,
+        "producesValue": true,
+        "operands": {
+          "min": 1,
+          "max": 1
         }
       },
       "children": []
