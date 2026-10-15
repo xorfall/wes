@@ -127,6 +127,9 @@ impl BoundAttempt {
     pub(crate) fn capture(&mut self, workspace: &Workspace) {
         self.selection.capture(workspace, Selection::Continue);
     }
+    pub(crate) fn read_sources(&self) -> Vec<crate::graph::OutputRef> {
+        self.selection.read_sources()
+    }
     pub(crate) fn execute(
         self,
         run: String,

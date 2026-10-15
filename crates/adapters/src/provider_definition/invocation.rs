@@ -342,6 +342,61 @@ impl MappedInvoker {
     }
 }
 impl Invoker for MappedInvoker {
+    fn byte_input(
+        &self,
+        capability: &wes_core::capability::Capability,
+    ) -> Option<wes_engine::byte_input::ByteInputSpec> {
+        self.definition
+            .operations
+            .iter()
+            .find(|op| op.path == capability.path)
+            .and_then(|op| op.byte_input.clone())
+    }
+    fn supports_byte_input(&self) -> bool {
+        self.base.supports_byte_input()
+    }
+    fn invoke_with_byte_input(
+        &self,
+        call: Call,
+        token: CancellationToken,
+        input: wes_engine::byte_input::OwnedByteInput,
+    ) -> InvocationFuture {
+        let this = self.clone();
+        Box::pin(async move {
+            let op = this
+                .definition
+                .operations
+                .iter()
+                .find(|op| op.path == call.capability.path)
+                .ok_or_else(|| failed("PRV001", "unknown captured provider operation"))?;
+            if op.byte_input.is_none()
+                || !this.base.supports_byte_input()
+                || !call.authority.is_local_user()
+            {
+                return Err(failed(
+                    "PRV001",
+                    "owned byte input requires an explicit native user and a supporting execution target; no provider was invoked",
+                ));
+            }
+            let arguments = this.arguments(op, &call, &token)?;
+            let delegated = Call {
+                capability: this.capability.clone(),
+                arguments,
+                ..call
+            };
+            let output = this
+                .base
+                .invoke_with_byte_input(delegated, token.clone(), input)
+                .await?;
+            let policy = output.provenance().policy().clone();
+            this.output(op, output, &token).map_err(|e| match e {
+                InvocationError::Failed(error) => {
+                    InvocationError::Failed(error.with_policy(&policy))
+                }
+                error => error,
+            })
+        })
+    }
     fn invoke_acquired(
         &self,
         call: Call,
@@ -356,6 +411,12 @@ impl Invoker for MappedInvoker {
                 .iter()
                 .find(|op| op.path == call.capability.path)
                 .ok_or_else(|| failed("PRV001", "unknown captured provider operation"))?;
+            if op.byte_input.is_some() {
+                return Err(failed(
+                    "PRV001",
+                    "This operation requires captured native byte input; no provider was invoked",
+                ));
+            }
             let eligible = match op.format {
                 schema::OutputFormat::Process | schema::OutputFormat::RecordBytes => true,
                 schema::OutputFormat::Json => false,
@@ -477,6 +538,12 @@ impl Invoker for MappedInvoker {
                 .iter()
                 .find(|op| op.path == call.capability.path)
                 .ok_or_else(|| failed("PRV001", "unknown captured provider operation"))?;
+            if op.byte_input.is_some() {
+                return Err(failed(
+                    "PRV001",
+                    "This operation requires captured native byte input; no provider was invoked",
+                ));
+            }
             let arguments = this.arguments(op, &call, &token)?;
             let delegated = Call {
                 capability: this.capability.clone(),

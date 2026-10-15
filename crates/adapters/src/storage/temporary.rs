@@ -89,6 +89,7 @@ impl TemporaryValues {
             next_publication: 0,
             holds: Default::default(),
             drafts: Default::default(),
+            manifest_cache_identity: Uuid::new_v4(),
             manifests: Default::default(),
             protection,
         };

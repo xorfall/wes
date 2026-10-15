@@ -34,6 +34,7 @@ struct Operation {
     streaming: bool,
     control: Option<Control>,
     recording: Option<Recording>,
+    byte_input: Option<wes_engine::byte_input::ByteInputSpec>,
 }
 #[derive(Clone)]
 struct Control {

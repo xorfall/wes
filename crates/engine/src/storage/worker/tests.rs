@@ -1,4 +1,5 @@
 use super::*;
+use crate::storage::StoredSnapshot;
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -50,6 +51,150 @@ fn value(text: &str) -> Value {
         Provenance::default(),
     )
     .unwrap()
+}
+
+struct CostObject {
+    bytes: u64,
+    digest: String,
+    children: Vec<super::super::SnapshotDependency>,
+}
+struct CostInventory(std::collections::BTreeMap<ValueHandle, CostObject>);
+impl ValueStore for CostInventory {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        Ok(self.0.contains_key(h).then(Default::default))
+    }
+    fn digest(&self, h: &ValueHandle) -> Result<Option<String>, StoreError> {
+        Ok(self.0.get(h).map(|o| o.digest.clone()))
+    }
+    fn size(&self, h: &ValueHandle) -> Result<Option<u64>, StoreError> {
+        Ok(self.0.get(h).map(|o| o.bytes))
+    }
+    fn dependencies(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Vec<super::super::SnapshotDependency>, StoreError> {
+        Ok(self.0.get(h).map_or_else(Vec::new, |o| o.children.clone()))
+    }
+    fn store(&mut self, _: &Value) -> Result<ValueHandle, StoreError> {
+        panic!("cost preview cannot write")
+    }
+    fn read(&self, _: &ValueHandle) -> Result<Option<LoadedValue>, StoreError> {
+        panic!("cost preview cannot read payload")
+    }
+    fn encoded(&self, _: &ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
+        panic!("cost preview cannot export payload")
+    }
+    fn release(&mut self, _: &ValueHandle) -> Result<bool, StoreError> {
+        panic!("cost preview cannot release")
+    }
+    fn keep(&mut self, _: &ValueHandle) -> Result<bool, StoreError> {
+        panic!("cost preview cannot retain")
+    }
+}
+
+#[tokio::test]
+async fn retention_cost_counts_shared_native_dependency_closures_once_without_reading_payloads() {
+    use super::super::datasets::{CapturedValue, RetentionCapture};
+    let root = ValueHandle::fresh();
+    let middle = ValueHandle::fresh();
+    let raw = ValueHandle::fresh();
+    let hash = format!("sha256:{}", "a".repeat(64));
+    let child = |name: &str, h: &ValueHandle| super::super::SnapshotDependency {
+        name: name.into(),
+        handle: h.to_string(),
+        digest: hash.clone(),
+        selection: vec![],
+    };
+    let objects = std::collections::BTreeMap::from([
+        (
+            raw.clone(),
+            CostObject {
+                bytes: 5000,
+                digest: hash.clone(),
+                children: vec![],
+            },
+        ),
+        (
+            middle.clone(),
+            CostObject {
+                bytes: 100,
+                digest: hash.clone(),
+                children: vec![child("input", &raw)],
+            },
+        ),
+        (
+            root.clone(),
+            CostObject {
+                bytes: 40,
+                digest: hash.clone(),
+                children: vec![child("derived", &middle), child("sameRaw", &raw)],
+            },
+        ),
+    ]);
+    let capture = |h: &ValueHandle, bytes, shared| RetentionCapture {
+        value: CapturedValue {
+            handle: h.to_string(),
+            digest: hash.clone(),
+            bytes,
+            selection: vec![],
+        },
+        shared,
+    };
+    let (worker, task) = spawn_store(CostInventory(objects), StoreWorkerLimits::default()).unwrap();
+    let sources = vec![
+        capture(&root, 40, false),
+        capture(&middle, 100, true),
+        capture(&root, 40, false),
+    ];
+    assert_eq!(
+        worker
+            .request_owner(1, move |owner| owner.retention_capture_cost(sources))
+            .await
+            .unwrap()
+            .wait()
+            .await
+            .unwrap(),
+        (5140, 5100)
+    );
+    let sources = vec![capture(&root, 40, true)];
+    assert_eq!(
+        worker
+            .request_owner(1, move |owner| owner.retention_capture_cost(sources))
+            .await
+            .unwrap()
+            .wait()
+            .await
+            .unwrap(),
+        (5140, 5140)
+    );
+    let mut wrong = capture(&root, 40, false);
+    wrong.value.digest = format!("sha256:{}", "0".repeat(64));
+    assert!(matches!(
+        worker
+            .request_owner(1, move |owner| owner.retention_capture_cost(vec![wrong]))
+            .await
+            .unwrap()
+            .wait()
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let wrong = capture(&root, 39, false);
+    assert!(matches!(
+        worker
+            .request_owner(1, move |owner| owner.retention_capture_cost(vec![wrong]))
+            .await
+            .unwrap()
+            .wait()
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    // The two deliberately inconsistent storage identities are real counted conflicts;
+    // no payload read, retention or other mutation was attempted by this preview.
+    assert_eq!(worker.shutdown().await.unwrap().failed, 2);
+    task.join().await.unwrap();
 }
 
 #[tokio::test]
@@ -339,8 +484,14 @@ async fn recovery_requires_retention_and_bounds_decoded_replies() {
     .unwrap();
     assert!(store.recover(small.clone()).await.unwrap().is_none());
     state.lock().unwrap().kept.insert(small.clone());
-    let recovered = store.recover(small).await.unwrap().unwrap();
+    let recovered = store.recover(small.clone()).await.unwrap().unwrap();
     assert_eq!(recovered.loaded.value, value("small"));
+    let snapshot = recovered
+        .snapshot
+        .as_ref()
+        .expect("same-job backing inspection");
+    assert_eq!(snapshot.handle, small);
+    assert!(snapshot.matches(&recovered.loaded.value));
 
     assert!(matches!(
         store.recover(large).await,
@@ -380,6 +531,16 @@ async fn retaining_an_existing_handle_never_republishes_and_preserves_partial_fa
     task.join().await.unwrap();
 }
 impl ValueStore for Memory {
+    fn recovery_snapshot(
+        &self,
+        handle: &ValueHandle,
+        value: &Value,
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        let Some(digest) = self.digest(handle)? else {
+            return Ok(None);
+        };
+        Ok(StoredSnapshot::capture(handle.clone(), digest, value))
+    }
     fn read_policy(
         &self,
         h: &ValueHandle,

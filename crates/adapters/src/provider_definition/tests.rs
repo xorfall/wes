@@ -22,6 +22,40 @@ fn document() -> serde_json::Value {
 }
 
 #[test]
+fn byte_input_is_strict_required_unconstrained_and_distinct_from_argv() {
+    let doc = serde_json::json!({"version":1,"provider":"input","backend":{"kind":"process","bin":"/synthetic/input"},"operations":[{"path":["inspect"],"parameters":[{"name":"source","type":"Bytes"}],"byte_input":{"parameter":"source","max_bytes":1048576},"argv":[],"result":{"format":"json","type":"Text"}}]});
+    let compiled = schema::compile(&doc.to_string(), None).unwrap();
+    assert_eq!(
+        compiled.operations[0]
+            .byte_input
+            .as_ref()
+            .unwrap()
+            .parameter,
+        "source"
+    );
+    for mutation in 0..7 {
+        let mut invalid = doc.clone();
+        match mutation {
+            0 => invalid["operations"][0]["byte_input"]["max_bytes"] = 0.into(),
+            1 => invalid["operations"][0]["byte_input"]["parameter"] = "absent".into(),
+            2 => invalid["operations"][0]["parameters"][0]["required"] = false.into(),
+            3 => invalid["operations"][0]["parameters"][0]["type"] = "Text".into(),
+            4 => {
+                invalid["operations"][0]["argv"] =
+                    serde_json::json!([{"parameter":"source","encoding":"json"}])
+            }
+            5 => invalid["backend"]["kind"] = "session".into(),
+            6 => invalid["operations"][0]["byte_input"]["path"] = "/synthetic/input".into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            schema::compile(&invalid.to_string(), None).is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+
+#[test]
 fn checked_in_definitions_compile_without_probing_their_executables() {
     for source in [include_str!(
         "../../../../examples/declarative-providers/demo.yaml"

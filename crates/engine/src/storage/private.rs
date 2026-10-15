@@ -16,6 +16,16 @@ impl<S> PolicyValues<S> {
     }
 }
 impl<S: ValueStore> ValueStore for PolicyValues<S> {
+    fn recovery_snapshot(
+        &self,
+        handle: &ValueHandle,
+        value: &Value,
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        if self.private.contains_key(handle) {
+            return Ok(None);
+        }
+        self.backing.recovery_snapshot(handle, value)
+    }
     fn read_policy(
         &self,
         handle: &ValueHandle,
@@ -25,7 +35,7 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
             None => self.backing.read_policy(handle),
         }
     }
-    fn dependencies(&self, handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+    fn dependencies(&self, handle: &ValueHandle) -> Result<Vec<SnapshotDependency>, StoreError> {
         if self.private.contains_key(handle) {
             Ok(vec![])
         } else {
@@ -62,6 +72,19 @@ impl<S: ValueStore> ValueStore for PolicyValues<S> {
     }
     fn abort_acquisition(&mut self, h: &ValueHandle) -> Result<(), StoreError> {
         self.backing.abort_acquisition(h)
+    }
+    fn seal_acquisition_with_dependencies(
+        &mut self,
+        h: &ValueHandle,
+        shell: &Value,
+        leaves: &[LeafSelection],
+        dependencies: &[SnapshotDependency],
+    ) -> Result<StoredSnapshot, StoreError> {
+        if shell.provenance().policy().is_private() || shell.provenance().policy().is_unknown() {
+            return Err(StoreError::Restricted);
+        }
+        self.backing
+            .seal_acquisition_with_dependencies(h, shell, leaves, dependencies)
     }
     fn describe(
         &self,

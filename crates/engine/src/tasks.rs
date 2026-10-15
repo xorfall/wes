@@ -73,8 +73,12 @@ impl BoundTask {
     /// A bounded reader consumes the captured descriptor, without decoding a whole input.
     pub(crate) fn stored_source_for(&self, node: &crate::graph::NodeId) -> bool {
         match self {
+            Self::Call(call) => call.stored_byte_source_for(node),
             Self::Scan(scan) => scan.stored_source_for(node),
             Self::Query(query) => query.stored_source_for(node),
+            Self::ScanAttempt(scan) => scan.read_sources().iter().any(|s| &s.node == node),
+            Self::ScanExcerpt(scan) => scan.read_sources().iter().any(|s| &s.node == node),
+            Self::ScanContinuation(scan) => scan.read_sources().iter().any(|s| &s.node == node),
             _ => false,
         }
     }
@@ -310,12 +314,18 @@ impl BoundTask {
             _ => crate::runtime::DependencyLifetime::Continuous,
         }
     }
-    /// Reads for eager edits are prepared without adding scheduling or refresh dependencies.
+    /// Native read owners are captured before cache maintenance without adding scheduling
+    /// or refresh dependencies. Finite scans retain their existing captured dependencies.
     pub(crate) fn entry_read_sources(&self) -> Vec<OutputRef> {
         match self {
+            Self::Call(call) => call.byte_read_sources(),
             Self::View(view) => view.read_sources(),
             Self::SourceControl(control) => control.read_sources(),
             Self::Query(query) => query.read_sources(),
+            Self::Scan(scan) => scan.read_sources(),
+            Self::ScanAttempt(scan) => scan.read_sources(),
+            Self::ScanExcerpt(scan) => scan.read_sources(),
+            Self::ScanContinuation(scan) => scan.read_sources(),
             _ => vec![],
         }
     }

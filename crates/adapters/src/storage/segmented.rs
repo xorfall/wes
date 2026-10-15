@@ -7,7 +7,7 @@ use std::{
 };
 use wes_core::{Data, Primitive, Shape};
 use wes_engine::storage::{
-    CHUNK_BYTES, LeafSelection, SnapshotDescriptor, SourceRange, StoredSnapshot,
+    CHUNK_BYTES, LeafSelection, SnapshotDependency, SnapshotDescriptor, SourceRange, StoredSnapshot,
 };
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,23 +32,27 @@ struct Manifest {
     shell: String,
     total: u64,
     leaves: Vec<Leaf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dependencies: Vec<SnapshotDependency>,
 }
 type CapturedManifest = (Manifest, Value, Vec<u8>, String);
 #[derive(Default)]
 pub(super) struct ManifestCache {
-    entries: HashMap<ValueHandle, (u64, cap_std::time::SystemTime, u64, Arc<CapturedManifest>)>,
+    entries:
+        HashMap<(Uuid, ValueHandle), (u64, cap_std::time::SystemTime, u64, Arc<CapturedManifest>)>,
     charge: u64,
 }
 impl ManifestCache {
     pub(super) fn probe(
         &self,
+        store: Uuid,
         handle: &ValueHandle,
         size: u64,
         modified: cap_std::time::SystemTime,
         prefix: &[u8],
         maximum: usize,
     ) -> Option<Result<Option<Vec<u8>>, StoreError>> {
-        let (cached_size, cached_at, _, captured) = self.entries.get(handle)?;
+        let (cached_size, cached_at, _, captured) = self.entries.get(&(store, handle.clone()))?;
         if *cached_size != size || *cached_at != modified {
             return None;
         }
@@ -157,7 +161,7 @@ impl FileValues {
             .lock()
             .expect("manifest cache")
             .entries
-            .get(handle)
+            .get(&(self.manifest_cache_identity, handle.clone()))
         {
             if *size == info.len() && *at == modified {
                 return Ok(Some(captured.clone()));
@@ -171,10 +175,18 @@ impl FileValues {
         let m: Manifest = serde_json::from_slice(&bytes).map_err(|_| StoreError::Corrupt)?;
         if m.format != "wes.segmented"
             || m.version != 1
-            || m.leaves.is_empty()
+            || (m.leaves.is_empty() && m.dependencies.is_empty())
             || m.leaves.len() > 16
+            || m.dependencies.len() > 128
         {
             return Err(StoreError::Corrupt);
+        }
+        let mut dependencies = std::collections::BTreeSet::new();
+        for dependency in &m.dependencies {
+            let child = dependency.validate()?;
+            if &child == handle || !dependencies.insert(dependency.name.clone()) {
+                return Err(StoreError::Corrupt);
+            }
         }
         let shell = codec::decode_value(m.shell.as_bytes(), self.limits)
             .map_err(stored_decode_error)?
@@ -256,7 +268,10 @@ impl FileValues {
         let captured = Arc::new((m, shell, bytes, digest));
         if charge <= metadata_limit() as u64 {
             let mut cache = self.manifests.lock().expect("manifest cache");
-            if let Some((_, _, old, _)) = cache.entries.remove(handle) {
+            if let Some((_, _, old, _)) = cache
+                .entries
+                .remove(&(self.manifest_cache_identity, handle.clone()))
+            {
                 cache.charge -= old;
             }
             if cache.charge.saturating_add(charge) > metadata_limit() as u64 {
@@ -265,11 +280,19 @@ impl FileValues {
             }
             cache.charge += charge;
             cache.entries.insert(
-                handle.clone(),
+                (self.manifest_cache_identity, handle.clone()),
                 (info.len(), modified, charge, captured.clone()),
             );
         }
         Ok(Some(captured))
+    }
+    pub(super) fn segmented_dependencies(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<Vec<SnapshotDependency>>, StoreError> {
+        Ok(self
+            .manifest(handle)?
+            .map(|captured| captured.0.dependencies.clone()))
     }
     pub(super) fn segmented_size(&self, handle: &ValueHandle) -> Result<Option<u64>, StoreError> {
         Ok(self
@@ -588,14 +611,31 @@ impl FileValues {
         shell: &Value,
         selections: &[LeafSelection],
     ) -> Result<StoredSnapshot, StoreError> {
-        if selections.is_empty()
+        self.seal_segmented_with_dependencies(handle, shell, selections, &[])
+    }
+    pub(super) fn seal_segmented_with_dependencies(
+        &mut self,
+        handle: &ValueHandle,
+        shell: &Value,
+        selections: &[LeafSelection],
+        dependencies: &[SnapshotDependency],
+    ) -> Result<StoredSnapshot, StoreError> {
+        if (selections.is_empty() && dependencies.is_empty())
             || selections.len() > 16
+            || dependencies.len() > 128
             || !shell.data().is_inline()
             || shell.shape().contains_meta()
             || shell.provenance().policy().is_private()
             || shell.provenance().policy().is_unknown()
         {
             return Err(StoreError::Restricted);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for dependency in dependencies {
+            let child = dependency.validate()?;
+            if &child == handle || !seen.insert(dependency.name.clone()) {
+                return Err(StoreError::Conflict);
+            }
         }
         let shell_bytes = if self.protection.is_some() {
             codec::encode_protected_value(shell, self.limits)
@@ -735,6 +775,7 @@ impl FileValues {
             shell: String::from_utf8(shell_bytes).map_err(|_| StoreError::Conflict)?,
             total: selected_bytes,
             leaves,
+            dependencies: dependencies.to_vec(),
         };
         let encoded = serde_json::to_vec(&m).map_err(|_| StoreError::Conflict)?;
         if encoded.len() > metadata_limit() {
@@ -967,6 +1008,94 @@ mod tests {
             Default::default(),
         )
         .unwrap()
+    }
+    #[test]
+    fn kept_and_temporary_copies_reuse_their_own_authenticated_headers() {
+        use crate::protected_storage::ObjectProtection;
+        use wes_core::flow::{FlowPolicy, Residence};
+        let root = tempfile::tempdir().unwrap();
+        let archive = root.path().join("archive");
+        let key = ObjectProtection::new(&Uuid::new_v4().to_string(), [63; 32]).unwrap();
+        let mut store = TieredValues::open_protected(
+            &root.path().join("live"),
+            &archive,
+            Limits::default(),
+            Durability::FileAndDirectory,
+            None,
+            Some(key),
+        )
+        .unwrap();
+        let owner = Arc::new(());
+        let handle = store
+            .begin_acquisition(CHUNK_BYTES as u64, Arc::downgrade(&owner))
+            .unwrap();
+        store
+            .append_acquisition(&handle, "raw", &[85; CHUNK_BYTES])
+            .unwrap();
+        let shell = shell().with_provenance(
+            wes_core::Provenance::default()
+                .with_policy(&FlowPolicy::default().confidential(Residence::Retainable)),
+        );
+        let snapshot = store
+            .seal_acquisition(
+                &handle,
+                &shell,
+                &[LeafSelection {
+                    port: "raw".into(),
+                    fields: vec![],
+                    text: false,
+                }],
+            )
+            .unwrap();
+        assert!(
+            store
+                .keep_with_reason(&handle, Retention::Protected)
+                .unwrap()
+        );
+        let header = archive.join(format!("{handle}.json"));
+        std::fs::File::options()
+            .write(true)
+            .open(&header)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+            .unwrap();
+        let temporary = store.temporary.manifest(&handle).unwrap().unwrap();
+        let retained = store.archive.manifest(&handle).unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&temporary, &retained));
+        assert!(Arc::ptr_eq(
+            &store.temporary.manifests,
+            &store.archive.manifests
+        ));
+        // Scope checks alternate archive existence with live dependency/byte reads.
+        // Their distinct file timestamps must not evict each other's authenticated header.
+        for _ in 0..4 {
+            assert!(store.is_kept(&handle).unwrap());
+            assert!(store.dependencies(&handle).unwrap().is_empty());
+            assert_eq!(store.source_range(&snapshot, 0, 1).unwrap().bytes, [85]);
+            assert!(Arc::ptr_eq(
+                &retained,
+                &store.archive.manifest(&handle).unwrap().unwrap()
+            ));
+            assert!(Arc::ptr_eq(
+                &temporary,
+                &store.temporary.manifest(&handle).unwrap().unwrap()
+            ));
+        }
+        assert!(store.archive.manifests.lock().unwrap().charge <= metadata_limit() as u64);
+        let mut bytes = std::fs::read(&header).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(&header, bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&header)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(store.archive.dependencies(&handle).is_err());
+        assert!(Arc::ptr_eq(
+            &temporary,
+            &store.temporary.manifest(&handle).unwrap().unwrap()
+        ));
     }
     #[test]
     fn warm_protected_header_probes_still_refuse_changed_identity_and_corrupt_chunks() {

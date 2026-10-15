@@ -36,6 +36,13 @@ impl Workspace {
                 return Err(WorkspaceError::UnsafeObservation);
             }
             self.install_saved_alias(&saved, Some(value), false)?;
+            if let Some(snapshot) = stored {
+                let run = crate::runtime::RunId::new(format!("saved:{}", saved.id))
+                    .expect("validated saved identity");
+                if !self.attach_stored_output(&alias_id(&saved), &run, snapshot) {
+                    return Err(WorkspaceError::UnsafeObservation);
+                }
+            }
         }
         self.saved_selections.push(saved);
         Ok(())

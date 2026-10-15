@@ -104,6 +104,70 @@ async fn retention_admission_preserves_read_withdrawal_without_requiring_a_read_
     assert_eq!(worker.shutdown().await.unwrap().failed, 0);
     task.join().await.unwrap();
 }
+
+#[tokio::test]
+async fn derived_keep_protects_dependency_closure_while_reads_are_withdrawn() {
+    use wes_engine::storage::SnapshotDependency;
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = wes_adapters::storage::TieredValues::open(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        codec::Limits::default(),
+        Durability::File,
+        None,
+    )
+    .unwrap();
+    let gate = Gate::new();
+    let value = gate.value();
+    let source = backend.store(&value).unwrap();
+    let owner = Arc::new(());
+    let derived = backend
+        .begin_acquisition(1, Arc::downgrade(&owner))
+        .unwrap();
+    let shell = Value::new(
+        Shape::Primitive(Primitive::Text),
+        Data::Text("synthetic derived summary".into()),
+        value.provenance().clone(),
+    )
+    .unwrap();
+    let dependency = SnapshotDependency {
+        name: "input".into(),
+        handle: source.to_string(),
+        digest: backend.digest(&source).unwrap().unwrap(),
+        selection: vec![],
+    };
+    let snapshot = backend
+        .seal_acquisition_with_dependencies(&derived, &shell, &[], &[dependency])
+        .unwrap();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    worker.provider_readers().register(gate.clone()).unwrap();
+    assert_eq!(
+        worker
+            .source_range_dependency(snapshot.clone(), "input".into(), 0, 9)
+            .await
+            .unwrap()
+            .bytes,
+        b"synthetic"
+    );
+    gate.set(false);
+    assert!(matches!(
+        worker
+            .source_range_dependency(snapshot.clone(), "missing".into(), 0, 9)
+            .await,
+        Err(StoreError::ProviderReadUnavailable)
+    ));
+    assert!(worker.retain(derived.clone()).await.unwrap().kept);
+    assert!(worker.is_kept(source).await.unwrap());
+    assert!(worker.is_kept(derived).await.unwrap());
+    assert!(matches!(
+        worker
+            .source_range_dependency(snapshot, "input".into(), 0, 9)
+            .await,
+        Err(StoreError::ProviderReadUnavailable)
+    ));
+    assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+    task.join().await.unwrap();
+}
 #[tokio::test]
 async fn revoked_root_policy_precedes_body_decode_and_selection_and_keeps_the_bytes() {
     let home = tempfile::tempdir().unwrap();

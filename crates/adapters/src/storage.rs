@@ -41,6 +41,8 @@ pub struct FileValues {
     next_publication: u64,
     holds: HashMap<ValueHandle, Weak<()>>,
     drafts: HashMap<ValueHandle, segmented::Draft>,
+    // Partitions one shared metadata budget by physical store; this is not read authority.
+    manifest_cache_identity: Uuid,
     manifests: Arc<std::sync::Mutex<segmented::ManifestCache>>,
     protection: Option<std::sync::Arc<crate::protected_storage::ObjectProtection>>,
 }
@@ -78,6 +80,7 @@ impl FileValues {
             next_publication: 0,
             holds: HashMap::new(),
             drafts: HashMap::new(),
+            manifest_cache_identity: Uuid::new_v4(),
             manifests: Default::default(),
         })
     }
@@ -108,12 +111,14 @@ impl FileValues {
             .map_err(|e| StoreError::backend("checking snapshot header identity", e))?;
         // Other format probes share the same immutable, authenticated manifest cache.
         // A protected header must not be decrypted again merely to rule out a composite.
-        if let Some(probe) = self
-            .manifests
-            .lock()
-            .expect("manifest cache")
-            .probe(handle, size, modified, prefix, maximum)
-        {
+        if let Some(probe) = self.manifests.lock().expect("manifest cache").probe(
+            self.manifest_cache_identity,
+            handle,
+            size,
+            modified,
+            prefix,
+            maximum,
+        ) {
             return probe;
         }
         if self.protection.is_none() {
@@ -535,6 +540,24 @@ impl FileValues {
     }
 }
 impl ValueStore for FileValues {
+    fn recovery_snapshot(
+        &self,
+        handle: &ValueHandle,
+        value: &Value,
+    ) -> Result<Option<wes_engine::storage::StoredSnapshot>, StoreError> {
+        if let Some(snapshot) = self.describe_composite(handle, &[])? {
+            return Ok(Some(snapshot));
+        }
+        if let Some(snapshot) = self.describe_segmented(handle, &[])? {
+            return Ok(Some(snapshot));
+        }
+        let Some(digest) = self.digest(handle)? else {
+            return Ok(None);
+        };
+        wes_engine::storage::StoredSnapshot::capture(handle.clone(), digest, value)
+            .map(Some)
+            .ok_or(StoreError::Limit("recovered backing metadata"))
+    }
     fn read_policy(
         &self,
         handle: &ValueHandle,
@@ -610,12 +633,25 @@ impl ValueStore for FileValues {
         snapshot = snapshot.with_selection(fields.to_vec());
         Ok(Some(snapshot))
     }
-    fn dependencies(&self, handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+    fn dependencies(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Vec<wes_engine::storage::SnapshotDependency>, StoreError> {
+        if let Some(dependencies) = self.segmented_dependencies(handle)? {
+            return Ok(dependencies);
+        }
         self.composite_header(handle)?
             .map_or(Ok(vec![]), |(root, _)| {
                 root.members
                     .iter()
-                    .map(|m| ValueHandle::new(&m.handle))
+                    .map(|m| {
+                        Ok(wes_engine::storage::SnapshotDependency {
+                            name: m.name.clone(),
+                            selection: m.selection.clone(),
+                            handle: m.handle.clone(),
+                            digest: m.digest.clone(),
+                        })
+                    })
                     .collect()
             })
     }
@@ -867,6 +903,28 @@ impl TieredValues {
     }
 }
 impl ValueStore for TieredValues {
+    fn recovery_snapshot(
+        &self,
+        handle: &ValueHandle,
+        value: &Value,
+    ) -> Result<Option<wes_engine::storage::StoredSnapshot>, StoreError> {
+        if let Some(bytes) = self.memory.encoded(handle) {
+            use sha2::{Digest, Sha256};
+            return wes_engine::storage::StoredSnapshot::capture(
+                handle.clone(),
+                format!("sha256:{:x}", Sha256::digest(bytes)),
+                value,
+            )
+            .map(Some)
+            .ok_or(StoreError::Limit("recovered backing metadata"));
+        }
+        for store in [&self.temporary, &self.live, &self.archive] {
+            if let Some(snapshot) = store.recovery_snapshot(handle, value)? {
+                return Ok(Some(snapshot));
+            }
+        }
+        Ok(None)
+    }
     fn read_policy(
         &self,
         handle: &ValueHandle,
@@ -884,7 +942,10 @@ impl ValueStore for TieredValues {
         }
         self.archive.read_policy(handle)
     }
-    fn dependencies(&self, h: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+    fn dependencies(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Vec<wes_engine::storage::SnapshotDependency>, StoreError> {
         if self.memory.size(h).is_some() {
             return Ok(vec![]);
         }
@@ -916,6 +977,32 @@ impl ValueStore for TieredValues {
         leaves: &[wes_engine::storage::LeafSelection],
     ) -> Result<wes_engine::storage::StoredSnapshot, StoreError> {
         self.temporary.seal_segmented(h, shell, leaves)
+    }
+    fn seal_acquisition_with_dependencies(
+        &mut self,
+        h: &ValueHandle,
+        shell: &Value,
+        leaves: &[wes_engine::storage::LeafSelection],
+        dependencies: &[wes_engine::storage::SnapshotDependency],
+    ) -> Result<wes_engine::storage::StoredSnapshot, StoreError> {
+        for dependency in dependencies {
+            let child = dependency.validate()?;
+            if &child == h || self.digest(&child)?.as_ref() != Some(&dependency.digest) {
+                return Err(StoreError::Conflict);
+            }
+            let selected = self
+                .describe(&child, &dependency.selection)?
+                .ok_or(StoreError::MissingValue)?;
+            if selected.digest != dependency.digest {
+                return Err(StoreError::Conflict);
+            }
+            let policy = self.read_policy(&child)?.ok_or(StoreError::MissingValue)?;
+            if shell.provenance().policy().join(&policy) != *shell.provenance().policy() {
+                return Err(StoreError::Restricted);
+            }
+        }
+        self.temporary
+            .seal_segmented_with_dependencies(h, shell, leaves, dependencies)
     }
     fn abort_acquisition(&mut self, h: &ValueHandle) -> Result<(), StoreError> {
         self.temporary.abort_segmented(h)
@@ -1096,6 +1183,10 @@ impl ValueStore for TieredValues {
         }
     }
     fn automatic_retention_allowed(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
+        if !self.dependencies(handle)?.is_empty() {
+            return Ok(false);
+        }
+
         Ok(self
             .read(handle)?
             .is_some_and(|v| !v.value.provenance().policy().is_confidential()))

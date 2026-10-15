@@ -1149,6 +1149,7 @@ impl Workspace {
             _ => None,
         };
         if let Some(call) = call {
+            call.capture_byte_input(self)?;
             if let Some(node) = self.runtime.graph().node(ticket.run.node()) {
                 call.set_source_definition(node.definition());
             }

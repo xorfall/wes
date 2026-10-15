@@ -1,5 +1,6 @@
 //! Local execution ownership. Finite invocation, piped interaction and terminal handover are distinct.
 mod acquired;
+mod byte_input;
 mod interactive;
 mod launch;
 pub(crate) mod ownership;
@@ -198,6 +199,17 @@ impl fmt::Debug for ProcessInvoker {
     }
 }
 impl Invoker for ProcessInvoker {
+    fn supports_byte_input(&self) -> bool {
+        !self.program_text
+    }
+    fn invoke_with_byte_input(
+        &self,
+        call: Call,
+        cancellation: CancellationToken,
+        input: wes_engine::byte_input::OwnedByteInput,
+    ) -> InvocationFuture {
+        byte_input::invoke(self.clone(), call, cancellation, input)
+    }
     fn invoke_acquired(
         &self,
         call: Call,
@@ -273,6 +285,14 @@ impl ProcessInvoker {
         call: &Call,
         cancellation: &CancellationToken,
     ) -> Result<(ownership::LocalChild, Instant, Vec<String>), InvocationError> {
+        self.launch_call_with_input(call, cancellation, None).await
+    }
+    async fn launch_call_with_input(
+        &self,
+        call: &Call,
+        cancellation: &CancellationToken,
+        input_bytes: Option<u64>,
+    ) -> Result<(ownership::LocalChild, Instant, Vec<String>), InvocationError> {
         let this = self;
         let (line, timeout) = this.prepare(&call).map_err(Failure::error)?;
         let deadline = Instant::now()
@@ -297,7 +317,11 @@ impl ProcessInvoker {
             command.raw_arg(format!("\"{program}\""));
         }
         command
-            .stdin(Stdio::null())
+            .stdin(if input_bytes.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -313,6 +337,9 @@ impl ProcessInvoker {
                 }
                 if let Some(launch) = launch {
                     launch.apply(&mut command)?;
+                }
+                if let Some(bytes) = input_bytes {
+                    command.env("WES_BYTE_INPUT_BYTES", bytes.to_string());
                 }
                 ownership::LocalChild::spawn(command, false).map_err(|_| Failure::Spawn)
             })

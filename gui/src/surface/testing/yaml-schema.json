@@ -1299,6 +1299,10 @@
           "schema": "provider.control",
           "required": false
         },
+        "byte_input": {
+          "schema": "provider.byte-input",
+          "required": false
+        },
         "recording": {
           "schema": "provider.recording",
           "required": false
@@ -1474,6 +1478,20 @@
         }
       },
       "hint": "Streaming session only. Captured materialized record type and a required unconstrained Bytes leaf. max_bytes is positive and at most the native acquisition budget; duration is 1–86400000 ms. Native storage supplies placement/policy. Ordered byte credits, an initial shell before readiness and a final shell plus exact End distinguish complete data from an acknowledged incomplete prefix. Physical join is required; no peer-selected paths or replay."
+    },
+    "provider.byte-input": {
+      "kind": "object",
+      "fields": {
+        "parameter": {
+          "schema": "text",
+          "required": true
+        },
+        "max_bytes": {
+          "schema": "int",
+          "required": true
+        }
+      },
+      "hint": "Finite local process only; parameter names one required Bytes input without an argv mapping. max_bytes is positive and at most the native acquisition ceiling. Native entry captures the acknowledged exact source and scope; bounded stdin reads retain ownership and join cleanup. No implicit producer dependency or replay."
     }
   },
   "typeConstructors": [

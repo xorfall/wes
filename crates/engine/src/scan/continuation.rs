@@ -45,6 +45,9 @@ impl BoundContinuation {
     pub(crate) fn capture(&mut self, workspace: &Workspace) {
         self.selection.capture(workspace, Selection::Read);
     }
+    pub(crate) fn read_sources(&self) -> Vec<crate::graph::OutputRef> {
+        self.selection.read_sources()
+    }
     pub(crate) fn policy(&self) -> FlowPolicy {
         self.selection.policy()
     }

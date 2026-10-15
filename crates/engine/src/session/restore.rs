@@ -726,11 +726,12 @@ pub async fn restore(
                 None => Err(SessionError::NoStorage),
             };
             check_cancelled(&cancellation)?;
-            let stored = if loaded
-                .as_ref()
-                .err()
-                .and_then(SessionError::read_failure_kind)
-                == Some(crate::storage::ReadFailureKind::Capacity)
+            let stored = if (saved.single && loaded.as_ref().is_ok_and(|v| v.is_some()))
+                || loaded
+                    .as_ref()
+                    .err()
+                    .and_then(SessionError::read_failure_kind)
+                    == Some(crate::storage::ReadFailureKind::Capacity)
             {
                 match &storage {
                     Some(storage) => {
@@ -747,7 +748,14 @@ pub async fn restore(
             } else {
                 None
             };
+            let mut ready_backing = None;
             let state = match (loaded, stored) {
+                (Ok(Some(value)), Some(snapshot)) if value_charge(&value, remaining).is_some() => {
+                    remaining -= value_charge(&value, remaining).expect("checked charge");
+                    report.values += 1;
+                    ready_backing = Some(snapshot);
+                    crate::runtime::RestoredState::Ready(value)
+                }
                 (_, Some(snapshot)) => {
                     report.values += 1;
                     crate::runtime::RestoredState::ReadyStored(snapshot)
@@ -799,9 +807,15 @@ pub async fn restore(
                 state,
                 Some(crate::runtime::RunId::new(format!("saved:{}", saved.id)).expect("saved id")),
             )?;
+            if let Some(snapshot) = ready_backing {
+                let run = crate::runtime::RunId::new(format!("saved:{}", saved.id))
+                    .expect("validated saved identity");
+                replay.attach_stored_output(&node, &run, snapshot)?;
+            }
             continue;
         }
         let mut value = None;
+        let mut ready_backing = None;
         if let Some(result) = index.retained.get(&node) {
             let loaded = match &storage {
                 None => Err(RestoreProblemKind::NoValueStore),
@@ -830,6 +844,7 @@ pub async fn restore(
                                 },
                             )?;
                         report.values += 1;
+                        ready_backing = loaded.snapshot;
                         value = Some(loaded.loaded.value);
                     } else {
                         report.problems.push(RestoreProblem {
@@ -856,7 +871,15 @@ pub async fn restore(
         } else {
             index.state(&node, value)
         };
-        replay.hydrate(&node, state, run)?;
+        let backing = matches!(&state, crate::runtime::RestoredState::Ready(_))
+            && index
+                .retained
+                .get(&node)
+                .is_some_and(|result| Some(&result.run) == run.as_ref());
+        replay.hydrate(&node, state, run.clone())?;
+        if backing && let (Some(snapshot), Some(run)) = (ready_backing, run) {
+            replay.attach_stored_output(&node, &run, snapshot)?;
+        }
     }
     check_cancelled(&cancellation)?;
     report.interrupted = unresolved_calls(history.recovery())

@@ -152,6 +152,7 @@ trait OwnedStorage {
         handle: &ValueHandle,
         shell: &Value,
         leaves: &[super::LeafSelection],
+        dependencies: &[super::SnapshotDependency],
     ) -> Result<(super::StoredSnapshot, ValueLease, u64), StoreError>;
     fn check_policy(&self, policy: &wes_core::flow::FlowPolicy) -> Result<(), StoreError>;
     fn admit_retention(&self, handle: &ValueHandle, reason: Retention) -> Result<(), StoreError>;
@@ -166,6 +167,10 @@ trait OwnedStorage {
     fn refresh_access(&self);
     fn values(&mut self) -> &mut dyn ValueStore;
     fn retained_value_exists(&self, handle: &ValueHandle) -> Result<bool, StoreError>;
+    fn retention_capture_cost(
+        &mut self,
+        captures: Vec<super::datasets::RetentionCapture>,
+    ) -> Result<(u64, u64), StoreError>;
     fn datasets(&self) -> Result<&dyn DatasetStorage, StoreError>;
     fn datasets_mut(&mut self) -> Result<&mut dyn DatasetStorage, StoreError>;
     fn captured_analysis(
@@ -247,11 +252,13 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
         handle: &ValueHandle,
         shell: &Value,
         leaves: &[super::LeafSelection],
+        dependencies: &[super::SnapshotDependency],
     ) -> Result<(super::StoredSnapshot, ValueLease, u64), StoreError> {
-        let snapshot = self.seal_acquisition(handle, shell, leaves)?;
+        let snapshot =
+            self.seal_acquisition_with_dependencies(handle, shell, leaves, dependencies)?;
         // Publication ownership is distinct from read authority. This only pins the sealed
         // raw backing object; native read/Keep paths still recheck its original root policy.
-        let hold = if self.scope.is_none() {
+        let hold = if self.scope.is_none() && dependencies.is_empty() {
             self.values.hold(handle)?
         } else {
             self.hold(handle)?
@@ -492,6 +499,12 @@ impl<V: ValueStore> OwnedStorage for Owner<V> {
     fn retained_value_exists(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
         self.values.is_kept(handle)
     }
+    fn retention_capture_cost(
+        &mut self,
+        captures: Vec<super::datasets::RetentionCapture>,
+    ) -> Result<(u64, u64), StoreError> {
+        Owner::retention_capture_cost(self, captures)
+    }
     fn datasets(&self) -> Result<&dyn DatasetStorage, StoreError> {
         self.datasets
             .as_deref()
@@ -708,9 +721,10 @@ impl StoreWorker {
         handle: ValueHandle,
         shell: Value,
         leaves: Vec<super::LeafSelection>,
+        dependencies: Vec<super::SnapshotDependency>,
     ) -> Result<(super::StoredSnapshot, ValueLease, u64), StoreError> {
         self.request_owner(self.limits.bytes.get(), move |owner| {
-            owner.seal_owned_acquisition(&handle, &shell, &leaves)
+            owner.seal_owned_acquisition(&handle, &shell, &leaves, &dependencies)
         })
         .await?
         .wait()
@@ -720,6 +734,12 @@ impl StoreWorker {
     pub fn with_placement(mut self, placement: ValuePlacement) -> Self {
         self.placement = placement;
         self
+    }
+    pub(crate) fn for_derivation(&self) -> Result<Self, StoreError> {
+        if self.placement == ValuePlacement::Memory {
+            return Err(StoreError::Restricted);
+        }
+        Ok(self.clone().with_placement(ValuePlacement::MemoryAndDisk))
     }
     pub fn resident_memory(&self) -> &super::ResidentMemory {
         &self.residency
@@ -857,12 +877,24 @@ impl StoreWorker {
             let Some(loaded) = store.read(&handle)? else {
                 return Ok(None);
             };
-            if value_charge(&loaded.value, limit.into()).is_none() {
-                return Err(StoreError::Limit("recovered value payload"));
-            }
+            let charge = value_charge(&loaded.value, limit.into())
+                .ok_or(StoreError::Limit("recovered value payload"))?;
             let bytes = store.size(&handle)?.ok_or(StoreError::MissingValue)?;
+            let snapshot = store.recovery_snapshot(&handle, &loaded.value)?;
+            if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| !snapshot.matches(&loaded.value))
+            {
+                return Err(StoreError::Conflict);
+            }
+            if snapshot.as_ref().is_some_and(|snapshot| {
+                charge.saturating_add(snapshot.metadata_charge()) > u64::from(limit)
+            }) {
+                return Err(StoreError::Limit("recovered value and backing metadata"));
+            }
             Ok(Some(super::RecoveredOutput {
                 loaded,
+                snapshot,
                 bytes,
                 retention: store.retention(&handle)?,
             }))
@@ -1113,25 +1145,16 @@ impl StoreWorker {
                 if inventory.reference != reference {
                     return Err(StoreError::Conflict);
                 }
-                let mut total = inventory.object_bytes;
-                let mut shared = inventory.shared_object_bytes;
-                let mut captured = 0u64;
-                for capture in inventory.captures {
-                    let bytes = capture.value.bytes;
-                    total = total
-                        .checked_add(bytes)
-                        .ok_or(StoreError::Limit("retention bytes"))?;
-                    captured = captured
-                        .checked_add(bytes)
-                        .ok_or(StoreError::Limit("retention bytes"))?;
-                    if capture.shared
-                        || owner.retained_value_exists(&ValueHandle::new(&capture.value.handle)?)?
-                    {
-                        shared = shared
-                            .checked_add(bytes)
-                            .ok_or(StoreError::Limit("retention bytes"))?;
-                    }
-                }
+                let (captured, captured_shared) =
+                    owner.retention_capture_cost(inventory.captures)?;
+                let total = inventory
+                    .object_bytes
+                    .checked_add(captured)
+                    .ok_or(StoreError::Limit("retention bytes"))?;
+                let shared = inventory
+                    .shared_object_bytes
+                    .checked_add(captured_shared)
+                    .ok_or(StoreError::Limit("retention bytes"))?;
                 let exclusive = total
                     .checked_sub(shared)
                     .ok_or(StoreError::DatasetCorrupt)?;
