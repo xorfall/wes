@@ -27,7 +27,8 @@ mod readiness;
 mod recording;
 mod resources;
 pub use controls::{
-    ControlError, ControlFuture, ControlLimits, ControlOutcome, LiveController, LiveControls,
+    ControlContracts, ControlError, ControlFuture, ControlLimits, ControlOutcome, LiveController,
+    LiveControls,
 };
 pub(crate) use recording::RecordedOutput;
 pub use recording::{RecordingAppend, RecordingEnd, StreamRecording};
@@ -54,6 +55,13 @@ pub trait StreamingInvoker: Send + Sync + 'static {
     /// Static admission metadata, with no external work or result-derived authority.
     fn records_bytes(&self, _capability: &wes_core::capability::Capability) -> bool {
         false
+    }
+    /// Captured static contracts, before subscription. No external work or live authority.
+    fn control_contracts(
+        &self,
+        _capability: &wes_core::capability::Capability,
+    ) -> Option<ControlContracts> {
+        None
     }
 
     fn subscribe(
@@ -106,6 +114,7 @@ struct State {
     reconnecting: bool,
     reconnects: u64,
     controls: Option<controls::Owner>,
+    controls_required: bool,
     window: Window,
     phase: Phase,
     opened: bool,
@@ -610,6 +619,7 @@ pub(crate) fn spawn_with_recording(
     let epoch = uuid::Uuid::new_v4();
     let connection_cancel = cancellation.child_token();
     let recording_required = invoker.records_bytes(&call.capability);
+    let controls_required = invoker.control_contracts(&call.capability).is_some();
     let (recorded, recorded_read) = watch::channel(None);
     let shared = Arc::new(Shared {
         run: run.clone(),
@@ -619,6 +629,7 @@ pub(crate) fn spawn_with_recording(
             reconnecting: false,
             reconnects: 0,
             controls: None,
+            controls_required,
             window,
             phase: Phase::Opening,
             opened: false,
@@ -670,12 +681,13 @@ pub(crate) fn spawn_with_recording(
             tokio::select! {
                 biased;
                 result = &mut provider => {
-                    let controls = {
+                    let (controls, ready) = {
                         let mut state = shared.state();
+                        let ready = state.opened && (!state.controls_required || state.controls.is_some());
                         state.phase = Phase::Closing;
                         state.dirty = true;
                         if let Some(controls) = &state.controls { controls.revoke(); }
-                        state.controls.take()
+                        (state.controls.take(), ready)
                     };
                     if controls.is_some() { publish_window(&shared, &run, &publish).await; }
                     let control_failed = if let Some(controls) = controls { controls.join().await.is_err() } else { false };
@@ -688,11 +700,11 @@ pub(crate) fn spawn_with_recording(
                         } else if token.is_cancelled() {
                             Phase::Cancelled
                         } else { match result {
-                            Ok(Ok(())) if state.opened => Phase::Ended,
+                            Ok(Ok(())) if ready => Phase::Ended,
                             Ok(Err(InvocationError::Cancelled)) => Phase::Cancelled,
                             Ok(Err(InvocationError::Failed(_))) if state.window.value().provenance().policy().is_confidential() => Phase::Failed(RuntimeCode::ExecutionFailed.error("Private stream failed; details withheld.", None)),
                             Ok(Err(InvocationError::Failed(error))) => Phase::Failed(error),
-                            Ok(Ok(())) => Phase::Failed(RuntimeCode::ExecutionFailed.error("The stream ended without acknowledging its opening.", None)),
+                            Ok(Ok(())) => Phase::Failed(RuntimeCode::ExecutionFailed.error("The stream ended without acknowledging usable readiness and declared controls.", None)),
                             Err(_) => Phase::Failed(RuntimeCode::ExecutionFailed.error("The stream provider terminated unexpectedly.", None)),
                         }};
                         state.dirty = true;
@@ -747,7 +759,15 @@ async fn publish_window(shared: &Arc<Shared>, run: &Run, publish: &watch::Sender
                 return None;
             }
             state.dirty = false;
-            (state.window.clone(), state.phase.clone(), state.rejected)
+            let phase = if state.phase == Phase::Open
+                && state.controls_required
+                && state.controls.is_none()
+            {
+                Phase::Opening
+            } else {
+                state.phase.clone()
+            };
+            (state.window.clone(), phase, state.rejected)
         };
         // Clone only Arc-backed items under the lock. Deep observation materialization cannot
         // hold up event admission, and computation never reads this materialized list.

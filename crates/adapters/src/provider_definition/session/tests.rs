@@ -57,6 +57,38 @@ fn executable(mode: &str, streaming: bool, result: &str) -> (tempfile::TempDir, 
     (root, product)
 }
 
+#[test]
+fn captured_control_metadata_is_available_before_launch_and_keeps_resolved_constraints() {
+    let root = tempfile::tempdir().unwrap();
+    let mut doc = document(root.path(), "hold", true, "Int");
+    doc["types"] = serde_json::json!({"Action":{"base":"Int","enum":[7]},"Receipt":{"base":"Bool","enum":[true]}});
+    doc["operations"][0]["control"] =
+        serde_json::json!({"input":"Action","output":"Receipt","output_policy":"confidential"});
+    let definition = super::super::schema::compile(&doc.to_string(), None).unwrap();
+    let expected = definition.operations[0].control.clone().unwrap();
+    let product = unbound(definition, ProcessConfig::default()).unwrap();
+    let cap = product.description().capabilities().next().unwrap();
+    let metadata = product.streams().unwrap().control_contracts(cap).unwrap();
+    assert_eq!(metadata.input.digest(), expected.input.digest());
+    assert_eq!(metadata.output.digest(), expected.output.digest());
+    assert!(!metadata.input.issues(&Data::Int(6)).is_empty());
+    assert!(metadata.input.issues(&Data::Int(7)).is_empty());
+    assert!(!metadata.output.issues(&Data::Bool(false)).is_empty());
+    assert_eq!(
+        std::fs::read_dir(root.path()).unwrap().count(),
+        0,
+        "metadata starts no child"
+    );
+    let (_root, no_controls) = executable("hold", true, "Int");
+    assert!(
+        no_controls
+            .streams()
+            .unwrap()
+            .control_contracts(no_controls.description().capabilities().next().unwrap())
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn declared_resource_keys_refuse_alias_conflicts_and_malformed_arguments_before_child_launch()
 {

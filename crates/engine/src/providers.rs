@@ -25,7 +25,10 @@ mod lifecycle;
 mod read_access;
 mod streaming;
 pub use finite::{FinitePreparationFuture, PreparedCall};
-pub use streaming::{OwnedSource, PreparedSource, SourcePreparationFuture, SourcePrerequisite};
+pub use streaming::{
+    BoundStop, FinalizationLimits, OwnedSource, PreparedSource, PreparedStop, SourceFinalization,
+    SourcePreparationFuture, SourcePrerequisite,
+};
 
 pub type InvocationFuture =
     Pin<Box<dyn Future<Output = Result<Value, InvocationError>> + Send + 'static>>;

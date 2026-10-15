@@ -649,6 +649,22 @@ impl Invoker for Session {
     }
 }
 impl StreamingInvoker for Session {
+    fn control_contracts(
+        &self,
+        capability: &wes_core::capability::Capability,
+    ) -> Option<wes_engine::streams::ControlContracts> {
+        let control = self
+            .definition
+            .operations
+            .iter()
+            .find(|operation| operation.path == capability.path)?
+            .control
+            .as_ref()?;
+        Some(wes_engine::streams::ControlContracts {
+            input: control.input.clone(),
+            output: control.output.clone(),
+        })
+    }
     fn exclusive_resources(
         &self,
         call: &Call,
