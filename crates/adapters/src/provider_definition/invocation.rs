@@ -71,7 +71,7 @@ pub(crate) fn build(
     )
 }
 
-fn failed(code: &str, message: impl Into<String>) -> InvocationError {
+pub(super) fn failed(code: &str, message: impl Into<String>) -> InvocationError {
     InvocationError::Failed(
         ErrorValue::new(
             ErrorId::new(uuid::Uuid::new_v4().to_string()).expect("uuid"),
@@ -297,6 +297,15 @@ impl MappedInvoker {
             return Err(failed("PRV002", "process backend omitted stdout"));
         };
         let contract = op.result.as_ref().expect("compiled output contract");
+        if matches!(op.format, schema::OutputFormat::RecordBytes) {
+            return super::record_bytes::materialized(
+                stdout,
+                contract,
+                op.byte_field.as_ref().expect("compiled leaf"),
+                output.provenance().clone(),
+                token,
+            );
+        }
         let data = match op.format {
             schema::OutputFormat::Json => codec::decode_json_for_contract(
                 stdout,
@@ -319,6 +328,7 @@ impl MappedInvoker {
             ),
             schema::OutputFormat::Bytes => Data::Bytes(stdout.clone()),
             schema::OutputFormat::Process => unreachable!(),
+            schema::OutputFormat::RecordBytes => unreachable!(),
         };
         let value = Value::new(Shape::Unknown, data, output.provenance().clone())
             .map_err(|_| failed("PRV004", "invalid process result"))?;
@@ -347,7 +357,7 @@ impl Invoker for MappedInvoker {
                 .find(|op| op.path == call.capability.path)
                 .ok_or_else(|| failed("PRV001", "unknown captured provider operation"))?;
             let eligible = match op.format {
-                schema::OutputFormat::Process => true,
+                schema::OutputFormat::Process | schema::OutputFormat::RecordBytes => true,
                 schema::OutputFormat::Json => false,
                 schema::OutputFormat::Text | schema::OutputFormat::Bytes => {
                     op.result.as_ref().is_some_and(|c| {
@@ -379,6 +389,57 @@ impl Invoker for MappedInvoker {
             let mapped = this.clone();
             let captured = op.clone();
             let cancel = token.clone();
+            if matches!(op.format, schema::OutputFormat::RecordBytes) {
+                let decoder = Arc::new(std::sync::Mutex::new(
+                    super::record_bytes::Decoder::default(),
+                ));
+                let decoding = decoder.clone();
+                let contract = op.result.clone().expect("compiled record-bytes");
+                let fields = op.byte_field.clone().expect("compiled leaf");
+                let stopped = token.clone();
+                let policy = context.provenance().policy().clone();
+                let context = context
+                    .with_decoder(Arc::new(move |port, bytes| {
+                        if port != "stdout" {
+                            return Ok(bytes);
+                        }
+                        decoding
+                            .lock()
+                            .map_err(|_| failed("PRV004", "record-bytes decoder is unavailable"))?
+                            .push(&bytes, &contract, &fields, &stopped)
+                    }))
+                    .with_finalizer(Arc::new(move |value, _| {
+                        let mut status = captured.clone();
+                        status.format = schema::OutputFormat::Process;
+                        let value = mapped.output(&status, value, &cancel)?;
+                        let shell = decoder
+                            .lock()
+                            .map_err(|_| failed("PRV004", "record-bytes decoder is unavailable"))?
+                            .finish(value.provenance().clone(), &cancel)?;
+                        Ok((
+                            shell,
+                            vec![wes_engine::storage::LeafSelection {
+                                port: "stdout".into(),
+                                fields: captured.byte_field.clone().expect("compiled leaf"),
+                                text: false,
+                            }],
+                        ))
+                    }));
+                return match this
+                    .base
+                    .invoke_acquired(delegated, token.clone(), context)
+                    .await
+                {
+                    Ok(wes_engine::storage::AcquiredOutput::Value(value)) => this
+                        .output(op, value, &token)
+                        .map(wes_engine::storage::AcquiredOutput::Value),
+                    Ok(stored) => Ok(stored),
+                    Err(InvocationError::Failed(error)) => {
+                        Err(InvocationError::Failed(error.with_policy(&policy)))
+                    }
+                    Err(error) => Err(error),
+                };
+            }
             let context = context.with_finalizer(Arc::new(move |value, leaves| {
                 let output = mapped.output(&captured, value, &cancel)?;
                 if matches!(captured.format, schema::OutputFormat::Process) {

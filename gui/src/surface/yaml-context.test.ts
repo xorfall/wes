@@ -16,9 +16,10 @@ describe("context-specific YAML package completion", () => {
     expect(complete("backend:\n  kind: ", "provider")).toEqual(["process", "session"]);
     expect(complete("backend:\n  kind: session\n  c", "provider")).toEqual(["credentials"]);
     expect(complete("backend:\n  kind: process\n  c", "provider")).toEqual([]);
-    expect(complete("operations:\n  - result:\n      format: ", "provider")).toEqual(["json", "text", "bytes", "process"]);
+    expect(complete("operations:\n  - result:\n      format: ", "provider")).toEqual(["json", "text", "bytes", "process", "record-bytes"]);
     expect(complete("operations:\n  - control:\n      output_policy: ", "provider")).toEqual(["public", "private", "confidential-temporary", "confidential"]);
     expect(complete("read_access:\n  r", "provider")).toEqual(["revalidate"]);
+    expect(complete("operations:\n  - result:\n      b", "provider")).toEqual(["byte_field"]);
   });
   it("recognizes package after version in the environment buffer", () => {
     expect(complete("version: 1\npa")).toEqual(["package"]);

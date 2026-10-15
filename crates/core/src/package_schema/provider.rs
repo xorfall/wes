@@ -114,13 +114,14 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
             object(&[
                 ("format", "provider.output-format", true),
                 ("type", "type", false),
+                ("byte_field", "provider.text-list", false),
             ]),
             "provider-result",
         ),
     );
     d.insert(
         "provider.output-format",
-        choices(Text, &["json", "text", "bytes", "process"]),
+        choices(Text, &["json", "text", "bytes", "process", "record-bytes"]),
     );
     d.insert(
         "provider.control",
@@ -164,7 +165,7 @@ pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)
         ("provider-session", "Local target only. credentials defaults to []; at most 16 distinct identifier slots (no hyphens), with material supplied through the native environment form. Operations require JSON results, literal argv and success_codes [0]. Versioned bounded duplex frames carry calls, readiness, events, controls and finite outcomes; import never starts a session."),
         ("provider-operation", "path has 1–16 identifier segments; summary defaults to empty (max 4096 bytes). parameters defaults to [] (max 256 distinct names). argv has fewer than 1024 members; success_codes defaults to [0] (1–256 unsigned 32-bit codes). streaming defaults to false and requires a session backend. Resolved input/output contracts must be materialized."),
         ("provider-argv", "A Text is one literal argument, never a shell program. Parameter mappings default prefix to [] and encoding to scalar. scalar accepts scalar types except Bytes; spread requires a list of those scalars; flag requires Bool and a nonempty prefix; json accepts materialized values. Optional missing parameters omit their mapping. Arguments/prefixes cannot contain NUL; final size/count budgets still apply."),
-        ("provider-result", "json requires an explicit type. text defaults to Text and bytes to Bytes; overrides must retain that shape. process has the fixed ProcessOutput contract and forbids type. JSON Bytes fields use canonical base64 only where the captured contract declares Bytes."),
+        ("provider-result", "json requires an explicit type. text defaults to Text and bytes to Bytes; overrides must retain that shape. process has the fixed ProcessOutput contract and forbids type. JSON Bytes fields use canonical base64 only where the captured contract declares Bytes. record-bytes requires a finite process operation, explicit type and byte_field selecting one required unconstrained Bytes leaf. stdout is a 4-byte big-endian header length (1–262144), a complete typed JSON record with an empty Bytes placeholder, then the exact payload to EOF. Successful exit and bounded headers are required; transient acquisition can retain nonexpanding bytes beyond the ordinary output cap. byte_field is forbidden for other formats."),
         ("provider-control", "Requires streaming on a session backend. input and output resolve to materialized contracts. output_policy defaults to public; native environment and input restrictions still apply. Controls belong to one admitted live connection; uncertain external outcomes must not be automatically replayed."),
         ("provider-read-access", "Opt-in managed-environment read domain. scope contains 1–16 distinct required Text parameters present on every operation. revalidate names one finite Bool operation whose only parameters are that scope. Only explicit native revalidation returning true opens captured reads. Expiry/revoke/material or binding changes close reads; retained bytes, re-enabling and new grants cannot revive old work. Import never probes."),
     ].into_iter()

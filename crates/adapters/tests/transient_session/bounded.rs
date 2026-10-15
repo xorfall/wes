@@ -18,6 +18,164 @@ struct CountProcess {
 }
 
 #[tokio::test]
+async fn declared_record_bytes_projects_metadata_and_reads_raw_without_full_materialization_or_replay()
+ {
+    use wes_engine::imports::{ImportMode, ImportRequest, ImportSnapshot, Importer};
+    let root = tempfile::tempdir().unwrap();
+    let program = finite_fixture(root.path()).await;
+    let probe = root.path().join("invocations");
+    let (worker, storage_task) = spawn_store(
+        TieredValues::open(
+            &root.path().join("live"),
+            &root.path().join("archive"),
+            Limits {
+                bytes: 32 * 1024,
+                ..Default::default()
+            },
+            Durability::FileAndDirectory,
+            None,
+        )
+        .unwrap(),
+        StoreWorkerLimits::default(),
+    )
+    .unwrap();
+    let (mut base, _) = workspace(Arc::new(Definitions::default()));
+    for (name, mode) in [
+        ("blob", "record-bytes"),
+        ("bad", "record-truncated"),
+        ("failed", "record-fail"),
+    ] {
+        let doc = serde_json::json!({"version":1,"provider":name,"backend":{"kind":"process","bin":program},"types":{
+            "Index":{"base":"Record","fields":{"label":"Text","size":"Int"}},
+            "Blob":{"base":"Record","fields":{"index":"Index","raw":"Bytes"}}
+        },"operations":[{"path":["read"],"argv":[mode,"","","131073",probe],"result":{"format":"record-bytes","type":"Blob","byte_field":["raw"]}}]});
+        let file = format!("{name}.yaml");
+        std::fs::write(root.path().join(&file), doc.to_string()).unwrap();
+        let importer = wes_adapters::provider_definition::ProviderImporter::new(
+            root.path(),
+            ProcessConfig {
+                output_bytes: 4096,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let request = ImportRequest::new(
+            "provider".into(),
+            None,
+            [(
+                "file".into(),
+                wes_core::Value::new(
+                    Shape::Primitive(Primitive::Text),
+                    Data::Text(file.into()),
+                    Default::default(),
+                )
+                .unwrap(),
+            )]
+            .into(),
+        )
+        .unwrap();
+        let recipe = importer.capture(&request, 64 * 1024).unwrap();
+        let product = importer
+            .build(&ImportSnapshot::new(request, recipe), ImportMode::Live)
+            .unwrap();
+        base.register_provider(product.description().clone(), product.invoker().clone())
+            .unwrap();
+    }
+    let (handle, task) = session::spawn_with_storage(
+        base,
+        RecordingMode::Ephemeral,
+        Arc::new(NoFiles),
+        NonZeroUsize::new(2).unwrap(),
+        SessionStorage {
+            worker: worker.clone(),
+            auto_keep: AutoKeep::default(),
+        },
+    )
+    .unwrap();
+    let made = submit(
+        &handle,
+        "import",
+        ":transient { blob read > evidence } > study",
+    )
+    .await;
+    assert!(made.sandbox.is_some(), "{:?}", made.diagnostics);
+    let export = handle.read_sandbox_export("study", false).await.unwrap();
+    let scope = export.scope.clone().unwrap();
+    drop(export);
+    let (child, _) = handle.resolve_read_scope(&scope).await.unwrap();
+    child.wait_idle().await.unwrap();
+    let snapshot = child.snapshot().await.unwrap();
+    let source = &snapshot.names["evidence"].node;
+    assert!(
+        snapshot.execution.errors.is_empty(),
+        "{:?}",
+        snapshot.execution.errors
+    );
+    assert!(snapshot.execution.stored_values.contains_key(source));
+    let run = snapshot.execution.runs[source].clone();
+    drop(snapshot);
+    submit(
+        &child,
+        "index",
+        ":calc pure { return $evidence.index; } > metadata",
+    )
+    .await;
+    child.wait_idle().await.unwrap();
+    assert_eq!(
+        read(&handle, "study.metadata").await,
+        Data::Record(
+            [
+                ("label".into(), Data::Text("synthetic".into())),
+                ("size".into(), Data::Int(131073))
+            ]
+            .into()
+        )
+    );
+    submit(
+        &child,
+        "bytes",
+        ":read bytes:$evidence from:\"65534\" limit:5 select:\"raw\" > bytes",
+    )
+    .await;
+    child.wait_idle().await.unwrap();
+    let Data::Record(range) = read(&handle, "study.bytes").await else {
+        panic!("range");
+    };
+    assert_eq!(range["extent"], Data::Text("131073".into()));
+    assert_eq!(
+        range["data"],
+        Data::Bytes(
+            [65534usize, 65535, 0, 1, 2]
+                .map(|n| (n % 251) as u8)
+                .to_vec()
+                .into()
+        )
+    );
+    assert_eq!(
+        child.snapshot().await.unwrap().execution.runs
+            [&child.snapshot().await.unwrap().names["evidence"].node],
+        run
+    );
+    assert_eq!(std::fs::read_to_string(&probe).unwrap(), "once\n");
+    for (id, provider) in [("bad", "bad"), ("failed", "failed")] {
+        submit(&child, id, &format!("{provider} read > {id}")).await;
+        child.wait_idle().await.unwrap();
+        let snapshot = child.snapshot().await.unwrap();
+        let node = &snapshot.names[id].node;
+        assert!(snapshot.execution.errors.contains_key(node), "{snapshot:?}");
+        assert!(!snapshot.execution.stored_values.contains_key(node));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&probe).unwrap(),
+        "once\nonce\nonce\n"
+    );
+    handle.shutdown().await.unwrap();
+    task.join().await.unwrap();
+    worker.shutdown().await.unwrap();
+    storage_task.join().await.unwrap();
+}
+
+#[tokio::test]
 async fn declared_text_and_bytes_use_bounded_acquisition_with_their_original_public_types() {
     use wes_engine::imports::{ImportMode, ImportRequest, ImportSnapshot, Importer};
     let root = tempfile::tempdir().unwrap();

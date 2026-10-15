@@ -317,6 +317,113 @@ async fn supports_text_bytes_raw_process_and_explicit_success_codes() {
         }
     }
 }
+
+fn record_bytes_document() -> serde_json::Value {
+    serde_json::json!({"version":1,"provider":"blob","backend":{"kind":"process","bin":"/synthetic/tool"},"types":{
+        "BinaryPart":{"base":"Record","fields":{"raw":"Bytes"}},
+        "Blob":{"base":"Record","fields":{"label":"Text","nested":"BinaryPart"}}
+    },"operations":[{"path":["read"],"argv":[],"result":{"format":"record-bytes","type":"Blob","byte_field":["nested","raw"]}}]})
+}
+#[test]
+fn record_bytes_requires_a_static_required_unconstrained_binary_leaf() {
+    let valid = record_bytes_document();
+    assert!(schema::compile(&valid.to_string(), None).is_ok());
+    for mutation in 0..8 {
+        let mut doc = valid.clone();
+        match mutation {
+            0 => doc["operations"][0]["result"]["byte_field"] = serde_json::json!([]),
+            1 => doc["operations"][0]["result"]["byte_field"] = serde_json::json!(["missing"]),
+            2 => doc["types"]["BinaryPart"]["fields"]["raw"] = "Text".into(),
+            3 => {
+                doc["types"]["BinaryPart"]["fields"]["raw"] =
+                    serde_json::json!({"type":"Bytes","optional":true})
+            }
+            4 => {
+                doc["types"]["BinaryPart"]["fields"]["raw"] =
+                    serde_json::json!({"base":"Bytes","enum":[""]})
+            }
+            5 => doc["operations"][0]["result"]["format"] = "json".into(),
+            6 => doc["operations"][0]["result"]["type"] = "Bytes".into(),
+            7 => doc["backend"]["kind"] = "session".into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            schema::compile(&doc.to_string(), None).is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+#[tokio::test]
+async fn record_bytes_materialized_result_preserves_exact_payload_and_refuses_bad_headers() {
+    let header = br#"{"label":"synthetic","nested":{"raw":""}}"#;
+    let mut stdout = (header.len() as u32).to_be_bytes().to_vec();
+    stdout.extend_from_slice(header);
+    stdout.extend_from_slice(&[0, 255, 13, 10]);
+    let (p, calls) = product(
+        &record_bytes_document(),
+        Ok(output(0, &stdout)),
+        Default::default(),
+    );
+    let value = p
+        .invoker()
+        .invoke(call(&p, vec![]), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(value.metadata().is_some());
+    let Data::Record(fields) = value.data() else {
+        panic!("record");
+    };
+    let Data::Record(nested) = &fields["nested"] else {
+        panic!("nested");
+    };
+    assert_eq!(nested["raw"], Data::Bytes(vec![0, 255, 13, 10].into()));
+    assert_eq!(calls.lock().unwrap().len(), 1);
+    for (code, bytes, expected) in [
+        (0, vec![0, 0, 0, 0], "PRV004"),
+        (0, stdout[..8].to_vec(), "PRV004"),
+        (7, stdout.clone(), "PRV003"),
+        (0, vec![255; 4], "PRV004"),
+    ] {
+        let (p, calls) = product(
+            &record_bytes_document(),
+            Ok(output(code, &bytes)),
+            Default::default(),
+        );
+        assert_eq!(
+            error_code(
+                p.invoker()
+                    .invoke(call(&p, vec![]), CancellationToken::new())
+                    .await
+            ),
+            expected
+        );
+        assert_eq!(calls.lock().unwrap().len(), 1);
+    }
+}
+#[test]
+fn record_bytes_decoder_accepts_every_header_boundary_without_storing_framing_bytes() {
+    let definition = schema::compile(&record_bytes_document().to_string(), None).unwrap();
+    let contract = definition.operations[0].result.as_ref().unwrap();
+    let fields = definition.operations[0].byte_field.as_ref().unwrap();
+    let header = br#"{"label":"synthetic","nested":{"raw":""}}"#;
+    let mut input = (header.len() as u32).to_be_bytes().to_vec();
+    input.extend_from_slice(header);
+    input.extend_from_slice(&[255, 0, 7]);
+    for split in 0..=input.len() {
+        let token = CancellationToken::new();
+        let mut decoder = super::record_bytes::Decoder::default();
+        let mut raw = decoder
+            .push(&input[..split], contract, fields, &token)
+            .unwrap();
+        raw.extend(
+            decoder
+                .push(&input[split..], contract, fields, &token)
+                .unwrap(),
+        );
+        decoder.finish(Provenance::default(), &token).unwrap();
+        assert_eq!(raw, [255, 0, 7], "split {split}");
+    }
+}
 #[tokio::test]
 async fn optional_false_and_empty_list_omit_prefixes_and_json_encoding_is_explicit() {
     let (p, calls) = product(
@@ -662,7 +769,7 @@ fn provider_structure_diagnostics_publish_choices_without_submitted_values() {
         (
             "/operations/0/result/private-field",
             serde_json::json!("private-value"),
-            "valid fields: format, type",
+            "valid fields: format, type, byte_field",
         ),
         (
             "/operations/0/result/format",

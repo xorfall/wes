@@ -3,9 +3,8 @@ use super::*;
 use wes_engine::storage::{
     AcquiredFuture, Acquisition, AcquisitionContext, CHUNK_BYTES, LeafSelection, acquisition_error,
 };
-type PendingAppend<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<(), wes_engine::storage::StoreError>> + Send + 'a>,
->;
+type PendingAppend<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), InvocationError>> + Send + 'a>>;
 pub(super) fn invoke(
     this: ProcessInvoker,
     call: Call,
@@ -131,9 +130,9 @@ async fn capture_owned<'a>(
             _=cancellation.cancelled()=>return Err(InvocationError::Cancelled),
             _=tokio::time::sleep_until(wake)=>if Instant::now()>=deadline{return Err(Failure::Timeout.error());},
             waited=child.wait(),if status.is_none()=>status=Some(waited.map_err(|_|Failure::Wait.error())?),
-            appended=async {pending.as_mut().expect("pending append").await},if pending.is_some()=>{pending.take();appended.map_err(acquisition_error)?;},
-            read=read_pipe(&mut stdout,&mut out_buf),if pending.is_none()=>{let n=read.map_err(|_|Failure::Read.error())?;if n==0{stdout=None;}else{*pending=Some(Box::pin(acquisition.append("stdout",out_buf[..n].to_vec())));}},
-            read=read_pipe(&mut stderr,&mut err_buf),if pending.is_none()=>{let n=read.map_err(|_|Failure::Read.error())?;if n==0{stderr=None;}else{let take=n.min(2049-excerpt.len());excerpt.extend_from_slice(&err_buf[..take]);*pending=Some(Box::pin(acquisition.append("stderr",err_buf[..n].to_vec())));}},
+            appended=async {pending.as_mut().expect("pending append").await},if pending.is_some()=>{pending.take();appended?;},
+            read=read_pipe(&mut stdout,&mut out_buf),if pending.is_none()=>{let n=read.map_err(|_|Failure::Read.error())?;if n==0{stdout=None;}else{*pending=Some(Box::pin(acquisition.append_input("stdout",out_buf[..n].to_vec())));}},
+            read=read_pipe(&mut stderr,&mut err_buf),if pending.is_none()=>{let n=read.map_err(|_|Failure::Read.error())?;if n==0{stderr=None;}else{let take=n.min(2049-excerpt.len());excerpt.extend_from_slice(&err_buf[..take]);*pending=Some(Box::pin(acquisition.append_input("stderr",err_buf[..n].to_vec())));}},
         }
     }
 }

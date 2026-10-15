@@ -2,6 +2,7 @@
 //! separate boundaries; definitions contain no shell programs or ambient provider references.
 mod importer;
 mod invocation;
+mod record_bytes;
 mod schema;
 mod session;
 #[cfg(test)]
@@ -28,6 +29,7 @@ struct Operation {
     argv: Vec<schema::Argument>,
     result: Option<Arc<Contract>>,
     format: schema::OutputFormat,
+    byte_field: Option<Vec<String>>,
     success_codes: Vec<i64>,
     streaming: bool,
     control: Option<Control>,

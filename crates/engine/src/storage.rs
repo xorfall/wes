@@ -14,8 +14,8 @@ mod residency;
 mod scope;
 mod snapshot;
 pub use acquisition::{
-    AcquiredFuture, AcquiredOutput, Acquisition, AcquisitionContext, CHUNK_BYTES, LeafSelection,
-    SnapshotFinalizer, SnapshotMember, SourceRange, acquisition_error,
+    AcquiredFuture, AcquiredOutput, Acquisition, AcquisitionContext, CHUNK_BYTES, ChunkDecoder,
+    LeafSelection, SnapshotFinalizer, SnapshotMember, SourceRange, acquisition_error,
 };
 pub use read_failure::ReadFailureKind;
 pub use residency::ResidentMemory;
