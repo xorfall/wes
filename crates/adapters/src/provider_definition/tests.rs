@@ -635,3 +635,80 @@ fn control_output_policies_are_static_strict_and_default_to_public() {
         assert!(schema::compile(&invalid_doc.to_string(), None).is_err());
     }
 }
+
+#[test]
+fn provider_structure_diagnostics_publish_choices_without_submitted_values() {
+    for (pointer, value, expected) in [
+        (
+            "/private-field",
+            serde_json::json!("private-value"),
+            "valid fields: version, provider, types, backend, operations, read_access",
+        ),
+        (
+            "/backend/private-field",
+            serde_json::json!("private-value"),
+            "valid fields: kind, bin",
+        ),
+        (
+            "/backend/kind",
+            serde_json::json!("private-value"),
+            "valid kind values: process, session",
+        ),
+        (
+            "/operations/0/private-field",
+            serde_json::json!("private-value"),
+            "valid fields: path, summary, parameters, argv, result, success_codes, streaming, control",
+        ),
+        (
+            "/operations/0/result/private-field",
+            serde_json::json!("private-value"),
+            "valid fields: format, type",
+        ),
+        (
+            "/operations/0/result/format",
+            serde_json::json!("private-value"),
+            "valid values: json, text, bytes, process",
+        ),
+        (
+            "/operations/0/parameters/0/private-field",
+            serde_json::json!("private-value"),
+            "valid fields: name, type, required",
+        ),
+        (
+            "/operations/0/control",
+            serde_json::json!({"input":"Text","output":"Bool","private-field":"private-value"}),
+            "valid fields: input, output, output_policy",
+        ),
+        (
+            "/read_access",
+            serde_json::json!({"scope":["id"],"revalidate":["probe"],"private-field":"private-value"}),
+            "valid fields: scope, revalidate",
+        ),
+    ] {
+        let mut doc = document();
+        // Insert only at a known structural location, never interpolate source into errors.
+        let (parent, field) = pointer.rsplit_once('/').unwrap();
+        let parent = doc.pointer_mut(parent).unwrap().as_object_mut().unwrap();
+        parent.insert(field.into(), value);
+        let error = match schema::compile(&doc.to_string(), None) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid structure accepted"),
+        };
+        let error: wes_engine::imports::ImportError = error.into();
+        let message = error.to_string();
+        assert!(message.contains(expected), "{message}");
+        assert!(!message.contains("private-field"), "{message}");
+        assert!(!message.contains("private-value"), "{message}");
+        assert_eq!(error.diagnostic(wes_language::Span::at(0)).code, "IMP001");
+    }
+    let mut semantic = document();
+    semantic["operations"][0]["result"]["type"] = "private-value".into();
+    let node = wes_core::contracts::read_strict_package(&semantic.to_string()).unwrap();
+    wes_core::package_schema::declarations()
+        .validate("provider.document", &node)
+        .unwrap();
+    assert!(
+        schema::compile(&semantic.to_string(), None).is_err(),
+        "structural validity must not bypass resolved contract checks"
+    );
+}

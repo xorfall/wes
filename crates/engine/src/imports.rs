@@ -31,6 +31,9 @@ fn max_entries() -> usize {
 pub enum ImportError {
     #[error("{0}")]
     Input(&'static str),
+    /// A declaration diagnostic composed only from schema-owned names or producer-authored rules.
+    #[error("{0}")]
+    Declaration(String),
     #[error("Required import argument '{0}:' is missing. Read this importer's help.")]
     MissingArgument(String),
     #[error("Specify exactly one of these import arguments: {0}. Read this importer's help.")]
@@ -74,6 +77,8 @@ pub struct ImporterMetadata {
     pub parameters: Vec<Parameter>,
     pub exactly_one: Vec<Vec<String>>,
     pub summary: Option<&'static str>,
+    /// Registered inert YAML family; help and validation share its authoritative descriptors.
+    pub declaration: Option<&'static str>,
 }
 impl ImporterMetadata {
     pub fn validate(&self, request: &ImportRequest) -> Result<(), ImportError> {
@@ -438,6 +443,13 @@ impl Importers {
             return Err(ImportError::Capacity);
         }
         let metadata = importer.metadata();
+        if let Some(root) = metadata.declaration
+            && !wes_core::package_schema::declarations()
+                .roots
+                .contains_key(root)
+        {
+            return Err(ImportError::Name);
+        }
         let parameters = &metadata.parameters;
         if parameters.len() > 256 {
             return Err(ImportError::Capacity);
@@ -958,5 +970,38 @@ mod binding_tests {
                 .bind_environment(&binding, Some(Default::default()))
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod declaration_metadata_tests {
+    use super::*;
+    struct Inert(&'static str);
+    impl Importer for Inert {
+        fn metadata(&self) -> ImporterMetadata {
+            ImporterMetadata {
+                declaration: Some(self.0),
+                ..Default::default()
+            }
+        }
+        fn capture(&self, _: &ImportRequest, _: usize) -> Result<ImportRecipe, ImportError> {
+            panic!("metadata registration must not capture input")
+        }
+        fn build(&self, _: &ImportSnapshot, _: ImportMode) -> Result<ImportProduct, ImportError> {
+            panic!("metadata registration must not build a provider")
+        }
+    }
+    #[test]
+    fn declaration_metadata_requires_a_registered_family_without_input_io() {
+        let mut importers = Importers::default();
+        assert!(matches!(
+            importers.register("sample".into(), Arc::new(Inert("missing"))),
+            Err(ImportError::Name)
+        ));
+        assert_eq!(importers.names().count(), 0);
+        importers
+            .register("sample".into(), Arc::new(Inert("provider")))
+            .unwrap();
+        assert_eq!(importers.metadata()["sample"].declaration, Some("provider"));
     }
 }

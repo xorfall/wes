@@ -268,3 +268,47 @@ fn union_and_recursive_yaml_data_are_accepted_without_schema_recursion() {
             .is_err()
     );
 }
+
+#[test]
+fn provider_publication_is_complete_and_keeps_semantics_explicit() {
+    let registry = declarations();
+    let published = registry.describe_root("provider").unwrap();
+    assert_eq!(published["roots"]["provider"], "provider.document");
+    assert!(published["roots"].get("env").is_none());
+    let fields = &published["definitions"]["provider.document"]["fields"];
+    assert_eq!(fields["backend"]["required"], true);
+    assert_eq!(fields["types"]["required"], false);
+    let backends = &published["definitions"]["provider.backend"]["variants"];
+    assert_eq!(backends["process"], "provider.backend.process");
+    assert_eq!(backends["session"], "provider.backend.session");
+    assert_eq!(
+        published["definitions"]["provider.encoding"]["choices"],
+        serde_json::json!(["scalar", "spread", "flag", "json"])
+    );
+    assert_eq!(
+        published["definitions"]["provider.control"]["fields"]["output_policy"]["schema"],
+        "provider.output-policy"
+    );
+    assert!(
+        published["definitions"]
+            .get("contract.field.object")
+            .is_some()
+    );
+    for rule in [
+        "provider-session",
+        "provider-read-access",
+        "provider-control",
+        "type-resolution",
+    ] {
+        assert_eq!(published["constraints"][rule]["validation"], "semantic");
+    }
+    assert!(published.to_string().len() < 24 * 1024);
+    for source in [
+        r#"{"version":1,"provider":"sample","backend":{"kind":"process","bin":"./tool"},"operations":[{"path":["read"],"argv":[],"result":{"format":"text"}}]}"#,
+        r#"{"version":1,"provider":"sample","backend":{"kind":"session","bin":"./tool","credentials":["Key"]},"read_access":{"scope":["tenant"],"revalidate":["probe"]},"operations":[{"path":["probe"],"parameters":[{"name":"tenant","type":"Text"}],"argv":[],"result":{"format":"json","type":"Bool"}}]}"#,
+    ] {
+        registry
+            .validate("provider.document", &read_package(source).unwrap())
+            .unwrap();
+    }
+}

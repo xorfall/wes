@@ -146,6 +146,7 @@ fn http_metadata(summary: &'static str) -> wes_engine::imports::ImporterMetadata
             .collect(),
         exactly_one: vec![vec!["file".into(), "url".into()]],
         summary: Some(summary),
+        ..Default::default()
     }
 }
 fn http_argument<'a>(

@@ -5,6 +5,7 @@
 use crate::contracts::{PackageNode as Node, PackageScalarKind as Scalar};
 use indexmap::IndexMap;
 use std::sync::LazyLock;
+mod provider;
 mod publication;
 
 #[derive(Clone, Copy, Debug)]
@@ -179,7 +180,10 @@ impl Registry {
                         }
                     });
                 if !chosen {
-                    return Err(error("unsupported declaration value"));
+                    return Err(error(&format!(
+                        "unsupported declaration value in {id}; valid values: {}",
+                        choices.join(", ")
+                    )));
                 }
             }
             Kind::Object {
@@ -837,7 +841,8 @@ fn build() -> Registry {
         &[],
     );
     d.insert("contract.iterator", iterator);
-    Registry { roots: [("env", "env.package"), ("types", "contract.package")].into_iter().collect(), definitions: d,
+    provider::register(&mut d);
+    Registry { roots: [("env", "env.package"), ("types", "contract.package"), ("provider", "provider.document")].into_iter().collect(), definitions: d,
         constraints: [
             ("environment-identifier", "Environment names follow the core identifier rules."),
             ("count-range", "Counts are integers from 0 through 2147483647."),
@@ -849,5 +854,5 @@ fn build() -> Registry {
             ("contract-subtype", "Constraints must match the resolved base kind and cannot weaken inherited limits or fields."),
             ("iterator-output", "Iterator output must resolve to Iter<T>."),
             ("iterator-input", "Iterator mode must match the resolved input shape; extraction patterns and limits are checked by core."),
-        ].into_iter().collect() }
+        ].into_iter().chain(provider::constraints()).collect() }
 }
