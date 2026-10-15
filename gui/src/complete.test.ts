@@ -353,3 +353,37 @@ describe("nested command variants", () => {
     expect(offered).toEqual([]);
   });
 });
+
+
+describe("native command completion inside explicit scopes", () => {
+  const offer = (line: string) => complete(line, line.length, catalogue, []).items.map(item => item.text);
+
+  it("uses the advertised registry choices inside a same-line transient statement", () => {
+    expect(offer(":transient { :list ")).toEqual([...catalogue.commands[0]!.takes, "provider:"]);
+  });
+
+  it("finds statements after newlines and completed calculations in a transient", () => {
+    expect(offer(":transient {\n :calc { return 1; } > value\n :list pro")).toEqual(["providers", "provider:"]);
+  });
+
+  it("preserves the original caret replacement coordinate in a sandbox", () => {
+    const line = ":sandbox {\n :list pro";
+    const result = complete(line, line.length, catalogue, []);
+    expect(result.items.map(item => item.text)).toEqual(["providers", "provider:"]);
+    expect(result.from).toBe(line.length - 3);
+  });
+
+  it("returns to the outer binding after the explicit scope closes", () => {
+    expect(offer(":transient {\n :list providers\n} > ")).toEqual([]);
+  });
+
+  it("does not treat a quoted brace as a new scope or invent additional registries", () => {
+    expect(offer(':transient {\n :calc { return "{"; } > value\n :list ')).toEqual([...catalogue.commands[0]!.takes, "provider:"]);
+  });
+
+  it("bounds call-stack use while editing a source with many unmatched braces", () => {
+    const line = ":transient {" + "{".repeat(200_000);
+    expect(() => complete(line, line.length, catalogue, [])).not.toThrow();
+    expect(complete(line, line.length, catalogue, []).from).toBeLessThanOrEqual(line.length);
+  });
+});
