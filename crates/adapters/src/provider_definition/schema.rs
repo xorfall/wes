@@ -51,6 +51,7 @@ struct OperationDoc {
     exclusive: Option<Vec<ExclusiveDoc>>,
     #[serde(default = "empty_object")]
     fixed_arguments: Json,
+    source_profile: Option<super::source_profile::Declaration>,
 }
 fn exclusive_declaration<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -432,6 +433,30 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             params.push((parameter.name, contract, parameter.required));
         }
         let fixed_arguments = super::fixed_arguments::compile(&op.fixed_arguments, &params)?;
+        let source_profile = op
+            .source_profile
+            .map(|profile| {
+                super::source_profile::compile(
+                    profile,
+                    &params,
+                    &fixed_arguments,
+                    control.as_ref(),
+                    op.streaming,
+                )
+            })
+            .transpose()?;
+        if let Some(profile) = &source_profile
+            && operations.iter().any(|operation: &Operation| {
+                operation
+                    .source_profile
+                    .as_ref()
+                    .is_some_and(|existing| existing.name() == profile.name())
+            })
+        {
+            return Err(DefinitionError::new(
+                "duplicate source profile name in one provider definition",
+            ));
+        }
         let byte_input = op.byte_input.map(|input| {
             if session.is_some() || op.streaming || input.max_bytes == 0 || input.max_bytes > wes_budgets::get("storage.acquisition.bytes") {
                 return Err(DefinitionError::new("byte_input requires a finite process and a bounded byte ceiling"));
@@ -611,6 +636,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             byte_input,
             exclusive,
             fixed_arguments,
+            source_profile,
         });
     }
     let description = ProviderDescription::new(

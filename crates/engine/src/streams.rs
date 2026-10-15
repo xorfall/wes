@@ -48,6 +48,14 @@ pub type StreamFuture = Pin<Box<dyn Future<Output = Result<(), InvocationError>>
 /// constructing that future must not block the async scheduler. No detached delivery tasks.
 /// Synchronous delivery before `opened` is accepted into the already installed window.
 pub trait StreamingInvoker: Send + Sync + 'static {
+    /// Frozen declaration metadata only. Looking up a profile starts no work and
+    /// grants no live source, control, storage or read authority.
+    fn source_profile(
+        &self,
+        _capability: &wes_core::capability::Capability,
+    ) -> Option<Arc<crate::providers::profiles::SourceProfile>> {
+        None
+    }
     /// Side-effect-free resource keys from the captured declaration and validated arguments.
     /// The native owner reserves them atomically before provider entry; no waiting or replay.
     fn exclusive_resources(&self, _call: &Call) -> Result<Vec<ExclusiveResource>, StreamError> {
