@@ -19,6 +19,38 @@ pub struct SnapshotMember {
     pub digest: String,
     pub selection: Vec<String>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotDependency {
+    pub name: String,
+    pub handle: String,
+    pub digest: String,
+    pub selection: Vec<String>,
+}
+impl SnapshotDependency {
+    pub fn validate(&self) -> Result<ValueHandle, StoreError> {
+        if self.name.is_empty()
+            || self.name.len() > 1024
+            || self.selection.len() > 64
+            || self
+                .selection
+                .iter()
+                .any(|s| s.is_empty() || s.len() > 1024)
+            || self.selection.iter().map(String::len).sum::<usize>() > 4096
+        {
+            return Err(StoreError::Corrupt);
+        }
+        let handle = ValueHandle::new(&self.handle)?;
+        if !self.digest.strip_prefix("sha256:").is_some_and(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            return Err(StoreError::Corrupt);
+        }
+        Ok(handle)
+    }
+}
 #[derive(Clone, Debug)]
 pub struct SourceRange {
     pub bytes: Vec<u8>,
@@ -40,6 +72,7 @@ pub struct AcquisitionContext {
     provenance: Provenance,
     finalizer: Option<SnapshotFinalizer>,
     decoder: Option<ChunkDecoder>,
+    dependencies: Vec<SnapshotDependency>,
 }
 /// A trusted adapter's bounded, nonexpanding transport decoder. It receives at most one
 /// acquisition chunk and returns bytes for that same port. It cannot change placement or policy.
@@ -57,6 +90,7 @@ impl AcquisitionContext {
             provenance,
             finalizer: None,
             decoder: None,
+            dependencies: vec![],
         }
     }
     pub fn with_finalizer(mut self, finalizer: SnapshotFinalizer) -> Self {
@@ -65,6 +99,11 @@ impl AcquisitionContext {
     }
     pub fn provenance(&self) -> &Provenance {
         &self.provenance
+    }
+    /// Native dependency witnesses confer no read capability or weaker placement/policy.
+    pub fn with_dependencies(mut self, dependencies: Vec<SnapshotDependency>) -> Self {
+        self.dependencies = dependencies;
+        self
     }
     pub fn with_decoder(mut self, decoder: ChunkDecoder) -> Self {
         self.decoder = Some(decoder);
@@ -94,6 +133,7 @@ impl AcquisitionContext {
             provenance: self.provenance.clone(),
             finalizer: self.finalizer.clone(),
             decoder: self.decoder.clone(),
+            dependencies: self.dependencies.clone(),
         })
     }
 }
@@ -106,6 +146,7 @@ pub struct Acquisition {
     provenance: Provenance,
     finalizer: Option<SnapshotFinalizer>,
     decoder: Option<ChunkDecoder>,
+    dependencies: Vec<SnapshotDependency>,
 }
 impl Acquisition {
     /// Decode transport bytes before storing them. The producer joins this operation before
@@ -176,7 +217,7 @@ impl Acquisition {
         let handle = self.handle.clone();
         let result = self
             .worker
-            .seal_owned_acquisition(handle.clone(), shell, leaves)
+            .seal_owned_acquisition(handle.clone(), shell, leaves, self.dependencies.clone())
             .await
             .map(|(snapshot, hold, bytes)| AcquiredOutput::Stored {
                 output: StoredOutput {
@@ -206,6 +247,58 @@ impl Acquisition {
     }
 }
 impl StoreWorker {
+    /// Resolve an exact native member under its complete owned parent's authority.
+    pub async fn source_range_dependency(
+        &self,
+        snapshot: StoredSnapshot,
+        name: String,
+        from: u64,
+        maximum: usize,
+    ) -> Result<SourceRange, StoreError> {
+        if name.is_empty() || name.len() > 1024 || maximum == 0 || maximum > CHUNK_BYTES {
+            return Err(StoreError::SourceRange("invalid dependency range"));
+        }
+        let epoch = self.read_epoch();
+        let policy = snapshot.provenance.policy().clone();
+        let result = self
+            .request(self.limits.bytes.get(), move |store| {
+                let _hold = store
+                    .hold(&snapshot.handle)?
+                    .ok_or(StoreError::MissingValue)?;
+                let current = store
+                    .describe(&snapshot.handle, &snapshot.selection)?
+                    .ok_or(StoreError::MissingValue)?;
+                if current.digest != snapshot.digest
+                    || current.shape != snapshot.shape
+                    || current.provenance != snapshot.provenance
+                    || current.metadata != snapshot.metadata
+                {
+                    return Err(StoreError::Conflict);
+                }
+                let dependency = store
+                    .dependencies(&snapshot.handle)?
+                    .into_iter()
+                    .find(|d| d.name == name)
+                    .ok_or(StoreError::SourceRange(
+                        "owned input dependency is unavailable",
+                    ))?;
+                let child = store
+                    .describe(&dependency.validate()?, &dependency.selection)?
+                    .ok_or(StoreError::MissingValue)?;
+                if child.digest != dependency.digest
+                    || snapshot.provenance.policy().join(child.provenance.policy())
+                        != *snapshot.provenance.policy()
+                {
+                    return Err(StoreError::Conflict);
+                }
+                store.source_range(&child, from, maximum)
+            })
+            .await?
+            .wait()
+            .await;
+        self.check_read_epoch(&epoch, &policy)?;
+        result
+    }
     pub(crate) async fn compose(
         &self,
         handle: ValueHandle,
@@ -224,16 +317,32 @@ impl StoreWorker {
         &self,
         snapshot: StoredSnapshot,
     ) -> Result<super::datasets::CapturedValue, StoreError> {
-        let scope = self.scope.clone().ok_or(StoreError::ScopeUnavailable)?;
+        let scope = self.scope.clone();
+        let policy = snapshot.provenance.policy();
+        if policy.is_private()
+            || policy.is_unknown()
+            || (scope.is_none() && !policy.allows_retention())
+            || (policy.is_confidential() && !self.supports_confidential_values())
+        {
+            return Err(StoreError::Restricted);
+        }
         let limit = self.limits.bytes.get();
         self.request(limit, move |store| {
             let lease = store
                 .hold(&snapshot.handle)?
                 .ok_or(StoreError::MissingValue)?;
-            if store.digest(&snapshot.handle)?.as_ref() != Some(&snapshot.digest) {
+            if store
+                .describe(&snapshot.handle, &snapshot.selection)?
+                .as_ref()
+                != Some(&snapshot)
+            {
                 return Err(StoreError::Conflict);
             }
-            scope.capture(snapshot.handle.clone(), lease)?;
+            if let Some(scope) = &scope {
+                scope.capture(snapshot.handle.clone(), lease)?;
+            } else if !store.keep_with_reason(&snapshot.handle, super::Retention::Protected)? {
+                return Err(StoreError::RetentionUnavailable);
+            }
             Ok(super::datasets::CapturedValue {
                 handle: snapshot.handle.to_string(),
                 digest: snapshot.digest.clone(),

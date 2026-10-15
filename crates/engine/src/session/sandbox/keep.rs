@@ -134,8 +134,8 @@ impl Sandboxes {
         }
         state.pending_saves.remove(saved_name);
         state.saved.insert(saved_name.into(), saved.clone());
-        let stored = if capture.values.len()
-            != saved.members.iter().filter(|m| m.payload.is_some()).count()
+        let stored = if saved.single
+            || capture.values.len() != saved.members.iter().filter(|m| m.payload.is_some()).count()
         {
             super::super::saved::stored_alias(
                 self.storage.as_ref().ok_or(SessionError::NoStorage)?,

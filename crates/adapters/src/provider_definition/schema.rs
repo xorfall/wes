@@ -46,6 +46,13 @@ struct OperationDoc {
     streaming: bool,
     control: Option<ControlDoc>,
     recording: Option<RecordingDoc>,
+    byte_input: Option<ByteInputDoc>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ByteInputDoc {
+    parameter: String,
+    max_bytes: u64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -403,6 +410,23 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             );
             params.push((parameter.name, contract, parameter.required));
         }
+        let byte_input = op.byte_input.map(|input| {
+            if session.is_some() || op.streaming || input.max_bytes == 0 || input.max_bytes > wes_budgets::get("storage.acquisition.bytes") {
+                return Err(DefinitionError::new("byte_input requires a finite process and a bounded byte ceiling"));
+            }
+            let (_, contract, required) = params.iter().find(|(name,_,_)|name==&input.parameter)
+                .ok_or(DefinitionError::new("byte_input names an undeclared parameter"))?;
+            let limits = contract.constraints();
+            if !*required || !matches!(contract.kind(), wes_core::contracts::ContractKind::Scalar(Primitive::Bytes))
+                || !limits.enumeration.is_empty() || !limits.patterns.is_empty() || limits.min.is_some() || limits.max.is_some()
+                || limits.min_length.is_some() || limits.max_length.is_some() || limits.min_items.is_some() || limits.max_items.is_some() {
+                return Err(DefinitionError::new("byte_input requires one required unconstrained Bytes parameter"));
+            }
+            if op.argv.iter().any(|a|matches!(a,Argument::Parameter(fields) if fields.parameter==input.parameter)) {
+                return Err(DefinitionError::new("byte_input cannot also be encoded in argv"));
+            }
+            Ok(wes_engine::byte_input::ByteInputSpec {parameter:input.parameter, maximum:input.max_bytes})
+        }).transpose()?;
         for arg in &op.argv {
             match arg {
                 Argument::Literal(s) if s.contains('\0') => {
@@ -444,6 +468,12 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
         }
         if session.is_none()
             && params.iter().any(|(n, _, _)| {
+                if byte_input
+                    .as_ref()
+                    .is_some_and(|input| &input.parameter == n)
+                {
+                    return false;
+                }
                 !op.argv.iter().any(
                 |a| matches!(a,Argument::Parameter(ArgumentFields{parameter,..}) if parameter == n),
             )
@@ -465,6 +495,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             streaming: op.streaming,
             control,
             recording,
+            byte_input,
         });
     }
     let description = ProviderDescription::new(

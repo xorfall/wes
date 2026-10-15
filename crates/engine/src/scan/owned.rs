@@ -57,6 +57,9 @@ impl OwnedAnalysis {
     pub(super) fn node_id(&self) -> &str {
         self.source.node.as_str()
     }
+    pub(super) fn read_sources(&self) -> Vec<OutputRef> {
+        vec![self.source.clone()]
+    }
     pub(super) fn policy(&self) -> FlowPolicy {
         self.policy.clone()
     }
@@ -74,15 +77,66 @@ impl OwnedAnalysis {
                     .node(&self.source.node)
                     .ok_or("Analysis is no longer present in this workspace")?;
                 if let BoundTask::SavedInput(saved) = node.payload() {
-                    let member = if saved.single && self.fields.is_empty() {saved.members.first()}
-                        else if !saved.single && self.fields.len()==1 {saved.members.iter().find(|m|m.name == self.fields[0])} else {None};
-                    let member=member.filter(|m|m.port == "data" && m.fields.is_empty() && m.payload.is_some()
-                        && matches!(m.operation.as_str(),"scan"|"scan_attempt")).ok_or("Select an exact saved whole scan result, not an arbitrary copied value")?;
-                    let value=runtime.value_of(&self.source.node).ok_or("The saved analysis is not prepared within read capacity")?;
-                    let value=crate::plan::project_value(value,&self.fields).map_err(|_|"The saved analysis member is unavailable")?;
-                    if value.provenance().policy().is_private() || value.provenance().policy().is_unknown() || workspace.dataset_access.blocks(&value) {return Err("Saved analysis access is not authorized");}
-                    self.policy=value.provenance().policy().clone();
-                    return member.run.clone().ok_or("Saved analysis has no exact owned run");
+                    let member = if saved.single && self.fields.is_empty() {
+                        saved.members.first()
+                    } else if !saved.single && self.fields.len() == 1 {
+                        saved.members.iter().find(|m| m.name == self.fields[0])
+                    } else {
+                        None
+                    };
+                    let member = member
+                        .filter(|m| {
+                            m.port == "data"
+                                && m.fields.is_empty()
+                                && m.payload.is_some()
+                                && matches!(m.operation.as_str(), "scan" | "scan_attempt")
+                        })
+                        .ok_or("Select an exact saved whole scan result, not an arbitrary copied value")?;
+                    let policy = match runtime.output(&self.source) {
+                        crate::runtime::OutputState::Available(value) => {
+                            let value = crate::plan::project_value(&value, &self.fields)
+                                .map_err(|_| "The saved analysis member is unavailable")?;
+                            if workspace.dataset_access.blocks(&value) {
+                                return Err("Saved analysis access is not authorized");
+                            }
+                            value.provenance().policy().clone()
+                        }
+                        crate::runtime::OutputState::Stored(stored) => {
+                            // Entry read preparation holds and revalidates this exact owner
+                            // without materializing a cold saved composite. Only native
+                            // whole-scan membership supplies its original run acknowledgement.
+                            let payload = member.payload.as_ref().expect("checked payload");
+                            if (saved.single
+                                && (stored.snapshot.handle.as_str() != payload.handle
+                                    || stored.snapshot.digest != payload.digest
+                                    || stored.snapshot.selection != member.fields))
+                                || (!saved.single
+                                    && (stored.snapshot.handle.as_str() != saved.id
+                                        || !stored.snapshot.selection.is_empty()))
+                            {
+                                return Err("Saved analysis backing identity changed");
+                            }
+                            if crate::plan::field_shape(&stored.snapshot.shape, &self.fields)
+                                .is_none()
+                            {
+                                return Err("The saved analysis member is unavailable");
+                            }
+                            let policy = stored.snapshot.provenance.policy();
+                            if workspace.dataset_access.blocks_policy(policy) {
+                                return Err("Saved analysis access is not authorized");
+                            }
+                            policy.clone()
+                        }
+                        _ => return Err("The saved analysis is no longer accessible"),
+                    };
+                    if policy.is_private() || policy.is_unknown() {
+                        return Err("Saved analysis access is not authorized");
+                    }
+                    self.policy = policy;
+                    return member
+                        .run
+                        .clone()
+                        .ok_or("Saved analysis has no exact owned run");
                 }
                 if !self.fields.is_empty() || !matches!(
                     node.payload(),

@@ -828,7 +828,7 @@ async fn saved_process_source_reopens_in_a_fresh_process() {
         Data::Int(0)
     );
     assert_eq!(read(&handle, "saved_whole.code").await, Data::Int(0));
-    let continued=submit(&handle,"resume",":transient {\n:scan excerpt $saved_partial from:\"65530\" limit:12 > excerpt\n:scan resume $saved_partial > continued\n} > next").await;
+    let continued=submit(&handle,"resume",":transient {\n:scan continuation $saved_partial > review\n:scan excerpt $saved_partial from:\"65530\" limit:12 > excerpt\n:scan resume $saved_partial > continued\n} > next").await;
     assert!(
         continued
             .diagnostics
@@ -850,6 +850,13 @@ async fn saved_process_source_reopens_in_a_fresh_process() {
             .contains_key(&next.names["continued"].node),
         "{:?}",
         next.execution.errors
+    );
+    let Data::Record(review) = next.execution.values[&next.names["review"].node].data() else {
+        panic!("cold saved continuation review")
+    };
+    assert_eq!(review["version"], Data::Int(1));
+    assert!(
+        matches!(&review["basis"], Data::Text(text) if text.starts_with("sha256:") && text.len() == 71)
     );
     let excerpt = read(&handle, "next.excerpt").await;
     let Data::Record(excerpt) = excerpt else {

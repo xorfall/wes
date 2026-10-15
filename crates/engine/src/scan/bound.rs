@@ -22,6 +22,7 @@ use wes_language::{Diagnostic, Span, templates::Templates, vocabulary::scan};
 #[derive(Clone)]
 pub struct BoundScan {
     source: Input,
+    owned_source: Option<crate::storage::StoredSnapshot>,
     stored_source: Option<crate::storage::StoredSnapshot>,
     initial: Input,
     context: Input,
@@ -48,19 +49,30 @@ impl std::fmt::Debug for BoundScan {
     }
 }
 impl BoundScan {
-    pub(crate) fn defer_source(
+    pub(crate) fn read_sources(&self) -> Vec<OutputRef> {
+        if self.live {
+            vec![]
+        } else {
+            self.source.dependencies().into_iter().cloned().collect()
+        }
+    }
+    pub(crate) fn capture_source_owner(
         &mut self,
         node: &crate::graph::NodeId,
         snapshot: &crate::storage::StoredSnapshot,
     ) -> bool {
-        if self.live
-            || self.source.dependency().is_none_or(|r| &r.node != node)
-            || self
-                .initial
-                .dependencies()
-                .iter()
-                .chain(self.context.dependencies().iter())
-                .any(|r| &r.node == node)
+        if self.live || self.source.dependency().is_none_or(|r| &r.node != node) {
+            return false;
+        }
+        // Checkpoint ownership is independent of cursor representation. A bounded typed
+        // List still executes in memory, but must retain its original owner's closure.
+        self.owned_source = Some(snapshot.clone());
+        if self
+            .initial
+            .dependencies()
+            .iter()
+            .chain(self.context.dependencies().iter())
+            .any(|r| &r.node == node)
         {
             return false;
         }
@@ -291,6 +303,7 @@ impl BoundScan {
         let profile_revision = profile_digest(profile, framing.as_ref());
         Ok(Self {
             source: required("source")?,
+            owned_source: None,
             stored_source: None,
             initial: required("initial")?,
             context: required("context")?,
@@ -358,7 +371,7 @@ impl BoundScan {
                 ))
                 .into();
             }
-            let stored = if let Some(root) = self.stored_source.clone() {
+            let source_owner = if let Some(root) = self.owned_source.clone() {
                 let Some(worker) = storage.as_ref() else {
                     return failed(Failure::new(
                         "CAL004",
@@ -379,12 +392,25 @@ impl BoundScan {
                     if snapshot.digest != root.digest {
                         return Err(crate::storage::StoreError::Conflict);
                     }
-                    let range = worker.source_range(snapshot.clone(), 0, 1).await?;
-                    Ok::<_, crate::storage::StoreError>((snapshot, range.extent))
+                    Ok::<_, crate::storage::StoreError>(snapshot)
                 }
                 .await;
                 match result {
                     Ok(stored) => Some(stored),
+                    Err(e) => return failed(Failure::new("CAL004", span, e.to_string())).into(),
+                }
+            } else {
+                None
+            };
+            let stored = if self.stored_source.is_some() {
+                let snapshot = source_owner.as_ref().expect("deferred source has an owner");
+                match storage
+                    .as_ref()
+                    .expect("admitted source owner")
+                    .source_range(snapshot.clone(), 0, 1)
+                    .await
+                {
+                    Ok(range) => Some((snapshot.clone(), range.extent)),
                     Err(e) => return failed(Failure::new("CAL004", span, e.to_string())).into(),
                 }
             } else {
@@ -449,7 +475,24 @@ impl BoundScan {
                     if token.is_cancelled() {
                         return Err(Failure::cancelled(span));
                     }
-                    let source = if let Some(snapshot) = runner.stored_source() {
+                    let source = if let Some(snapshot) =
+                        source_owner.as_ref().or_else(|| runner.stored_source())
+                    {
+                        let value = runner.captured_source();
+                        if snapshot.shape != *value.shape()
+                            || snapshot.metadata.as_ref() != value.metadata()
+                            || value
+                                .provenance()
+                                .policy()
+                                .join(snapshot.provenance.policy())
+                                != *value.provenance().policy()
+                        {
+                            return Err(Failure::new(
+                                "CAL004",
+                                span,
+                                "scan checkpoint source does not match its acknowledged owner",
+                            ));
+                        }
                         worker.capture_stored_source(snapshot.clone()).await
                     } else {
                         worker.capture_scan_source(runner.captured_source()).await

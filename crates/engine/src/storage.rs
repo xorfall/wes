@@ -15,7 +15,8 @@ mod scope;
 mod snapshot;
 pub use acquisition::{
     AcquiredFuture, AcquiredOutput, Acquisition, AcquisitionContext, CHUNK_BYTES, ChunkDecoder,
-    LeafSelection, SnapshotFinalizer, SnapshotMember, SourceRange, acquisition_error,
+    LeafSelection, SnapshotDependency, SnapshotFinalizer, SnapshotMember, SourceRange,
+    acquisition_error,
 };
 pub use read_failure::ReadFailureKind;
 pub use residency::ResidentMemory;
@@ -166,6 +167,8 @@ pub struct LoadedValue {
 #[derive(Clone, Debug)]
 pub struct RecoveredOutput {
     pub loaded: LoadedValue,
+    /// Original store-owned backing inspected in the same serial recovery job, never inferred.
+    pub snapshot: Option<StoredSnapshot>,
     pub bytes: u64,
     pub retention: Retention,
 }
@@ -239,6 +242,16 @@ impl fmt::Debug for ValueLease {
 
 /// Synchronous I/O port, called on storage workers rather than the runtime state owner.
 pub trait ValueStore: Send {
+    /// Optional original backing for the value just read by the same serial recovery job.
+    /// Default has no backing authority and performs no read, encoding or mutation. Backends
+    /// with native descriptors may inspect immutable metadata and reuse the already read value.
+    fn recovery_snapshot(
+        &self,
+        _handle: &ValueHandle,
+        _value: &Value,
+    ) -> Result<Option<StoredSnapshot>, StoreError> {
+        Ok(None)
+    }
     /// Whole-result policy before typed payload decoding or selected reads.
     /// Implement from bounded immutable metadata or already resident policy;
     /// never fall back to reading/decoding the domain body. None means absent.
@@ -276,6 +289,20 @@ pub trait ValueStore: Send {
         _leaves: &[LeafSelection],
     ) -> Result<StoredSnapshot, StoreError> {
         Err(StoreError::Limit("bounded acquisition unavailable"))
+    }
+    fn seal_acquisition_with_dependencies(
+        &mut self,
+        handle: &ValueHandle,
+        shell: &Value,
+        leaves: &[LeafSelection],
+        dependencies: &[SnapshotDependency],
+    ) -> Result<StoredSnapshot, StoreError> {
+        if !dependencies.is_empty() {
+            return Err(StoreError::Limit(
+                "owned dependency publication unavailable",
+            ));
+        }
+        self.seal_acquisition(handle, shell, leaves)
     }
     fn abort_acquisition(&mut self, _handle: &ValueHandle) -> Result<(), StoreError> {
         Err(StoreError::Limit("bounded acquisition unavailable"))
@@ -318,7 +345,7 @@ pub trait ValueStore: Send {
     }
     /// Immutable physical members that must be held with a composed result. This grants no read
     /// authority; the shared owner validates every member's current policy and Dataset roots.
-    fn dependencies(&self, _handle: &ValueHandle) -> Result<Vec<ValueHandle>, StoreError> {
+    fn dependencies(&self, _handle: &ValueHandle) -> Result<Vec<SnapshotDependency>, StoreError> {
         Ok(vec![])
     }
     fn read_selected(

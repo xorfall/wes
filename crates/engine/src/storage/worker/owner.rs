@@ -70,6 +70,163 @@ pub(super) fn has_datasets(value: &Value) -> Result<bool, StoreError> {
 }
 
 impl<V: ValueStore> Owner<V> {
+    pub(super) fn retention_capture_cost(
+        &mut self,
+        captures: Vec<super::super::datasets::RetentionCapture>,
+    ) -> Result<(u64, u64), StoreError> {
+        struct Object {
+            digest: String,
+            bytes: Option<u64>,
+            shared: bool,
+            children: Vec<ValueHandle>,
+        }
+        let mut objects = std::collections::BTreeMap::<ValueHandle, Object>::new();
+        for capture in captures {
+            let handle = ValueHandle::new(&capture.value.handle)?;
+            if let Some(prior) = objects.get_mut(&handle) {
+                if prior.digest != capture.value.digest || prior.bytes != Some(capture.value.bytes)
+                {
+                    return Err(StoreError::Conflict);
+                }
+                prior.shared |= capture.shared;
+            } else {
+                if objects.len() >= 128 {
+                    return Err(StoreError::Limit("retention dependency traversal"));
+                }
+                objects.insert(
+                    handle,
+                    Object {
+                        digest: capture.value.digest,
+                        bytes: Some(capture.value.bytes),
+                        shared: capture.shared,
+                        children: vec![],
+                    },
+                );
+            }
+        }
+        let mut pending = objects
+            .keys()
+            .cloned()
+            .collect::<std::collections::VecDeque<_>>();
+        while let Some(handle) = pending.pop_front() {
+            self.check_scope(&handle)?;
+            let policy = self
+                .values
+                .read_policy(&handle)?
+                .ok_or(StoreError::MissingValue)?;
+            self.check_policy(&policy)?;
+            let object = &objects[&handle];
+            let bytes = self.values.size(&handle)?.ok_or(StoreError::MissingValue)?;
+            if self.values.digest(&handle)?.as_ref() != Some(&object.digest)
+                || object.bytes.is_some_and(|expected| expected != bytes)
+            {
+                return Err(StoreError::Conflict);
+            }
+            let dependencies = self.values.dependencies(&handle)?;
+            if dependencies.len() > 128 {
+                return Err(StoreError::Limit("retention dependency traversal"));
+            }
+            let mut children = vec![];
+            for dependency in dependencies {
+                let child = dependency.validate()?;
+                let child_policy = self
+                    .values
+                    .read_policy(&child)?
+                    .ok_or(StoreError::MissingValue)?;
+                if policy.join(&child_policy) != policy {
+                    return Err(StoreError::Restricted);
+                }
+                if let Some(prior) = objects.get(&child) {
+                    if prior.digest != dependency.digest {
+                        return Err(StoreError::Conflict);
+                    }
+                } else {
+                    if objects.len() >= 128 {
+                        return Err(StoreError::Limit("retention dependency traversal"));
+                    }
+                    objects.insert(
+                        child.clone(),
+                        Object {
+                            digest: dependency.digest,
+                            bytes: None,
+                            shared: false,
+                            children: vec![],
+                        },
+                    );
+                    pending.push_back(child.clone());
+                }
+                children.push(child);
+            }
+            let object = objects.get_mut(&handle).expect("inventoried source owner");
+            object.bytes = Some(bytes);
+            object.shared |= self.values.is_kept(&handle)?;
+            object.children = children;
+        }
+        // A source shared with another protected prefix also shares its immutable closure.
+        let mut shared = objects
+            .iter()
+            .filter(|(_, o)| o.shared)
+            .map(|(h, _)| h.clone())
+            .collect::<std::collections::VecDeque<_>>();
+        while let Some(handle) = shared.pop_front() {
+            for child in objects[&handle].children.clone() {
+                let object = objects.get_mut(&child).expect("inventoried dependency");
+                if !object.shared {
+                    object.shared = true;
+                    shared.push_back(child);
+                }
+            }
+        }
+        let mut total = 0u64;
+        let mut shared = 0u64;
+        for object in objects.values() {
+            let bytes = object.bytes.expect("joined inventory");
+            total = total
+                .checked_add(bytes)
+                .ok_or(StoreError::Limit("retention bytes"))?;
+            if object.shared {
+                shared = shared
+                    .checked_add(bytes)
+                    .ok_or(StoreError::Limit("retention bytes"))?;
+            }
+        }
+        Ok((total, shared))
+    }
+    fn kept_closure(
+        &self,
+        handle: &ValueHandle,
+        visiting: &mut std::collections::BTreeSet<ValueHandle>,
+        work: &mut usize,
+    ) -> Result<bool, StoreError> {
+        *work += 1;
+        if *work > 128 || !visiting.insert(handle.clone()) {
+            return Err(StoreError::Limit("retained dependency traversal"));
+        }
+        let result = (|| {
+            if !self.values.is_kept(handle)? {
+                return Ok(false);
+            }
+            for dependency in self.values.dependencies(handle)? {
+                let child = dependency.validate()?;
+                if self.values.digest(&child)?.as_ref() != Some(&dependency.digest) {
+                    return Err(StoreError::Conflict);
+                }
+                if !self.kept_closure(&child, visiting, work)? {
+                    return Ok(false);
+                }
+            }
+            let Some(root) = self.value_root(handle)? else {
+                return Ok(true);
+            };
+            for prefix in &root.prefixes {
+                self.datasets()?.inspect(prefix)?;
+            }
+            self.datasets()?
+                .root_covers(handle, &root.prefixes, self.values.retention(handle)?)
+        })();
+        visiting.remove(handle);
+        result
+    }
     pub(super) fn owns_transient(&self, handle: &ValueHandle) -> bool {
         self.scope.as_ref().is_some_and(|scope| {
             scope.is_open()
@@ -242,6 +399,27 @@ impl<V: ValueStore> Owner<V> {
     }
 }
 impl<V: ValueStore> ValueStore for Owner<V> {
+    fn recovery_snapshot(
+        &self,
+        handle: &ValueHandle,
+        value: &Value,
+    ) -> Result<Option<crate::storage::StoredSnapshot>, StoreError> {
+        self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Ok(None);
+        }
+        self.checked_snapshot(self.values.recovery_snapshot(handle, value)?)
+    }
+    fn dependencies(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Vec<super::super::SnapshotDependency>, StoreError> {
+        self.check_scope(handle)?;
+        if self.read_policy(handle)?.is_none() {
+            return Err(StoreError::MissingValue);
+        }
+        self.values.dependencies(handle)
+    }
     fn read_policy(
         &self,
         handle: &ValueHandle,
@@ -313,6 +491,15 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         shell: &Value,
         leaves: &[super::super::LeafSelection],
     ) -> Result<crate::storage::StoredSnapshot, StoreError> {
+        self.seal_acquisition_with_dependencies(handle, shell, leaves, &[])
+    }
+    fn seal_acquisition_with_dependencies(
+        &mut self,
+        handle: &ValueHandle,
+        shell: &Value,
+        leaves: &[super::super::LeafSelection],
+        dependencies: &[super::super::SnapshotDependency],
+    ) -> Result<crate::storage::StoredSnapshot, StoreError> {
         if !self.owns_acquisition(handle) {
             return Err(StoreError::ScopeUnavailable);
         }
@@ -329,7 +516,36 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         {
             return Err(StoreError::Restricted);
         }
-        self.values.seal_acquisition(handle, shell, leaves)
+        if dependencies.len() > 128 {
+            return Err(StoreError::Limit("snapshot dependencies"));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for dependency in dependencies {
+            let child = dependency.validate()?;
+            if &child == handle || !seen.insert(dependency.name.clone()) {
+                return Err(StoreError::Conflict);
+            }
+            self.check_scope(&child)?;
+            if self.values.digest(&child)?.as_ref() != Some(&dependency.digest) {
+                return Err(StoreError::Conflict);
+            }
+            let selected = self
+                .values
+                .describe(&child, &dependency.selection)?
+                .ok_or(StoreError::MissingValue)?;
+            if selected.digest != dependency.digest {
+                return Err(StoreError::Conflict);
+            }
+            let policy = self
+                .values
+                .read_policy(&child)?
+                .ok_or(StoreError::MissingValue)?;
+            if shell.provenance().policy().join(&policy) != *shell.provenance().policy() {
+                return Err(StoreError::Restricted);
+            }
+        }
+        self.values
+            .seal_acquisition_with_dependencies(handle, shell, leaves, dependencies)
     }
     fn abort_acquisition(&mut self, handle: &ValueHandle) -> Result<(), StoreError> {
         if !self.owns_acquisition(handle) {
@@ -470,8 +686,12 @@ impl<V: ValueStore> ValueStore for Owner<V> {
                 return Err(StoreError::Limit("value hold dependencies"));
             }
             let mut members = Vec::new();
-            for child in &dependencies {
-                members.push(self.hold(child)?.ok_or(StoreError::MissingValue)?);
+            for dependency in &dependencies {
+                let child = dependency.validate()?;
+                if self.values.digest(&child)?.as_ref() != Some(&dependency.digest) {
+                    return Err(StoreError::Conflict);
+                }
+                members.push(self.hold(&child)?.ok_or(StoreError::MissingValue)?);
             }
             if !dependencies.is_empty()
                 || snapshot.as_ref().is_some_and(|snapshot| {
@@ -618,52 +838,65 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         if self.scope.is_some() && reason != Retention::Protected {
             return Err(StoreError::Restricted);
         }
-        if self
+        let dependencies = self.values.dependencies(handle)?;
+        let datasets = self
             .value_root(handle)?
-            .is_none_or(|root| root.prefixes.is_empty())
-        {
+            .is_some_and(|root| !root.prefixes.is_empty());
+        if dependencies.is_empty() && !datasets {
             return self.values.keep_with_reason(handle, reason);
         }
-        let Some(loaded) = self.values.read(handle)? else {
+        let Some(policy) = self.values.read_policy(handle)? else {
             return Ok(false);
         };
-        if !loaded.value.provenance().policy().allows_retention() {
+        if !policy.allows_retention() {
             return Err(StoreError::Restricted);
         }
-        if self.retaining.len() >= 128 || !self.retaining.insert(handle.clone()) {
+        if dependencies.len() > 128
+            || self.retaining.len() >= 128
+            || !self.retaining.insert(handle.clone())
+        {
             return Err(StoreError::Limit("retention dependency traversal"));
         }
         let result = (|| {
-            let mut captures = std::collections::BTreeMap::new();
-            for prefix in self.validate_prefixes(&loaded.value)? {
-                for capture in self.datasets()?.retention_preview(&prefix)?.captures {
-                    captures.insert(capture.value.handle.clone(), capture.value);
+            for dependency in dependencies {
+                let child = dependency.validate()?;
+                if self.values.digest(&child)?.as_ref() != Some(&dependency.digest) {
+                    return Err(StoreError::Conflict);
                 }
-            }
-            for capture in captures.into_values() {
-                let source = ValueHandle::new(&capture.handle)?;
-                if !self.keep_with_reason(&source, Retention::Protected)? {
+                let child_policy = self
+                    .values
+                    .read_policy(&child)?
+                    .ok_or(StoreError::MissingValue)?;
+                if policy.join(&child_policy) != policy {
+                    return Err(StoreError::Restricted);
+                }
+                if !self.keep_with_reason(&child, Retention::Protected)? {
                     return Err(StoreError::MissingValue);
                 }
             }
-            self.root_value(handle, &loaded.value, reason)?;
+            if datasets {
+                let loaded = self.values.read(handle)?.ok_or(StoreError::MissingValue)?;
+                let mut captures = std::collections::BTreeMap::new();
+                for prefix in self.validate_prefixes(&loaded.value)? {
+                    for capture in self.datasets()?.retention_preview(&prefix)?.captures {
+                        captures.insert(capture.value.handle.clone(), capture.value);
+                    }
+                }
+                for capture in captures.into_values() {
+                    let source = ValueHandle::new(&capture.handle)?;
+                    if !self.keep_with_reason(&source, Retention::Protected)? {
+                        return Err(StoreError::MissingValue);
+                    }
+                }
+                self.root_value(handle, &loaded.value, reason)?;
+            }
             self.values.keep_with_reason(handle, reason)
         })();
         self.retaining.remove(handle);
         result
     }
     fn is_kept(&self, handle: &ValueHandle) -> Result<bool, StoreError> {
-        if !self.values.is_kept(handle)? {
-            return Ok(false);
-        }
-        let Some(root) = self.value_root(handle)? else {
-            return Ok(true);
-        };
-        for prefix in &root.prefixes {
-            self.datasets()?.inspect(prefix)?;
-        }
-        self.datasets()?
-            .root_covers(handle, &root.prefixes, self.values.retention(handle)?)
+        self.kept_closure(handle, &mut std::collections::BTreeSet::new(), &mut 0)
     }
     fn retention(&self, handle: &ValueHandle) -> Result<Retention, StoreError> {
         self.values.retention(handle)

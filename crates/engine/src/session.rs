@@ -2735,6 +2735,24 @@ impl Actor {
                         _ => None,
                     };
                     if let Some(captured) = captured {
+                        if matches!(enter.ticket.payload, BoundTask::Scan(_))
+                            && enter
+                                .ticket
+                                .input_origins
+                                .get(&source.node)
+                                .is_none_or(|origin| {
+                                    captured.run.as_ref() != Some(&origin.run)
+                                        || captured.revision != origin.revision
+                                        || origin.port != source.port
+                                })
+                        {
+                            let _ = enter
+                                .reply
+                                .send(Err(crate::storage::StoreError::Conflict.read_error(
+                                    "Scan source changed before its original owner was captured",
+                                )));
+                            return;
+                        }
                         enter
                             .ticket
                             .deferred_inputs
@@ -2755,7 +2773,7 @@ impl Actor {
                 };
                 if let BoundTask::Scan(scan) = &mut enter.ticket.payload {
                     for (source, captured) in &enter.ticket.deferred_inputs {
-                        scan.defer_source(source, &captured.snapshot);
+                        scan.capture_source_owner(source, &captured.snapshot);
                     }
                 }
                 let charge = enter

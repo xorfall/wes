@@ -2,6 +2,7 @@
 pub mod access;
 pub mod accumulation;
 pub mod bindings;
+pub mod byte_input;
 pub mod calc;
 pub mod calls;
 pub mod completion;

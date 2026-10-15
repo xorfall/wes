@@ -254,6 +254,17 @@ impl ReplayWorkspace {
         self.hydrating = true;
         Ok(())
     }
+    pub(crate) fn attach_stored_output(
+        &mut self,
+        node: &NodeId,
+        run: &RunId,
+        snapshot: crate::storage::StoredSnapshot,
+    ) -> Result<(), WorkspaceError> {
+        if !self.workspace.attach_stored_output(node, run, snapshot) {
+            return Err(WorkspaceError::UnsafeObservation);
+        }
+        Ok(())
+    }
     /// No work starts here. Required-call admission reconstruction and session identity/Log/store
     /// snapshots are separate coordinator responsibilities, not implied by these structural nodes.
     pub fn finish(self) -> Workspace {

@@ -6,10 +6,17 @@ use wes_core::Data;
 use wes_language::{Call, Expression, Statement, Value};
 mod keep;
 
-/// View input is consumed by the parent workspace, not an operation on the
-/// referenced object. Saved inputs already have inert typed parent bindings.
+/// Native value selectors and View input are consumed by the parent workspace,
+/// not operations on the referenced object. Saved inputs have inert typed bindings.
 /// Live child members still cannot cross scopes without an explicit Keep.
 fn object_references(call: &Call) -> impl Iterator<Item = &wes_language::Name> {
+    let native_read = wes_language::vocabulary::commands::invocation(call).is_ok_and(|i| {
+        i.spec.command == MetaCommand::Read
+            && call
+                .arguments
+                .iter()
+                .any(|a| matches!(a.key.text.as_str(), "bytes" | "output" | "trace"))
+    });
     let view_input = wes_language::vocabulary::commands::invocation(call).is_ok_and(|i| {
         matches!(
             i.spec.command,
@@ -25,6 +32,7 @@ fn object_references(call: &Call) -> impl Iterator<Item = &wes_language::Name> {
                 .map(|a| &a.value),
         )
         .flat_map(Value::references)
+        .filter(move |_| !native_read)
 }
 #[derive(Default)]
 struct Names {

@@ -1,16 +1,17 @@
 //! Original byte coordinates over one acknowledged result; never a producer dependency.
 use super::{BoundQuery, Failure};
 use crate::{
+    byte_input::{CapturedSource, Source},
     driver::{CancellationToken, ExecutionFuture},
-    graph::{OutputPort, OutputRef},
+    graph::OutputRef,
     plan::{Input, MetaTask},
-    runtime::{Outcome, OutputState, RuntimeCode},
-    storage::{CHUNK_BYTES, SourceRange, StoreError, StoreWorker, StoredSnapshot},
+    runtime::{Outcome, RuntimeCode},
+    storage::{CHUNK_BYTES, SourceRange, StoreError, StoreWorker},
     workspace::Workspace,
 };
 use indexmap::IndexMap;
 use wes_core::{
-    Data, Primitive, Provenance, RecordShape, Shape, Value,
+    Data, Primitive, RecordShape, Shape, Value,
     contracts::{Contract, ContractField, ContractRegistry, metadata::ValueMetadata},
     flow::FlowPolicy,
 };
@@ -20,6 +21,7 @@ struct Options {
     from: u64,
     limit: usize,
     fields: Vec<String>,
+    dependency: Option<String>,
 }
 impl Options {
     fn parse(task: &MetaTask) -> Result<Self, &'static str> {
@@ -53,17 +55,33 @@ impl Options {
             }
             _ => return Err("select: must be a literal static field path of at most 4096 bytes"),
         };
+        let dependency = match (task.inputs.contains_key("dependency"), text("dependency")) {
+            (false, _) => None,
+            (true, Some(name))
+                if !name.is_empty()
+                    && name.len() <= 1024
+                    && !task.inputs.contains_key("select") =>
+            {
+                Some(name.to_owned())
+            }
+            _ => {
+                return Err(
+                    "dependency: requires one literal native slot name and cannot be combined with select:",
+                );
+            }
+        };
         if task
             .inputs
             .keys()
-            .any(|k| !matches!(k.as_str(), "from" | "limit" | "select"))
+            .any(|k| !matches!(k.as_str(), "from" | "limit" | "select" | "dependency"))
         {
-            return Err("Byte reads accept only from:, limit: and optional select:");
+            return Err("Byte reads accept from:, limit: and optional select: or dependency:");
         }
         Ok(Self {
             from,
             limit: *limit as usize,
             fields,
+            dependency,
         })
     }
 }
@@ -72,20 +90,9 @@ pub(super) fn validate(task: &MetaTask) -> Result<(), &'static str> {
 }
 
 #[derive(Clone, Debug)]
-enum Source {
-    Resident(Value),
-    Stored(StoredSnapshot),
-}
-#[derive(Clone, Debug)]
 pub(super) struct CapturedBytes {
     options: Options,
-    source: Source,
-    node: String,
-    run: Option<String>,
-    revision: u64,
-    provenance: Provenance,
-    readers: crate::provider_reads::Readers,
-    epoch: String,
+    source: CapturedSource,
 }
 impl CapturedBytes {
     pub(super) fn capture(
@@ -94,65 +101,25 @@ impl CapturedBytes {
         output: &OutputRef,
     ) -> Result<Self, Failure> {
         let options = Options::parse(&query.task).map_err(Failure::Selection)?;
-        let (source, run, revision, provenance) = match workspace.runtime().output(output) {
-            OutputState::Available(value) => {
-                let provenance = value.provenance().clone();
-                let run = if output.port == OutputPort::Data {
-                    workspace.runtime().value_run(&output.node)
-                } else {
-                    workspace.runtime().run_of(&output.node)
-                }.map(ToString::to_string);
-                (Source::Resident(value), run, workspace.runtime().display_revision(&output.node), provenance)
-            }
-            OutputState::Stored(captured) => {
-                let provenance = captured.snapshot.provenance.clone();
-                (Source::Stored(captured.snapshot), captured.run.map(|r| r.to_string()), captured.revision, provenance)
-            }
-            _ if output.port == OutputPort::Data => {
-                let evidence = workspace.runtime().evidence_value(&output.node).ok_or_else(|| Failure::OutputUnavailable(
-                    "Byte source has no acknowledged accessible result; this read did not run its producer.".into(),
-                ))?;
-                let provenance = evidence.value.provenance().clone()
-                    .with_fact("wes.observation.state", "stopped")
-                    .with_fact("wes.observation.run", evidence.run.as_str())
-                    .with_fact("wes.observation.source", evidence.source.as_str());
-                (Source::Resident(evidence.value.clone()), Some(evidence.run.to_string()), workspace.runtime().display_revision(&output.node), provenance)
-            }
-            _ => return Err(Failure::OutputUnavailable(
-                "Byte source has no acknowledged accessible result; this read did not run its producer.".into(),
-            )),
-        };
-        // Root authority precedes field lookup, including stopped independent evidence.
-        if workspace.dataset_access.blocks_policy(provenance.policy()) {
-            return Err(Failure::Selection(
-                "Byte-source read authority is unavailable",
+        let source = CapturedSource::capture(workspace, output, options.fields.clone()).map_err(
+            |error| {
+                Failure::OutputUnavailable(
+                    error
+                        .read_error("Byte source unavailable; this read did not run its producer")
+                        .message()
+                        .to_owned(),
+                )
+            },
+        )?;
+        if options.dependency.is_some() && !matches!(source.source, Source::Stored(_)) {
+            return Err(Failure::OutputUnavailable(
+                "Native input dependency requires an acknowledged owned stored result; copies and literals confer no authority.".into(),
             ));
         }
-        let readers = workspace.dataset_access.providers.clone();
-        let epoch = readers.epoch();
-        Ok(Self {
-            options,
-            source,
-            node: output.node.to_string(),
-            run,
-            revision,
-            provenance,
-            readers,
-            epoch,
-        })
+        Ok(Self { options, source })
     }
     pub(super) fn policy(&self) -> FlowPolicy {
-        self.provenance.policy().clone()
-    }
-    fn check_authority(&self) -> Result<(), StoreError> {
-        let policy = self.provenance.policy();
-        if !policy.provider_reads().is_empty() && self.epoch != self.readers.epoch() {
-            return Err(StoreError::ProviderReadChanged);
-        }
-        if self.readers.blocks_policy(policy) {
-            return Err(StoreError::ProviderReadUnavailable);
-        }
-        Ok(())
+        self.source.provenance.policy().clone()
     }
     pub(super) fn execute(
         self,
@@ -168,38 +135,35 @@ impl CapturedBytes {
             if token.is_cancelled() {
                 return cancelled().into();
             }
-            if let Err(error) = self.check_authority() {
+            if let Err(error) = self.source.check() {
                 return Outcome::Failed(error.read_error("Byte read refused")).into();
             }
-            let result = match &self.source {
-                Source::Resident(value) => {
-                    let source = value.clone();
-                    let options = self.options.clone();
-                    let read =
-                        tokio::task::spawn_blocking(move || resident_range(&source, &options))
-                            .await;
-                    read.unwrap_or(Err(StoreError::Corrupt))
-                }
-                Source::Stored(snapshot) => match storage {
-                    Some(worker) => {
+            let result = if let Some(name) = &self.options.dependency {
+                match (&self.source.source, &storage) {
+                    (Source::Stored(snapshot), Some(worker)) => {
                         worker
-                            .source_range_selected(
+                            .source_range_dependency(
                                 snapshot.clone(),
-                                self.options.fields.clone(),
+                                name.clone(),
                                 self.options.from,
                                 self.options.limit,
                             )
                             .await
                     }
-                    None => Err(StoreError::Closed),
-                },
+                    _ => Err(StoreError::MissingValue),
+                }
+            } else {
+                self.source
+                    .range(storage.as_ref(), self.options.from, self.options.limit)
+                    .await
             };
             // Submitted local work is joined, even when the read is cancelled or withdrawn.
             if token.is_cancelled() {
                 return cancelled().into();
             }
             let result = self
-                .check_authority()
+                .source
+                .check()
                 .and(result)
                 .and_then(|range| self.value(range));
             match result {
@@ -221,11 +185,14 @@ impl CapturedBytes {
         if next < range.extent && range.bytes.is_empty() {
             return Err(StoreError::Corrupt);
         }
-        let (handle, digest, selection) = match &self.source {
+        let (handle, digest, selection) = match &self.source.source {
             Source::Resident(_) => (None, None, self.options.fields.clone()),
             Source::Stored(snapshot) => {
                 let mut selection = snapshot.selection.clone();
                 selection.extend(self.options.fields.iter().cloned());
+                if let Some(name) = &self.options.dependency {
+                    selection.push(format!("dependency:{name}"));
+                }
                 (
                     Some(snapshot.handle.to_string()),
                     Some(snapshot.digest.clone()),
@@ -235,11 +202,11 @@ impl CapturedBytes {
         };
         let optional = |s: Option<String>| Data::Option(s.map(|v| Box::new(Data::Text(v.into()))));
         let data = Data::Record(IndexMap::from([
-            ("source".into(), Data::Text(self.node.clone().into())),
-            ("run".into(), optional(self.run.clone())),
+            ("source".into(), Data::Text(self.source.node.clone().into())),
+            ("run".into(), optional(self.source.run.clone())),
             (
                 "revision".into(),
-                Data::Text(self.revision.to_string().into()),
+                Data::Text(self.source.revision.to_string().into()),
             ),
             ("handle".into(), optional(handle)),
             ("digest".into(), optional(digest)),
@@ -278,42 +245,10 @@ impl CapturedBytes {
             })
             .collect::<Result<_, StoreError>>()?;
         let contract = Contract::record("ByteRange", contracts).map_err(|_| StoreError::Corrupt)?;
-        Value::new(shape(), data, self.provenance.clone())
+        Value::new(shape(), data, self.source.provenance.clone())
             .map(|v| v.with_metadata(Some(ValueMetadata::capture(&contract))))
             .map_err(|_| StoreError::Corrupt)
     }
-}
-fn resident_range(source: &Value, options: &Options) -> Result<SourceRange, StoreError> {
-    let mut data = source.data();
-    for field in &options.fields {
-        let Data::Record(fields) = data else {
-            return Err(StoreError::SourceRange("select: requires record fields"));
-        };
-        data = fields
-            .get(field)
-            .ok_or(StoreError::SourceRange("selected field is unavailable"))?;
-    }
-    let (bytes, text) = match data {
-        Data::Text(s) => (s.as_bytes(), true),
-        Data::Bytes(b) => (b.as_ref(), false),
-        _ => {
-            return Err(StoreError::SourceRange(
-                "selected source must be Text or Bytes",
-            ));
-        }
-    };
-    let from = usize::try_from(options.from)
-        .ok()
-        .filter(|n| *n <= bytes.len())
-        .ok_or(StoreError::SourceRange(
-            "from: exceeds the original source extent",
-        ))?;
-    let next = from.saturating_add(options.limit).min(bytes.len());
-    Ok(SourceRange {
-        bytes: bytes[from..next].to_vec(),
-        extent: bytes.len() as u64,
-        text,
-    })
 }
 fn fields() -> IndexMap<String, Shape> {
     ["source", "revision", "from", "next", "extent"]
@@ -346,6 +281,7 @@ mod tests {
     use super::*;
     use crate::{driver::Executor, runtime::Effect, tasks::TaskExecutor, workspace::Preparation};
     use std::time::Duration;
+    use wes_core::Provenance;
 
     #[tokio::test]
     async fn private_native_byte_range_is_refused_by_the_shared_public_view_boundary() {
