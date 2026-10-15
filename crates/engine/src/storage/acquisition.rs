@@ -39,7 +39,12 @@ pub struct AcquisitionContext {
     worker: StoreWorker,
     provenance: Provenance,
     finalizer: Option<SnapshotFinalizer>,
+    decoder: Option<ChunkDecoder>,
 }
+/// A trusted adapter's bounded, nonexpanding transport decoder. It receives at most one
+/// acquisition chunk and returns bytes for that same port. It cannot change placement or policy.
+pub type ChunkDecoder =
+    Arc<dyn Fn(&str, Vec<u8>) -> Result<Vec<u8>, InvocationError> + Send + Sync>;
 pub type SnapshotFinalizer = Arc<
     dyn Fn(Value, Vec<LeafSelection>) -> Result<(Value, Vec<LeafSelection>), InvocationError>
         + Send
@@ -51,6 +56,7 @@ impl AcquisitionContext {
             worker,
             provenance,
             finalizer: None,
+            decoder: None,
         }
     }
     pub fn with_finalizer(mut self, finalizer: SnapshotFinalizer) -> Self {
@@ -59,6 +65,10 @@ impl AcquisitionContext {
     }
     pub fn provenance(&self) -> &Provenance {
         &self.provenance
+    }
+    pub fn with_decoder(mut self, decoder: ChunkDecoder) -> Self {
+        self.decoder = Some(decoder);
+        self
     }
     pub async fn begin(&self, maximum: u64) -> Result<Acquisition, StoreError> {
         if self.provenance.policy().is_private()
@@ -83,6 +93,7 @@ impl AcquisitionContext {
             owner,
             provenance: self.provenance.clone(),
             finalizer: self.finalizer.clone(),
+            decoder: self.decoder.clone(),
         })
     }
 }
@@ -94,8 +105,27 @@ pub struct Acquisition {
     owner: Arc<()>,
     provenance: Provenance,
     finalizer: Option<SnapshotFinalizer>,
+    decoder: Option<ChunkDecoder>,
 }
 impl Acquisition {
+    /// Decode transport bytes before storing them. The producer joins this operation before
+    /// reading its next chunk, retaining the ordinary backpressure and physical acknowledgement.
+    pub async fn append_input(&self, port: &str, bytes: Vec<u8>) -> Result<(), InvocationError> {
+        let input_bytes = bytes.len();
+        if input_bytes > CHUNK_BYTES || port.is_empty() || port.len() > 128 {
+            return Err(acquisition_error(StoreError::Limit("acquisition chunk")));
+        }
+        let bytes = match &self.decoder {
+            Some(decode) => decode(port, bytes)?,
+            None => bytes,
+        };
+        if bytes.len() > input_bytes {
+            return Err(acquisition_error(StoreError::Limit(
+                "nonexpanding acquisition decoder",
+            )));
+        }
+        self.append(port, bytes).await.map_err(acquisition_error)
+    }
     pub async fn append(&self, port: &str, bytes: Vec<u8>) -> Result<(), StoreError> {
         if bytes.len() > CHUNK_BYTES || port.is_empty() || port.len() > 128 {
             return Err(StoreError::Limit("acquisition chunk"));

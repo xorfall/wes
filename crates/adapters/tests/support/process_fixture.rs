@@ -74,6 +74,19 @@ fn main() {
             while remaining>0 {let n=remaining.min(chunk.len() as u64) as usize;out.write_all(&chunk[..n]).unwrap();remaining-=n as u64;}
             std::io::stderr().write_all(b"synthetic finite source").unwrap();
         }
+        "record-bytes" | "record-fail" | "record-truncated" => {
+            OpenOptions::new().create(true).append(true).open(args.get(5).unwrap()).unwrap().write_all(b"once\n").unwrap();
+            let header = br#"{"index":{"label":"synthetic","size":131073},"raw":""}"#;
+            let mut out = std::io::stdout().lock();
+            for byte in (header.len() as u32).to_be_bytes() { out.write_all(&[byte]).unwrap(); out.flush().unwrap(); }
+            if mode == "record-truncated" { out.write_all(&header[..10]).unwrap(); return; }
+            out.write_all(header).unwrap();
+            let chunk: Vec<u8> = (0..65536).map(|n| (n % 251) as u8).collect();
+            let mut remaining = args.get(4).unwrap().parse::<usize>().unwrap();
+            while remaining > 0 { let n = remaining.min(chunk.len()); out.write_all(&chunk[..n]).unwrap(); remaining -= n; }
+            out.flush().unwrap();
+            if mode == "record-fail" { std::process::exit(7); }
+        }
         "bytes" => {
             std::io::stdout().write_all(&[0, 255, 1, 10]).unwrap();
             std::io::stderr().write_all(&[254, 0, 2]).unwrap();

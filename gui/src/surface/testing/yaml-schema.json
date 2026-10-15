@@ -1382,6 +1382,10 @@
         "type": {
           "schema": "type",
           "required": false
+        },
+        "byte_field": {
+          "schema": "provider.text-list",
+          "required": false
         }
       },
       "constraints": [
@@ -1395,7 +1399,8 @@
         "json",
         "text",
         "bytes",
-        "process"
+        "process",
+        "record-bytes"
       ]
     },
     "provider.control": {
@@ -1547,7 +1552,7 @@
       "validation": "semantic"
     },
     "provider-result": {
-      "description": "json requires an explicit type. text defaults to Text and bytes to Bytes; overrides must retain that shape. process has the fixed ProcessOutput contract and forbids type. JSON Bytes fields use canonical base64 only where the captured contract declares Bytes.",
+      "description": "json requires an explicit type. text defaults to Text and bytes to Bytes; overrides must retain that shape. process has the fixed ProcessOutput contract and forbids type. JSON Bytes fields use canonical base64 only where the captured contract declares Bytes. record-bytes requires a finite process operation, explicit type and byte_field selecting one required unconstrained Bytes leaf. stdout is a 4-byte big-endian header length (1–262144), a complete typed JSON record with an empty Bytes placeholder, then the exact payload to EOF. Successful exit and bounded headers are required; transient acquisition can retain nonexpanding bytes beyond the ordinary output cap. byte_field is forbidden for other formats.",
       "validation": "semantic"
     },
     "provider-control": {

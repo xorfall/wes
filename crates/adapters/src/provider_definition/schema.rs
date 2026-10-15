@@ -102,14 +102,16 @@ struct ResultDoc {
     format: OutputFormat,
     #[serde(rename = "type")]
     contract: Option<String>,
+    byte_field: Option<Vec<String>>,
 }
 #[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub(super) enum OutputFormat {
     Json,
     Text,
     Bytes,
     Process,
+    RecordBytes,
 }
 fn empty_object() -> Json {
     serde_json::json!({})
@@ -299,7 +301,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                     "process format has the fixed ProcessOutput contract",
                 ));
             }
-            OutputFormat::Json => Some(
+            OutputFormat::Json | OutputFormat::RecordBytes => Some(
                 registry
                     .resolve(
                         op.result
@@ -333,6 +335,24 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                     "output format and materialized contract must agree",
                 ));
             }
+        }
+        if matches!(op.result.format, OutputFormat::RecordBytes) {
+            if session.is_some() || op.streaming {
+                return Err(DefinitionError::new(
+                    "record-bytes requires a finite process operation",
+                ));
+            }
+            super::record_bytes::validate_leaf(
+                contract.as_ref().expect("record-bytes contract"),
+                op.result
+                    .byte_field
+                    .as_deref()
+                    .ok_or(DefinitionError::new("record-bytes requires byte_field"))?,
+            )?;
+        } else if op.result.byte_field.is_some() {
+            return Err(DefinitionError::new(
+                "byte_field is only valid for record-bytes output",
+            ));
         }
         let result_shape = contract
             .as_ref()
@@ -416,6 +436,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             argv: op.argv,
             result: contract,
             format: op.result.format,
+            byte_field: op.result.byte_field,
             success_codes: op.success_codes,
             streaming: op.streaming,
             control,
