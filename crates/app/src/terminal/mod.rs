@@ -13,6 +13,7 @@ mod powershell;
 mod prompt;
 #[cfg(windows)]
 mod published;
+mod screen;
 pub(crate) mod ui;
 use crate::{ApplicationHandle, CurrentSession};
 pub use bridge::{BridgeReply, BridgeRequest, client};
@@ -74,6 +75,37 @@ struct Output {
     exit: Option<u32>,
     problem: Option<String>,
     destination: Option<String>,
+    screen: screen::Screen,
+    epoch: u64,
+    snapshot: Option<Snapshot>,
+}
+struct Snapshot {
+    id: String,
+    cursor: u64,
+    epoch: u64,
+    cols: u16,
+    rows: u16,
+    bytes: Vec<u8>,
+}
+#[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryCursor {
+    pub id: Option<String>,
+    pub offset: usize,
+}
+#[derive(Clone, Default)]
+pub struct DisplayRead {
+    pub epoch: Option<u64>,
+    pub recovery: Option<RecoveryCursor>,
+}
+#[derive(Serialize)]
+pub struct RecoveryPage {
+    pub id: String,
+    pub offset: usize,
+    pub next: usize,
+    pub total: usize,
+    pub cols: u16,
+    pub rows: u16,
 }
 enum Input {
     Write(Vec<u8>),
@@ -128,6 +160,7 @@ impl TerminalSession {
     }
     fn append(&self, bytes: &[u8]) {
         let mut out = self.output.lock().expect("terminal output");
+        out.screen.append(bytes);
         out.bytes.extend(bytes);
         let extra = out.bytes.len().saturating_sub(1024 * 1024);
         out.bytes.drain(..extra);
@@ -135,9 +168,21 @@ impl TerminalSession {
         drop(out);
         self.changed.notify_waiters();
     }
+    fn resized(&self, size: TerminalSize) {
+        let mut out = self.output.lock().expect("terminal output");
+        if out.screen.size() != (size.cols, size.rows) {
+            out.screen.resize(size.cols, size.rows);
+            out.epoch += 1;
+        }
+        drop(out);
+        self.changed.notify_waiters();
+    }
 }
 #[derive(Serialize)]
 pub struct Frame {
+    pub recovery_error: Option<String>,
+    pub epoch: u64,
+    pub recovery: Option<RecoveryPage>,
     pub start: u64,
     pub next: u64,
     pub data: String,
@@ -321,6 +366,9 @@ impl Manager {
                 exit: None,
                 problem: None,
                 destination: None,
+                screen: screen::Screen::new(wes_budgets::get("terminal.scrollback.cells") as usize),
+                epoch: 0,
+                snapshot: None,
             }),
             directory,
             _permit: permit,
@@ -492,7 +540,7 @@ impl Manager {
     pub fn poll(&self, id: &str, generation: &str, client: &str, cursor: u64) -> io::Result<Frame> {
         let terminal = self.owned(id, generation, client)?;
         *terminal.heartbeat.lock().expect("terminal heartbeat") = std::time::Instant::now();
-        Ok(Self::frame(&terminal, cursor))
+        Self::frame(&terminal, cursor, &DisplayRead::default())
     }
     /// Existing readers can still poll immediately. The UI waits for actual changes instead
     /// of imposing a fixed delay on each chunk. Only one waiting reader owns this terminal.
@@ -503,26 +551,29 @@ impl Manager {
         client: &str,
         cursor: u64,
         wait_ms: u64,
+        read: DisplayRead,
     ) -> io::Result<Frame> {
         if wait_ms > 1000 {
             return Err(io::Error::other("Terminal wait exceeds 1000 ms."));
         }
-        if wait_ms == 0 {
-            return self.poll(id, generation, client, cursor);
-        }
         let terminal = self.owned(id, generation, client)?;
+        *terminal.heartbeat.lock().expect("terminal heartbeat") = std::time::Instant::now();
+        if wait_ms == 0 {
+            return Self::frame(&terminal, cursor, &read);
+        }
         let _reader = terminal
             .reader
             .try_acquire()
             .map_err(|_| io::Error::other("A terminal output reader is already waiting."))?;
-        *terminal.heartbeat.lock().expect("terminal heartbeat") = std::time::Instant::now();
         let changed = terminal.changed.notified();
         tokio::pin!(changed);
         // Register before inspecting state: output/editor changes cannot fall between the
         // empty check and subscription. notify_waiters also avoids stale queued permits.
         changed.as_mut().enable();
-        let frame = Self::frame(&terminal, cursor);
-        if frame.start != cursor
+        let frame = Self::frame(&terminal, cursor, &read)?;
+        if frame.recovery.is_some()
+            || frame.recovery_error.is_some()
+            || frame.start != cursor
             || frame.next != cursor
             || frame.closed
             || frame.problem.is_some()
@@ -536,14 +587,100 @@ impl Manager {
             _ = terminal.finished.cancelled() => {},
             _ = tokio::time::sleep(Duration::from_millis(wait_ms)) => {},
         }
-        Ok(Self::frame(&terminal, cursor))
+        // Revocation/close can occur while the reader is asleep.
+        let terminal = self.owned(id, generation, client)?;
+        Self::frame(&terminal, cursor, &read)
     }
-    fn frame(terminal: &TerminalSession, cursor: u64) -> Frame {
+    fn frame(terminal: &TerminalSession, cursor: u64, read: &DisplayRead) -> io::Result<Frame> {
         use base64::Engine;
-        let out = terminal.output.lock().expect("terminal output");
-        let start = cursor
-            .max(out.start)
-            .min(out.start + out.bytes.len() as u64);
+        let mut out = terminal.output.lock().expect("terminal output");
+        let end = out.start + out.bytes.len() as u64;
+        if let Some(recovery) = &read.recovery {
+            if recovery
+                .id
+                .as_ref()
+                .is_some_and(|id| uuid::Uuid::parse_str(id).is_err())
+                || (recovery.id.is_none() && recovery.offset != 0)
+            {
+                return Err(io::Error::other("Invalid terminal recovery position."));
+            }
+        }
+        if read.recovery.is_some()
+            || cursor < out.start
+            || cursor > end
+            || read.epoch.is_some_and(|epoch| epoch != out.epoch)
+        {
+            let continuation = read
+                .recovery
+                .as_ref()
+                .and_then(|read| {
+                    out.snapshot
+                        .as_ref()
+                        .filter(|snapshot| Some(&snapshot.id) == read.id.as_ref())
+                })
+                .is_some();
+            if !continuation {
+                if !out.screen.complete() {
+                    return Ok(Frame {
+                        recovery_error: Some("Terminal screen cannot be restored within its text budget. The existing command was not restarted.".into()),
+                        epoch: out.epoch, recovery: None, start: cursor, next: cursor, data: String::new(),
+                        exit: out.exit, problem: out.problem.clone(), destination: out.destination.clone(),
+                        closed: terminal.finished.is_cancelled(), ui: None, command: None,
+                    });
+                }
+                let (cols, rows) = out.screen.size();
+                let bytes = out.screen.snapshot();
+                if bytes.len() > 256 * 1024 * 1024 {
+                    return Err(io::Error::other(
+                        "Terminal recovery exceeds the encoded screen limit.",
+                    ));
+                }
+                out.snapshot = Some(Snapshot {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    cursor: end,
+                    epoch: out.epoch,
+                    cols,
+                    rows,
+                    bytes,
+                });
+            }
+            let snapshot = out.snapshot.as_ref().expect("frozen terminal screen");
+            let offset = if continuation {
+                read.recovery.as_ref().expect("continuation").offset
+            } else {
+                0
+            };
+            if offset > snapshot.bytes.len() {
+                return Err(io::Error::other("Invalid terminal recovery offset."));
+            }
+            let next = snapshot.bytes.len().min(offset + 64 * 1024);
+            return Ok(Frame {
+                recovery_error: None,
+                epoch: snapshot.epoch,
+                recovery: Some(RecoveryPage {
+                    id: snapshot.id.clone(),
+                    offset,
+                    next,
+                    total: snapshot.bytes.len(),
+                    cols: snapshot.cols,
+                    rows: snapshot.rows,
+                }),
+                start: snapshot.cursor,
+                next: snapshot.cursor,
+                data: base64::engine::general_purpose::STANDARD
+                    .encode(&snapshot.bytes[offset..next]),
+                exit: out.exit,
+                problem: out.problem.clone(),
+                destination: out.destination.clone(),
+                closed: terminal.finished.is_cancelled(),
+                ui: None,
+                command: None,
+            });
+        }
+        // A following contiguous read acknowledges the completed recovery. Keep
+        // the frozen bytes until then so a lost page reply is safely repeatable.
+        out.snapshot = None;
+        let start = cursor;
         let bytes: Vec<_> = out
             .bytes
             .iter()
@@ -551,7 +688,10 @@ impl Manager {
             .take(64 * 1024)
             .copied()
             .collect();
-        Frame {
+        Ok(Frame {
+            recovery_error: None,
+            epoch: out.epoch,
+            recovery: None,
             start,
             next: start + bytes.len() as u64,
             data: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -561,7 +701,7 @@ impl Manager {
             closed: terminal.finished.is_cancelled(),
             ui: terminal.ui.peek(),
             command: terminal.commands.peek(),
-        }
+        })
     }
     pub fn command_claim(
         &self,
@@ -931,6 +1071,7 @@ fn run(
         &input,
         &authority,
         |bytes| terminal.append(bytes),
+        |size| terminal.resized(size),
     );
     terminal.stopped.cancel();
     let exit = endpoint.shutdown()?;
@@ -949,6 +1090,7 @@ fn pump(
     input: &mpsc::Receiver<Input>,
     authority: &CancellationToken,
     mut append: impl FnMut(&[u8]),
+    mut resized: impl FnMut(TerminalSize),
 ) -> io::Result<()> {
     let mut queued = VecDeque::new();
     let mut buffer = [0u8; 16384];
@@ -964,7 +1106,9 @@ fn pump(
                         break;
                     }
                     Ok(Input::Resize(cols, rows)) => {
-                        endpoint.resize(TerminalSize { cols, rows })?
+                        let size = TerminalSize { cols, rows };
+                        endpoint.resize(size)?;
+                        resized(size);
                     }
                     Err(_) => break,
                 }

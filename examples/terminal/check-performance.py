@@ -106,7 +106,16 @@ while True:
                         pending = pool.submit(poll); time.sleep(.05)
                         assert not pending.done()
                         call('close', id=identity)
-                        assert pending.result(timeout=2)['closed'], 'close did not wake reader'
+                        try:
+                            closed = pending.result(timeout=2)
+                        except urllib.error.HTTPError as error:
+                            # Close joins the terminal and removes its owned registry entry.
+                            # The waiting read can observe either completion before removal
+                            # or the existing Gone response when it rechecks ownership.
+                            try: assert error.code == 410, 'close reader failed without Gone'
+                            finally: error.close()
+                        else:
+                            assert closed['closed'], 'close did not wake reader'
                 else: call('close', id=identity)
                 print(json.dumps({'mode': 'legacy-100ms' if args.legacy else 'notification', 'echo_median_ms': round(statistics.median(samples), 2), 'echo_max_ms': round(max(samples), 2), 'burst_bytes': len(payload), 'burst_ms': round(burst_ms, 2)}))
                 print('PASS: real PTY echo, ordered bounded colored burst, cursor replay, idle/wake/close and waiter limits')

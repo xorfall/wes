@@ -517,6 +517,17 @@
     "source": "crates/app/src/web/fonts.rs"
   },
   {
+    "id": "terminal.scrollback.cells",
+    "label": "Terminal recovery history",
+    "description": "Maximum retained normal-screen history cells per terminal; also capped at 5000 rows. Active screens and bounded parser work are separate.",
+    "group": "Interface",
+    "unit": "count",
+    "default": 400000,
+    "min": 1,
+    "max": 2000000,
+    "source": "crates/app/src/terminal/screen.rs"
+  },
+  {
     "id": "terminal.history.bytes",
     "label": "Shell history bytes",
     "description": "Maximum persisted shell command history file; does not delete workspace journals.",

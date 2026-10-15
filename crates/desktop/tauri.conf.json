@@ -30,7 +30,9 @@
     "resources": {
       "../../gui/dist": "gui-dist",
       "../../tools/describe/wes-extract": "wes-extract",
-      "resources/wes-view-build": "wes-view-build"
+      "resources/wes-view-build": "wes-view-build",
+      "../../vendor/avt/LICENSE": "licenses/avt-Apache-2.0.txt",
+      "../../vendor/avt/WES.md": "licenses/avt-Wes-changes.md"
     }
   }
 }

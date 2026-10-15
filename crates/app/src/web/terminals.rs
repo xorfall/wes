@@ -53,6 +53,10 @@ enum Action {
         cursor: u64,
         #[serde(default)]
         wait_ms: u64,
+        #[serde(default)]
+        epoch: Option<u64>,
+        #[serde(default)]
+        recovery: Option<crate::terminal::RecoveryCursor>,
     },
     Write {
         id: String,
@@ -278,9 +282,11 @@ pub(super) async fn action(super::Scoped(shared): super::Scoped, request: Reques
                     id,
                     cursor,
                     wait_ms,
+                    epoch,
+                    recovery,
                 } => Ok(json!(
                     manager
-                        .poll_wait(&id, generation, client, cursor, wait_ms)
+                        .poll_wait(&id, generation, client, cursor, wait_ms, crate::terminal::DisplayRead { epoch, recovery })
                         .await?
                 )),
                 Action::Write { id, text } => {

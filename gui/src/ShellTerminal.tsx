@@ -68,6 +68,7 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
   const container = useRef<HTMLDivElement>(null);
   const emulator = useRef<Terminal>();
   const fit = useRef<(force?: boolean) => void>();
+  const restoring = useRef(false);
   const identity = useRef<string>();
   const [id, setId] = useState<string>();
   const destination = target;
@@ -79,6 +80,9 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
   const [runningIdentity, setRunningIdentity] = useState<string>();
   const directoryAllowed = useRef(!target);
   const [busy, setBusy] = useState(false);
+  const [screenRecovery, setScreenRecovery] = useState(false);
+  const [screenFailure, setScreenFailure] = useState(false);
+  const [screenAttempt, setScreenAttempt] = useState(0);
   const [ended, setEnded] = useState(false);
   const [restartRequired, setRestartRequired] = useState(false);
   const [recovery, setRecovery] = useState<"checking" | "ready" | "failed">(engine.terminalRecovery && history ? "checking" : "ready");
@@ -168,7 +172,7 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
     // Terminal content must not drive fitting; only its allocated, visible host size does.
     let lastWidth = 0, lastHeight = 0;
     const fitVisible = (force = false) => {
-      if (owner.disposed) return;
+      if (owner.disposed || restoring.current) return;
       const width = container.current?.clientWidth ?? 0, height = container.current?.clientHeight ?? 0;
       if (!width || !height) { lastWidth = 0; lastHeight = 0; return; }
       if (!force && width === lastWidth && height === lastHeight) return;
@@ -176,11 +180,11 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
     };
     emulator.current = term; fit.current = fitVisible;
     const data = term.onData(text => {
-      if (!owner.disposed && identity.current) input.current?.push(text);
+      if (!owner.disposed && !restoring.current && identity.current) input.current?.push(text);
     });
     const resize = term.onResize(({ cols, rows }) => {
       const current = identity.current;
-      if (current) void resizeTerminal(current, cols, rows);
+      if (current && !restoring.current) void resizeTerminal(current, cols, rows);
     });
     const observer = new ResizeObserver(() => fitVisible());
     observer.observe(container.current);
@@ -252,14 +256,36 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
     return () => { controller.abort(); owner.recovering = false; };
   }, [engine, generation, history, recoveryAttempt]);
   useEffect(() => {
-    if (!id) return;
+    if (!id || lifetime.current.id !== id) return;
     const controller = new AbortController();
+    const owner = lifetime.current, revision = owner.revision;
+    const valid = () => !controller.signal.aborted && lifetime.current === owner && owner.id === id && owner.revision === revision && currentGeneration.current === generation;
     const term = emulator.current;
     if (!term) return;
+    let restoreDistance = 0;
     void terminalOutput({
-      poll: (cursor, signal) => engine.terminal<TerminalFrame>({ action: "poll", id, cursor, wait_ms: 1000 }, signal),
-      write: bytes => new Promise<void>(resolve => term.write(bytes, resolve)),
-      trimmed: () => { term.reset(); term.writeln("[Earlier output was trimmed.]\r\n"); },
+      poll: async (cursor, signal, read) => {
+        const frame = await engine.terminal<TerminalFrame>({ action: "poll", id, cursor, wait_ms: 1000, ...read }, signal);
+        if (!valid()) controller.abort();
+        return frame;
+      },
+      write: bytes => new Promise<void>(resolve => {
+        if (!valid()) { controller.abort(); resolve(); return; }
+        term.write(bytes, resolve);
+      }),
+      restore: page => {
+        if (!restoring.current) restoreDistance = term.buffer.active.type === "normal" ? term.buffer.active.baseY - term.buffer.active.viewportY : 0;
+        restoring.current = true;
+        setScreenRecovery(true);
+        setScreenFailure(false);
+        term.reset(); term.resize(page.cols, page.rows);
+      },
+      restored: () => {
+        if (term.buffer.active.type === "normal" && restoreDistance) term.scrollLines(-restoreDistance);
+        restoring.current = false;
+        setScreenRecovery(false);
+        fit.current?.(true);
+      },
       command: async request => {
         // A claim is single-use on the server, even if its response or the later reply is lost.
         const { claimed } = await engine.terminal<{ claimed: boolean }>({ action: "commandclaim", id, request: request.id }, controller.signal);
@@ -276,6 +302,11 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
         await engine.terminal({ action: "uireply", id, request: request.id, result }, controller.signal);
       },
       problem: message => { if (!controller.signal.aborted) fail("server report", message, id, "Inspect the terminal server diagnostic."); },
+      refused: message => {
+        if (controller.signal.aborted) return;
+        restoring.current = true; setScreenRecovery(false); setScreenFailure(true);
+        fail("screen recovery", message, id, "The existing shell was not restarted. Retry reading its screen after resolving the read refusal.");
+      },
       connection: (error, operation = "poll") => { if (!controller.signal.aborted) diagnostics.current.connection("output", error, operation, contextFor(id)); },
       unavailable: message => { if (!controller.signal.aborted) unavailable(id, message); },
       ended: exit => {
@@ -285,8 +316,8 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
         term.writeln(`\r\n[Terminal ended${exit === null ? "" : ` · exit ${exit}`}]`);
       },
     }, controller.signal);
-    return () => controller.abort();
-  }, [engine, id]);
+    return () => { controller.abort(); restoring.current = false; setScreenRecovery(false); setScreenFailure(false); };
+  }, [engine, id, generation, screenAttempt]);
   // A review belongs to one pane lifetime, generation and selection, never to the display alone.
   const visibleReview = review && review.owner === lifetime.current && review.generation === generation && targetKey(review.selected) === targetKey(target) ? review : undefined;
   const start = async (approval?: typeof review) => {
@@ -360,6 +391,8 @@ export function ShellTerminal({ engine, active, generation, focused = active, au
     {visibleReview && <TerminalTargetReview review={visibleReview.evidence} busy={busy} onConfirm={() => void start(visibleReview)} onCancel={() => setReview(undefined)} />}
     {recovery === "failed" && <button aria-label="Reconnect terminal" disabled={!generation} onClick={() => setRecoveryAttempt(attempt => attempt + 1)}>Reconnect terminal</button>}
     {recovery === "checking" && <p className="hint">Reconnecting terminal…</p>}
+    {screenRecovery && <p className="hint" role="status">Restoring terminal screen…</p>}
+    {screenFailure && <button onClick={() => setScreenAttempt(attempt => attempt + 1)}>Retry terminal screen</button>}
     {recovery === "ready" && !visibleReview && (!id || ended || restartRequired) && <button aria-label="Start terminal" disabled={busy || !generation} onClick={() => void start()}>Start terminal</button>}
     {!visibleReview && !autoStart && !id && <p className="hint">Start a real shell to run programs such as Codex. Workspace tools are available in local shells. Remote shells use their target account; host tools are not forwarded.</p>}
     <div ref={container} className="terminal-emulator" />

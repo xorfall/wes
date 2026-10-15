@@ -1,0 +1,17 @@
+[package]
+name = "avt"
+version = "0.18.0"
+edition = "2021"
+rust-version = "1.82.0"
+license = "Apache-2.0"
+repository = "https://github.com/asciinema/avt"
+description = "asciinema virtual terminal with Wes bounded recovery additions"
+
+[dependencies]
+rgb = "0.8.33"
+unicode-width = "0.1.13"
+
+[dev-dependencies]
+pretty_assertions = "1"
+proptest = "=1.9.0"
+rand = "0.7"

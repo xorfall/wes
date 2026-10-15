@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+avt = { path = "../../vendor/avt", version = "=0.18.0" }
 wes-budgets.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

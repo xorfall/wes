@@ -8,6 +8,7 @@ members = [
     "crates/adapters",
     "crates/app",
     "crates/desktop",
+    "vendor/avt",
 ]
 resolver = "3"
 
