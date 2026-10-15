@@ -25,6 +25,7 @@ pub(crate) mod recording;
 pub use reconcile::ReconciliationControl;
 pub use recording::RecordingControl;
 mod companion;
+pub(crate) mod retention;
 mod source;
 pub(crate) mod source_control;
 pub use companion::BoundCompanion;
@@ -61,6 +62,7 @@ pub enum BoundTask {
     Management(management::BoundManagement),
     ImportPlan(import_plan::BoundImportPlan),
     Query(BoundQuery),
+    Retention(retention::BoundRetention),
     View(view::BoundView),
     SourceControl(source_control::BoundSourceControl),
 }
@@ -81,6 +83,7 @@ impl BoundTask {
             Self::Companion(task) => task.call.stored_byte_source_for(node),
             Self::Scan(scan) => scan.stored_source_for(node),
             Self::Query(query) => query.stored_source_for(node),
+            Self::Retention(task) => &task.source().node == node,
             Self::ScanAttempt(scan) => scan.read_sources().iter().any(|s| &s.node == node),
             Self::ScanExcerpt(scan) => scan.read_sources().iter().any(|s| &s.node == node),
             Self::ScanContinuation(scan) => scan.read_sources().iter().any(|s| &s.node == node),
@@ -225,6 +228,7 @@ impl BoundTask {
             Self::Calculation(calc) => calc.set_authority(authority),
             Self::Dataset(task) => task.set_authority(authority),
             Self::Reconcile(task) => task.set_authority(authority),
+            Self::Retention(task) => task.set_authority(authority),
             _ => (),
         }
     }
@@ -267,6 +271,7 @@ impl BoundTask {
             | Self::Accumulation(_)
             | Self::Help(_)
             | Self::Query(_)
+            | Self::Retention(_)
             | Self::Management(_)
             | Self::ImportPlan(_)
             | Self::View(_) => None,
@@ -275,11 +280,13 @@ impl BoundTask {
     }
     pub fn traits(&self) -> ExecutionTraits {
         match self {
-            Self::View(_) | Self::SourceControl(_) | Self::Companion(_) => ExecutionTraits {
-                pure: false,
-                repeatable: false,
-                bounded: true,
-            },
+            Self::View(_) | Self::SourceControl(_) | Self::Companion(_) | Self::Retention(_) => {
+                ExecutionTraits {
+                    pure: false,
+                    repeatable: false,
+                    bounded: true,
+                }
+            }
             Self::Call(call) => call.traits(),
             Self::SourceLaunch(launch) => launch.source.traits(),
             Self::Describe(_) => ExecutionTraits {
@@ -344,6 +351,7 @@ impl BoundTask {
             Self::View(view) => view.read_sources(),
             Self::SourceControl(control) => control.read_sources(),
             Self::Query(query) => query.read_sources(),
+            Self::Retention(task) => vec![task.source().clone()],
             Self::Scan(scan) => scan.read_sources(),
             Self::ScanAttempt(scan) => scan.read_sources(),
             Self::ScanExcerpt(scan) => scan.read_sources(),
@@ -717,6 +725,7 @@ impl TaskExecutor {
             BoundTask::View(view) => policy = policy.join(&view.prepared_policy()),
             BoundTask::SourceControl(control) => policy = policy.join(&control.policy),
             BoundTask::Query(query) => policy = policy.join(&query.captured_policy()),
+            BoundTask::Retention(task) => policy = policy.join(&task.policy()),
             BoundTask::Scan(scan) => policy = policy.join(&scan.literal_policy()),
             BoundTask::Dataset(read) => policy = policy.join(&read.policy()),
             BoundTask::Recording(recording) => policy = policy.join(&recording.policy()),
@@ -937,6 +946,7 @@ impl TaskExecutor {
             BoundTask::Query(query) => {
                 query.execute(ticket.inputs, self.storage.clone(), cancellation)
             }
+            BoundTask::Retention(task) => task.execute(self.storage.clone(), cancellation),
         };
         Box::pin(async move {
             let mut report = work.await;

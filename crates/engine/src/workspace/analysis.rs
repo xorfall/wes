@@ -538,6 +538,23 @@ impl Analysis<'_> {
                             typing,
                         )
                     }
+                    Task::Meta(task) if task.spec.command == MetaCommand::Keep => {
+                        if self.pipe_input.is_some() || !statement.annotations.is_empty() {
+                            return Err(rejected(
+                                "KPV001",
+                                statement.span,
+                                "Keep requires an explicit standalone result reference without annotations.",
+                            ));
+                        }
+                        let keep = crate::tasks::retention::BoundRetention::bind(task)
+                            .map_err(|message| rejected("KPV001", statement.span, message))?;
+                        let typing = Arc::new(
+                            self.data_typing(&keep.source().node)
+                                .cloned()
+                                .unwrap_or_else(|| Typing::new(Shape::Unknown)),
+                        );
+                        (BoundTask::Retention(keep), typing)
+                    }
                     Task::Meta(task)
                         if crate::tasks::view::BoundView::supports(task.spec.command) =>
                     {

@@ -1168,6 +1168,9 @@ impl Workspace {
         if let BoundTask::Query(query) = &mut ticket.payload {
             query.capture(self);
         }
+        if let BoundTask::Retention(task) = &mut ticket.payload {
+            task.capture(self);
+        }
         if let BoundTask::Recording(recording) = &mut ticket.payload {
             recording.capture(self);
         }
