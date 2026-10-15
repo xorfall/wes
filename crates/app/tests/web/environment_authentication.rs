@@ -226,7 +226,9 @@ environments:
         assert_eq!(provider["grantSeconds"], 0);
     }
     assert_eq!(
-        f.change(reader, json!({"action":"grant"})).await.status(),
+        f.change(reader, json!({"action":"grant","lifetime":{"seconds":300}}))
+            .await
+            .status(),
         200
     );
     let granted = f.report().await;
@@ -246,6 +248,70 @@ environments:
             .find(|p| p["provider"] == "writer")
             .unwrap()["grantSeconds"],
         0
+    );
+    for seconds in [60, 900, 3600, 14400, 86400] {
+        assert_eq!(
+            f.change(
+                reader,
+                json!({"action":"grant","lifetime":{"seconds":seconds}})
+            )
+            .await
+            .status(),
+            200
+        );
+        let report = f.report().await;
+        let status = report["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["provider"] == "reader")
+            .unwrap();
+        assert_eq!(status["access"], json!({"state":"timed","seconds":seconds}));
+        assert!(status["grantSeconds"].as_u64().unwrap() <= seconds);
+        assert!(status["grantSeconds"].as_u64().unwrap() >= seconds - 2);
+    }
+    assert_eq!(
+        f.change(reader, json!({"action":"grant","lifetime":"session"}))
+            .await
+            .status(),
+        200
+    );
+    for invalid in [
+        json!(null),
+        json!(0),
+        json!({"seconds":0}),
+        json!({"seconds":61}),
+        json!({"seconds":86460}),
+        json!({"seconds":1.5}),
+        json!({"seconds":900,"extra":true}),
+        json!("unlimited"),
+    ] {
+        assert_eq!(
+            f.change(reader, json!({"action":"grant","lifetime":invalid}))
+                .await
+                .status(),
+            400
+        );
+        let report = f.report().await;
+        assert_eq!(
+            report["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["provider"] == "reader")
+                .unwrap()["access"],
+            json!({"state":"session"})
+        );
+    }
+    assert_eq!(
+        f.change(reader, json!({"action":"grant"})).await.status(),
+        400
+    );
+    assert_eq!(
+        f.change(&stale, json!({"action":"grant","lifetime":"session"}))
+            .await
+            .status(),
+        409
     );
     assert_eq!(
         f.change(reader, json!({"action":"revoke"})).await.status(),
@@ -268,6 +334,21 @@ environments:
                 .iter()
                 .any(|slot| slot["slot"] == "Password" && slot["present"] == false))
     );
+    assert_eq!(
+        f.change(
+            reader,
+            json!({"action":"supply","slot":"Password","value":"synthetic-new"})
+        )
+        .await
+        .status(),
+        200
+    );
+    assert_eq!(
+        f.change(reader, json!({"action":"grant","lifetime":"session"}))
+            .await
+            .status(),
+        200
+    );
     f.close().await;
 
     let reopened = AuthFixture::open(root.path()).await;
@@ -275,6 +356,7 @@ environments:
     assert_eq!(restored["providers"].as_array().unwrap().len(), 2);
     for provider in restored["providers"].as_array().unwrap() {
         assert_eq!(provider["grantSeconds"], 0);
+        assert_eq!(provider["access"], json!({"state":"none"}));
         assert!(
             provider["credentials"]
                 .as_array()
@@ -397,7 +479,12 @@ async fn authentication_controls_select_bind_supply_grant_and_restore_without_ma
     );
     assert!(!supplied.to_string().contains("synthetic-private"));
     assert_eq!(
-        f.change(provider, json!({"action":"grant"})).await.status(),
+        f.change(
+            provider,
+            json!({"action":"grant","lifetime":{"seconds":300}})
+        )
+        .await
+        .status(),
         200
     );
     assert!(
@@ -459,7 +546,10 @@ async fn authentication_controls_select_bind_supply_grant_and_restore_without_ma
     assert_eq!(restored.report().await["providers"][0]["enabled"], false);
     assert_eq!(
         restored
-            .change(provider, json!({"action":"grant"}))
+            .change(
+                provider,
+                json!({"action":"grant","lifetime":{"seconds":300}})
+            )
             .await
             .status(),
         409
@@ -677,7 +767,12 @@ async fn optional_saved_credentials_restore_presence_without_grants_and_forget_k
     for (slot, remember) in [("key", true), ("secret", false)] {
         assert_eq!(f.change(p,json!({"action":"supply","slot":slot,"value":"synthetic-material","remember":remember})).await.status(),200);
     }
-    assert_eq!(f.change(p, json!({"action":"grant"})).await.status(), 200);
+    assert_eq!(
+        f.change(p, json!({"action":"grant","lifetime":{"seconds":300}}))
+            .await
+            .status(),
+        200
+    );
     assert!(
         f.report().await["providers"][0]["grantSeconds"]
             .as_u64()

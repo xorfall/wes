@@ -198,7 +198,9 @@ pub enum ProviderAuthorityCommand {
     Forget {
         slot: String,
     },
-    Grant,
+    Grant {
+        lifetime: crate::environments::AccessLifetime,
+    },
     Revoke,
     Enable,
 }
@@ -1131,7 +1133,11 @@ impl Actor {
                         };
                         Box::new(move || {
                             authority.hydrate(&binding)?;
-                            authority.grant(&binding, &provider, Duration::from_secs(seconds))
+                            authority.grant(
+                                &binding,
+                                &provider,
+                                crate::environments::AccessLifetime::Timed { seconds },
+                            )
                         })
                     }
                     other => {
@@ -1197,7 +1203,7 @@ impl Actor {
                             Supply {slot, value} => authority.supply(binding.import().credential_refs().get(&slot).ok_or(crate::credentials::CredentialError::InvalidName)?.clone(), value),
                             SupplyWithPersistence {slot, value, remember} => authority.supply_with_persistence(binding.import().credential_refs().get(&slot).ok_or(crate::credentials::CredentialError::InvalidName)?.clone(), value, remember),
                             Forget {slot} => authority.forget(binding.import().credential_refs().get(&slot).ok_or(crate::credentials::CredentialError::InvalidName)?),
-                            Grant => { authority.hydrate(&binding)?; authority.grant(&binding, &provider, Duration::from_secs(300)) },
+                            Grant { lifetime } => { lifetime.deadline()?; authority.hydrate(&binding)?; authority.grant(&binding, &provider, lifetime) },
                             Revoke => authority.revoke(&binding, &provider),
                             Enable => authority.enable(&identity),
                         }
@@ -1228,9 +1234,21 @@ impl Actor {
                         .filter(|e| !e.is_retired() && !e.is_abstract())
                         .cloned()
                         .collect::<Vec<_>>();
-                    Ok::<_, SessionError>((authority, environments))
+                    let domains = environments
+                        .iter()
+                        .flat_map(|env| {
+                            env.imports().keys().filter_map(|alias| {
+                                self.workspace
+                                    .environment_images
+                                    .get(env.name(), env.revision())
+                                    .and_then(|p| p.read_domain(alias))
+                                    .map(|d| ((env.name().to_owned(), alias.clone()), d.clone()))
+                            })
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    Ok::<_, SessionError>((authority, environments, domains))
                 })();
-                let (authority, environments) = match prepared {
+                let (authority, environments, domains) = match prepared {
                     Ok(value) => value,
                     Err(error) => {
                         let _ = reply.send(Err(error));
@@ -1254,9 +1272,12 @@ impl Actor {
                                             | Err(crate::credentials::CredentialError::Locked) => {}
                                             Err(_) => return Err(SessionError::Preparation),
                                         }
-                                        let status = authority
+                                        let mut status = authority
                                             .status(&binding, alias)
                                             .map_err(|_| SessionError::Preparation)?;
+                                        status.read_domain = domains
+                                            .get(&(environment.name().to_owned(), alias.clone()))
+                                            .cloned();
                                         Ok((alias.clone(), status))
                                     })
                                     .collect::<Result<_, SessionError>>()?;

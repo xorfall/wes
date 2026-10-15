@@ -85,3 +85,17 @@ it("reopens a failed display only on explicit action, without applying a query o
   expect(JSON.stringify(f.tree.toJSON())).not.toContain("expired or closed");
   act(()=>f.tree.unmount());
 });
+
+it("points revoked provider reads to revalidation without automatically rerunning anything",()=>{
+ const f=fixture(1);
+ act(()=>f.records[0]!.listener({problem:"View provider read access is unavailable. Grant access in /env, then run a native probe for its captured scope. No source was rerun."}));
+ expect(JSON.stringify(f.tree.toJSON())).toContain("/env");
+ expect(f.tree.root.findAllByType("button").some(b=>b.children[0]==="Reopen view")).toBe(false);
+ expect(f.watchViewFrame).toHaveBeenCalledOnce();
+ const check=f.tree.root.findAllByType("button").find(b=>b.children[0]==="Check after revalidation")!;
+ act(()=>check.props.onClick());
+ expect(f.watchViewFrame).toHaveBeenCalledTimes(2);
+ expect(f.applyViewQuery).not.toHaveBeenCalled();
+ expect(f.viewObservation).not.toHaveBeenCalled();
+ act(()=>f.tree.unmount());
+});

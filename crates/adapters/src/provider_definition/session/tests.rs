@@ -191,7 +191,11 @@ environments:
     }
     fn grant(&self) {
         self.authority
-            .grant(&self.binding, "samples", Duration::from_secs(60))
+            .grant(
+                &self.binding,
+                "samples",
+                wes_engine::environments::AccessLifetime::Timed { seconds: 60 },
+            )
             .unwrap();
     }
     async fn stop(self) {
@@ -451,7 +455,22 @@ async fn read_revocation_before_first_event_retires_the_owned_source_and_its_con
 async fn view_prepares_typed_control_without_dispatch_and_preserves_native_ownership() {
     let fixture = Managed::new("control", true).await;
     fixture.supply();
-    fixture.grant();
+    fixture
+        .authority
+        .grant(
+            &fixture.binding,
+            "samples",
+            wes_engine::environments::AccessLifetime::SESSION,
+        )
+        .unwrap();
+    assert_eq!(
+        fixture
+            .authority
+            .status(&fixture.binding, "samples")
+            .unwrap()
+            .grant_seconds,
+        0
+    );
     fixture.submit(":env use \"lab\"", false).await;
     fixture.submit("samples read > events", false).await;
     fixture

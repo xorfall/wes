@@ -177,6 +177,9 @@ impl Providers {
             ..Self::default()
         }
     }
+    pub(crate) fn read_domain(&self, alias: &str) -> Option<&crate::provider_reads::ReadDomain> {
+        self.providers.get(alias)?.read_domain.as_ref()
+    }
     pub fn catalogue(&self) -> &Catalogue {
         &self.catalogue
     }

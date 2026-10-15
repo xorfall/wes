@@ -33,11 +33,39 @@ impl BoundCall {
             if self.invocation.interactive || self.streaming() {
                 return Err(refusal());
             }
-            Ok(Attempt::Probe(Some(
-                authority
-                    .begin_read_probe(binding, alias, &digest, &self.context.authority)
-                    .map_err(|_| refusal())?,
-            )))
+            let probe = authority
+                .begin_read_probe(binding, alias, &digest, &self.context.authority)
+                .map_err(|_| refusal())?;
+            // Scope text is metadata only for wholly public literal arguments. Restricted or
+            // read-dependent values stay opaque; neither text nor a runnable draft is exposed.
+            let public_labels = domain.public_labels(arguments);
+            let public = public_labels.is_some();
+            let labels = public_labels.unwrap_or_default();
+            let safe_name = |s: &str| {
+                !s.is_empty()
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            };
+            let draft = (public
+                && safe_name(alias)
+                && safe_name(binding.environment().name())
+                && domain.revalidate.iter().all(|s| safe_name(s))
+                && domain.scope.iter().all(|s| safe_name(s)))
+            .then(|| {
+                format!(
+                    "@env{{{}}} {} {} {}",
+                    binding.environment().name(),
+                    alias,
+                    domain.revalidate.join(" "),
+                    labels
+                        .iter()
+                        .map(|(n, v)| format!("{n}:{}", wes_language::quote_text(v)))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            });
+            probe.describe(if public { labels } else { Default::default() }, draft);
+            Ok(Attempt::Probe(Some(probe)))
         } else {
             let origin = authority
                 .provider_read_origin(binding, alias, &digest)

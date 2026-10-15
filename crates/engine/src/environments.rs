@@ -20,7 +20,8 @@ mod authority;
 mod execution;
 pub(crate) use authority::ReadPermit;
 pub use authority::{
-    Authority, CredentialStatus, DispatchDenied, InvocationAuthority, ReadProbe, ResourceCreation,
+    AccessEnd, AccessLifetime, AccessStatus, Authority, CredentialStatus, DispatchDenied,
+    InvocationAuthority, ReadProbe, ResourceCreation,
 };
 pub(crate) use execution::ExecutionImages;
 pub use execution::{DefinitionEdit, EnvironmentDocument, EnvironmentLoader, LoadedDefinitions};

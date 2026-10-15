@@ -20,6 +20,61 @@ const textOf=(node:unknown):string=>typeof node==="string"?node:(node as {childr
 const option=(label:string)=>tree!.root.findByProps({"aria-label":"demo latest authentication method"}).findAllByType("button").find(b=>textOf(b).includes(label))!;
 const fixedKey=(state:AuthenticationReport,present:boolean)=>{const p=state.providers[0]!;p.credentials=[{slot:"key",reference:"ref",present}];p.operations=[{operation:["latest"],state:"fixed",selected:null,options:[{schemes:[],credentialSlots:["key"],methods:["header"]}]}];return p;};
 
+it("chooses lifetimes locally and grants session access explicitly without a probe", async()=>{
+ const state=report(), p=fixedKey(state,true), requests:any[]=[];
+ p.lifetimes={presets:[300,900,3600,14400],minSeconds:60,maxSeconds:86400,session:true};
+ p.access={state:"none"};
+ p.readScopes=[{scope:{region:"north"},state:"unverified",draft:'demo probe region:"north"'}];
+ vi.stubGlobal("fetch",vi.fn(async(_url,init)=>{
+  if(init.method==="GET")return {ok:true,json:async()=>structuredClone(state)};
+  const body=JSON.parse(init.body);requests.push(body);
+  if(body.action==="grant"){p.access={state:"session"};p.readScopes![0]!.state="unverified";}
+  if(body.action==="revoke"){p.access={state:"none",ended:"revoked"};p.readScopes![0]!.state="lapsed";}
+  return {ok:true,json:async()=>({...binding,applied:true})};
+ }));
+ await mount();
+ expect(button("allow for 15 minutes").props.disabled).toBe(false);
+ act(()=>tree!.root.findAllByProps({role:"radio"}).find(r=>r.children.join("")==="unlimited")!.props.onClick());
+ expect(requests).toEqual([]);
+ expect(text()).not.toContain("granted ·");
+ await act(async()=>button("allow until session ends").props.onClick());
+ expect(requests).toEqual([{environment:"default",revision:"r1",provider:"demo",action:"grant",lifetime:"session"}]);
+ expect(text()).toContain("granted · until session ends");
+ expect(text()).toContain("needs a fresh native probe");
+ act(()=>button("prepare verification command").props.onClick());
+ expect(text()).toContain("Draft only. Nothing runs from here.");
+ expect(requests).toHaveLength(1);
+ await act(async()=>button("revoke access").props.onClick());
+ expect(text()).toContain("ended with access");
+ expect(requests.map(r=>r.action)).toEqual(["grant","revoke"]);
+});
+
+it("keeps the active countdown independent of a pending custom duration and expires the scope",async()=>{
+ vi.useFakeTimers();
+ const state=report(), p=fixedKey(state,true), requests:any[]=[];
+ p.lifetimes={presets:[300,900,3600,14400],minSeconds:60,maxSeconds:86400,session:true};
+ p.access={state:"timed",seconds:60};p.grantSeconds=2;
+ p.readScopes=[{scope:{region:"north"},state:"verified"}];
+ vi.stubGlobal("fetch",vi.fn(async(_url,init)=>{if(init.method!=="GET")requests.push(JSON.parse(init.body));return {ok:true,json:async()=>structuredClone(state)};}));
+ await mount();
+ const pick=(label:string)=>act(()=>tree!.root.findAllByProps({role:"radio"}).find(r=>r.children.join("")===label)!.props.onClick());
+ pick("4 h");
+ expect(text()).toContain("granted · 0:02 remaining");
+ expect(requests).toEqual([]);
+ pick("custom");
+ const input=tree!.root.findByProps({"aria-label":"Custom duration"});
+ act(()=>input.props.onChange({target:{value:"0"}}));
+ expect(button("renew …").props.disabled).toBe(true);
+ expect(text()).toContain("At least 1 minute");
+ act(()=>input.props.onChange({target:{value:"90"}}));
+ expect(button("renew for 1 hour 30 minutes").props.disabled).toBe(false);
+ await act(async()=>{vi.advanceTimersByTime(3000);});
+ expect(text()).toContain("expired");
+ expect(text()).toContain("ended with access");
+ expect(text()).not.toContain("granted ·");
+ expect(requests).toEqual([]);
+});
+
 it("opens fixed declarative credential bindings without HTTP methods and keeps access explicit", async () => {
  const state=report(), p=state.providers[0]!;
  p.operations=[];
@@ -51,7 +106,7 @@ it("opens fixed declarative credential bindings without HTTP methods and keeps a
  expect(text()).not.toContain("granted ·");
  await act(async()=>button("allow for 5 minutes").props.onClick());
  expect(requests.map(r=>r.action)).toEqual(["supply","supply","grant"]);
- expect(requests.at(-1)).toEqual({environment:"default",revision:"r1",provider:"demo",action:"grant"});
+ expect(requests.at(-1)).toEqual({environment:"default",revision:"r1",provider:"demo",action:"grant",lifetime:{seconds:300}});
  expect(text()).toContain("granted ·");
  expect(text()).not.toContain("synthetic-");
 });
@@ -186,8 +241,8 @@ it("refresh cannot increase reported grant duration or resurrect an expired gran
   await mount();
   await act(async () => { vi.advanceTimersByTime(250); });
   await act(async () => { await tree!.root.findByProps({ "aria-label": "Refresh setup" }).props.onClick(); });
-  expect(text()).toContain("granted · 2s remaining");
-  expect(text()).not.toContain("3s remaining");
+  expect(text()).toContain("granted · 0:02 remaining");
+  expect(text()).not.toContain("0:03 remaining");
   await act(async () => { vi.advanceTimersByTime(3000); });
   expect(text()).not.toContain("granted ·");
   provider.grantSeconds = 0;

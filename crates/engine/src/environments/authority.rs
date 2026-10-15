@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 use wes_core::environments::{Binding, Revision};
+mod access;
+use access::alive;
+pub use access::{AccessEnd, AccessLifetime, AccessStatus};
 mod provider_reads;
 mod resources;
 pub(crate) use provider_reads::ReadPermit;
@@ -52,8 +55,26 @@ impl DispatchDenied {
 type Scope = (String, Revision, String);
 struct Grant {
     identity: Arc<()>,
-    until: Instant,
+    until: Option<Instant>,
+    lifetime: AccessLifetime,
+    material_generation: u64,
     references: BTreeSet<String>,
+    secrets: BTreeMap<String, Option<std::sync::Weak<crate::credentials::SecretString>>>,
+}
+impl Grant {
+    fn current(&self, material: &crate::credentials::material::Material) -> bool {
+        alive(self.until)
+            && material
+                .revision()
+                .is_ok_and(|(generation, _)| generation == self.material_generation)
+            && self.secrets.iter().all(|(r, before)| {
+                material.lookup(r).is_ok_and(|now| match (before, now) {
+                    (Some(a), Some(b)) => a.ptr_eq(&Arc::downgrade(&b)),
+                    (None, None) => true,
+                    _ => false,
+                })
+            })
+    }
 }
 #[derive(Default)]
 struct State {
@@ -62,6 +83,7 @@ struct State {
     read_updates: Option<tokio::sync::watch::Sender<u64>>,
     reads: BTreeMap<wes_core::flow::ProviderReadOrigin, provider_reads::ReadGrant>,
     read_probes: BTreeMap<wes_core::flow::ProviderReadOrigin, std::sync::Weak<()>>,
+    known_scopes: BTreeMap<wes_core::flow::ProviderReadOrigin, provider_reads::KnownScope>,
     resources: resources::Resources,
     restored: bool,
     lifetimes: BTreeMap<String, CancellationToken>,
@@ -69,6 +91,7 @@ struct State {
     namespace: Option<String>,
     transfers: BTreeMap<(String, String), Instant>,
     grants: BTreeMap<Scope, Grant>,
+    ended: BTreeMap<Scope, AccessEnd>,
     disabled: BTreeSet<String>,
     closed: bool,
 }
@@ -85,6 +108,9 @@ pub struct CredentialStatus {
     pub saved: BTreeSet<String>,
     pub persistence_supported: bool,
     pub grant_seconds: u64,
+    pub access: AccessStatus,
+    pub read_scopes: Vec<provider_reads::ReadScopeStatus>,
+    pub read_domain: Option<crate::provider_reads::ReadDomain>,
     pub enabled: bool,
 }
 impl Authority {
@@ -127,11 +153,32 @@ impl Authority {
                 state
                     .grants
                     .get(&scope)
-                    .map(|g| g.until.saturating_duration_since(Instant::now()).as_secs())
+                    .and_then(|g| g.until)
+                    .map(|at| at.saturating_duration_since(Instant::now()).as_secs())
                     .unwrap_or(0)
             } else {
                 0
             },
+            access: match state.grants.get(&scope).filter(|_| enabled) {
+                Some(g) if g.current(&self.1) => match g.lifetime {
+                    AccessLifetime::Timed { seconds } => AccessStatus::Timed { seconds },
+                    AccessLifetime::Session(_) => AccessStatus::Session,
+                },
+                Some(g) => AccessStatus::Ended {
+                    ended: if alive(g.until) {
+                        AccessEnd::Changed
+                    } else {
+                        AccessEnd::Expired
+                    },
+                },
+                None => state
+                    .ended
+                    .get(&scope)
+                    .map(|reason| AccessStatus::Ended { ended: *reason })
+                    .unwrap_or_default(),
+            },
+            read_scopes: self.read_scope_status(&state, &scope),
+            read_domain: None,
             enabled,
         })
     }
@@ -141,8 +188,11 @@ impl Authority {
         if let Ok(mut state) = self.0.write() {
             state.restored = true;
             state.resources = Default::default();
+            state.grants.clear();
+            state.ended.clear();
             state.cancel_lifetimes();
             state.reads.clear();
+            state.known_scopes.clear();
             state.read_changed();
         }
     }
@@ -254,25 +304,32 @@ impl Authority {
         &self,
         binding: &Binding,
         alias: &str,
-        lifetime: Duration,
+        lifetime: AccessLifetime,
     ) -> Result<(), CredentialError> {
-        if lifetime.is_zero() || lifetime > Duration::from_secs(3600) {
-            return Err(CredentialError::Unavailable);
-        }
+        let until = lifetime.deadline()?;
         let scope = scope(binding, alias)?;
         let mut state = self.0.write().map_err(|_| CredentialError::Unavailable)?;
         if !state.available(&scope.0) {
             return Err(CredentialError::Unavailable);
         }
-        state.grants.retain(|_, grant| grant.until > Instant::now());
+        state.grants.retain(|_, grant| alive(grant.until));
         if state.grants.len() >= 1024 && !state.grants.contains_key(&scope) {
             return Err(CredentialError::Capacity);
         }
+        state.ended.remove(&scope);
         state.grants.insert(
             scope.clone(),
             Grant {
                 identity: Arc::new(()),
-                until: Instant::now() + lifetime,
+                until,
+                lifetime,
+                material_generation: self.1.revision()?.0,
+                secrets: binding
+                    .import()
+                    .credential_refs()
+                    .values()
+                    .map(|r| Ok((r.clone(), self.1.lookup(r)?.as_ref().map(Arc::downgrade))))
+                    .collect::<Result<_, CredentialError>>()?,
                 references: binding
                     .import()
                     .credential_refs()
@@ -285,11 +342,27 @@ impl Authority {
         state.read_changed();
         Ok(())
     }
+    pub(crate) fn retain_bindings(&self, bindings: &BTreeSet<(String, Revision)>) {
+        if let Ok(mut state) = self.0.write() {
+            let removed = state
+                .grants
+                .keys()
+                .filter(|s| !bindings.contains(&(s.0.clone(), s.1)))
+                .cloned()
+                .collect::<Vec<_>>();
+            for scope in removed {
+                state.end_access(&scope, AccessEnd::Changed);
+            }
+            state
+                .reads
+                .retain(|_, g| bindings.contains(&(g.scope.0.clone(), g.scope.1)));
+            state.read_changed();
+        }
+    }
     pub fn revoke(&self, binding: &Binding, alias: &str) -> Result<(), CredentialError> {
         let scope = scope(binding, alias)?;
         let mut state = self.0.write().map_err(|_| CredentialError::Unavailable)?;
-        state.grants.remove(&scope);
-        state.reads.retain(|_, g| g.scope != scope);
+        state.end_access(&scope, AccessEnd::Revoked);
         state.read_changed();
         Ok(())
     }
@@ -305,7 +378,15 @@ impl Authority {
         if let Some(token) = state.lifetimes.remove(name) {
             token.cancel();
         }
-        state.grants.retain(|scope, _| scope.0 != name);
+        let scopes = state
+            .grants
+            .keys()
+            .filter(|s| s.0 == name)
+            .cloned()
+            .collect::<Vec<_>>();
+        for scope in scopes {
+            state.end_access(&scope, AccessEnd::Disabled);
+        }
         state.reads.retain(|_, g| g.scope.0 != name);
         state.read_changed();
         if let Some(namespace) = &state.namespace {
@@ -364,6 +445,7 @@ impl Authority {
             state.grants.clear();
             state.transfers.clear();
             state.reads.clear();
+            state.known_scopes.clear();
             state.read_changed();
         }
     }
@@ -449,7 +531,7 @@ impl Credentials for Scoped {
             .grants
             .get(&self.scope)
             .ok_or_else(|| CredentialError::AccessDenied(self.scope.2.clone()))?;
-        if grant.until <= Instant::now() {
+        if !grant.current(&self.authority.1) {
             return Err(CredentialError::AccessDenied(self.scope.2.clone()));
         }
         names
@@ -483,7 +565,7 @@ impl Credentials for Scoped {
             .grants
             .get(&self.scope)
             .ok_or_else(|| CredentialError::AccessDenied(self.scope.2.clone()))?;
-        if grant.until <= Instant::now() || !grant.references.contains(reference) {
+        if !grant.current(&self.authority.1) || !grant.references.contains(reference) {
             return Err(CredentialError::AccessDenied(self.scope.2.clone()));
         }
         self.authority.1.lookup(reference)
@@ -517,7 +599,7 @@ mod tests {
         let authority = Authority::default();
         let port = authority.credentials(&dev, "api").unwrap();
         authority
-            .grant(&dev, "api", Duration::from_secs(60))
+            .grant(&dev, "api", AccessLifetime::Timed { seconds: 60 })
             .unwrap();
         authority
             .0
@@ -527,7 +609,7 @@ mod tests {
             .values_mut()
             .next()
             .unwrap()
-            .until = Instant::now();
+            .until = Some(Instant::now());
         assert_eq!(
             port.lookup("key").unwrap_err(),
             CredentialError::AccessDenied("api".into())
@@ -564,7 +646,7 @@ mod tests {
             CredentialError::AccessDenied("api".into())
         );
         authority
-            .grant(&dev, "api", Duration::from_secs(60))
+            .grant(&dev, "api", AccessLifetime::Timed { seconds: 60 })
             .unwrap();
         let old = a.lookup("key").unwrap().unwrap();
         assert!(b.lookup("key").is_err());
@@ -576,14 +658,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(old.expose_secret(), "qa-one");
+        assert!(a.lookup("key").is_err());
+        authority
+            .grant(&dev, "api", AccessLifetime::Timed { seconds: 60 })
+            .unwrap();
         assert_eq!(a.lookup("key").unwrap().unwrap().expose_secret(), "qa-two");
         authority.revoke(&dev, "api").unwrap();
         assert!(a.lookup("key").is_err());
         authority
-            .grant(&dev, "api", Duration::from_secs(60))
+            .grant(&dev, "api", AccessLifetime::Timed { seconds: 60 })
             .unwrap();
         authority.forget("dev/key").unwrap();
-        assert!(a.lookup("key").unwrap().is_none());
+        assert!(a.lookup("key").is_err());
         authority.disable("dev").unwrap();
         assert!(!authority.available("dev"));
         assert!(authority.available("prod"));
