@@ -166,6 +166,71 @@ struct Managed {
     recorder: wes_engine::recording::Recorder,
     writer: wes_engine::recording::RecorderTask,
 }
+
+#[tokio::test]
+async fn configured_arguments_reach_the_session_handoff_and_native_resource_boundary_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let mut doc = document(root.path(), "fixed-hold", true, "Int");
+    doc["types"] = serde_json::json!({"Scope":{"base":"Record","fields":{"name":"Text"}}});
+    doc["operations"][0]["parameters"] = serde_json::json!([{"name":"scope","type":"Scope"}]);
+    doc["operations"][0]["fixed_arguments"] =
+        serde_json::json!({"scope":{"name":"synthetic-resource"}});
+    doc["operations"][0]["exclusive"] = serde_json::json!([{"namespace":format!("synthetic.{}",uuid::Uuid::new_v4()),"fields":[["scope","name"]]}]);
+    let product = unbound(
+        super::super::schema::compile(&doc.to_string(), None).unwrap(),
+        ProcessConfig::default(),
+    )
+    .unwrap();
+    assert!(
+        product
+            .description()
+            .capabilities()
+            .next()
+            .unwrap()
+            .parameters
+            .is_empty()
+    );
+    let start = |call: Call| {
+        streams::spawn(
+            call,
+            product.streams().unwrap().clone(),
+            Default::default(),
+            Default::default(),
+            CancellationToken::new(),
+        )
+    };
+    let mut overridden = call(&product);
+    overridden.arguments.insert(
+        "scope".into(),
+        Value::new(
+            Shape::Unknown,
+            Data::Record(indexmap::IndexMap::from([(
+                "name".into(),
+                Data::Text("different".into()),
+            )])),
+            Default::default(),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        start(overridden),
+        Err(streams::StreamError::InvalidResource)
+    ));
+    assert!(!root.path().join("attempts").exists());
+    let invocation = call(&product);
+    let run = invocation.run.clone();
+    let (handle, task) = start(invocation).unwrap();
+    handle
+        .wait_ready(&run, Duration::from_secs(5), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        start(call(&product)),
+        Err(streams::StreamError::ResourceBusy)
+    ));
+    task.shutdown().await.unwrap();
+    one_joined_attempt(root.path());
+}
 impl Managed {
     async fn new(mode: &str, streaming: bool) -> Self {
         Self::new_with_policy(mode, streaming, false).await

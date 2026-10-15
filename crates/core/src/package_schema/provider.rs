@@ -68,6 +68,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
                 ("success_codes", "provider.success-codes", false),
                 ("streaming", "bool", false),
                 ("control", "provider.control", false),
+                ("fixed_arguments", "provider.fixed-arguments", false),
                 ("exclusive", "provider.exclusive-list", false),
                 ("byte_input", "provider.byte-input", false),
                 ("recording", "provider.recording", false),
@@ -171,6 +172,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
     d.insert("provider.field-paths", list("provider.text-list"));
 
     d.insert("provider.exclusive", hint(object(&[("namespace", "text", true),("fields", "provider.field-paths", true)]), "Streaming session only; at most four distinct resources. namespace is a bounded literal physical-resource namespace shared by aliases. fields has 1–8 bounded static paths through required records ending at required Text parameters. Captured argument values form exact lexical resource keys; reservation is atomic and held until physical producer/controller join. This grants no invocation or read authority."));
+    d.insert("provider.fixed-arguments", hint(named("datum"), "Defaults to an empty map. Captured typed constants for declared parameters, at most 256 entries, 65536 encoded bytes and 10000 decoding nodes. Validate exact native literals against captured contracts. Omit fixed fields from caller parameters and refuse overrides. Fixed native byte-input sources are forbidden. Import/reconstruction never rereads mutable configuration."));
 }
 
 pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)> {

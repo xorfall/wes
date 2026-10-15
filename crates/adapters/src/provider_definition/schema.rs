@@ -49,6 +49,8 @@ struct OperationDoc {
     byte_input: Option<ByteInputDoc>,
     #[serde(default, deserialize_with = "exclusive_declaration")]
     exclusive: Option<Vec<ExclusiveDoc>>,
+    #[serde(default = "empty_object")]
+    fixed_arguments: Json,
 }
 fn exclusive_declaration<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -417,12 +419,19 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                     "parameters require materialized contracts",
                 ));
             }
-            cap.parameters.push(
-                Parameter::new(&parameter.name, contract.shape(), parameter.required)
-                    .constrained_by(&contract),
-            );
+            if !op
+                .fixed_arguments
+                .as_object()
+                .is_some_and(|fields| fields.contains_key(&parameter.name))
+            {
+                cap.parameters.push(
+                    Parameter::new(&parameter.name, contract.shape(), parameter.required)
+                        .constrained_by(&contract),
+                );
+            }
             params.push((parameter.name, contract, parameter.required));
         }
+        let fixed_arguments = super::fixed_arguments::compile(&op.fixed_arguments, &params)?;
         let byte_input = op.byte_input.map(|input| {
             if session.is_some() || op.streaming || input.max_bytes == 0 || input.max_bytes > wes_budgets::get("storage.acquisition.bytes") {
                 return Err(DefinitionError::new("byte_input requires a finite process and a bounded byte ceiling"));
@@ -437,6 +446,9 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             }
             if op.argv.iter().any(|a|matches!(a,Argument::Parameter(fields) if fields.parameter==input.parameter)) {
                 return Err(DefinitionError::new("byte_input cannot also be encoded in argv"));
+            }
+            if fixed_arguments.contains_key(&input.parameter) {
+                return Err(DefinitionError::new("byte_input requires a captured native source, not a configured literal"));
             }
             Ok(wes_engine::byte_input::ByteInputSpec {parameter:input.parameter, maximum:input.max_bytes})
         }).transpose()?;
@@ -598,6 +610,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             recording,
             byte_input,
             exclusive,
+            fixed_arguments,
         });
     }
     let description = ProviderDescription::new(

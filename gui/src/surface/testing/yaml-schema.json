@@ -1299,6 +1299,10 @@
           "schema": "provider.control",
           "required": false
         },
+        "fixed_arguments": {
+          "schema": "provider.fixed-arguments",
+          "required": false
+        },
         "exclusive": {
           "schema": "provider.exclusive-list",
           "required": false
@@ -1518,6 +1522,11 @@
         }
       },
       "hint": "Streaming session only; at most four distinct resources. namespace is a bounded literal physical-resource namespace shared by aliases. fields has 1–8 bounded static paths through required records ending at required Text parameters. Captured argument values form exact lexical resource keys; reservation is atomic and held until physical producer/controller join. This grants no invocation or read authority."
+    },
+    "provider.fixed-arguments": {
+      "kind": "map",
+      "values": "datum",
+      "hint": "Defaults to an empty map. Captured typed constants for declared parameters, at most 256 entries, 65536 encoded bytes and 10000 decoding nodes. Validate exact native literals against captured contracts. Omit fixed fields from caller parameters and refuse overrides. Fixed native byte-input sources are forbidden. Import/reconstruction never rereads mutable configuration."
     }
   },
   "typeConstructors": [

@@ -1,5 +1,6 @@
 //! Declarative executable providers. Compilation, target execution and output decoding are
 //! separate boundaries; definitions contain no shell programs or ambient provider references.
+mod fixed_arguments;
 mod importer;
 mod invocation;
 mod record_bytes;
@@ -36,6 +37,7 @@ struct Operation {
     recording: Option<Recording>,
     byte_input: Option<wes_engine::byte_input::ByteInputSpec>,
     exclusive: Vec<Exclusive>,
+    fixed_arguments: indexmap::IndexMap<String, wes_core::Value>,
 }
 #[derive(Clone)]
 struct Exclusive {

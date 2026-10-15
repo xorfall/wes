@@ -94,6 +94,156 @@ fn exclusive_resources_require_strict_bounded_required_text_paths_on_streaming_s
 }
 
 #[test]
+fn fixed_arguments_are_typed_bounded_and_absent_from_caller_parameters() {
+    let mut doc = document();
+    doc["operations"][0]["fixed_arguments"] =
+        serde_json::json!({"id":9007199254740993i64,"verbose":false});
+    let compiled = schema::compile(&doc.to_string(), None).unwrap();
+    let op = &compiled.operations[0];
+    assert_eq!(
+        op.fixed_arguments["id"].data(),
+        &Data::Int(9007199254740993)
+    );
+    let cap = compiled.description.capabilities().next().unwrap();
+    assert!(cap.parameter("id").is_none());
+    assert!(cap.parameter("verbose").is_none());
+    assert!(cap.parameter("labels").is_some());
+    for literal in [
+        serde_json::Value::Null,
+        serde_json::json!([]),
+        serde_json::json!(true),
+        serde_json::json!({"missing":1}),
+        serde_json::json!({"id":0}),
+        serde_json::json!({"id":"1"}),
+        serde_json::json!({"labels":[1]}),
+        serde_json::json!({"labels":["x".repeat(65536)]}),
+        serde_json::json!({"labels":vec![""; 10000]}),
+    ] {
+        let mut invalid = doc.clone();
+        invalid["operations"][0]["fixed_arguments"] = literal;
+        assert!(schema::compile(&invalid.to_string(), None).is_err());
+    }
+    let bytes = serde_json::json!({"version":1,"provider":"input","backend":{"kind":"process","bin":"/synthetic/input"},"operations":[{"path":["inspect"],"parameters":[{"name":"source","type":"Bytes"}],"byte_input":{"parameter":"source","max_bytes":1048576},"fixed_arguments":{"source":"YQ=="},"argv":[],"result":{"format":"json","type":"Text"}}]});
+    assert!(schema::compile(&bytes.to_string(), None).is_err());
+}
+
+#[test]
+fn fixed_literal_decoding_keeps_nullable_temporal_and_binary_contract_context() {
+    let mut doc = document();
+    doc["operations"][0]["parameters"] = serde_json::json!([
+        {"name":"duration","type":"Duration"},{"name":"at","type":"Instant"},
+        {"name":"optional","type":"Option<Int>"},{"name":"bytes","type":"Bytes"}]);
+    doc["operations"][0]["argv"] = serde_json::json!([
+        {"parameter":"duration"},{"parameter":"at"},{"parameter":"optional","encoding":"json"},{"parameter":"bytes","encoding":"json"}]);
+    doc["operations"][0]["fixed_arguments"] = serde_json::json!({"duration":"PT2S","at":"2031-01-02T03:04:05Z","optional":17,"bytes":"YQ=="});
+    let compiled = schema::compile(&doc.to_string(), None).unwrap();
+    let values = &compiled.operations[0].fixed_arguments;
+    assert!(matches!(values["duration"].data(), Data::Duration(_)));
+    assert!(matches!(values["at"].data(), Data::Instant(_)));
+    assert_eq!(
+        values["optional"].data(),
+        &Data::Option(Some(Box::new(Data::Int(17))))
+    );
+    assert_eq!(values["bytes"].data(), &Data::Bytes(b"a".as_slice().into()));
+    doc["operations"][0]["fixed_arguments"]["bytes"] = "Zh==".into();
+    assert!(schema::compile(&doc.to_string(), None).is_err());
+}
+
+#[tokio::test]
+async fn process_fixed_arguments_join_caller_policy_and_refuse_overrides_before_backend_entry() {
+    let mut doc = document();
+    doc["operations"][0]["fixed_arguments"] = serde_json::json!({"id":17,"verbose":true});
+    doc["operations"][0]["result"] = serde_json::json!({"format":"text"});
+    let (product, entered) = product(&doc, Ok(output(0, b"fixed")), Default::default());
+    assert_eq!(
+        error_code(
+            product
+                .invoker()
+                .invoke(
+                    call(&product, vec![("id", Data::Int(99))]),
+                    CancellationToken::new()
+                )
+                .await
+        ),
+        "PRV001"
+    );
+    assert!(entered.lock().unwrap().is_empty());
+    let mut invocation = call(
+        &product,
+        vec![("labels", Data::List(vec![Data::Text("tag".into())]))],
+    );
+    let labels = &invocation.arguments["labels"];
+    invocation.arguments["labels"] = labels.with_provenance(
+        labels
+            .provenance()
+            .clone()
+            .with_policy(&wes_core::flow::FlowPolicy::default().private()),
+    );
+    product
+        .invoker()
+        .invoke(invocation, CancellationToken::new())
+        .await
+        .unwrap();
+    let entered = entered.lock().unwrap();
+    assert_eq!(entered.len(), 1);
+    assert_eq!(
+        entered[0].arguments["args"].data(),
+        &Data::List(
+            ["view", "17", "--label", "tag", "--verbose"]
+                .into_iter()
+                .map(|s| Data::Text(s.into()))
+                .collect()
+        )
+    );
+    assert!(
+        entered[0].arguments["args"]
+            .provenance()
+            .policy()
+            .is_private()
+    );
+}
+
+#[test]
+fn frozen_import_keeps_configured_literals_when_source_content_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut doc = document();
+    doc["backend"]["bin"] = std::env::current_exe().unwrap().to_str().unwrap().into();
+    doc["operations"][0]["fixed_arguments"] = serde_json::json!({"id":17});
+    std::fs::write(root.path().join("provider.yaml"), doc.to_string()).unwrap();
+    let importer = ProviderImporter::new(root.path(), Default::default()).unwrap();
+    let request = ImportRequest::new(
+        "provider".into(),
+        None,
+        [(
+            "file".into(),
+            Value::new(
+                Shape::Unknown,
+                Data::Text("provider.yaml".into()),
+                Default::default(),
+            )
+            .unwrap(),
+        )]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap();
+    let recipe = importer.capture(&request, 256 * 1024).unwrap();
+    doc["operations"][0]["fixed_arguments"]["id"] = 99.into();
+    std::fs::write(root.path().join("provider.yaml"), doc.to_string()).unwrap();
+    let (definition, _) = importer::reconstruct(recipe.source(), false, None).unwrap();
+    assert_eq!(
+        definition.operations[0].fixed_arguments["id"].data(),
+        &Data::Int(17)
+    );
+    let new_recipe = importer.capture(&request, 256 * 1024).unwrap();
+    let (definition, _) = importer::reconstruct(new_recipe.source(), false, None).unwrap();
+    assert_eq!(
+        definition.operations[0].fixed_arguments["id"].data(),
+        &Data::Int(99)
+    );
+}
+
+#[test]
 fn checked_in_definitions_compile_without_probing_their_executables() {
     for source in [include_str!(
         "../../../../examples/declarative-providers/demo.yaml"

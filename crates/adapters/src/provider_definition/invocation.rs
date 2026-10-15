@@ -105,15 +105,11 @@ impl MappedInvoker {
         call: &Call,
         token: &CancellationToken,
     ) -> Result<IndexMap<String, Value>, InvocationError> {
-        if call
-            .arguments
-            .keys()
-            .any(|name| !op.parameters.iter().any(|(n, _, _)| n == name))
-        {
-            return Err(failed("PRV001", "undeclared provider argument"));
-        }
+        let arguments = op
+            .bind_arguments(&call.arguments)
+            .map_err(|message| failed("PRV001", message))?;
         for (name, contract, required) in &op.parameters {
-            match call.arguments.get(name) {
+            match arguments.get(name) {
                 None if *required => {
                     return Err(failed(
                         "PRV001",
@@ -170,7 +166,7 @@ impl MappedInvoker {
                     prefix,
                     encoding,
                 }) => {
-                    let Some(value) = call.arguments.get(parameter) else {
+                    let Some(value) = arguments.get(parameter) else {
                         continue;
                     };
                     let data = match value.data() {
@@ -238,7 +234,7 @@ impl MappedInvoker {
                 }
             }
         }
-        let provenance = Provenance::agreed_by(call.arguments.values().map(Value::provenance));
+        let provenance = Provenance::agreed_by(arguments.values().map(Value::provenance));
         let value = Value::new(
             Shape::List(Box::new(Shape::Primitive(wes_core::Primitive::Text))),
             Data::List(argv),
