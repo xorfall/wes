@@ -76,6 +76,7 @@ else:
         send({"kind": "event", "sequence": 1, "data": 7})
         credit = read()
         assert credit["session"] == nonce and credit["message"] == {"kind": "credit", "count": 1}
+        os.close(0)  # A valid peer may finish without reading the final replenishment credit.
         send({"kind": "event", "sequence": 2, "data": 8})
         send({"kind": "end"})
     elif mode == "hold":
