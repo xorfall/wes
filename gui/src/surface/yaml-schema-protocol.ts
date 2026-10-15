@@ -16,10 +16,12 @@ export type SchemaNode = Metadata & (
   | { readonly kind: "union"; readonly variants: readonly string[] }
   | { readonly kind: "discriminated"; readonly field: string; readonly variants: Readonly<Record<string, string>> }
 );
+export const YAML_CONTEXTS = ["env", "types", "provider"] as const;
+export type YamlContext = typeof YAML_CONTEXTS[number];
 export interface YamlSchema {
   readonly language: "yaml";
   readonly version: 1;
-  readonly roots: Readonly<Record<"env" | "types", string>>;
+  readonly roots: Readonly<Record<YamlContext, string>>;
   readonly definitions: Readonly<Record<string, SchemaNode>>;
   readonly typeConstructors: readonly { readonly name: string; readonly parameters: readonly string[] }[];
   readonly constraints?: Readonly<Record<string, { readonly description: string; readonly validation: "semantic" }>>;
@@ -83,7 +85,9 @@ export function parseYamlSchema(value: unknown): YamlSchema {
     edges.set(id, children);
   }
   const roots = root.roots as Record<string, unknown>;
-  for (const context of ["env", "types"]) valid(string(roots[context]) && edges.has(roots[context] as string));
+  for (const context of YAML_CONTEXTS) valid(string(roots[context]) && edges.has(roots[context] as string));
+  valid(Object.keys(roots).length <= 4096);
+  for (const [name, id] of Object.entries(roots)) valid(string(name) && string(id) && edges.has(id));
   // This protocol describes finite declaration shapes. Workspace recursive types
   // are names in TypeExpression values, never recursive schema object graphs.
   const visited = new Set<string>(), active = new Set<string>();

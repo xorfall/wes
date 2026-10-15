@@ -1,7 +1,6 @@
 /** Tolerant YAML location reader driven exclusively by the engine's schema graph. */
-import type { YamlSchema } from "./yaml-schema-protocol";
-export type { YamlSchema } from "./yaml-schema-protocol";
-export type YamlContext = "env" | "types";
+import type { YamlContext, YamlSchema } from "./yaml-schema-protocol";
+export type { YamlContext, YamlSchema } from "./yaml-schema-protocol";
 export interface Shape {
   readonly fields?: Readonly<Record<string, readonly string[]>>;
   readonly entry?: readonly string[];

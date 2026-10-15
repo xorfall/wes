@@ -6,7 +6,7 @@ import { highlightYaml } from "./yaml-highlight";
 import { newlineAt } from "./yaml-mode";
 
 const synthetic = (): YamlSchema => ({
-  language: "yaml", version: 1, roots: { env: "root", types: "root" },
+  language: "yaml", version: 1, roots: { env: "root", types: "root", provider: "root" },
   typeConstructors: [{ name: "Future", parameters: ["T"] }],
   definitions: {
     root: { kind: "object", fields: {
@@ -50,6 +50,8 @@ describe("the backend schema protocol", () => {
     expect(() => parseYamlSchema({ ...synthetic(), definitions: { root: { kind: "list", items: "root" } } })).toThrow();
     expect(() => parseYamlSchema({ ...synthetic(), typeConstructors: [{ name: "Future", parameters: null }] })).toThrow();
     expect(() => parseYamlSchema(null)).toThrow();
+    expect(() => parseYamlSchema({ ...synthetic(), roots: { ...synthetic().roots, provider: "missing" } })).toThrow();
+    expect(() => parseYamlSchema({ ...synthetic(), roots: { ...synthetic().roots, extra: "missing" } })).toThrow();
     expect(() => parseYamlSchema({ ...synthetic(), definitions: { root: { kind: "scalar", type: "Text", choices: [""] } } })).not.toThrow();
   });
 

@@ -3,7 +3,8 @@
   "version": 1,
   "roots": {
     "env": "env.package",
-    "types": "contract.package"
+    "types": "contract.package",
+    "provider": "provider.document"
   },
   "definitions": {
     "text": {
@@ -1164,6 +1165,284 @@
       "constraints": [
         "iterator-input"
       ]
+    },
+    "provider.document": {
+      "kind": "object",
+      "fields": {
+        "version": {
+          "schema": "version",
+          "required": true
+        },
+        "provider": {
+          "schema": "text",
+          "required": true
+        },
+        "types": {
+          "schema": "contract.types",
+          "required": false
+        },
+        "backend": {
+          "schema": "provider.backend",
+          "required": true
+        },
+        "operations": {
+          "schema": "provider.operations",
+          "required": true
+        },
+        "read_access": {
+          "schema": "provider.read-access",
+          "required": false
+        }
+      },
+      "constraints": [
+        "provider-definition"
+      ]
+    },
+    "provider.backend": {
+      "kind": "discriminated",
+      "field": "kind",
+      "variants": {
+        "process": "provider.backend.process",
+        "session": "provider.backend.session"
+      }
+    },
+    "provider.kind.process": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "process"
+      ]
+    },
+    "provider.kind.session": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "session"
+      ]
+    },
+    "provider.backend.process": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "provider.kind.process",
+          "required": true
+        },
+        "bin": {
+          "schema": "text",
+          "required": true
+        }
+      },
+      "constraints": [
+        "provider-process"
+      ]
+    },
+    "provider.backend.session": {
+      "kind": "object",
+      "fields": {
+        "kind": {
+          "schema": "provider.kind.session",
+          "required": true
+        },
+        "bin": {
+          "schema": "text",
+          "required": true
+        },
+        "credentials": {
+          "schema": "provider.text-list",
+          "required": false
+        }
+      },
+      "constraints": [
+        "provider-session"
+      ]
+    },
+    "provider.text-list": {
+      "kind": "list",
+      "items": "text"
+    },
+    "provider.operations": {
+      "kind": "list",
+      "items": "provider.operation"
+    },
+    "provider.operation": {
+      "kind": "object",
+      "fields": {
+        "path": {
+          "schema": "provider.text-list",
+          "required": true
+        },
+        "summary": {
+          "schema": "text",
+          "required": false
+        },
+        "parameters": {
+          "schema": "provider.parameters",
+          "required": false
+        },
+        "argv": {
+          "schema": "provider.argv",
+          "required": true
+        },
+        "result": {
+          "schema": "provider.result",
+          "required": true
+        },
+        "success_codes": {
+          "schema": "provider.success-codes",
+          "required": false
+        },
+        "streaming": {
+          "schema": "bool",
+          "required": false
+        },
+        "control": {
+          "schema": "provider.control",
+          "required": false
+        }
+      },
+      "constraints": [
+        "provider-operation"
+      ]
+    },
+    "provider.parameters": {
+      "kind": "list",
+      "items": "provider.parameter"
+    },
+    "provider.parameter": {
+      "kind": "object",
+      "fields": {
+        "name": {
+          "schema": "text",
+          "required": true
+        },
+        "type": {
+          "schema": "type",
+          "required": true
+        },
+        "required": {
+          "schema": "bool",
+          "required": false
+        }
+      },
+      "hint": "required defaults to true; types must resolve to materialized contracts."
+    },
+    "provider.argv": {
+      "kind": "list",
+      "items": "provider.argument"
+    },
+    "provider.argument": {
+      "kind": "union",
+      "variants": [
+        "text",
+        "provider.argument.parameter"
+      ]
+    },
+    "provider.argument.parameter": {
+      "kind": "object",
+      "fields": {
+        "parameter": {
+          "schema": "text",
+          "required": true
+        },
+        "prefix": {
+          "schema": "provider.text-list",
+          "required": false
+        },
+        "encoding": {
+          "schema": "provider.encoding",
+          "required": false
+        }
+      },
+      "constraints": [
+        "provider-argv"
+      ]
+    },
+    "provider.encoding": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "scalar",
+        "spread",
+        "flag",
+        "json"
+      ]
+    },
+    "provider.success-codes": {
+      "kind": "list",
+      "items": "int",
+      "hint": "Defaults to [0]."
+    },
+    "provider.result": {
+      "kind": "object",
+      "fields": {
+        "format": {
+          "schema": "provider.output-format",
+          "required": true
+        },
+        "type": {
+          "schema": "type",
+          "required": false
+        }
+      },
+      "constraints": [
+        "provider-result"
+      ]
+    },
+    "provider.output-format": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "json",
+        "text",
+        "bytes",
+        "process"
+      ]
+    },
+    "provider.control": {
+      "kind": "object",
+      "fields": {
+        "input": {
+          "schema": "type",
+          "required": true
+        },
+        "output": {
+          "schema": "type",
+          "required": true
+        },
+        "output_policy": {
+          "schema": "provider.output-policy",
+          "required": false
+        }
+      },
+      "constraints": [
+        "provider-control"
+      ]
+    },
+    "provider.output-policy": {
+      "kind": "scalar",
+      "type": "Text",
+      "choices": [
+        "public",
+        "private",
+        "confidential-temporary",
+        "confidential"
+      ]
+    },
+    "provider.read-access": {
+      "kind": "object",
+      "fields": {
+        "scope": {
+          "schema": "provider.text-list",
+          "required": true
+        },
+        "revalidate": {
+          "schema": "provider.text-list",
+          "required": true
+        }
+      },
+      "constraints": [
+        "provider-read-access"
+      ]
     }
   },
   "typeConstructors": [
@@ -1245,6 +1524,38 @@
     },
     "iterator-input": {
       "description": "Iterator mode must match the resolved input shape; extraction patterns and limits are checked by core.",
+      "validation": "semantic"
+    },
+    "provider-definition": {
+      "description": "Version 1; provider and operation/parameter names are bounded identifiers. Bounded strict YAML source and 1–256 distinct operations. Types default to an empty mapping and resolve within this document. Import captures declarations without launching the executable; operations are unsafe and require ordinary execution admission.",
+      "validation": "semantic"
+    },
+    "provider-process": {
+      "description": "bin is an explicit executable path; relative paths resolve from the definition directory. Every parameter needs an argv mapping. Process targets use the captured environment execution boundary.",
+      "validation": "semantic"
+    },
+    "provider-session": {
+      "description": "Local target only. credentials defaults to []; at most 16 distinct identifier slots (no hyphens), with material supplied through the native environment form. Operations require JSON results, literal argv and success_codes [0]. Versioned bounded duplex frames carry calls, readiness, events, controls and finite outcomes; import never starts a session.",
+      "validation": "semantic"
+    },
+    "provider-operation": {
+      "description": "path has 1–16 identifier segments; summary defaults to empty (max 4096 bytes). parameters defaults to [] (max 256 distinct names). argv has fewer than 1024 members; success_codes defaults to [0] (1–256 unsigned 32-bit codes). streaming defaults to false and requires a session backend. Resolved input/output contracts must be materialized.",
+      "validation": "semantic"
+    },
+    "provider-argv": {
+      "description": "A Text is one literal argument, never a shell program. Parameter mappings default prefix to [] and encoding to scalar. scalar accepts scalar types except Bytes; spread requires a list of those scalars; flag requires Bool and a nonempty prefix; json accepts materialized values. Optional missing parameters omit their mapping. Arguments/prefixes cannot contain NUL; final size/count budgets still apply.",
+      "validation": "semantic"
+    },
+    "provider-result": {
+      "description": "json requires an explicit type. text defaults to Text and bytes to Bytes; overrides must retain that shape. process has the fixed ProcessOutput contract and forbids type. JSON Bytes fields use canonical base64 only where the captured contract declares Bytes.",
+      "validation": "semantic"
+    },
+    "provider-control": {
+      "description": "Requires streaming on a session backend. input and output resolve to materialized contracts. output_policy defaults to public; native environment and input restrictions still apply. Controls belong to one admitted live connection; uncertain external outcomes must not be automatically replayed.",
+      "validation": "semantic"
+    },
+    "provider-read-access": {
+      "description": "Opt-in managed-environment read domain. scope contains 1–16 distinct required Text parameters present on every operation. revalidate names one finite Bool operation whose only parameters are that scope. Only explicit native revalidation returning true opens captured reads. Expiry/revoke/material or binding changes close reads; retained bytes, re-enabling and new grants cannot revive old work. Import never probes.",
       "validation": "semantic"
     }
   }

@@ -11,6 +11,15 @@ const enter = (source: string, context: YamlContext = "env") => {
 };
 
 describe("context-specific YAML package completion", () => {
+  it("uses the published provider grammar for backend choices and nested operation fields", () => {
+    expect(complete("", "provider")).toEqual(["version", "provider", "types", "backend", "operations", "read_access"]);
+    expect(complete("backend:\n  kind: ", "provider")).toEqual(["process", "session"]);
+    expect(complete("backend:\n  kind: session\n  c", "provider")).toEqual(["credentials"]);
+    expect(complete("backend:\n  kind: process\n  c", "provider")).toEqual([]);
+    expect(complete("operations:\n  - result:\n      format: ", "provider")).toEqual(["json", "text", "bytes", "process"]);
+    expect(complete("operations:\n  - control:\n      output_policy: ", "provider")).toEqual(["public", "private", "confidential-temporary", "confidential"]);
+    expect(complete("read_access:\n  r", "provider")).toEqual(["revalidate"]);
+  });
   it("recognizes package after version in the environment buffer", () => {
     expect(complete("version: 1\npa")).toEqual(["package"]);
     expect(complete("version: 1\n")).toEqual(["package", "targets", "environments"]);
