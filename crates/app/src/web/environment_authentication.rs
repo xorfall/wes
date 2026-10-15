@@ -33,6 +33,7 @@ enum Action {
         environment: String,
         revision: String,
         provider: String,
+        lifetime: wes_engine::environments::AccessLifetime,
     },
     Revoke {
         environment: String,
@@ -105,6 +106,13 @@ pub(super) async fn change(Scoped(shared): Scoped, request: Request) -> Response
             return (StatusCode::BAD_REQUEST, "Invalid authentication request.").into_response();
         }
     };
+    if matches!(&action, Action::Grant { lifetime, .. } if lifetime.deadline().is_err()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid access duration; choose whole minutes from 1 minute to 24 hours, or session.",
+        )
+            .into_response();
+    }
     let Ok(permit) = shared.queries.clone().try_acquire_owned() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -117,7 +125,7 @@ pub(super) async fn change(Scoped(shared): Scoped, request: Request) -> Response
                 let (environment,revision,provider,command)=match action {
                     Action::Supply {environment,revision,provider,slot,value,remember}=>(environment,revision,provider,ProviderAuthorityCommand::SupplyWithPersistence{slot,value:Arc::new(wes_engine::credentials::SecretString::from(value)),remember}),
                     Action::Forget {environment,revision,provider,slot}=>(environment,revision,provider,ProviderAuthorityCommand::Forget{slot}),
-                    Action::Grant {environment,revision,provider}=>(environment,revision,provider,ProviderAuthorityCommand::Grant),
+                    Action::Grant {environment,revision,provider,lifetime}=>(environment,revision,provider,ProviderAuthorityCommand::Grant { lifetime }),
                     Action::Revoke {environment,revision,provider}=>(environment,revision,provider,ProviderAuthorityCommand::Revoke),
                     Action::Enable {environment,revision,provider}=>(environment,revision,provider,ProviderAuthorityCommand::Enable),
                     Action::Configure {..}=>unreachable!(),
@@ -184,6 +192,8 @@ async fn report(current: &crate::CurrentSession) -> Result<Value, String> {
     let generation = current.generation.clone();
     tokio::task::spawn_blocking(move || {
         let mut providers = Vec::new();
+        let mut scope_bytes = 0usize;
+        let mut scope_count = 0usize;
         for env in state {
             for (alias, import) in env.environment.imports() {
                 let metadata = if let Some(spec) = specs.iter().find(|spec| {
@@ -199,15 +209,24 @@ async fn report(current: &crate::CurrentSession) -> Result<Value, String> {
                 } else {
                     continue;
                 };
+                let status = &env.providers[alias];
                 if metadata.as_array().is_none_or(|ops| ops.is_empty())
-                    && import.credential_refs().is_empty()
+                    && import.credential_refs().is_empty() && status.read_domain.is_none()
                 {
                     continue;
                 }
-                let status = &env.providers[alias];
+                let mut scopes = Vec::new();
+                let mut omitted = 0usize;
+                for scope in &status.read_scopes {
+                    let encoded = serde_json::to_value(scope).map_err(|_| "Scope inspection unavailable")?;
+                    let charge = encoded.to_string().len();
+                    if scope_count < 64 && charge <= (128 * 1024usize).saturating_sub(scope_bytes) {
+                        scope_bytes += charge; scope_count += 1; scopes.push(encoded);
+                    } else { omitted += 1; }
+                }
                 providers.push(json!({"environment":env.environment.name(),"revision":env.environment.revision().to_string(),"provider":alias,"operations":metadata,
                     "credentials":import.credential_refs().iter().map(|(slot,reference)|json!({"slot":slot,"reference":reference,"present":status.present.contains(slot),"saved":status.saved.contains(slot)})).collect::<Vec<_>>(),
-                    "persistenceSupported":status.persistence_supported,"enabled":status.enabled,"grantSeconds":status.grant_seconds}));
+                    "persistenceSupported":status.persistence_supported,"enabled":status.enabled,"grantSeconds":status.grant_seconds,"access":status.access,"readScopes":scopes,"readScopesOmitted":omitted,"readDomain":status.read_domain.as_ref().map(|d|json!({"scope":d.scope,"revalidate":d.revalidate})),"lifetimes":{"presets":[300,900,3600,14400],"minSeconds":60,"maxSeconds":86400,"session":true}}));
             }
         }
         Ok(json!({"workspace":workspace,"generation":generation,"providers":providers}))

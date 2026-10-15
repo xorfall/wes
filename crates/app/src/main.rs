@@ -238,6 +238,7 @@ async fn run(mut args: Arguments) -> Result<bool, Error> {
             for change in plan.changes() { eprintln!("[environment plan] {change}"); }
             session.apply_environments(plan).await?;
         }
+        let mut initial_grant = None;
         if let Some(name) = args.environment {
             let session = handle.current()?.session;
             let revisions = session.environment_revisions().await?;
@@ -248,7 +249,7 @@ async fn run(mut args: Arguments) -> Result<bool, Error> {
                 session.submit(SourceInput::new(uuid::Uuid::new_v4().to_string(), format!(":env enable \"{name}\""))?).await?;
             }
             if let Some(provider) = args.grant_provider {
-                session.environment_authority(wes_engine::session::EnvironmentAuthorityCommand::Grant { environment: name.clone(), revision, provider, seconds: 300 }).await?;
+                initial_grant = Some(wes_engine::session::EnvironmentAuthorityCommand::Grant { environment: name.clone(), revision, provider, seconds: 300 });
             }
             let context = wes_core::environments::EnvironmentContext { selected: Some(name), revisions };
             scenario_context = Some(context.clone());
@@ -269,6 +270,9 @@ async fn run(mut args: Arguments) -> Result<bool, Error> {
                 session.environment_authority(wes_engine::session::EnvironmentAuthorityCommand::Supply { reference, value: Arc::new(wes_engine::credentials::SecretString::from(value)) }).await?;
             }
         }
+        // Initial material must precede the user's explicit startup grant. Replacing credentials
+        // revokes previous grants; no later rotation is automatically re-authorized.
+        if let Some(grant) = initial_grant { handle.current()?.session.environment_authority(grant).await?; }
         if let Some((_, scenario)) = scenario_file {
             let session = handle.current()?.session;
             let cancel = wes_engine::driver::CancellationToken::new();

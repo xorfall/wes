@@ -11,6 +11,14 @@
   border-top: var(--stroke-thin) solid var(--line);
 }
 .wes-terminal .env-setup p { margin: 0; }
+/*
+ * Access controls: the providers table is a setup form, not output. Its own rows box drops the generic
+ * output height so an open setup grows the page/pane, which scrolls as usual; the table still scrolls
+ * sideways. Only this table's box, never a table nested in a setup or any other data table.
+ */
+.wes-terminal .env-setup > .value-table-block > .value-table-frame > .value-table-scroll { max-height: none; overflow-x: auto; overflow-y: hidden; }
+/* An open setup reflows inside the visible table width: labels and controls wrap, never widen the pane. */
+.wes-terminal .env-setup .table-detail-width { white-space: normal; min-width: 0; }
 .wes-terminal .env-setup-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 .wes-terminal .env-setup-title { font-family: var(--type-sans-family); font-size: var(--type-sans-small-size); color: var(--mono-ink); }
 .wes-terminal .env-provider { display: flex; flex-direction: column; }
@@ -30,8 +38,48 @@
 .wes-terminal .env-auth-credential { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm); }
 .wes-terminal .env-auth-method > span:first-child,
 .wes-terminal .env-auth-credential label > span { min-width: 12ch; }
-.wes-terminal .env-auth-credential label { display: flex; align-items: center; gap: var(--space-sm); }
-.wes-terminal .env-auth-credential input[type="password"] { width: 240px; }
+.wes-terminal .env-auth-credential label { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs) var(--space-sm); min-width: 0; max-width: 100%; }
+.wes-terminal .env-auth-credential label > span { overflow-wrap: anywhere; }
+.wes-terminal .env-auth-credential input[type="password"] { width: 240px; max-width: 100%; min-width: 0; }
 .wes-terminal .env-auth-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .wes-terminal .env-auth-credential .env-credential-remember { font-family: var(--type-sans-family); font-size: var(--type-sans-small-size); }
+
+/*
+ * Access controls: the Access step's facts. A sans key and its mono value per line — current, read
+ * scopes, next grant — so what is granted and what would be granted never share a line. Narrow, the
+ * key sits over its value.
+ */
+.wes-terminal .env-access {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-xs) var(--space-md);
+  align-items: baseline;
+}
+.wes-terminal .env-step-body:has(> .env-access) { container-type: inline-size; }
+.wes-terminal .env-access-key { color: var(--mono-dim); }
+.wes-terminal .env-access-value { min-width: 0; overflow-wrap: anywhere; }
+.wes-terminal .env-access-next { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-xs); }
+.wes-terminal .env-access-scope { grid-column: 1 / -1; }
+.wes-terminal .env-access .settings-segment { padding: 1px var(--space-sm); }
+.wes-terminal .env-access-amount { flex: 0 0 auto; width: 7ch; }
+.wes-terminal .env-access-amount[aria-invalid="true"] { border-color: var(--mono-bad); }
+.wes-terminal .env-access-meaning { max-width: 72ch; }
+.wes-terminal .env-access-proofs,
+.wes-terminal .env-access-proof { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+/* A command draft is data to read and take, never a control: mono on the sunk ground, selectable. */
+.wes-terminal .env-access-draft {
+  padding: 1px var(--space-sm);
+  font-family: var(--type-mono-family);
+  font-size: var(--type-mono-size);
+  color: var(--mono-ink);
+  background: var(--sunk);
+  border: var(--stroke-thin) solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+@container (max-width: 420px) {
+  .wes-terminal .env-access { grid-template-columns: minmax(0, 1fr); }
+  .wes-terminal .env-access-value + .env-access-key { margin-top: var(--space-xs); }
+}

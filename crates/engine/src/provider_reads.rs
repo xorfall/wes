@@ -60,6 +60,28 @@ impl ReadDomain {
         }
         Ok(())
     }
+    /// Public labels for native inspection only. A restricted or read-dependent member makes
+    /// the entire scope opaque, including a draft; this never grants read authority.
+    pub(crate) fn public_labels(
+        &self,
+        arguments: &IndexMap<String, Value>,
+    ) -> Option<std::collections::BTreeMap<String, String>> {
+        self.scope
+            .iter()
+            .map(|name| {
+                let value = arguments.get(name)?;
+                if !value.provenance().policy().is_empty() {
+                    return None;
+                }
+                match value.data() {
+                    Data::Text(text) if text.len() <= 1024 => {
+                        Some((name.clone(), text.to_string()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
     pub(crate) fn digest(
         &self,
         arguments: &IndexMap<String, Value>,
@@ -203,5 +225,49 @@ impl Readers {
             }
         }
         format!("{:x}", hash.finalize())
+    }
+}
+
+#[cfg(test)]
+mod scope_metadata_tests {
+    use super::*;
+    #[test]
+    fn restricted_scope_members_are_never_public_labels() {
+        let domain = ReadDomain {
+            scope: vec!["region".into(), "resource".into()],
+            revalidate: vec!["probe".into()],
+        };
+        let text = |s: &str| {
+            Value::new(
+                Shape::Primitive(Primitive::Text),
+                Data::Text(s.into()),
+                Default::default(),
+            )
+            .unwrap()
+        };
+        let mut args = IndexMap::from([
+            ("region".into(), text("north")),
+            ("resource".into(), text("task")),
+        ]);
+        assert_eq!(domain.public_labels(&args).unwrap().len(), 2);
+        for policy in [
+            FlowPolicy::default().private(),
+            FlowPolicy::default().confidential(wes_core::flow::Residence::Retainable),
+            FlowPolicy::default().unknown(),
+            FlowPolicy::default().with_provider_read(
+                ProviderReadOrigin::new(
+                    uuid::Uuid::nil().to_string(),
+                    "a".repeat(64),
+                    "b".repeat(64),
+                )
+                .unwrap(),
+            ),
+        ] {
+            let secret = text("restricted")
+                .with_provenance(wes_core::Provenance::default().with_policy(&policy));
+            args.insert("resource".into(), secret);
+            assert_eq!(domain.public_labels(&args), None);
+            assert!(domain.digest(&args).is_ok());
+        }
     }
 }

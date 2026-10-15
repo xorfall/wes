@@ -182,7 +182,7 @@ impl Session {
                         && authority.status(binding, alias).is_ok_and(|s| {
                             s.enabled
                                 && (self.definition.description.secrets().is_empty()
-                                    || s.grant_seconds > 0)
+                                    || s.access.granted())
                         })
                 })
     }

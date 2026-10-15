@@ -3,10 +3,23 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use wes_core::flow::ProviderReadOrigin;
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ReadScopeStatus {
+    pub scope: BTreeMap<String, String>,
+    pub state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
+}
+#[derive(Clone)]
+pub(super) struct KnownScope {
+    pub(super) binding: Scope,
+    pub(super) labels: BTreeMap<String, String>,
+    pub(super) draft: Option<String>,
+}
 pub(super) struct ReadGrant {
     identity: Arc<()>,
     pub(super) scope: Scope,
-    until: Instant,
+    until: Option<Instant>,
     grant: Option<Arc<()>>,
     material: u64,
     secrets: BTreeMap<String, Secret>,
@@ -75,6 +88,32 @@ impl State {
     }
 }
 impl Authority {
+    pub(super) fn read_scope_status(&self, state: &State, scope: &Scope) -> Vec<ReadScopeStatus> {
+        state
+            .known_scopes
+            .iter()
+            .filter(|(_, known)| &known.binding == scope)
+            .map(|(origin, known)| ReadScopeStatus {
+                scope: if known.labels.is_empty() {
+                    BTreeMap::from([("scope digest".into(), origin.scope().to_owned())])
+                } else {
+                    known.labels.clone()
+                },
+                state: if state
+                    .reads
+                    .get(origin)
+                    .is_some_and(|g| g.current(state, &self.1))
+                {
+                    "verified"
+                } else if state.grants.get(scope).is_some_and(|g| g.current(&self.1)) {
+                    "unverified"
+                } else {
+                    "lapsed"
+                },
+                draft: known.draft.clone(),
+            })
+            .collect()
+    }
     pub fn read_updates(&self) -> Result<tokio::sync::watch::Receiver<u64>, CredentialError> {
         let mut state = self.0.write().map_err(|_| CredentialError::Unavailable)?;
         let epoch = state.read_epoch;
@@ -84,13 +123,19 @@ impl Authority {
             .subscribe())
     }
     pub(crate) fn read_deadline(&self) -> Option<Instant> {
-        self.0.read().ok()?.reads.values().map(|g| g.until).min()
+        self.0
+            .read()
+            .ok()?
+            .reads
+            .values()
+            .filter_map(|g| g.until)
+            .min()
     }
     pub(crate) fn expire_reads(&self) {
         if let Ok(mut state) = self.0.write() {
             let before = state.reads.len();
             state.reads.retain(|_, g| {
-                g.until > Instant::now() && self.1.revision().ok().map(|r| r.0) == Some(g.material)
+                alive(g.until) && self.1.revision().ok().map(|r| r.0) == Some(g.material)
             });
             if before != state.reads.len() {
                 state.read_changed();
@@ -99,6 +144,15 @@ impl Authority {
     }
     pub(super) fn invalidate_read_material(&self, reference: &str) {
         if let Ok(mut state) = self.0.write() {
+            let scopes = state
+                .grants
+                .iter()
+                .filter(|(_, g)| g.references.contains(reference))
+                .map(|(s, _)| s.clone())
+                .collect::<Vec<_>>();
+            for scope in scopes {
+                state.end_access(&scope, AccessEnd::Changed);
+            }
             state
                 .reads
                 .retain(|_, g| !g.secrets.contains_key(reference));
@@ -142,28 +196,42 @@ impl Authority {
         if !state.available(&scope.0) {
             return Err(CredentialError::Unavailable);
         }
-        let deadline =
-            Instant::now() + Duration::from_millis(wes_budgets::get("provider.read.grant.ms"));
-        let mut until = deadline;
-        let grant = if binding.import().credential_refs().is_empty() {
-            None
-        } else {
-            let grant = state
-                .grants
-                .get(&scope)
-                .filter(|g| g.until > Instant::now())
-                .ok_or_else(|| CredentialError::AccessDenied(alias.into()))?;
-            if binding
-                .import()
-                .credential_refs()
-                .values()
-                .any(|r| !grant.references.contains(r))
-            {
+        let (until, grant) =
+            if let Some(grant) = state.grants.get(&scope).filter(|g| g.current(&self.1)) {
+                if binding
+                    .import()
+                    .credential_refs()
+                    .values()
+                    .any(|r| !grant.references.contains(r))
+                {
+                    return Err(CredentialError::AccessDenied(alias.into()));
+                }
+                (grant.until, Some(grant.identity.clone()))
+            } else if binding.import().credential_refs().is_empty() {
+                // An explicit native probe without credentials starts a default finite lifetime.
+                // Only its successful outcome proves this scope; it never opts into Session.
+                state.grants.retain(|_, g| alive(g.until));
+                if state.grants.len() >= 1024 && !state.grants.contains_key(&scope) {
+                    return Err(CredentialError::Capacity);
+                }
+                let until = AccessLifetime::DEFAULT.deadline()?;
+                let identity = Arc::new(());
+                state.ended.remove(&scope);
+                state.grants.insert(
+                    scope.clone(),
+                    Grant {
+                        identity: identity.clone(),
+                        until,
+                        lifetime: AccessLifetime::DEFAULT,
+                        material_generation: self.1.revision()?.0,
+                        references: Default::default(),
+                        secrets: Default::default(),
+                    },
+                );
+                (until, Some(identity))
+            } else {
                 return Err(CredentialError::AccessDenied(alias.into()));
-            }
-            until = until.min(grant.until);
-            Some(grant.identity.clone())
-        };
+            };
         let mut secrets = BTreeMap::new();
         for reference in binding.import().credential_refs().values() {
             let secret = self
@@ -237,13 +305,13 @@ impl Authority {
 impl ReadGrant {
     fn current(&self, state: &State, material: &crate::credentials::material::Material) -> bool {
         state.available(&self.scope.0)
-            && self.until > Instant::now()
+            && alive(self.until)
             && material.revision().ok().map(|r| r.0) == Some(self.material)
             && self.grant.as_ref().is_none_or(|id| {
                 state
                     .grants
                     .get(&self.scope)
-                    .is_some_and(|g| g.until > Instant::now() && Arc::ptr_eq(id, &g.identity))
+                    .is_some_and(|g| g.current(material) && Arc::ptr_eq(id, &g.identity))
             })
             && self.secrets.iter().all(|(r, s)| {
                 material
@@ -253,6 +321,30 @@ impl ReadGrant {
     }
 }
 impl ReadProbe {
+    pub(crate) fn describe(&self, labels: BTreeMap<String, String>, draft: Option<String>) {
+        if let Ok(mut state) = self.authority.0.write() {
+            if !state.probe_current(&self.origin, &self.proof.identity)
+                || labels.len() > 16
+                || labels.iter().any(|(k, v)| k.len() > 128 || v.len() > 1024)
+                || draft.as_ref().is_some_and(|s| s.len() > 20000)
+            {
+                return;
+            }
+            if state.known_scopes.len() >= wes_budgets::get("provider.read.grants") as usize
+                && !state.known_scopes.contains_key(&self.origin)
+            {
+                state.known_scopes.pop_first();
+            }
+            state.known_scopes.insert(
+                self.origin.clone(),
+                KnownScope {
+                    binding: self.proof.scope.clone(),
+                    labels,
+                    draft,
+                },
+            );
+        }
+    }
     pub(crate) fn current(&self) -> bool {
         self.authority.0.read().is_ok_and(|s| {
             s.probe_current(&self.origin, &self.proof.identity)
@@ -356,7 +448,7 @@ mod tests {
             )
             .unwrap();
         authority
-            .grant(&binding, "api", Duration::from_secs(60))
+            .grant(&binding, "api", AccessLifetime::Timed { seconds: 60 })
             .unwrap();
         (authority, binding)
     }
@@ -367,6 +459,67 @@ mod tests {
         let origin = probe.origin.clone();
         probe.confirm().unwrap();
         origin
+    }
+    #[test]
+    fn read_proofs_use_the_selected_deadline_and_session_grants_have_none() {
+        let (a, b) = fixture();
+        a.grant(&b, "api", AccessLifetime::Timed { seconds: 14400 })
+            .unwrap();
+        let origin = open(&a, &b, 'a');
+        let permit = a.capture_read_permit(&origin).unwrap();
+        {
+            let s = a.0.read().unwrap();
+            let deadline = s.grants.get(&scope(&b, "api").unwrap()).unwrap().until;
+            assert_eq!(s.reads[&origin].until, deadline);
+            assert!(deadline.unwrap().duration_since(Instant::now()) > Duration::from_secs(14300));
+        }
+        a.grant(&b, "api", AccessLifetime::SESSION).unwrap();
+        assert!(!a.permits_provider_read(&origin));
+        assert!(!permit.current());
+        assert!(matches!(
+            a.status(&b, "api").unwrap().access,
+            AccessStatus::Session
+        ));
+        assert_eq!(open(&a, &b, 'a'), origin);
+        assert_eq!(a.read_deadline(), None);
+        assert!(!permit.current());
+        a.disable("dev").unwrap();
+        a.enable("dev").unwrap();
+        assert!(!a.permits_provider_read(&origin));
+        a.grant(&b, "api", AccessLifetime::SESSION).unwrap();
+        open(&a, &b, 'a');
+        a.restored();
+        a.enable("dev").unwrap();
+        assert!(!a.status(&b, "api").unwrap().access.granted());
+        assert!(!a.permits_provider_read(&origin));
+    }
+    #[test]
+    fn scope_inspection_never_grants_and_binding_changes_revoke_session_proofs() {
+        let (a, b) = fixture();
+        a.grant(&b, "api", AccessLifetime::SESSION).unwrap();
+        let p = a
+            .begin_read_probe(&b, "api", &"a".repeat(64), &native())
+            .unwrap();
+        p.describe(
+            BTreeMap::from([("region".into(), "north".into())]),
+            Some("api probe region:\"north\"".into()),
+        );
+        let origin = p.origin.clone();
+        assert_eq!(
+            a.status(&b, "api").unwrap().read_scopes[0].state,
+            "unverified"
+        );
+        assert!(!a.permits_provider_read(&origin));
+        p.confirm().unwrap();
+        assert_eq!(
+            a.status(&b, "api").unwrap().read_scopes[0].state,
+            "verified"
+        );
+        a.retain_bindings(&Default::default());
+        assert!(!a.permits_provider_read(&origin));
+        assert_eq!(a.status(&b, "api").unwrap().read_scopes[0].state, "lapsed");
+        a.close();
+        assert!(a.status(&b, "api").unwrap().read_scopes.is_empty());
     }
     #[test]
     fn regrant_and_revalidation_do_not_revive_old_work_or_other_scopes() {
@@ -382,7 +535,8 @@ mod tests {
         assert!(!readers.blocks_policy(&policy));
         let epoch = readers.epoch();
         a.revoke(&b, "api").unwrap();
-        a.grant(&b, "api", Duration::from_secs(60)).unwrap();
+        a.grant(&b, "api", AccessLifetime::Timed { seconds: 60 })
+            .unwrap();
         assert!(readers.blocks_policy(&policy));
         assert!(!permit.current());
         assert_eq!(open(&a, &b, 'a'), first);
@@ -455,7 +609,11 @@ mod tests {
         authority.disable("dev").unwrap();
         authority.enable("dev").unwrap();
         authority
-            .grant(&binding, "api", Duration::from_secs(60))
+            .grant(
+                &binding,
+                "api",
+                super::AccessLifetime::Timed { seconds: 60 },
+            )
             .unwrap();
         for old in pending {
             assert!(old.confirm().is_err());
@@ -508,19 +666,21 @@ mod tests {
             .provider_read_origin(&foreign, "api", &"a".repeat(64))
             .unwrap();
         assert!(!a.permits_provider_read(&different));
-        a.0.write().unwrap().reads.get_mut(&origin).unwrap().until = Instant::now();
+        a.0.write().unwrap().reads.get_mut(&origin).unwrap().until = Some(Instant::now());
         assert!(!a.permits_provider_read(&origin));
         a.expire_reads();
         open(&a, &b, 'a');
         a.disable("dev").unwrap();
         a.enable("dev").unwrap();
         assert!(!a.permits_provider_read(&origin));
-        a.grant(&b, "api", Duration::from_secs(60)).unwrap();
+        a.grant(&b, "api", AccessLifetime::Timed { seconds: 60 })
+            .unwrap();
         open(&a, &b, 'a');
         a.restored();
         a.enable("dev").unwrap();
         assert!(!a.permits_provider_read(&origin));
-        a.grant(&b, "api", Duration::from_secs(60)).unwrap();
+        a.grant(&b, "api", AccessLifetime::Timed { seconds: 60 })
+            .unwrap();
         open(&a, &b, 'a');
         a.forget("dev/key").unwrap();
         assert!(!a.permits_provider_read(&origin));

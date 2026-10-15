@@ -328,6 +328,24 @@ async fn process_secret_delivery_is_scoped_rotatable_and_absent_from_disk_artifa
         })
         .await
         .unwrap();
+    f.submit("one", "vars run args:[QA_SECRET] > rotated_without_access")
+        .await;
+    let snapshot = f.handle.snapshot().await.unwrap();
+    assert!(
+        snapshot
+            .execution
+            .errors
+            .contains_key(&snapshot.names["rotated_without_access"].node)
+    );
+    f.handle
+        .environment_authority(EnvironmentAuthorityCommand::Grant {
+            environment: "dev".into(),
+            revision,
+            provider: "vars".into(),
+            seconds: 60,
+        })
+        .await
+        .unwrap();
     f.submit("one", "vars run args:[QA_SECRET] > second").await;
     assert_eq!(
         stdout(&f.value("second").await),

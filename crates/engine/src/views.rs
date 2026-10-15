@@ -1051,6 +1051,19 @@ impl crate::workspace::Workspace {
                     return Err("A view instance was removed".into());
                 }
                 if let Some(input) = &instance.input {
+                    if input.value.as_ref().is_some_and(|v| {
+                        self.dataset_access
+                            .providers
+                            .blocks_policy(v.provenance().policy())
+                    }) || input.source().is_some_and(|source| {
+                        self.runtime()
+                            .result_provenance(&source.output.node)
+                            .is_some_and(|p| {
+                                self.dataset_access.providers.blocks_policy(p.policy())
+                            })
+                    }) {
+                        return Err("View provider read access is unavailable. Grant access in /env, then run a native probe for its captured scope. No source was rerun.".into());
+                    }
                     if input
                         .value
                         .as_ref()
@@ -1107,14 +1120,23 @@ impl crate::workspace::Workspace {
                 }
                 Ok(())
             })();
-            if checked.is_err() {
+            if let Err(problem) = checked {
                 if instance.id == frame.root {
-                    return Err("View input is unavailable".into());
+                    return Err(if problem.starts_with("View provider read access") {
+                        problem
+                    } else {
+                        "View input is unavailable".into()
+                    });
                 }
                 instance.input = None;
                 instance.query = None;
                 instance.query_running = false;
-                instance.input_problem = Some("Input unavailable; no source was rerun".into());
+                instance.input_problem =
+                    Some(if problem.starts_with("View provider read access") {
+                        problem
+                    } else {
+                        "Input unavailable; no source was rerun".into()
+                    });
                 instance.linked_inputs.clear();
             }
         }

@@ -534,6 +534,16 @@ impl Workspace {
         }
         if !changes.is_empty() {
             self.revision = next;
+            if let Some(authority) = self.environment_loader.as_ref().and_then(|l| l.authority()) {
+                let current = self
+                    .environments
+                    .names()
+                    .filter_map(|name| self.environments.inspect(name))
+                    .filter(|e| !e.is_retired())
+                    .map(|e| (e.identity().to_owned(), e.revision()))
+                    .collect();
+                authority.retain_bindings(&current);
+            }
         }
         Ok(changes)
     }
