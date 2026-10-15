@@ -214,6 +214,11 @@ it("spends only budgeted window lines for facts, table and detail panel", async 
   tree = await render(tight);
   expect(sampleRows(tree)).toBe(3);
   expect(tree.root.findAllByProps({ role: "tablist" })).toHaveLength(0);
+  // Without the panel, a selection would be invisible: packet numbers are plain cells, not buttons.
+  expect(tree.root.findAllByType("button")).toHaveLength(0);
+  const plain = tree.root.findByProps({ "aria-label": "Sampled packets" }).findAllByType("tr").slice(1);
+  expect(plain.map(row => row.findAllByType("td")[0]!.children.join(""))).toEqual(["1", "2", "3"]);
+  expect(plain.every(row => row.props["aria-selected"] === undefined)).toBe(true);
   act(() => tree.unmount());
   const fitted = shown(prepared, { lines: 20 });
   expect(fitted.ownLines).toBe(20);
@@ -325,6 +330,13 @@ it("resets filter and selections when data is replaced, not when the same value 
   await act(async () => tree.update(draw(shown(prepared, { columns: 60 }))));
   expect(text(tree)).toContain("IPv4 Source address = 192.0.2.1");
   expect(tree.root.findByProps({ "aria-label": "Filter sampled packet rows" }).props.value).toBe("if0");
+  // Too short for the panel: the kept selection is neither marked nor actionable; with room again it returns exactly.
+  await act(async () => tree.update(draw(shown(prepared, { lines: 12 }))));
+  expect(tree.root.findAllByType("button")).toHaveLength(0);
+  expect(tree.root.findAllByProps({ className: "capture-analysis-selected" })).toHaveLength(0);
+  await act(async () => tree.update(draw(shown(prepared))));
+  expect(text(tree)).toContain("IPv4 Source address = 192.0.2.1");
+  expect(tree.root.findByProps({ "aria-label": "Sampled packets" }).findAllByProps({ "aria-pressed": true }).map(it => it.children.join(""))).toEqual(["1"]);
   await act(async () => tree.update(draw(shown(prepareSync(analysis())))));
   expect(text(tree)).not.toContain("IPv4 Source address = 192.0.2.1");
   expect(text(tree)).toContain("Select a sampled packet row to see its decoded header fields.");

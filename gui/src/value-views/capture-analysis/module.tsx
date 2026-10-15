@@ -391,9 +391,11 @@ function CaptureAnalysisView({ model: input }: ViewComponentProps) {
         <th scope="col">#</th>{wide && <th scope="col">If</th>}<th scope="col">Protocol</th><th scope="col">Status</th>
         {wide && <><th scope="col">Source</th><th scope="col">Destination</th><th scope="col">Captured</th></>}<th scope="col">Inspected</th>{wide && <th scope="col">Fields</th>}
       </tr></thead><tbody>{shown.map(row => {
-        const active = row.number === state.selected, from = endpoint(row.source, row.sourcePort), to = endpoint(row.destination, row.destinationPort);
-        return <tr key={row.number} aria-selected={active} className={active ? "capture-analysis-selected" : undefined}>
-          <td><button type="button" className="cell-action" aria-pressed={active} onClick={() => choosePacket(row.number)}>{row.number}</button></td>
+        // Without the detail panel, a selection would be invisible: rows are plain cells.
+        const selectable = model.panel > 0, active = selectable && row.number === state.selected;
+        const from = endpoint(row.source, row.sourcePort), to = endpoint(row.destination, row.destinationPort);
+        return <tr key={row.number} aria-selected={selectable ? active : undefined} className={active ? "capture-analysis-selected" : undefined}>
+          <td>{selectable ? <button type="button" className="cell-action" aria-pressed={active} onClick={() => choosePacket(row.number)}>{row.number}</button> : row.number}</td>
           {wide && <td>{row.interface}</td>}<td>{row.protocol}</td>
           <td className={row.status === "decoded" ? "capture-analysis-ok" : "capture-analysis-warn"}>{row.status}</td>
           {wide && <><td className={from === undefined ? "capture-analysis-dim" : undefined}>{from ?? "not decoded"}</td>

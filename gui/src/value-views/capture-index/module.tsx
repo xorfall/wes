@@ -124,7 +124,9 @@ interface CaptureModel {
 
 const plural = (count: string, word: string) => `${grouped(count)} ${word}${count === "1" ? "" : "s"}`;
 function warning(index: CaptureIndex) {
-  const parts = [index.complete ? undefined : "Index incomplete · counts cover only what was indexed", index.skipped === "0" ? undefined : `${plural(index.skipped, "block")} skipped`];
+  // An incomplete index is bounded in rows, never in counts: the packet count and size are file totals.
+  const parts = [index.complete ? undefined : "Bounded packet index · not every packet has a row · counts are file totals",
+    index.skipped === "0" ? undefined : `${plural(index.skipped, "block")} skipped`];
   const text = parts.filter(Boolean).join(" · ");
   return text || undefined;
 }
@@ -213,11 +215,14 @@ function CaptureIndexView({ model: input }: ViewComponentProps) {
       <table className="capture-index-packets"><thead><tr>
         <th scope="col">#</th><th scope="col">If</th>{wide && <th scope="col">Record offset</th>}<th scope="col">Data offset</th><th scope="col">Captured</th>
         {wide && <><th scope="col">Original</th><th scope="col">Timestamp ticks</th></>}
-      </tr></thead><tbody>{shown.map(row => <tr key={row.number} aria-selected={row.number === state.selected} className={row.number === state.selected ? "capture-index-selected" : undefined}>
-        <td><button type="button" className="cell-action" aria-pressed={row.number === state.selected} onClick={() => update({ selected: row.number, page })}>{row.number}</button></td>
+      </tr></thead><tbody>{shown.map(row => {
+        // Without room for the detail, a selection would be invisible: rows are plain cells.
+        const active = model.detail && row.number === state.selected;
+        return <tr key={row.number} aria-selected={model.detail ? active : undefined} className={active ? "capture-index-selected" : undefined}>
+        <td>{model.detail ? <button type="button" className="cell-action" aria-pressed={active} onClick={() => update({ selected: row.number, page })}>{row.number}</button> : row.number}</td>
         <td>{row.interface}</td>{wide && <td>{row.recordOffset}</td>}<td>{row.dataOffset}</td><td>{row.captured}</td>
         {wide && <><td>{row.original}</td><td className={row.ticks === undefined ? "capture-index-dim" : undefined}>{row.ticks ?? "unknown"}</td></>}
-      </tr>)}</tbody></table>
+      </tr>; })}</tbody></table>
       <div className="capture-index-status" role="status">
         <span>{matched.length === 0 ? `No indexed rows match · ${grouped(String(index.packets.length))} rows searched`
           : `${terms.length ? `${grouped(String(matched.length))} of ${grouped(String(index.packets.length))} indexed rows match` : `${grouped(String(matched.length))} indexed rows`} · showing ${first + 1}–${first + shown.length}`}</span>

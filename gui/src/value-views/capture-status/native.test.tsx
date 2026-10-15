@@ -69,13 +69,16 @@ it("matches status structure and data, never a record name, and refuses malforme
     { name: "" }, { name: "n".repeat(65) }, { name: "a\tb" }, { backend: "dumpcap" }, { backend: "./dumpcap" }, { backend: "/usr/bin/" }, { backend: "/" },
     { backend: "C:\\Program Files\\Wireshark\\dumpcap.exe" }, { backend: "/usr/bin/dumpcap\n" }, { interface: "" },
     { interface: "en0\n" }, { interface: "e".repeat(1025) }, { interface: "-D" }, { interface: "eth0:1" }, { interface: "/dev/pipe" },
-    { interface: "@remote" }, { interface: "rpcap\\x" }, { filter: "" }, { filter: "f".repeat(4097) }, { filter: "tcp\u0000" },
+    { interface: "@remote" }, { interface: "rpcap\\x" }, { filter: "f".repeat(4097) }, { filter: "tcp\u0000" }, { filter: "\u0000" },
     { durationMs: 0 }, { durationMs: 120001 }, { durationMs: 1.5 }, { maxBytes: 23 }, { maxBytes: 536870913 }, { packets: 0 }, { packets: 1000001 },
     { snapLength: 0 }, { snapLength: 65536 }, { promiscuous: "no" }, { durationMs: new ExactNumber("1e3") },
   ];
   for (const change of profiles) expect(accepted(single({ profile: profile(change) }))).toBe(false);
   expect(accepted(single({ profile: profile({ name: "n".repeat(64), filter: "f".repeat(4096), snapLength: 65535, maxBytes: 536870912, packets: 1000000, durationMs: 120000 }) }))).toBe(true);
   expect(accepted(single({ profile: profile({ maxBytes: 24 }), rawBytes: "24", packetCount: "0", truncatedPackets: "0" }))).toBe(true);
+  // Only the filter may be empty: it is the explicit absence of a filter; empty names, interfaces and backends stay malformed.
+  expect(accepted(single({ profile: profile({ filter: "" }) }))).toBe(true);
+  for (const change of [{ name: "" }, { interface: "" }, { backend: "" }]) expect(accepted(single({ profile: profile({ filter: "", ...change }) }))).toBe(false);
   const fallback = present({ prepared: prepareSync(single({ coverageKnown: true })), facts: { state: "ready" }, context, registry: Registry.core() }).root;
   expect(fallback.kind === "view" && fallback.view === "capture-status").toBe(false);
 });
@@ -108,15 +111,23 @@ it("ties completeness to the acknowledged container boundary, as the provider re
   let tree = await mount(shown(prepareSync(single({ phase: "incomplete", rawBytes: "24050", containerComplete: false, indexComplete: false }))));
   expect(text(tree)).toContain("phase incomplete");
   expect(text(tree)).toContain("120 packets · 24,050 B · 37 truncated · snap length 96 requested");
-  expect(text(tree)).toContain("Container not complete · index of first 512 packets not complete");
+  expect(text(tree)).toContain("Container not complete · packet index not complete · complete only when every packet has a row, at most 512");
   act(() => tree.unmount());
 
   tree = await mount(shown(prepareSync(single(opening))));
   expect(text(tree)).toContain("phase opening");
   expect(text(tree)).toContain("0 packets · 0 B · none truncated");
   expect(text(tree)).toContain("Drops unknown · traffic coverage not established");
-  expect(text(tree)).toContain("Container not complete · index of first 512 packets not complete");
+  expect(text(tree)).toContain("Container not complete · packet index not complete");
   expect(text(tree)).toContain("Reported status · not proof of a live capture or of stored bytes");
+  act(() => tree.unmount());
+
+  // A clean 1,000-packet capture keeps its full counts; its index is not complete because not every packet has a row.
+  tree = await mount(shown(prepareSync(single({ phase: "ended", rawBytes: "120024", packetCount: "1000", truncatedPackets: "0", indexComplete: false }))));
+  expect(text(tree)).toContain("1,000 packets · 120,024 B · none truncated");
+  expect(text(tree)).toContain("Container complete · packet index not complete · complete only when every packet has a row, at most 512");
+  expect(text(tree)).not.toMatch(/first 512/);
+  expect(text(tree)).toContain("Drops unknown");
   act(() => tree.unmount());
 });
 
@@ -157,14 +168,36 @@ it("counts truncation as a fact beside the requested snap length, separately fro
   expect(text(tree)).toContain("120 packets · 24,040 B · 37 truncated · snap length 96 requested");
   expect(text(tree)).not.toMatch(/truncated by|caused by|because of/);
   expect(text(tree)).toContain("Drops unknown");
-  expect(text(tree)).toContain("Container complete · index of first 512 packets complete");
+  expect(text(tree)).toContain("Container complete · packet index complete · every packet has a row");
   expect(text(tree)).toContain("Interface en0 · filter tcp port 443");
   expect(text(tree)).toContain("Reported status · not proof of a live capture or of stored bytes");
   press(tree, "Profile");
   const all = text(tree);
-  for (const fact of ["edge-https", "/usr/local/bin/dumpcap · recorded path, not run by this view", "30,000 ms", "10,485,760 B", "1,000", "96 B requested", "not requested", "frozen for this capture"]) expect(all).toContain(fact);
+  for (const fact of ["edge-https", "/usr/local/bin/dumpcap · recorded path, not run by this view", "30,000 ms", "10,485,760 B", "1,000", "96 B requested", "not requested", "frozen"]) expect(all).toContain(fact);
   expect(all).not.toContain("longer packets are stored truncated");
   act(() => tree.unmount());
+});
+
+it("presents an empty filter as no filter in the scope and the profile", async () => {
+  const tree = await mount(shown(prepareSync(single({ profile: profile({ filter: "" }) }))));
+  expect(text(tree)).toContain("Interface en0 · no filter");
+  expect(text(tree)).not.toContain("· filter");
+  press(tree, "Profile");
+  const filterRow = tree.root.findAllByType("tr").find(row => row.findByType("th").children.join("") === "Filter")!;
+  expect(filterRow.findByType("td").children.join("")).toBe("none · no filter");
+  act(() => tree.unmount());
+});
+
+it("states that original recording reads require physical join, whatever phase is reported", async () => {
+  for (const phase of ["ready", "stopping", "ended", "incomplete"]) {
+    const tree = await mount(shown(prepareSync(single({ phase, ...(phase === "incomplete" ? { containerComplete: false, indexComplete: false } : {}) }))));
+    expect(text(tree)).toContain("Reported status · not proof of a live capture or of stored bytes");
+    press(tree, "Profile");
+    expect(text(tree)).toContain("Physical join required · :read bytes of the original recording · frozen snapshot · an ended phase is not proof");
+    expect(text(tree)).not.toMatch(/\b(joined|ready to read|can be read|readable now)\b/i);
+    expect(tree.root.findAllByType("button").map(it => it.children.join(""))).toEqual(["Status", "Profile"]);
+    act(() => tree.unmount());
+  }
 });
 
 it("shows the recorded Unix backend path as inert data and leaves a non-Unix path to the generic view", async () => {
@@ -213,7 +246,7 @@ it("uses local tabs and history selection with keyboard support and no actions o
   expect(tree.root.findByProps({ role: "tabpanel" }).props["aria-label"]).toBe("History · 4");
   expect(stopPropagation).toHaveBeenCalledTimes(2);
   press(tree, "2");
-  expect(text(tree)).toContain("Status 2 · container complete · index complete · same profile");
+  expect(text(tree)).toContain("Status 2 · container complete · packet index complete · same profile");
   const labels = tree.root.findAllByType("button").map(it => it.children.join(""));
   expect(labels.every(label => /^\d+$/.test(label) || ["Status", "Profile", "History · 4"].includes(label))).toBe(true);
   expect(text(tree)).not.toMatch(/\b(Start|Stop|Keep|Export|Copy|Download|Annotate)\b/);
@@ -262,9 +295,65 @@ it("spends only the lines its host grants, in preview and window", async () => {
   tree = await mount(tight);
   expect(tree.root.findByProps({ role: "tabpanel" }).findAllByType("p")).toHaveLength(5);
   press(tree, "Profile");
-  expect(tree.root.findAllByType("tr")).toHaveLength(6);
+  // Six panel lines: five profile rows and the count of the five that need more height.
+  let panel = tree.root.findByProps({ role: "tabpanel" });
+  expect(panel.findAllByType("tr")).toHaveLength(5);
+  expect(panel.findAllByType("p").map(it => it.children.join(""))).toEqual(["5 more rows need more height"]);
   press(tree, "History · 20");
   expect(tree.root.findAllByType("tr")).toHaveLength(1 + 4);
   expect(text(tree)).toContain("Newest 4 of 20 reported statuses");
   act(() => tree.unmount());
+
+  // Four panel lines: three facts, then the hidden-fact count ahead of a short disclaimer kept whole in the title; the scope yields first.
+  const squeezed = shown(prepareSync(single()), { lines: 6 });
+  expect(squeezed.ownLines).toBe(6);
+  tree = await mount(squeezed);
+  panel = tree.root.findByProps({ role: "tabpanel" });
+  const lines = panel.findAllByType("p");
+  const facts = lines.map(it => it.children.join(""));
+  expect(facts).toHaveLength(4);
+  expect(facts[3]).toBe("2 facts hidden · status snapshot");
+  expect(lines[3]!.props.title).toBe("Reported status · not proof of a live capture or of stored bytes");
+  expect(text(tree)).not.toContain("Interface en0");
+  expect(text(tree)).not.toContain("Reported status · not proof");
+  act(() => tree.unmount());
+
+  // Five panel lines: every fact fits, the disclaimer ahead of the scope, and nothing is reported hidden.
+  tree = await mount(shown(prepareSync(single()), { lines: 7 }));
+  panel = tree.root.findByProps({ role: "tabpanel" });
+  expect(panel.findAllByType("p").map(it => it.children.join("")).slice(3)).toEqual(["Reported status · not proof of a live capture or of stored bytes", "Interface en0 · filter tcp port 443"]);
+  expect(text(tree)).not.toContain("need more height");
+  press(tree, "Profile");
+  panel = tree.root.findByProps({ role: "tabpanel" });
+  expect(panel.findAllByType("tr")).toHaveLength(4);
+  expect(panel.findAllByType("p").map(it => it.children.join(""))).toEqual(["6 more rows need more height"]);
+  act(() => tree.unmount());
+});
+
+it("keeps the hidden-fact count and the physical join requirement visible first at narrow widths", async () => {
+  const disclaimer = "Reported status · not proof of a live capture or of stored bytes";
+  const join = "Physical join required · :read bytes of the original recording · frozen snapshot · an ended phase is not proof";
+  for (const columns of [30, 40]) {
+    // Four panel lines: the drawn omission line, not only its title, carries the count within the column budget.
+    let tree = await mount(shown(prepareSync(single()), { lines: 6, columns }));
+    const omission = tree.root.findByProps({ role: "tabpanel" }).findAllByType("p")[3]!;
+    const drawn = omission.children.join("");
+    expect(drawn).toMatch(/^2 facts hidden · /);
+    expect([...drawn].length).toBeLessThanOrEqual(columns);
+    if (columns === 40) expect(drawn).toBe("2 facts hidden · status snapshot");
+    expect(omission.props.title).toBe(disclaimer);
+    act(() => tree.unmount());
+
+    // Whatever phase is reported, the drawn Snapshot cell leads with the requirement; the title keeps every qualifier.
+    for (const phase of ["ready", "ended"]) {
+      tree = await mount(shown(prepareSync(single({ phase })), { columns }));
+      press(tree, "Profile");
+      const cell = tree.root.findAllByType("td").find(it => it.props.title === join)!;
+      const visible = cell.children.join("");
+      expect(visible).toMatch(/^Physical join required · /);
+      expect([...visible].length).toBeLessThanOrEqual(columns);
+      expect(visible).not.toMatch(/\b(joined|ready to read|can be read|readable now)\b/i);
+      act(() => tree.unmount());
+    }
+  }
 });

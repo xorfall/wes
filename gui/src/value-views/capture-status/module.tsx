@@ -23,7 +23,7 @@ const statusShape = record({ profile: profileShape, phase: is("TEXT"), rawBytes:
 
 /** A rolling window longer than this is not a status window this view validates. */
 export const MAX_WINDOW = 4096;
-/** The index fact covers at most this many leading packets. */
+/** A complete index has a row for every packet, so it covers at most this many. */
 export const INDEX_ROWS = 512;
 const MAX_U64 = 18446744073709551615n;
 const phases = ["opening", "ready", "stopping", "ended", "incomplete"] as const;
@@ -58,7 +58,8 @@ function readProfile(value: unknown): CaptureProfile | undefined {
   const { name, backend, interface: iface, filter, promiscuous } = value;
   const durationMs = within(value.durationMs, 1n, 120_000n), maxBytes = within(value.maxBytes, 24n, 536_870_912n);
   const packets = within(value.packets, 1n, 1_000_000n), snapLength = within(value.snapLength, 1n, 65_535n);
-  if (!text(name, 64) || !text(filter, 4096, /[\u0000\u000b\u000c\u000e-\u001f\u007f]/) || typeof promiscuous !== "boolean") return;
+  // An empty filter is the explicit absence of one; every other text keeps its limits.
+  if (!text(name, 64) || !(filter === "" || text(filter, 4096, /[\u0000\u000b\u000c\u000e-\u001f\u007f]/)) || typeof promiscuous !== "boolean") return;
   // An explicit local interface name: never option-shaped, a path, a remote or a pipe specification.
   if (!text(iface, 1024) || /^-|[\\/:@]/.test(iface)) return;
   // An explicit absolute local Unix executable path; it is shown, never probed or run.
@@ -85,8 +86,8 @@ export function readStatus(value: unknown): CaptureStatus | undefined {
   // behind at least the smallest container and record headers.
   if (BigInt(truncatedPackets) > count || count > BigInt(profile.packets) || raw > BigInt(profile.maxBytes)) return;
   if (count > 0n && raw < 24n + 16n * count) return;
-  // A complete container ends on a record boundary after at least its 24-byte header; a complete index of the
-  // first 512 packets needs that boundary and no more than 512 packets; a reported end needs a complete container.
+  // A complete container ends on a record boundary after at least its 24-byte header; a complete index indexes
+  // every packet, so it needs that boundary and no more than 512 packets; a reported end needs a complete container.
   if (containerComplete && raw < 24n) return;
   if (indexComplete && (!containerComplete || count > BigInt(INDEX_ROWS))) return;
   if (phase === "ended" && !containerComplete) return;
@@ -137,8 +138,11 @@ interface StatusModel {
   readonly history: readonly HistoryRow[];
 }
 
-const STATUS_FACTS: readonly Fact[] = ["counts", "drops", "container", "scope", "note"];
+/** The disclaimer outranks the scope when height runs out. */
+const STATUS_FACTS: readonly Fact[] = ["counts", "drops", "container", "note", "scope"];
 const PROFILE_ROWS = 10;
+/** The profile row stating the join requirement; it spans the panel so no label column clips it. */
+const SNAPSHOT = "Snapshot";
 
 export const captureStatusViewModule: ValueViewModule = {
   id: "capture-status",
@@ -177,16 +181,26 @@ function factText(fact: Fact, status: CaptureStatus, window: boolean): string {
     case "counts": return `${plural(status.packetCount, "packet")} · ${grouped(status.rawBytes)} B · ${status.truncated === "0" ? "none truncated"
       : `${grouped(status.truncated)} truncated · snap length ${grouped(profile.snapLength)} requested`}`;
     case "drops": return `${status.drops === undefined ? "Drops unknown" : `${plural(status.drops, "drop")} reported`} · traffic coverage not established`;
-    case "container": return `Container ${status.containerComplete ? "complete" : "not complete"} · index of first ${INDEX_ROWS} packets ${status.indexComplete ? "complete" : "not complete"}`;
-    case "scope": return `Interface ${profile.interface} · filter ${profile.filter}`;
+    case "container": return `Container ${status.containerComplete ? "complete" : "not complete"} · ${status.indexComplete ? "packet index complete · every packet has a row"
+      : `packet index not complete · complete only when every packet has a row, at most ${INDEX_ROWS}`}`;
+    case "scope": return `Interface ${profile.interface} · ${profile.filter === "" ? "no filter" : `filter ${profile.filter}`}`;
     case "note": return window ? "Reported status · selected or restored values are not a live capture" : "Reported status · not proof of a live capture or of stored bytes";
   }
 }
 function profileRows(profile: CaptureProfile): readonly (readonly [string, string])[] {
-  return [["Name", profile.name], ["Interface", profile.interface], ["Filter", profile.filter], ["Backend", `${profile.backend} · recorded path, not run by this view`],
+  return [["Name", profile.name], ["Interface", profile.interface], ["Filter", profile.filter === "" ? "none · no filter" : profile.filter],
+    ["Backend", `${profile.backend} · recorded path, not run by this view`],
     ["Duration limit", `${grouped(profile.durationMs)} ms`], ["Size limit", `${grouped(profile.maxBytes)} B`], ["Packet limit", grouped(profile.packets)],
     ["Snap length", `${grouped(profile.snapLength)} B requested`], ["Promiscuous", profile.promiscuous ? "requested" : "not requested"],
-    ["Snapshot", "frozen for this capture · bytes are read with :read bytes"]];
+    // A stop receipt or a reported end never proves the join, so the phase never stands in for it; the requirement leads.
+    [SNAPSHOT, "Physical join required · :read bytes of the original recording · frozen snapshot · an ended phase is not proof"]];
+}
+
+/** Rows beyond the panel height are counted, never silently dropped. */
+function bounded<T>(rows: readonly T[], lines: number): { shown: readonly T[]; hidden: number } {
+  if (rows.length <= lines) return { shown: rows, hidden: 0 };
+  const shown = rows.slice(0, Math.max(0, lines - 1));
+  return { shown, hidden: rows.length - shown.length };
 }
 
 interface ViewState { readonly source: object; readonly tab: Tab; readonly selected?: number }
@@ -226,9 +240,15 @@ function CaptureStatusView({ model: input }: ViewComponentProps) {
 
   const selected = state.selected === undefined ? undefined : model.history.find(row => row.position === state.selected);
   const panels: Record<Tab, () => ReactElement> = {
-    status: () => <>{STATUS_FACTS.slice(0, model.panel).map(fact)}</>,
-    profile: () => <table className="capture-status-profile"><tbody>{profileRows(latest.profile).slice(0, model.panel).map(([name, value]) =>
-      <tr key={name}><th scope="row">{name}</th><td>{fit(value, 18)}</td></tr>)}</tbody></table>,
+    status: () => { const { shown, hidden } = bounded(STATUS_FACTS, model.panel), note = factText("note", latest, model.window); return <>
+      {shown.map(fact)}
+      {/* The hidden count leads so narrow widths keep it; a hidden disclaimer stays short here and whole in the title. */}
+      {hidden > 0 && <p className="capture-status-dim" title={note}>{fit(`${plural(String(hidden), "fact")} hidden · ${shown.includes("note") ? "need more height" : "status snapshot"}`)}</p>}</>; },
+    profile: () => { const { shown, hidden } = bounded(profileRows(latest.profile), model.panel); return <>
+      <table className="capture-status-profile"><tbody>{shown.map(([name, value]) =>
+        <tr key={name}>{name === SNAPSHOT ? <td colSpan={2} title={value}>{fit(value)}</td>
+          : <><th scope="row">{name}</th><td title={value}>{fit(value, 18)}</td></>}</tr>)}</tbody></table>
+      {hidden > 0 && <p className="capture-status-dim">{fit(`${plural(String(hidden), "more row")} need more height`)}</p>}</>; },
     history: () => <>
       <table className="capture-status-history"><thead><tr><th scope="col">#</th><th scope="col">Phase</th><th scope="col">Packets</th>
         {!model.narrow && <><th scope="col">Bytes</th><th scope="col">Truncated</th></>}<th scope="col">Drops</th></tr></thead>
@@ -239,7 +259,7 @@ function CaptureStatusView({ model: input }: ViewComponentProps) {
           <td className={status.drops === undefined ? "capture-status-unknown" : undefined}>{status.drops ?? "unknown"}</td>
         </tr>)}</tbody></table>
       <p className="capture-status-dim" role="status">{fit(selected
-        ? `Status ${selected.position} · container ${selected.status.containerComplete ? "complete" : "not complete"} · index ${selected.status.indexComplete ? "complete" : "not complete"} · ${sameProfile(selected.status.profile, latest.profile) ? "same profile" : `profile ${selected.status.profile.name}`}`
+        ? `Status ${selected.position} · container ${selected.status.containerComplete ? "complete" : "not complete"} · packet index ${selected.status.indexComplete ? "complete" : "not complete"} · ${sameProfile(selected.status.profile, latest.profile) ? "same profile" : `profile ${selected.status.profile.name}`}`
         : `Newest ${grouped(String(model.history.length))} of ${grouped(String(model.total))} reported statuses · select one for its container facts`)}</p>
     </>,
   };

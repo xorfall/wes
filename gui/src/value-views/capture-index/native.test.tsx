@@ -121,7 +121,7 @@ it("keeps the preview inside its line budget with format, count, size, digest an
     expect(shownText).toContain("pcapng capture index");
     expect(shownText).toContain("index incomplete");
     expect(shownText.includes("70,000 packets · 1,048,576 B · sha256:abababababab…")).toBe(lines >= 2);
-    expect(shownText.includes("Index incomplete · counts cover only what was indexed · 2 blocks skipped")).toBe(lines >= 3);
+    expect(shownText.includes("Bounded packet index · not every packet has a row · counts are file totals · 2 blocks skipped")).toBe(lines >= 3);
     expect(tree.root.findAllByType("table")).toHaveLength(0);
     expect(tree.root.findAllByType("input")).toHaveLength(0);
     act(() => tree.unmount());
@@ -145,6 +145,11 @@ it("states the bounded index and its limits, and spends no unbudgeted detail row
   await act(async () => { tree = create(draw(tight)); });
   expect(tree.root.findAllByProps({ "aria-label": "Selected packet" })).toHaveLength(0);
   expect(tree.root.findAllByType("tr")).toHaveLength(1 + 3);
+  // Without the detail, a selection would be invisible: packet numbers are plain cells, not buttons.
+  expect(tree.root.findAllByType("button")).toHaveLength(0);
+  expect(tree.root.findAllByProps({ "aria-pressed": true })).toHaveLength(0);
+  expect(tree.root.findAllByType("tr").slice(1).map(row => row.findAllByType("td")[0]!.children.join(""))).toEqual(["1", "2", "3"]);
+  expect(tree.root.findAllByType("tr").slice(1).every(row => row.props["aria-selected"] === undefined)).toBe(true);
   act(() => tree.unmount());
 
   const crowded = shown(prepareSync(capture()), { lines: 9 });
@@ -211,6 +216,13 @@ it("resets selection and filter when the value is refreshed or withdrawn, not wh
   await act(async () => tree.update(draw(shown(prepared, { columns: 60 }))));
   expect(text(tree)).toContain("Packet 2 · interface 0");
   expect(tree.root.findByProps({ "aria-label": "Filter indexed packet rows" }).props.value).toBe("if0");
+  // Too short for the detail: the kept selection is neither marked nor actionable; with room again it returns exactly.
+  await act(async () => tree.update(draw(shown(prepared, { lines: 12 }))));
+  expect(tree.root.findAllByType("button")).toHaveLength(0);
+  expect(tree.root.findAllByProps({ className: "capture-index-selected" })).toHaveLength(0);
+  await act(async () => tree.update(draw(shown(prepared))));
+  expect(text(tree)).toContain("Packet 2 · interface 0");
+  expect(tree.root.findAllByProps({ "aria-pressed": true }).map(it => it.children.join(""))).toEqual(["2"]);
   await act(async () => tree.update(draw(shown(prepareSync(capture({ packetCount: "3", indexComplete: true, skippedBlocks: 0 }))))));
   expect(text(tree)).not.toContain("Packet 2 · interface 0");
   expect(text(tree)).toContain("Select a packet row to see its index facts.");
