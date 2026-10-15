@@ -1193,6 +1193,7 @@ mod tests {
     #[cfg(unix)]
     include!("view_authoring_tests.rs");
     include!("workspace_rejoin_tests.rs");
+    include!("environment_authoring_tests.rs");
     include!("workflow_report_tests.rs");
     use crate::{
         runtime::{RuntimeOptions, launch},

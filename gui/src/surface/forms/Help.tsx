@@ -118,13 +118,15 @@ export function readHelp(value: FormValue): HelpModel {
       if (!Object.hasOwn(invocation, key)) continue;
       if (!step()) break;
       // These fields have already been expressed as prose or source-facing usage.
-      if (["command", "provider", "capability", "summary", "usage", "shortForm", "parameters", "operands", "takes"].includes(key)) continue;
+      if (["command", "provider", "capability", "summary", "usage", "shortForm", "parameters", "operands", "takes", "declaration"].includes(key)) continue;
       if (key === "result") { resultType(invocation[key]); continue; }
       if (key === "implemented") { if (invocation[key] === false) add("Status", "Reserved; not implemented."); continue; }
       if (key === "otherArguments") { if (invocation[key] === true) add("Arguments", "Additional arguments depend on the selected operation."); continue; }
       if (key === "producesValue") { if (invocation[key] === true) add("Result", "Produces a value that can be named with > result."); continue; }
       detail(labelOf(key), invocation[key]);
     }
+    // Large schema details must not consume the display budget before syntax and runnable examples.
+    detail("Declaration", invocation.declaration);
   }
   if (Array.isArray(root.children)) {
     for (const child of root.children) {

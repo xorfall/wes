@@ -13,6 +13,7 @@ use wes_language::{
         commands::{self, COMMAND_PATHS, roots},
     },
 };
+mod declarations;
 
 #[derive(Clone, Debug)]
 pub struct BoundHelp {
@@ -845,7 +846,11 @@ fn describe(spec: &CommandSpec) -> Data {
                 "Load types or a compiled View package. Use wes-view-package describe/init/build to author Views with the public SDK. Installed Views appear in :list views and :inspect view:TaskBoard; create with :view create TaskBoard input:$data. Packages do not run commands. Choose exactly one of path: and source:. origin: labels inline source.",
             ),
             "env plan" => (
-                &[":env plan file:\"/path/environments.yaml\" > proposed"],
+                &[
+                    ":env plan source:\"version: 1\\nenvironments: {sample: {}}\\n\" > proposed",
+                    ":env apply $proposed",
+                    ":env plan file:\"/path/environments.yaml\" > proposed",
+                ],
                 "Choose exactly one of file: and source:. base: resolves relative inputs. reconcile:file or reconcile:source explicitly replaces conflicting workspace edits with that input. An import's bind.output classifies future output: public permits ordinary storage, private is memory-only, confidential-temporary permits encrypted temporary storage but refuses Keep, and confidential permits encrypted storage with explicit Keep only. Confidentiality propagates through derivation and the strictest residence wins. Disk policies require a home initialized with --storage-key-file FILE and the same external 32-byte key on every reopen; existing ordinary homes are not converted. Encryption and Keep do not grant terminal, MCP or file export. User-authored source remains outside result encryption.",
             ),
             "node timeout" => (
@@ -862,6 +867,10 @@ fn describe(spec: &CommandSpec) -> Data {
         }
         if !rule.is_empty() {
             fields.insert("syntax".into(), text(rule));
+        }
+        if spec.canonical == "env plan" {
+            fields.insert("authoring".into(), text("Read declaration for the complete accepted YAML structure, required fields, choices, variants and semantic constraints. Submit YAML directly with source: as a quoted Text literal, escaping newlines and quotes; no filesystem write tool or pre-existing file is required. origin: is an optional source label, not a file to create. Relative package inputs need an explicit absolute base:. Review the proposed changes in the plan reply (MCP: plans and ENV000 diagnostics), then submit :env apply $proposed separately with a fresh workspace context. Planning does not apply definitions or run providers. Applying installs definitions without running providers or granting credential access. Re-read context after application. To select the installed environment use :env use NAME separately. After an uncertain execution reply inspect the original request before submitting further work."));
+            fields.insert("declaration".into(), declarations::environment());
         }
     }
     if spec.command == MetaCommand::Inspect

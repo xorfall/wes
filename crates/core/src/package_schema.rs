@@ -5,6 +5,7 @@
 use crate::contracts::{PackageNode as Node, PackageScalarKind as Scalar};
 use indexmap::IndexMap;
 use std::sync::LazyLock;
+mod publication;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ScalarType {
@@ -83,6 +84,48 @@ pub fn declarations() -> &'static Registry {
     &REGISTRY
 }
 impl Registry {
+    /// One declaration family, including every transitively referenced definition and rule.
+    pub fn describe_root(&self, root: &str) -> Option<serde_json::Value> {
+        let (&name, &id) = self.roots.get_key_value(root)?;
+        let mut pending = vec![id];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            match &self.definitions.get(id)?.kind {
+                Kind::Object { fields, .. } => pending.extend(fields.values().map(|f| f.schema)),
+                Kind::Map { values } => pending.push(values),
+                Kind::List { items } => pending.push(items),
+                Kind::Union { variants } => pending.extend(variants),
+                Kind::Discriminated { variants, .. } => pending.extend(variants.values()),
+                Kind::Any | Kind::Scalar { .. } => (),
+            }
+        }
+        let definitions: IndexMap<_, _> = self
+            .definitions
+            .iter()
+            .filter(|(id, _)| seen.contains(**id))
+            .map(|(id, schema)| (*id, schema.clone()))
+            .collect();
+        let constraints = definitions
+            .values()
+            .flat_map(|s| s.constraints.iter())
+            .filter_map(|id| {
+                self.constraints
+                    .get(id)
+                    .map(|description| (*id, *description))
+            })
+            .collect();
+        Some(
+            Self {
+                roots: [(name, id)].into_iter().collect(),
+                definitions,
+                constraints,
+            }
+            .describe(),
+        )
+    }
     pub fn validate(&self, schema: &str, value: &Node) -> Result<(), Issue> {
         self.check(schema, value, "TYP002", 0)
     }
@@ -148,7 +191,10 @@ impl Registry {
                     return Err(error("expected declaration mapping"));
                 };
                 if map.keys().any(|key| !fields.contains_key(key.as_str())) {
-                    return Err(error("unknown declaration field"));
+                    return Err(error(&format!(
+                        "unknown declaration field in {id}; valid fields: {}",
+                        fields.keys().copied().collect::<Vec<_>>().join(", ")
+                    )));
                 }
                 for (key, field) in fields {
                     match map.get(*key) {
@@ -179,7 +225,10 @@ impl Registry {
                             .keys()
                             .any(|key| !condition.allowed.contains(&key.as_str()))
                         {
-                            return Err(error("field is not allowed for this declaration variant"));
+                            return Err(error(&format!(
+                                "field is not allowed for this declaration variant in {id}; valid fields: {}",
+                                condition.allowed.join(", ")
+                            )));
                         }
                         if condition.required.iter().any(|key| !map.contains_key(*key)) {
                             return Err(error("missing field required by declaration variant"));
@@ -219,7 +268,10 @@ impl Registry {
                 child(
                     variants
                         .get(tag)
-                        .ok_or_else(|| error("unsupported declaration discriminator"))?,
+                        .ok_or_else(|| error(&format!(
+                            "unsupported declaration discriminator in {id}; valid {field} values: {}",
+                            variants.keys().copied().collect::<Vec<_>>().join(", ")
+                        )))?,
                     value,
                 )?;
             }

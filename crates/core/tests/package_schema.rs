@@ -91,6 +91,100 @@ fn environment_schema_enforces_structure_without_disclosing_payloads() {
 }
 
 #[test]
+fn published_environment_schema_is_complete_and_tracks_validation_changes() {
+    use wes_core::package_schema::Field;
+    let mut registry = declarations().clone();
+    let Kind::Object { fields, .. } = &mut registry
+        .definitions
+        .get_mut("env.target.local")
+        .unwrap()
+        .kind
+    else {
+        panic!("local target");
+    };
+    fields.insert(
+        "futureOption",
+        Field {
+            schema: "bool",
+            required: false,
+        },
+    );
+    let source = read_package(
+        "version: 1\ntargets: {sample: {kind: local, futureOption: true}}\nenvironments: {}\n",
+    )
+    .unwrap();
+    registry.validate("env.package", &source).unwrap();
+    let schema = registry.describe_root("env").unwrap();
+    assert_eq!(schema["roots"], serde_json::json!({"env":"env.package"}));
+    assert_eq!(
+        schema["definitions"]["env.target.local"]["fields"]["futureOption"]["schema"],
+        "bool"
+    );
+    assert!(schema["definitions"].get("contract.package").is_none());
+    fn references(schema: &serde_json::Value) -> Vec<&str> {
+        match schema["kind"].as_str().unwrap() {
+            "object" => schema["fields"]
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|f| f["schema"].as_str().unwrap())
+                .collect(),
+            "map" => vec![schema["values"].as_str().unwrap()],
+            "list" => vec![schema["items"].as_str().unwrap()],
+            "union" => schema["variants"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect(),
+            "discriminated" => schema["variants"]
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|v| v.as_str().unwrap())
+                .collect(),
+            "any" | "scalar" => vec![],
+            _ => panic!("schema kind"),
+        }
+    }
+    for definition in schema["definitions"].as_object().unwrap().values() {
+        for id in references(definition) {
+            assert!(schema["definitions"].get(id).is_some(), "missing {id}");
+        }
+        if let Some(rules) = definition["constraints"].as_array() {
+            for rule in rules {
+                assert!(schema["constraints"].get(rule.as_str().unwrap()).is_some());
+            }
+        }
+    }
+    assert!(schema.to_string().len() < 24 * 1024);
+    assert!(registry.describe_root("missing").is_none());
+}
+
+#[test]
+fn unknown_declaration_fields_show_only_schema_owned_choices() {
+    for (source, expected) in [
+        (
+            "version: 1\nenvironments: {}\nprivate-field: private-value",
+            "valid fields: version, package, targets, environments",
+        ),
+        (
+            "version: 1\nenvironments: {sample: {private-field: private-value}}",
+            "valid fields: targets, owner, drift",
+        ),
+        (
+            "version: 1\ntargets: {sample: {kind: private-value}}\nenvironments: {}",
+            "valid kind values: local, docker, ssh",
+        ),
+    ] {
+        let error = Package::parse(source).unwrap_err();
+        assert!(error.message.contains(expected), "{}", error.message);
+        assert!(!error.message.contains("private-field"));
+        assert!(!error.message.contains("private-value"));
+    }
+}
+
+#[test]
 fn contract_packages_reject_unsupported_fields_atomically() {
     let mut registry = ContractRegistry::new();
     let error = registry
