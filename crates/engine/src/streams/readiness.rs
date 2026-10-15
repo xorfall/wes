@@ -101,7 +101,10 @@ impl StreamHandle {
                 if state.connection_epoch != epoch {
                     return Err(ReadyError::Changed);
                 }
-                if state.finished || owner.cancellation.is_cancelled() {
+                if state.finished
+                    || state.phase == Phase::Closing
+                    || owner.cancellation.is_cancelled()
+                {
                     return Err(ReadyError::Closed);
                 }
                 state.phase == Phase::Open

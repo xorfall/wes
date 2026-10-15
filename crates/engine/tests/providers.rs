@@ -18,6 +18,8 @@ use wes_engine::{
     runtime::*,
 };
 use wes_language::{Expression, SourceText, parse, resolve::resolve, templates::Templates};
+#[path = "providers/admission.rs"]
+mod admission;
 
 fn int(n: i64) -> Value {
     Value::new(

@@ -17,6 +17,7 @@ pub(super) fn prepare_source_with_storage(
 ) -> PreparationFuture {
     let policy = ticket.payload.failure_policy(&ticket.inputs);
     let work = async move {
+        let input_holds = ticket.input_holds;
         let validation_cancel = cancellation.clone();
         let prepared = tokio::task::spawn_blocking(move || {
             let bound = ticket.payload;
@@ -44,6 +45,9 @@ pub(super) fn prepare_source_with_storage(
                 .into());
             }
         };
+        let dispatch = bound
+            .dispatch_guard()
+            .map_err(|error| ExecutionReport::from(error.outcome()))?;
         if cancellation.is_cancelled() {
             return Err(InvocationError::Cancelled.outcome().into());
         }
@@ -83,7 +87,9 @@ pub(super) fn prepare_source_with_storage(
             attribution,
             cancellation,
             read_access,
+            dispatch,
             storage,
+            input_holds,
         })
     };
     Box::pin(async move {
@@ -99,12 +105,14 @@ pub(super) fn prepare_source_with_storage(
     })
 }
 
-pub(crate) type PreparationFuture =
+pub type SourcePreparationFuture =
     Pin<Box<dyn Future<Output = Result<PreparedSource, ExecutionReport>> + Send>>;
+pub(crate) type PreparationFuture = SourcePreparationFuture;
 
 /// Validated local admission held before producer dispatch. Archive setup may occur here,
 /// but a stored result cannot construct this capability or recreate external execution.
-pub(crate) struct PreparedSource {
+#[must_use = "start or discard the prepared source"]
+pub struct PreparedSource {
     bound: BoundCall,
     run: Run,
     arguments: IndexMap<String, Value>,
@@ -112,9 +120,29 @@ pub(crate) struct PreparedSource {
     attribution: Provenance,
     cancellation: CancellationToken,
     read_access: super::read_access::Attempt,
+    dispatch: Option<crate::provider_reads::ReadGuard>,
     storage: Option<crate::storage::StoreWorker>,
+    input_holds: Vec<crate::storage::ValueLease>,
 }
 impl PreparedSource {
+    /// Start a source whose physical task is owned independently from finite work.
+    /// Required byte recording is prepared by the ordinary source boundary.
+    pub fn start_owned(self) -> Result<OwnedSource, ExecutionReport> {
+        let fence = SourceFence {
+            bound: self.bound.clone(),
+            carried: self.carried.clone(),
+            read: self.read_access.stream_guard(),
+            dispatch: self.dispatch.clone(),
+            cancellation: self.cancellation.clone(),
+            policy: self.attribution.policy().clone(),
+        };
+        let (handle, task) = self.start(Vec::new())?;
+        Ok(OwnedSource {
+            handle,
+            task,
+            fence: Arc::new(fence),
+        })
+    }
     pub(crate) fn refusal(&self, message: String) -> ExecutionReport {
         Outcome::Failed(RuntimeCode::ExecutionFailed.error(message, None))
             .with_policy(self.attribution.policy())
@@ -149,6 +177,9 @@ impl PreparedSource {
         if let Err(reason) = self.bound.require_dispatch(&self.carried) {
             return Err(refused(environment_denied(reason)));
         }
+        if self.dispatch.as_ref().is_some_and(|guard| !guard.current()) {
+            return Err(refused(InvocationError::Cancelled.outcome()));
+        }
         if !self.read_access.current() {
             return Err(refused(super::read_access::refusal().outcome()));
         }
@@ -158,6 +189,7 @@ impl PreparedSource {
                 self.attribution.clone(),
             )
         });
+        let input_holds = self.input_holds;
         streams::spawn_with_recording(
             Call {
                 authority: self.bound.context.authority.clone(),
@@ -177,15 +209,139 @@ impl PreparedSource {
             self.bound.context.stream_budget,
             None,
             archives,
+            // Target adapters retain their live availability/cleanup guard and
+            // its typed refusal. Admission generations fence entry; converting
+            // them into a read withdrawal here would mask that terminal outcome.
             self.read_access.stream_guard(),
             context,
         )
+        .map(|(handle, task)| (handle, task.after_join(move || drop(input_holds))))
         .map_err(|error| {
             refused(Outcome::Failed(
                 RuntimeCode::ExecutionFailed.error(error.to_string(), None),
             ))
         })
     }
+}
+
+struct SourceFence {
+    bound: BoundCall,
+    carried: Provenance,
+    read: Option<crate::provider_reads::ReadGuard>,
+    dispatch: Option<crate::provider_reads::ReadGuard>,
+    cancellation: CancellationToken,
+    policy: wes_core::flow::FlowPolicy,
+}
+impl SourceFence {
+    fn protect(&self, error: InvocationError) -> InvocationError {
+        match error {
+            InvocationError::Failed(error) => {
+                InvocationError::Failed(error.with_policy(&self.policy))
+            }
+            other => other,
+        }
+    }
+    fn check(&self) -> Result<(), InvocationError> {
+        self.check_current().map_err(|error| self.protect(error))
+    }
+    fn check_current(&self) -> Result<(), InvocationError> {
+        if self.cancellation.is_cancelled() {
+            return Err(InvocationError::Cancelled);
+        }
+        if self.dispatch.as_ref().is_some_and(|guard| !guard.current()) {
+            return Err(InvocationError::Cancelled);
+        }
+        self.bound
+            .require_dispatch(&self.carried)
+            .map_err(|reason| {
+                let Outcome::Failed(error) = environment_denied(reason) else {
+                    unreachable!()
+                };
+                InvocationError::Failed(error)
+            })?;
+        if self.read.as_ref().is_some_and(|guard| !guard.current()) {
+            return Err(read_access::refusal());
+        }
+        Ok(())
+    }
+}
+
+/// Owns one source through physical join. Weak readiness prerequisites never own
+/// its lifetime or confer live controls. Retain this owner even after cancellation.
+#[must_use = "retain and physically join the owned source"]
+pub struct OwnedSource {
+    handle: streams::StreamHandle,
+    task: streams::StreamTask,
+    fence: Arc<SourceFence>,
+}
+impl OwnedSource {
+    pub fn handle(&self) -> &streams::StreamHandle {
+        &self.handle
+    }
+    pub async fn wait_ready(
+        &self,
+        budget: std::time::Duration,
+        caller: CancellationToken,
+    ) -> Result<SourcePrerequisite, InvocationError> {
+        self.fence.check()?;
+        let ready = self
+            .handle
+            .wait_ready(&self.handle.snapshot().run, budget, caller)
+            .await
+            .map_err(|error| {
+                self.fence.protect(match error {
+                    streams::ReadyError::Cancelled => InvocationError::Cancelled,
+                    _ => prerequisite_refusal(),
+                })
+            })?;
+        self.fence.check()?;
+        Ok(SourcePrerequisite {
+            ready,
+            fence: self.fence.clone(),
+        })
+    }
+    pub async fn join(self) -> Result<(), tokio::task::JoinError> {
+        self.task.join().await
+    }
+    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.task.shutdown().await
+    }
+}
+
+/// Native, nonserializable prerequisite from one original prepared source. A
+/// stored descriptor, alias or readiness event cannot construct this capability.
+pub struct SourcePrerequisite {
+    ready: streams::ReadyReceipt,
+    fence: Arc<SourceFence>,
+}
+impl std::fmt::Debug for SourcePrerequisite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourcePrerequisite")
+            .field("run", self.ready.run())
+            .finish_non_exhaustive()
+    }
+}
+impl SourcePrerequisite {
+    pub(super) fn check(&self) -> Result<(), InvocationError> {
+        self.admit(|| Ok(()))
+    }
+    pub(super) fn admit<R>(
+        &self,
+        admit: impl FnOnce() -> Result<R, InvocationError>,
+    ) -> Result<R, InvocationError> {
+        // Lock order is source -> local permission/read scopes, as in live
+        // source admission. Never execute an adapter while the source is locked.
+        self.ready
+            .admit(self.ready.run(), || {
+                self.fence.check()?;
+                admit()
+            })
+            .map_err(|_| self.fence.protect(prerequisite_refusal()))?
+    }
+}
+fn prerequisite_refusal() -> InvocationError {
+    InvocationError::Failed(RuntimeCode::ExecutionFailed.error(
+        "Required source readiness is unavailable or changed; the provider was not invoked. Nothing was replayed.", None))
 }
 
 pub(super) fn execute(

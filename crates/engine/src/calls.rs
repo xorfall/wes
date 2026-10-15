@@ -157,9 +157,7 @@ impl CallJournal {
         admission: &AdmittedCommand,
         run: &Run,
     ) -> Result<(), CallJournalError> {
-        if !Arc::ptr_eq(&self.identity, &admission.0.journal) || !admission.contains(run.node()) {
-            return Err(CallJournalError::Unadmitted);
-        }
+        self.validate_admission(admission, run)?;
         if admission.0.needs_accepted {
             // No write occurs during reconstruction. A missing crash-tail Accepted is
             // acknowledged on explicit execution, before provider entry. Repetition is idempotent metadata.
@@ -167,6 +165,19 @@ impl CallJournal {
                 cell: admission.cell().to_owned(),
             }))
             .await?;
+        }
+        Ok(())
+    }
+
+    /// Check a captured command locally, before another owned source can enter.
+    /// Interrupted admission repair still belongs to authorize at execution.
+    pub(crate) fn validate_admission(
+        &self,
+        admission: &AdmittedCommand,
+        run: &Run,
+    ) -> Result<(), CallJournalError> {
+        if !Arc::ptr_eq(&self.identity, &admission.0.journal) || !admission.contains(run.node()) {
+            return Err(CallJournalError::Unadmitted);
         }
         Ok(())
     }

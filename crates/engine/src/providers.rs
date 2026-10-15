@@ -19,10 +19,13 @@ use wes_core::{
     contracts::boundary::{self, BoundaryError},
 };
 mod byte_input;
+mod finite;
 mod interactive;
 mod lifecycle;
 mod read_access;
 mod streaming;
+pub use finite::{FinitePreparationFuture, PreparedCall};
+pub use streaming::{OwnedSource, PreparedSource, SourcePreparationFuture, SourcePrerequisite};
 
 pub type InvocationFuture =
     Pin<Box<dyn Future<Output = Result<Value, InvocationError>> + Send + 'static>>;
@@ -672,6 +675,26 @@ impl BoundCall {
             _ => Err(DispatchDenied::Unavailable),
         }
     }
+    fn dispatch_guard(&self) -> Result<Option<crate::provider_reads::ReadGuard>, InvocationError> {
+        match &self.provider.scope {
+            ExecutionScope::Local(_) => Ok(None),
+            ExecutionScope::Environment {
+                binding,
+                authority: Some(authority),
+            } => {
+                let lease = authority.availability_lease(binding.environment().identity())
+                    .map_err(|_| InvocationError::Failed(RuntimeCode::ExecutionFailed.error(
+                        "Captured environment admission is unavailable; the provider was not invoked.", None)))?;
+                Ok(Some(crate::provider_reads::ReadGuard::new(move || {
+                    !lease.is_cancelled()
+                })))
+            }
+            _ => Err(InvocationError::Failed(RuntimeCode::ExecutionFailed.error(
+                "Captured environment admission is unavailable; the provider was not invoked.",
+                None,
+            ))),
+        }
+    }
     fn output_provenance(&self, carried: &Provenance) -> Provenance {
         let mut policy = match self.origin() {
             Some(origin) => carried.policy().clone().from_origin(origin),
@@ -764,6 +787,29 @@ pub struct CallExecutor {
     storage: Option<crate::storage::StoreWorker>,
 }
 impl CallExecutor {
+    /// Validate a single finite call before starting any auxiliary source. This
+    /// captures read attempts and byte owners but writes no Calling receipt.
+    pub fn prepare_finite(
+        &self,
+        ticket: RunTicket<BoundCall>,
+        cancellation: CancellationToken,
+    ) -> FinitePreparationFuture {
+        finite::prepare_call(
+            self.journal.clone(),
+            self.storage.clone(),
+            ticket,
+            cancellation,
+        )
+    }
+    /// Prepare an independently owned source. Readiness and physical completion
+    /// remain separate acknowledgements; neither can be restored from a value.
+    pub fn prepare_source(
+        &self,
+        ticket: RunTicket<BoundCall>,
+        cancellation: CancellationToken,
+    ) -> SourcePreparationFuture {
+        self.prepare_stream(ticket, cancellation)
+    }
     pub(crate) fn journal(&self) -> Option<CallJournal> {
         self.journal.clone()
     }
@@ -823,297 +869,12 @@ impl Executor<BoundCall> for CallExecutor {
         ticket: RunTicket<BoundCall>,
         cancellation: CancellationToken,
     ) -> ExecutionFuture {
-        let journal = self.journal.clone();
-        let storage = self.storage.clone();
-        let policy = ticket.payload.failure_policy(&ticket.inputs);
-        let work = async move {
-            if ticket.payload.streaming() || ticket.payload.interactive() {
-                return Outcome::Failed(RuntimeCode::ExecutionFailed.error(
-                    "This call requires its stream or conversation execution port.",
-                    None,
-                ))
-                .into();
-            }
-            // Validation can walk large values. Keep it off asynchronous scheduler threads, and
-            // join its physical exit even when cancelled, just like any other blocking work.
-            let validation_cancel = cancellation.clone();
-            let prepared = tokio::task::spawn_blocking(move || {
-                prepare(
-                    &ticket.payload.invocation,
-                    &ticket.inputs,
-                    &validation_cancel,
-                )
-                .map(|(arguments, mut carried)| {
-                    // A pipe remains a control/data dependency even when the stage does not
-                    // project any fields. Do not shed its private/transfer restrictions.
-                    if let Some(input) = &ticket.payload.context.pipe_input
-                        && let Some(value) = ticket.inputs.get(&input.node)
-                    {
-                        carried = carried.with_policy(value.provenance().policy());
-                    }
-                    (ticket.payload, ticket.run, arguments, carried)
-                })
-            })
-            .await;
-            let (bound, run, arguments, carried) = match prepared {
-                Ok(Ok(prepared)) => prepared,
-                Ok(Err(error)) => return error.outcome().into(),
-                Err(_) => {
-                    return Outcome::Failed(
-                        RuntimeCode::ExecutionFailed
-                            .error("Input validation terminated unexpectedly.", None),
-                    )
-                    .into();
-                }
-            };
-            let mut read_access = match bound.read_access(&arguments) {
-                Ok(access) => access,
-                Err(error) => return error.outcome().into(),
-            };
-            if cancellation.is_cancelled() {
-                return InvocationError::Cancelled.outcome().into();
-            }
-            let input_source = bound.context.byte_input.clone();
-            let byte_input = if let Some(spec) = bound.byte_input_spec() {
-                if !bound.context.authority.is_local_user() {
-                    return Outcome::Failed(RuntimeCode::ResultForbidden.error("Original byte handoff requires an explicit native user invocation; read access alone is insufficient.", None)).into();
-                }
-                if let Err(reason) = bound.require_dispatch(&carried) {
-                    return environment_denied(reason).into();
-                }
-                let Some(source) = input_source.clone() else {
-                    return Outcome::Failed(RuntimeCode::InputFailed.error("Original byte input was not captured at native entry; no provider was invoked.", None)).into();
-                };
-                match source.open(storage.clone(), spec.maximum).await {
-                    Ok(input) => Some(input),
-                    Err(error) => return error.outcome().into(),
-                }
-            } else {
-                None
-            };
-            let byte_input_holds = byte_input
-                .as_ref()
-                .map(crate::byte_input::OwnedByteInput::retain_owner);
-            let calling = match lifecycle::begin(&journal, &bound, &run, &cancellation).await {
-                Ok(calling) => calling,
-                Err(report) => return *report,
-            };
-            // An accepted writer request is joined even when cancellation happens while waiting.
-            // In that case close this local attempt without ever entering the provider.
-            let protected = read_access.protect(bound.output_provenance(&carried));
-            let trace = if let Some(profile) = bound.invocation.trace_profile.as_deref() {
-                bound
-                    .context
-                    .traces
-                    .as_ref()
-                    .and_then(|traces| traces.begin(&run, profile, protected.clone()))
-            } else {
-                None
-            };
-            let acquisition = storage
-                .clone()
-                .filter(|s| {
-                    s.transient_identity().is_some()
-                        && !read_access.is_probe()
-                        && !protected.policy().is_private()
-                        && !protected.policy().is_unknown()
-                })
-                .map(|s| {
-                    crate::storage::AcquisitionContext::new(
-                        s,
-                        protected
-                            .clone()
-                            .cautioned(bound.invocation.cautions.iter().cloned()),
-                    )
-                });
-            let mut output_hold = None;
-            let observation = trace.clone();
-            let outcome = if bound.invocation.trace_profile.is_some() && trace.is_none() {
-                Outcome::Failed(RuntimeCode::ExecutionFailed.error(
-                    "Trace capacity is unavailable; the provider was not called.",
-                    None,
-                ))
-            } else if let Err(reason) = bound.require_dispatch(&carried) {
-                environment_denied(reason)
-            } else if cancellation.is_cancelled() {
-                InvocationError::Cancelled.outcome()
-            } else if !read_access.current() {
-                read_access::refusal().outcome()
-            } else {
-                let provider = bound.provider;
-                let call = Call {
-                    authority: bound.context.authority.clone(),
-                    run,
-                    capability: bound.invocation.capability.clone(),
-                    arguments,
-                };
-                // Join the actual provider future, including synchronous invoke panics. A panic
-                // payload may contain secrets and is never copied into a value or notice.
-                let probe_cancellation = cancellation.clone();
-                let invocation_cancel = cancellation.child_token();
-                let source_guard = input_source
-                    .clone()
-                    .map(|source| tokio::spawn(source.guard(invocation_cancel.clone())));
-                let joined_cancel = invocation_cancel.clone();
-                let mut result = tokio::spawn(async move {
-                    let cancellation = invocation_cancel;
-                    if cancellation.is_cancelled() {
-                        return Err(InvocationError::Cancelled);
-                    }
-                    if let Some(input) = byte_input {
-                        return provider
-                            .invoker
-                            .invoke_with_byte_input(call, cancellation, input)
-                            .await
-                            .map(crate::storage::AcquiredOutput::Value);
-                    }
-                    match observation {
-                        Some(trace) => provider
-                            .invoker
-                            .invoke_observed(call, cancellation, trace)
-                            .await
-                            .map(crate::storage::AcquiredOutput::Value),
-                        None => match acquisition {
-                            Some(context) => {
-                                provider
-                                    .invoker
-                                    .invoke_acquired(call, cancellation, context)
-                                    .await
-                            }
-                            None => provider
-                                .invoker
-                                .invoke(call, cancellation)
-                                .await
-                                .map(crate::storage::AcquiredOutput::Value),
-                        },
-                    }
-                })
-                .await;
-                joined_cancel.cancel();
-                if let Some(guard) = source_guard {
-                    let _ = guard.await;
-                }
-                if let (Some(source), Some(worker)) = (&input_source, &storage)
-                    && let Ok(Ok(crate::storage::AcquiredOutput::Value(value))) = &result
-                {
-                    let value = value.with_provenance(value.provenance().inheriting(&protected));
-                    result = Ok(source.publish_derived(worker, value).await);
-                }
-                let source_current = input_source.as_ref().is_none_or(|s| s.check().is_ok());
-                if !source_current {
-                    read_access::refusal().outcome()
-                } else {
-                    match result {
-                        Ok(Ok(crate::storage::AcquiredOutput::Stored { output, hold })) => {
-                            if read_access.current() && !probe_cancellation.is_cancelled() {
-                                output_hold = Some(hold);
-                                Outcome::Stored(output)
-                            } else {
-                                read_access::refusal().outcome()
-                            }
-                        }
-                        Ok(Ok(crate::storage::AcquiredOutput::Value(value))) => {
-                            match read_access.finish(&value, probe_cancellation.is_cancelled()) {
-                                Err(error) => error.outcome(),
-                                Ok(()) => {
-                                    let provenance = value
-                                        .provenance()
-                                        .inheriting(&protected)
-                                        .cautioned(bound.invocation.cautions.iter().cloned());
-                                    Outcome::Produced(if &provenance == value.provenance() {
-                                        value
-                                    } else {
-                                        value.with_provenance(provenance)
-                                    })
-                                }
-                            }
-                        }
-                        Ok(Err(error)) => error.outcome(),
-                        Err(_) => Outcome::Failed(
-                            RuntimeCode::ExecutionFailed
-                                .error("The provider terminated unexpectedly.", None),
-                        ),
-                    }
-                }
-            };
-            let mut report: ExecutionReport = outcome.with_policy(protected.policy()).into();
-            if let Some(hold) = output_hold {
-                report
-                    .holds
-                    .push(crate::driver::ExecutionHold::retain(hold));
-            }
-            if let Outcome::Failed(error) = &report.outcome
-                && error.code() == wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN
-            {
-                // Cancellation can revoke node publication before physical exec returns. Keep
-                // remote uncertainty as an operational notice even for an obsolete run.
-                report.notices.push(error.clone());
-            }
-            if let Some(trace) = trace {
-                let (state, code, provenance) = match &report.outcome {
-                    Outcome::Produced(value) => ("completed", "", value.provenance().clone()),
-                    Outcome::Failed(error) | Outcome::Incomplete { error, .. } => (
-                        "failed",
-                        error.code(),
-                        wes_core::Provenance::default().with_policy(error.policy()),
-                    ),
-                    _ => ("cancelled", "", protected.clone()),
-                };
-                trace.emit(
-                    "execution.finished",
-                    crate::trace::record(
-                        "ExecutionCompletion",
-                        [
-                            ("state".into(), crate::trace::text(state)),
-                            ("code".into(), crate::trace::text(code)),
-                        ],
-                        provenance,
-                    ),
-                );
-                trace.finish(match &report.outcome {
-                    Outcome::Produced(_) | Outcome::Stored(_) => "completed",
-                    Outcome::Failed(_) | Outcome::Incomplete { .. } => "failed",
-                    _ => "cancelled",
-                });
-                if let Some(record) = trace.persistent_record() {
-                    if let Some(journal) = &journal {
-                        if journal.record_trace(record).await.is_ok() {
-                            trace.persistence("recorded");
-                        } else {
-                            trace.persistence("failed");
-                            report.notices.push(RuntimeCode::RecordingFailed.error(
-                                "Inspection completed, but its trace could not be recorded.",
-                                None,
-                            ));
-                        }
-                    }
-                } else {
-                    trace.persistence("private");
-                }
-            }
-            let mut report = lifecycle::finish(journal, calling, report).await;
-            // Recovery acknowledgement is joined too; withdrawal/regrant during that
-            // acknowledgement cannot resurrect an already captured byte-input attempt.
-            if let Some(source) = &input_source
-                && let Err(error) = source.check()
-            {
-                report.outcome = Outcome::Failed(
-                    error.read_error("Original byte input authority changed before publication"),
-                )
-                .with_policy(protected.policy());
-            }
-            drop(byte_input_holds);
-            report
-        };
+        let preparation = self.prepare_finite(ticket, cancellation);
         Box::pin(async move {
-            let mut report: ExecutionReport = work.await;
-            report.outcome = report.outcome.with_policy(&policy);
-            report.notices = report
-                .notices
-                .into_iter()
-                .map(|e| e.with_policy(&policy))
-                .collect();
-            report
+            match preparation.await {
+                Ok(call) => call.execute().await,
+                Err(report) => report,
+            }
         })
     }
 }
