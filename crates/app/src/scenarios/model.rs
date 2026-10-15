@@ -160,7 +160,7 @@ fn validate_step(source: &str) -> Result<(), ScenarioError> {
                 MetaCommand::Import
                     | MetaCommand::Type
                     | MetaCommand::Read
-                    | MetaCommand::Trace
+                    | MetaCommand::TraceRead
                     | MetaCommand::Inspect
                     | MetaCommand::List
                     | MetaCommand::Help

@@ -20,28 +20,16 @@ use wes_engine::{
     session::SessionStorage,
     source::SourceInput,
     storage::{AutoKeep, StoreWorkerLimits, spawn_store},
-    trace::{TraceSink, text},
     type_sources::{TypeSourceError, TypeSourceReader},
+    values::text,
     workspace::{Workspace, WorkspaceName},
 };
 
 struct Fixture(Arc<AtomicUsize>);
 impl Invoker for Fixture {
-    fn supports_trace(&self, profile: &str) -> bool {
-        profile == "binary"
-    }
     fn invoke(&self, _: Call, _: CancellationToken) -> InvocationFuture {
         let n = self.0.fetch_add(1, Ordering::SeqCst) + 1;
         Box::pin(async move { Ok(text(format!("synthetic response {n}"))) })
-    }
-    fn invoke_observed(
-        &self,
-        call: Call,
-        cancel: CancellationToken,
-        trace: TraceSink,
-    ) -> InvocationFuture {
-        trace.emit("synthetic", text("fixture entry; no external service"));
-        self.invoke(call, cancel)
     }
 }
 struct NoFiles;
@@ -61,21 +49,12 @@ async fn sample(
     let checkpoint = session.checkpoint().await.unwrap();
     let history = checkpoint.history();
     let mut identities = BTreeSet::new();
-    let mut traces = 0;
-    let mut trace_bytes = 0;
     for entry in history.journal() {
         match entry {
             JournalEntry::Observed(e) => {
                 if let Some(run) = e.run() {
                     identities.insert(run.clone());
                 }
-            }
-            JournalEntry::Trace(t) => {
-                traces += 1;
-                trace_bytes +=
-                    wes_adapters::codec::encode_display_value(&t.value, Limits::default())
-                        .unwrap()
-                        .len();
             }
             _ => (),
         }
@@ -87,7 +66,6 @@ async fn sample(
         "journalBytes":history.checkpoint().journal.end_offset,
         "recoveryBytes":history.checkpoint().recovery.end_offset,
         "decodedHistoryChargeBytes":history.charged_bytes(),
-        "traceRecords":traces, "traceDisplayBytes":trace_bytes,
         "payloadClasses":usage.classes.iter().map(|(class,count,bytes)| serde_json::json!({"class":class.as_str(),"count":count,"bytes":bytes})).collect::<Vec<_>>()
     });
     assert_eq!(identities.len(), runs);
@@ -182,7 +160,6 @@ async fn main() {
                 .await
                 .unwrap();
             assert_eq!(evidence["run"]["protected"], true);
-            assert!(!evidence["trace"].is_null());
             protected_runs.push(run);
         }
         if [20, 60, 80].contains(&n) {
@@ -199,13 +176,6 @@ async fn main() {
         80,
         "reopen must not execute providers"
     );
-    let observation = app.current().unwrap().session.observe().await.unwrap();
-    assert!(
-        observation
-            .traces
-            .get(&original.nodes[0], Some(&first_run))
-            .is_none()
-    );
     let oldest = app
         .work_history(
             app.current().unwrap().generation,
@@ -215,10 +185,7 @@ async fn main() {
         )
         .await
         .unwrap();
-    assert!(
-        !oldest["trace"].is_null(),
-        "history uses recorded evidence even after live trace eviction"
-    );
+    assert!(oldest["definition"].is_object());
     for run in protected_runs {
         let evidence = app
             .work_history(
@@ -230,10 +197,6 @@ async fn main() {
             .await
             .unwrap();
         assert_eq!(evidence["run"]["protected"], true);
-        assert!(
-            !evidence["trace"].is_null(),
-            "selected protection remains discoverable after reopen"
-        );
         let handle =
             wes_engine::storage::ValueHandle::new(evidence["run"]["handle"].as_str().unwrap())
                 .unwrap();

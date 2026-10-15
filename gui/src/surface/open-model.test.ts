@@ -54,7 +54,6 @@ const everything: WorkspaceNode = {
   handle: "h1",
   kept: true,
   retention: "automatic",
-  traced: true,
   interactive: true,
   repeatable: false,
   private: true,
@@ -94,7 +93,6 @@ describe("what /open's details tab says about a result", () => {
     expect(facts).toContain("provider=acme");
     expect(facts).toContain("capability=orders create");
     expect(facts).toContain("unsafe=this capability performs an external action");
-    expect(facts).toContain("traced=the call was recorded");
     expect(facts).toContain("interactive=it can be typed at while it runs");
     expect(facts).toContain("repeatable=no — running it again acts again");
     expect(facts).toContain("effects=acknowledged for this attempt");
@@ -131,7 +129,7 @@ describe("what /open's details tab says about a result", () => {
     };
     const facts = said({ node: bare, workspace: { ...workspace, nodes: [bare] }, context });
     for (const absent of [
-      "provider", "capability", "unsafe", "traced", "interactive", "repeatable", "effects",
+      "provider", "capability", "unsafe", "interactive", "repeatable", "effects",
       "ran at", "run", "environment", "revision", "target", "endpoint", "origin", "grant",
       "caution", "doubt", "private", "retention", "result",
     ]) {
@@ -150,9 +148,28 @@ describe("what /open's details tab says about a result", () => {
 
   it("should_NameAProviderOnlyWhenTheCatalogueKnowsIt_When_TheCommandIsRead", () => {
     expect(capabilityOf("acme orders.list", catalogue)?.capability?.safe).toBe(true);
-    expect(capabilityOf("@trace(x) acme orders.create", catalogue)?.capability?.safe).toBe(false);
+    expect(capabilityOf('@trace(capture:"synthetic-http",tail:"5s") acme orders.create', catalogue)?.capability?.safe).toBe(false);
+    expect(capabilityOf("@trace(tcp) acme orders.create", catalogue)?.capability?.safe).toBe(false);
     expect(capabilityOf("nothing like.this", catalogue)).toBeUndefined();
     expect(capabilityOf(":calc 1 + 1", catalogue)).toBeUndefined();
+  });
+
+  it("should_InventNoProviderOrSafetyFact_When_TheCommandIsANativeTraceOperation", () => {
+    // Arrange: native local trace operations, including an explicitly approved confidential export.
+    const commands = [
+      ':trace import file:"sample.pcap" using:"pcap"',
+      ':trace analyze $imported.raw using:"headers" options:{packets:128,headerBytes:256}',
+      ':trace export $imported.raw using:"pcap" file:"/owned/result.pcap" allow_confidential:true',
+      ":trace retain $decoded",
+    ];
+    // Act
+    const named = commands.map(command => capabilityOf(command, catalogue));
+    const facts = commands.map(command => said({ node: { ...everything, command }, workspace, context }).join("\n"));
+    // Assert: export permission stays with the engine; the client neither marks it safe nor unsafe.
+    expect(named).toEqual([undefined, undefined, undefined, undefined]);
+    for (const fact of facts) {
+      expect(fact).not.toMatch(/^(provider|capability|unsafe)=/m);
+    }
   });
 
   it("should_DrawEachFactAsTwoColumnsUnderItsHeading_When_TheTabIsWritten", () => {

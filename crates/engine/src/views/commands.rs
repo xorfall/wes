@@ -285,6 +285,7 @@ impl Workspace {
         statement.annotations.push(Annotation {
             name: name("view".into()),
             targets: targets.into_iter().map(name).collect(),
+            arguments: vec![],
             span: Span::at(0),
         });
         let source = statement.to_string();

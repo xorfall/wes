@@ -11,10 +11,10 @@ import { newCell } from "../cells";
 
 vi.mock("../views/Result", () => ({ ValueView: ({ value }: { value: StoredValue }) => <pre data-result>{JSON.stringify(value.data)}</pre> }));
 const node = { id: "node-a", label: "$orders", glyph: "ready" as const };
-const old: WorkRun = { node: node.id, run: "old-run", state: "Ready", at: "2026-09-26T09:00:00Z", handle: "old-result", protected: false, trace: false };
+const old: WorkRun = { node: node.id, run: "old-run", state: "Ready", at: "2026-09-26T09:00:00Z", handle: "old-result", protected: false };
 const recent: WorkRun = { ...old, run: "new-run", at: "2026-09-28T09:00:00Z", handle: "new-result" };
 const history: WorkHistory = { runs: [old, recent], attempts: [{ id: "cell", source: "catalog echo value:synthetic", nodes: [node.id], revisionOf: null, repeatOf: null, failure: null, diagnostics: [] }], unconfirmedWrites: "0" };
-const detail = (run: WorkRun): WorkRunDetail => ({ run, canProtect: true, definition: { text: "catalog echo value:original" }, error: null, trace: null, contextNote: "Captured context only.", traceNote: "No recorded trace for this run." });
+const detail = (run: WorkRun): WorkRunDetail => ({ run, canProtect: true, definition: { text: "catalog echo value:original" }, error: null, contextNote: "Captured context only." });
 const value = (text: string): StoredValue => ({ type: { kind: "primitive", name: "String" }, data: text, provenance: {} });
 function fixture() {
   const api = { workHistory: vi.fn().mockResolvedValue(history), workRun: vi.fn((_cell: string, id: string) => Promise.resolve(detail(id === old.run ? old : recent))),
@@ -52,7 +52,8 @@ describe("fixed run inspection", () => {
     expect(text(tree)).toContain("New runs recorded");
     expect(tree.root.findByProps({ "data-result": true }).children).toEqual(['"old-result"']);
     expect(api.submit).not.toHaveBeenCalled();
-    expect(text(tree)).toContain("No recorded trace");
+    // Capture evidence is read with :trace read, never disclosed as part of a run's history.
+    expect(text(tree)).not.toMatch(/Trace ·|history-trace/);
   });
 
   it("discards a late detail reply from a previous selection", async () => {

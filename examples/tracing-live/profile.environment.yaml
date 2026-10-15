@@ -1,0 +1,9 @@
+version: 1
+targets:
+  local: {kind: local}
+environments:
+  captures:
+    imports:
+      lab_trace:
+        source: {kind: provider, file: profile.provider.yaml}
+        bind: {target: local, output: confidential-temporary}

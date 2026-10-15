@@ -36,7 +36,7 @@ pub mod workspace;
 
 pub mod iteration;
 
-pub mod trace;
+pub mod values;
 
 pub mod diagnostics;
 

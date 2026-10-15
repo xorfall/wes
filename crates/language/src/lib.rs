@@ -1,4 +1,5 @@
 //! Command syntax and analysis. Parsing never executes a provider.
+pub mod capture;
 
 mod ast;
 mod diagnostic;

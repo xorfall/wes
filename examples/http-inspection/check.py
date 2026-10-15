@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check actual example files, isolated public/private homes and offline trace restoration."""
+"""Check actual example files, isolated public/private homes and offline response inspection."""
 import argparse
 import json
 from pathlib import Path
@@ -52,14 +52,14 @@ def main():
             assert Handler.requests == 6, Handler.requests
             server.shutdown(); server.server_close(); thread.join()
             inspection = run('public', '--file', 'inspect.wes')
-            assert 'recorded' in inspection and 'http.response' in inspection and '42' in inspection, inspection
-            run('private', '--command', ':read trace:$sample', success=False)
-            raw = run('direct', '--command', ':read trace:$response'); assert '404' in raw and 'completed' in raw, raw
+            assert 'validation' in inspection and '42' in inspection, inspection
+            run('private', '--command', ':read $sample', success=False)
+            raw = run('direct', '--command', ':read $response'); assert '404' in raw and 'validation' in raw, raw
             assert chart(run('public', '--file', 'analyze.wes')) == public_chart
             assert chart(run('direct', '--file', 'decode.wes')) == public_chart
             assert not run('private', '--command', ':calc { return $reading_chart.points; }').strip(), 'private derived content became available on restart'
             assert Handler.requests == 6, 'inspection, decoding or chart rendering performed network I/O'
-            run('public', '--command', '@trace(http) http request url:"http://127.0.0.1:1"', success=False)
+            run('public', '--command', 'http request url:"http://127.0.0.1:1"', success=False)
     finally:
         server.shutdown(); server.server_close(); thread.join()
     print('PASS actual HTTP inspection examples, environment isolation, private omission and offline replay, UTF-8/JSON decoding and sensor charts')

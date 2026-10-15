@@ -193,11 +193,6 @@ enum JournalWire<'a> {
         from: Option<Cow<'a, str>>,
         run: Cow<'a, str>,
     },
-    Trace {
-        node: Cow<'a, str>,
-        run: Cow<'a, str>,
-        value: String,
-    },
     Environments {
         id: Cow<'a, str>,
         yaml: Cow<'a, str>,
@@ -682,17 +677,6 @@ fn journal_wire(entry: &JournalEntry, limits: Limits) -> Result<JournalWire<'_>,
                     .map_err(invalid)?,
             }
         }
-        JournalEntry::Trace(record) => {
-            if !record.validate() {
-                return Err(invalid("invalid public trace record"));
-            }
-            JournalWire::Trace {
-                node: record.node.as_str().into(),
-                run: record.run.as_str().into(),
-                value: String::from_utf8(super::encode_value(&record.value, limits)?)
-                    .map_err(invalid)?,
-            }
-        }
         JournalEntry::Environments(record) => JournalWire::Environments {
             id: record.id().into(),
             yaml: record.yaml().into(),
@@ -1000,18 +984,6 @@ fn journal_entry(wire: JournalWire<'_>, limits: Limits) -> Result<JournalEntry, 
             };
             record.input().map_err(invalid)?;
             JournalEntry::Submitted(record)
-        }
-        JournalWire::Trace { node, run, value } => {
-            let decoded = super::decode_value(value.as_bytes(), limits)?;
-            let record = wes_engine::trace::TraceRecord {
-                node: NodeId::new(&node).map_err(invalid)?,
-                run: RunId::new(&run).map_err(invalid)?,
-                value: decoded.value,
-            };
-            if !record.validate() {
-                return Err(invalid("invalid public trace record"));
-            }
-            JournalEntry::Trace(record)
         }
         JournalWire::Invocation {
             node,

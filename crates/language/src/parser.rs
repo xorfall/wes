@@ -385,6 +385,8 @@ impl Parser {
         }
         let name = token_name(self.advance());
         let mut targets = Vec::new();
+        let mut arguments = Vec::new();
+        let mut separated = true;
         if self.at(K::BraceOpen) || self.at(K::ParenOpen) {
             let closing = if self.at(K::ParenOpen) {
                 K::ParenClose
@@ -395,9 +397,43 @@ impl Parser {
             while self.peek().kind != closing && !matches!(self.peek().kind, K::Newline | K::Eof) {
                 match self.peek().kind {
                     K::Comma => {
+                        if name.text == "trace" && separated {
+                            self.error(
+                                "PAR004",
+                                self.peek().span,
+                                "unexpected annotation separator",
+                            );
+                            return None;
+                        }
+                        separated = true;
                         self.advance();
                     }
-                    K::Word => targets.push(token_name(self.advance())),
+                    K::Key => {
+                        if name.text == "trace" && !separated {
+                            self.error("PAR004", self.peek().span, "expected annotation comma");
+                            return None;
+                        }
+                        separated = false;
+                        let key = token_name(self.advance());
+                        if !self.value_start() {
+                            self.error("PAR004", key.span, "expected an annotation literal");
+                            return None;
+                        }
+                        let value = self.argument_value()?;
+                        arguments.push(Argument {
+                            span: key.span.union(value.name().span),
+                            key,
+                            value,
+                        });
+                    }
+                    K::Word => {
+                        if name.text == "trace" && !separated {
+                            self.error("PAR004", self.peek().span, "expected annotation comma");
+                            return None;
+                        }
+                        separated = false;
+                        targets.push(token_name(self.advance()));
+                    }
                     _ => {
                         self.error(
                             "PAR004",
@@ -416,11 +452,16 @@ impl Parser {
                 );
                 return None;
             }
+            if name.text == "trace" && separated && (!targets.is_empty() || !arguments.is_empty()) {
+                self.error("PAR004", self.peek().span, "trailing annotation separator");
+                return None;
+            }
             self.advance();
         }
         Some(Annotation {
             name,
             targets,
+            arguments,
             span: self.span_from(start),
         })
     }

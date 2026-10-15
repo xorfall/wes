@@ -23,7 +23,6 @@ pub enum HttpOperation {
     Status,
     Error,
     Catalogue,
-    Analysis,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,7 +212,6 @@ impl BoundCalculation {
                     inputs: IndexMap::new(),
                     cautions: Default::default(),
                     interactive: false,
-                    trace_profile: None,
                     guards: IndexMap::new(),
                 })?;
                 Ok((*id, call))

@@ -80,17 +80,6 @@ pub trait Invoker: Send + Sync + 'static {
         let future = self.invoke(call, cancellation);
         Box::pin(async move { future.await.map(crate::storage::AcquiredOutput::Value) })
     }
-    fn supports_trace(&self, _profile: &str) -> bool {
-        false
-    }
-    fn invoke_observed(
-        &self,
-        call: Call,
-        cancellation: CancellationToken,
-        _trace: crate::trace::TraceSink,
-    ) -> InvocationFuture {
-        self.invoke(call, cancellation)
-    }
 }
 #[derive(Clone, Debug)]
 pub struct Call {
@@ -335,15 +324,6 @@ impl Providers {
         {
             return Err(BindError::ProviderChanged);
         }
-        if let Some(profile) = invocation.trace_profile.as_deref()
-            && (profile.is_empty()
-                || profile.len() > 64
-                || !provider.invoker.supports_trace(profile)
-                || invocation.interactive
-                || invocation.capability.streaming)
-        {
-            return Err(BindError::UnsupportedTrace);
-        }
         Ok(BoundCall {
             definition_changed: false,
             invocation,
@@ -354,8 +334,6 @@ impl Providers {
 }
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum BindError {
-    #[error("this provider does not support the requested finite trace profile")]
-    UnsupportedTrace,
     #[error("the provider changed after analysis; resolve this call again")]
     ProviderChanged,
     #[error("streaming and interactive calls require their own execution ports")]
@@ -391,7 +369,6 @@ struct CallContext {
     authority: crate::environments::InvocationAuthority,
     pipe_input: Option<crate::graph::OutputRef>,
     admission: Option<AdmittedCommand>,
-    traces: Option<crate::trace::Traces>,
     byte_input: Option<crate::byte_input::CapturedSource>,
 }
 impl BoundCall {
@@ -526,7 +503,7 @@ impl BoundCall {
             })
             .collect::<Option<Vec<_>>>()?;
         let arguments =
-            crate::trace::record("InvocationArguments", arguments, Provenance::default());
+            crate::values::record("InvocationArguments", arguments, Provenance::default());
         let public = !arguments.provenance().policy().is_private()
             && !arguments.provenance().policy().is_unknown();
         Some(crate::selection::InvocationRecord {
@@ -646,9 +623,6 @@ impl BoundCall {
     pub(crate) fn with_pipe_input(mut self, input: Option<crate::graph::OutputRef>) -> Self {
         self.context.pipe_input = input;
         self
-    }
-    pub(crate) fn set_traces(&mut self, traces: crate::trace::Traces) {
-        self.context.traces = Some(traces);
     }
     fn failure_policy(&self, inputs: &IndexMap<NodeId, Value>) -> wes_core::flow::FlowPolicy {
         let carried = inputs

@@ -35,7 +35,6 @@ export interface WorkspaceNode {
   readonly retention?: import("./protocol").Retention;
   readonly repeatable?: boolean;
   readonly publication?: import("./protocol").ResultPublication;
-  readonly traced?: boolean;
   readonly private?: boolean;
   readonly confidential?: boolean;
   readonly residence?: "memory" | "temporary" | "retainable";
@@ -266,7 +265,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
           // Progress belongs to one run; a new run never inherits an older run's counters.
           ...(node.progress && node.progress.run !== (event.run ?? undefined) ? { progress: undefined } : {}),
           ...(node.run !== (event.run ?? undefined) ? { accessWithdrawn: undefined } : {}),
-          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, selectionSources: event.selectionSources, dependencyLifetime: event.dependencyLifetime, inputsCaptured: event.inputsCaptured === true || undefined, streamOutput: event.streamOutput, streamSource: event.streamSource === true, traced: event.traced, interactive: event.interactive,
+          command: event.command, currentDefinition: event.currentDefinition ?? undefined, run: event.run ?? undefined, dependsOn: event.dependsOn, selectionSources: event.selectionSources, dependencyLifetime: event.dependencyLifetime, inputsCaptured: event.inputsCaptured === true || undefined, streamOutput: event.streamOutput, streamSource: event.streamSource === true, interactive: event.interactive,
           repeatable: event.repeatable, startedAt: event.startedAt ?? undefined,
           // Replaced by every announcement: absent or null now means no controls, whatever was said before.
           recordingControl: recordingControlOf(event), reconciliationControl: reconciliationControlOf(event), openLifetime: openLifetimeOf(event) }));
@@ -291,7 +290,7 @@ export function apply(workspace: Workspace, event: Event): Workspace {
             dependencyLifetime: event.dependencyLifetime,
             ...(event.inputsCaptured === true ? { inputsCaptured: true as const } : {}),
             state: "pending",
-            traced: event.traced, interactive: event.interactive,
+            interactive: event.interactive,
             provenance: {},
             cautions: [],
             kept: false,

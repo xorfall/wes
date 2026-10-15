@@ -5,7 +5,7 @@ mod direct;
 mod domain;
 pub(crate) mod transport;
 pub use domain::HttpFunction;
-mod inspection;
+mod headers;
 pub use direct::direct;
 pub(crate) use direct::direct_named;
 pub(crate) mod explicit;
@@ -201,28 +201,12 @@ struct Inner {
     operations: IndexMap<Vec<String>, explicit::Operation>,
 }
 impl Invoker for HttpInvoker {
-    fn supports_trace(&self, profile: &str) -> bool {
-        profile == "http"
-    }
     fn invoke(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture {
-        self.invoke_with_trace(call, cancellation, None)
-    }
-    fn invoke_observed(
-        &self,
-        call: Call,
-        cancellation: CancellationToken,
-        trace: wes_engine::trace::TraceSink,
-    ) -> InvocationFuture {
-        self.invoke_with_trace(call, cancellation, Some(trace))
+        self.run(call, cancellation)
     }
 }
 impl HttpInvoker {
-    fn invoke_with_trace(
-        &self,
-        call: Call,
-        cancellation: CancellationToken,
-        trace: Option<wes_engine::trace::TraceSink>,
-    ) -> InvocationFuture {
+    fn run(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture {
         let inner = self.inner.clone();
         timed(async move {
             if cancellation.is_cancelled() {
@@ -240,17 +224,7 @@ impl HttpInvoker {
                 return Err(InvocationError::Cancelled);
             }
             let prepared = request.map_err(Failure::error)?;
-            if let Some(trace) = &trace {
-                inspection::request(trace, &prepared.request, &prepared.redactor);
-            }
-            let response = inner
-                .send_observed(
-                    prepared.request,
-                    cancellation.clone(),
-                    trace.as_ref(),
-                    &prepared.redactor,
-                )
-                .await?;
+            let response = inner.send(prepared.request, cancellation.clone()).await?;
             let limits = inner.config.response;
             let interpreted = tokio::task::spawn_blocking(move || {
                 let expected =
@@ -274,29 +248,17 @@ impl HttpInvoker {
 }
 impl Inner {
     async fn read_body(&self, response: reqwest::Response) -> Result<(u16, Vec<u8>), Failure> {
-        read_body(response, self.config.response.bytes, None).await
+        read_body(response, self.config.response.bytes).await
     }
-    async fn send_observed(
+    async fn send(
         &self,
         request: reqwest::Request,
         cancellation: CancellationToken,
-        trace: Option<&wes_engine::trace::TraceSink>,
-        redactor: &auth::Redactor,
     ) -> Result<transport::Response, InvocationError> {
         let response = self
             .transport
-            .send(
-                &self.client,
-                request,
-                self.config,
-                cancellation,
-                trace,
-                redactor,
-            )
+            .send(&self.client, request, self.config, cancellation)
             .await?;
-        if let Some(trace) = trace {
-            trace.emit("http.body", inspection::body(&response.body, redactor));
-        }
         Ok(response)
     }
 }
@@ -304,7 +266,6 @@ impl Inner {
 async fn read_body(
     mut response: reqwest::Response,
     limit: usize,
-    trace: Option<&wes_engine::trace::TraceSink>,
 ) -> Result<(u16, Vec<u8>), Failure> {
     let status = response.status().as_u16();
     if response
@@ -314,30 +275,11 @@ async fn read_body(
         return Err(Failure::Size);
     }
     let mut body = Vec::new();
-    let mut last = std::time::Instant::now();
-    let mut updates = 0;
     while let Some(chunk) = response.chunk().await.map_err(Failure::transport)? {
         if chunk.len() > limit.saturating_sub(body.len()) {
             return Err(Failure::Size);
         }
         body.extend_from_slice(&chunk);
-        if updates < 48 && (updates == 0 || last.elapsed() >= Duration::from_millis(100)) {
-            if let Some(trace) = trace {
-                trace.emit(
-                    "http.progress",
-                    wes_engine::trace::record(
-                        "HttpProgress",
-                        [(
-                            "receivedBytes".into(),
-                            wes_engine::trace::integer(body.len() as i64),
-                        )],
-                        wes_core::Provenance::default(),
-                    ),
-                );
-            }
-            last = std::time::Instant::now();
-            updates += 1;
-        }
     }
     Ok((status, body))
 }

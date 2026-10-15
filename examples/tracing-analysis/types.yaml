@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "types": {
+    "CaptureCoordinate": {
+      "base": "Text",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 20
+    },
+    "CaptureInterface": {
+      "base": "Record",
+      "fields": {
+        "id": "Int",
+        "section": "Int",
+        "linkType": "Int",
+        "snapLength": "Int",
+        "timestampScale": "Text",
+        "timestampOffset": "Text"
+      }
+    },
+    "CaptureInterfaces": {
+      "base": "List<CaptureInterface>",
+      "maxItems": 256
+    },
+    "CapturePacket": {
+      "base": "Record",
+      "fields": {
+        "number": "Int",
+        "interface": "Int",
+        "recordOffset": "CaptureCoordinate",
+        "dataOffset": "CaptureCoordinate",
+        "capturedLength": "Int",
+        "originalLength": "Int",
+        "timestampTicks": "Option<CaptureCoordinate>"
+      }
+    },
+    "CapturePackets": {
+      "base": "List<CapturePacket>",
+      "maxItems": 512
+    },
+    "CaptureIndex": {
+      "base": "Record",
+      "fields": {
+        "format": "Text",
+        "rawBytes": "CaptureCoordinate",
+        "sha256": "Text",
+        "packetCount": "CaptureCoordinate",
+        "indexComplete": "Bool",
+        "skippedBlocks": "Int",
+        "interfaces": "CaptureInterfaces",
+        "packets": "CapturePackets"
+      }
+    },
+    "DecoderIdentity": {
+      "base": "Record",
+      "fields": {
+        "name": "Text",
+        "version": "Text",
+        "runtime": "Text",
+        "codeSha256": "Text",
+        "containerSha256": "Text",
+        "schemaSha256": "Text"
+      }
+    },
+    "PacketLimit": {
+      "base": "Int",
+      "min": 1,
+      "max": 512
+    },
+    "HeaderBytes": {
+      "base": "Int",
+      "min": 64,
+      "max": 65536
+    },
+    "AnalysisOptions": {
+      "base": "Record",
+      "fields": {
+        "packetLimit": "PacketLimit",
+        "headerBytes": "HeaderBytes"
+      }
+    },
+    "DecodedField": {
+      "base": "Record",
+      "fields": {
+        "layer": "Text",
+        "key": "Text",
+        "label": "Text",
+        "value": "Text",
+        "offset": "CaptureCoordinate",
+        "length": "Int"
+      }
+    },
+    "DecodedFields": {
+      "base": "List<DecodedField>",
+      "maxItems": 64
+    },
+    "DecodeNotes": {
+      "base": "List<Text>",
+      "maxItems": 8
+    },
+    "DecodeStatus": {
+      "base": "Text",
+      "enum": [
+        "decoded",
+        "unsupported",
+        "truncated",
+        "fragmented",
+        "malformed"
+      ]
+    },
+    "DecodedPacket": {
+      "base": "Record",
+      "fields": {
+        "number": "Int",
+        "interface": "Int",
+        "dataOffset": "CaptureCoordinate",
+        "capturedLength": "Int",
+        "originalLength": "Int",
+        "protocol": "Text",
+        "source": "Option<Text>",
+        "destination": "Option<Text>",
+        "sourcePort": "Option<Int>",
+        "destinationPort": "Option<Int>",
+        "status": "DecodeStatus",
+        "inspectedBytes": "Int",
+        "fields": "DecodedFields",
+        "notes": "DecodeNotes"
+      }
+    },
+    "DecodedPackets": {
+      "base": "List<DecodedPacket>",
+      "maxItems": 512
+    },
+    "AnalysisLimitations": {
+      "base": "List<Text>",
+      "maxItems": 16
+    },
+    "CaptureAnalysis": {
+      "base": "Record",
+      "fields": {
+        "decoder": "DecoderIdentity",
+        "options": "AnalysisOptions",
+        "index": "CaptureIndex",
+        "packets": "DecodedPackets",
+        "sampleComplete": "Bool",
+        "limitations": "AnalysisLimitations"
+      }
+    },
+    "PacketScanStep": {
+      "base": "Record",
+      "fields": {
+        "state": "Int",
+        "outputs": "List<DecodedPacket>"
+      }
+    }
+  }
+}

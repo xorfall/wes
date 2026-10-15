@@ -1467,6 +1467,9 @@ fn validate_definition(definition: &Definition) -> Result<(), SessionError> {
                     let common = matches!(
                         i.spec.command,
                         MetaCommand::Read
+                            | MetaCommand::TraceImport
+                            | MetaCommand::TraceAnalyze
+                            | MetaCommand::TraceExport
                             | MetaCommand::Inspect
                             | MetaCommand::List
                             | MetaCommand::Help

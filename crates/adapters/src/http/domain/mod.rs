@@ -1,15 +1,13 @@
 //! Pure HTTP definitions and analysis. Views are thin entry points, never network clients.
-mod analysis;
 mod catalogue;
 #[cfg(test)]
 mod tests;
 
-use indexmap::IndexMap;
 use wes_core::{Data, ErrorId, ErrorValue, Primitive, Provenance, Shape, Value};
 use wes_engine::{
     calc::LocalError,
     driver::CancellationToken,
-    trace::{integer, record, text},
+    values::{integer, record, text},
 };
 
 #[derive(Clone, Copy)]
@@ -17,7 +15,6 @@ pub enum HttpFunction {
     Status,
     Error,
     Catalogue,
-    Analysis,
 }
 impl HttpFunction {
     pub fn evaluate(
@@ -50,7 +47,6 @@ impl HttpFunction {
                 Self::Status => catalogue::status_input(input.data()),
                 Self::Error => catalogue::error_input(input.data()),
                 Self::Catalogue => catalogue::catalogue(input.data()),
-                Self::Analysis => analysis::analyze(input.data(), cancellation),
             }
         })();
         match result {

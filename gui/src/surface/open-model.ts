@@ -113,7 +113,6 @@ export function openFacts(input: OpenInput): readonly FactGroup[] {
     named?.capability?.safe === false
       ? fact("unsafe", "this capability performs an external action", "mono-warn")
       : undefined,
-    node?.traced ? fact("traced", "the call was recorded") : undefined,
     node?.interactive ? fact("interactive", "it can be typed at while it runs") : undefined,
     node?.repeatable === undefined
       ? undefined

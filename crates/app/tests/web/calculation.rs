@@ -304,7 +304,7 @@ async fn run_history_keeps_the_selected_failure_after_a_successful_revision() {
     assert_eq!(detail["definition"]["text"], source);
     assert_eq!(detail["run"]["state"], "Failed");
     assert!(detail["run"]["handle"].is_null());
-    assert!(detail["trace"].is_null());
+    assert!(detail.get("trace").is_none());
     assert_eq!(detail["canProtect"], false);
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
     f.close().await;

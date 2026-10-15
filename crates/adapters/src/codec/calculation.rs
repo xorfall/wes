@@ -19,7 +19,6 @@ impl LocalServices for CalculationServices {
             HttpOperation::Status => crate::http::HttpFunction::Status,
             HttpOperation::Error => crate::http::HttpFunction::Error,
             HttpOperation::Catalogue => crate::http::HttpFunction::Catalogue,
-            HttpOperation::Analysis => crate::http::HttpFunction::Analysis,
         };
         operation
             .evaluate(input, token)

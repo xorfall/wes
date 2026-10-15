@@ -1652,6 +1652,24 @@ async fn vocabulary_projects_adapter_inputs_and_existing_subcommand_specs() {
         ["as", "replace", "file", "url", "endpoint"]
     );
     assert_eq!(params("import", "process"), ["as", "replace", "bin"]);
+    let trace = commands.iter().find(|c| c["name"] == "trace").unwrap();
+    assert_eq!(
+        trace["takes"],
+        json!([
+            "import", "analyze", "export", "retain", "start", "stop", "read"
+        ])
+    );
+    assert_eq!(
+        trace["summary"],
+        wes_language::vocabulary::commands::help_summary(&["trace"])
+    );
+    assert_eq!(params("trace", "import"), ["file", "using", "options"]);
+    assert_eq!(params("trace", "analyze"), ["using", "options"]);
+    assert_eq!(
+        params("trace", "export"),
+        ["using", "file", "allow_confidential", "options"]
+    );
+    assert!(params("trace", "retain").is_empty());
     let import = commands.iter().find(|c| c["name"] == "import").unwrap();
     for name in ["spec", "process", "plan", "apply"] {
         assert!(import["takes"].as_array().unwrap().contains(&json!(name)));

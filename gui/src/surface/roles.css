@@ -285,21 +285,6 @@
   border-style: solid;
 }
 
-/* Traced badge: The command was traced. */
-.wes-terminal .badge-traced, .wes-terminal.badge-traced {
-  font-family: var(--type-sans-small-family);
-  font-size: var(--type-sans-small-size);
-  font-weight: var(--type-sans-small-weight);
-  letter-spacing: var(--type-sans-small-tracking);
-  line-height: var(--type-sans-small-leading);
-  color: var(--mono-meta);
-  background-color: var(--sunk);
-  border-color: var(--line);
-  border-width: var(--stroke-thin);
-  border-radius: var(--radius-sm);
-  border-style: solid;
-}
-
 /* Effects acknowledged: A repeat someone forced past the effects guard; per attempt, always on the cell. */
 .wes-terminal .badge-effects, .wes-terminal.badge-effects {
   font-family: var(--type-sans-small-family);

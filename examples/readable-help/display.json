@@ -30,6 +30,10 @@
       "summary": "Choose a command family or provider. :list providers discovers the selected catalogue. :help arguments explains literals and nested references; :help errors explains diagnostic codes and typical fixes.",
       "children": [
         {
+          "name": "trace",
+          "summary": "Start, stop and read an original local capture; import capture files, analyze explicit original Bytes, export with separate permission, or retain exact results and their dependencies. Remote capture and transfer are not implemented."
+        },
+        {
           "name": "source",
           "summary": "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority."
         },
@@ -95,7 +99,7 @@
         },
         {
           "name": "read",
-          "summary": "reads selected output or retained trace content. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency."
+          "summary": "reads selected output. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency."
         },
         {
           "name": "node",
@@ -309,11 +313,11 @@
     "provenance": {},
     "data": {
       "path": "read",
-      "summary": "reads selected output or retained trace content. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency.",
+      "summary": "reads selected output. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency.",
       "invocation": {
         "command": ":read",
-        "usage": ":read [$result] [value:<Unknown>] [trace:<Unknown>] [bytes:<Unknown>] [run:<Text>] [select:<Text>] [offset:<Int>] [limit:<Int>]",
-        "summary": "reads selected output or retained trace content. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency.",
+        "usage": ":read [$result] [value:<Unknown>] [bytes:<Unknown>] [select:<Text>] [offset:<Int>] [limit:<Int>]",
+        "summary": "reads selected output. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission. dependency: instead of select: reads a named immutable stored input under the complete derived result's root policy, including after its original transient definition closes. Ordinary record fields, copied provenance and arbitrary handles cannot create this dependency.",
         "implemented": true,
         "takes": [],
         "parameters": [
@@ -323,18 +327,8 @@
             "required": false
           },
           {
-            "name": "trace",
-            "type": "Unknown",
-            "required": false
-          },
-          {
             "name": "bytes",
             "type": "Unknown",
-            "required": false
-          },
-          {
-            "name": "run",
-            "type": "Text",
             "required": false
           },
           {
@@ -677,7 +671,6 @@
           "httpStatus",
           "httpError",
           "httpCatalogue",
-          "httpAnalysis",
           "parseJson",
           "decodeJson",
           "regexTest",

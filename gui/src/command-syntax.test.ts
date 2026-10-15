@@ -13,12 +13,22 @@ it("separates the screenshot's meta command and as key from reference, value and
 });
 
 it("recognizes annotations, L0 paths, L1 lines and UI commands independently", () => {
-  const source = '@trace(http) @env{dev}\ncatalog echo value:"yes"\n:list types\n/theme paper';
-  expect(role(source, "note")).toEqual(["@trace(http)", "@env{dev}"]);
+  const source = '@trace(tcp) @env{dev}\ncatalog echo value:"yes"\n:list types\n/theme paper';
+  expect(role(source, "note")).toEqual(["@trace(tcp)", "@env{dev}"]);
   expect(role(source, "verb")).toEqual(["catalog", "echo"]);
   expect(role(source, "meta")).toEqual([":list", "types"]);
   expect(role(source, "ui")).toEqual(["/theme"]);
   expect(role(source, "str")).toEqual(['"yes"']);
+});
+
+it("keeps a named capture's literal options inside the annotation and reads the call after it", () => {
+  const source = '@trace(capture:"synthetic-http",tail:"5s") catalog echo value:"yes" > echoed\n:trace read $echoed > evidence';
+  expect(role(source, "note")).toEqual(["@trace(capture:", ",tail:", ")"]);
+  expect(role(source, "str")).toEqual(['"synthetic-http"', '"5s"', '"yes"']);
+  expect(role(source, "verb")).toEqual(["catalog", "echo"]);
+  expect(role(source, "arg")).toEqual(["value:"]);
+  expect(role(source, "meta")).toEqual([":trace"]);
+  expect(commandTokens(source).map(token => token.text).join("")).toBe(source);
 });
 
 it("separates help's provider path from the meta command, also after annotations", () => {
@@ -39,9 +49,9 @@ it("only treats advertised L1 subcommands as keywords, leaving positional names 
 });
 
 it("handles escaped strings and treats URLs, references and string content as values", () => {
-  const source = String.raw`service call url:https://example.invalid/a:b value:"a \"quoted\" @trace(http) as:word" input:$result::error`;
+  const source = String.raw`service call url:https://example.invalid/a:b value:"a \"quoted\" @trace(tcp) as:word" input:$result::error`;
   expect(role(source, "arg")).toEqual(["url:", "value:", "input:"]);
-  expect(role(source, "str")).toEqual([String.raw`"a \"quoted\" @trace(http) as:word"`]);
+  expect(role(source, "str")).toEqual([String.raw`"a \"quoted\" @trace(tcp) as:word"`]);
   expect(role(source, "note")).toEqual([]);
 });
 
@@ -54,7 +64,7 @@ it("keeps multiline calculation body words and comments out of command roles", (
 });
 
 it("preserves exact source including partial input, annotation strings, Unicode and whitespace", () => {
-  const samples = ["", "\t\n ", '@env{"dev space"} :list types', '@trace(http) :type check $a as:Text',
+  const samples = ["", "\t\n ", '@env{"dev space"} :list types', '@trace(capture:"synthetic-http",tail:"5s") :type check $a as:Text', '@trace(capture:"unfinished',
     '@env{nested{value:"x}y"}} service call', '@env{unfinished', 'echo value:"unfinished\\',
     "echo value:'it\\'s fine'", ":calc {\n return {şehir: \"İstanbul 😀\"};\n}",
     'catalog echo value:"<script>alert(1)</script>"'];

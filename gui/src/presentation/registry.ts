@@ -21,7 +21,7 @@ import processOutput from "./core/process-output.yaml?raw";
 
 /** The kinds this client can draw from an entry. Anything else is an unknown kind. */
 export const ENTRY_KINDS: readonly (Kind | "http" | "log")[] = ["table", "fields", "items", "text", "line", "process", "http", "log"];
-const OFFERS: readonly OfferName[] = ["http", "source", "copy", "trace"];
+const OFFERS: readonly OfferName[] = ["http", "source", "copy"];
 const UNITS = ["ns", "us", "ms", "s"] as const;
 export type TimeUnit = (typeof UNITS)[number];
 

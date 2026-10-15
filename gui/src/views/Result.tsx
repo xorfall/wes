@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Engine } from "../engine";
 import type { StoredValue } from "../protocol";
-import { httpTrace, HttpInspection } from "./HttpInspection";
 import { ValueBlock, type ValueBlockProps } from "../surface/render/ValueBlock";
 import type { StoredIdentity } from "../surface/render/dataset-source";
 
@@ -13,7 +12,6 @@ import type { StoredIdentity } from "../surface/render/dataset-source";
  * that dispatch around one fetched value so panels never reimplement it.
  */
 export function ValueView({ value, cacheKey, engine, stored, name, selectionSource, readScope }: { readonly readScope?:string; readonly selectionSource?:ValueBlockProps["selectionSource"]; readonly value: StoredValue; readonly cacheKey?: string; readonly engine?: Engine; readonly stored?: StoredIdentity; readonly name?: string }) {
-  if (httpTrace(value.data)) return <HttpInspection data={value.data} />;
   return <ValueBlock readScope={readScope} selectionSource={selectionSource} engine={engine} value={value} {...(stored ? { stored } : {})} {...(name ? { name } : {})} cacheKey={cacheKey ?? `view:${keyOf(value)}`} mode="window" inCell={false} />;
 }
 

@@ -44,7 +44,7 @@ export function DiagnosticsPanel() {
             </button>;
           })}
         </div>
-        <p className="settings-note">Nothing is sent to an external service. Command history and explicit provider traces have controls of their own.</p>
+        <p className="settings-note">Nothing is sent to an external service. Command history and explicit capture evidence have controls of their own.</p>
       </div>
     </div>
     <div className="settings-row">

@@ -44,8 +44,8 @@ def main():
             server.shutdown(); server.server_close(); thread.join()
             # Offline read/analysis in a managed, deactivated workspace must send no requests.
             offline = values(run('public', '--file', 'offline.wes').stdout)
-            analysis = next(v for v in offline if isinstance(v, dict) and v.get('analyzer') == 'wes.http')
-            assert analysis['statuses'][0]['code'] == 200 and analysis['executionState'] == 'completed', analysis
+            analysis = next(v for v in offline if isinstance(v, dict) and v.get('class') == 'success')
+            assert analysis['code'] == 200, analysis
             assert any(isinstance(v, list) for v in offline), offline
             catalogue_output = run('public', '--file', 'catalogue.wes').stdout
             assert 'calc' in catalogue_output

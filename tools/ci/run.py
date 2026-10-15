@@ -47,6 +47,9 @@ def commands(suite, plan, model):
             result.append((ROOT, argv))
         result.insert(6, (ROOT, ["python3", "examples/prometheus-workspace/run.py", "--check"]))
         result.append((ROOT, ["python3", "examples/byte-export/test_export.py"]))
+        for script in ["tracing-offline/test_capture_adapter.py", "tracing-live/test_capture_session.py",
+                       "tracing-analysis/test_analyze_capture.py", "tracing-local/check.py"]:
+            result.append((ROOT, ["python3", f"examples/{script}"]))
         return result
     raise ValueError("Unknown suite")
 

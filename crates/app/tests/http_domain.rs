@@ -32,7 +32,7 @@ fn actual_http_domain_project_runs_managed_public_private_and_offline() {
 }
 
 #[tokio::test]
-async fn private_analysis_and_definitions_are_typed_live_values_but_not_restored() {
+async fn private_status_classifications_are_typed_live_values_but_not_restored() {
     let root = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -87,15 +87,16 @@ async fn private_analysis_and_definitions_are_typed_live_values_but_not_restored
     assert!(report.export().is_none());
     server.await.unwrap();
     let snapshot = session.snapshot().await.unwrap();
-    for name in ["sample", "trace", "analysis", "status", "definition"] {
+    for name in ["sample", "analysis", "status", "definition"] {
         let value = &snapshot.execution.values[&snapshot.names[name].node];
         assert!(value.provenance().policy().is_private(), "{name}");
     }
     let Data::Record(analysis) = snapshot.execution.values[&snapshot.names["analysis"].node].data()
     else {
-        panic!("typed analysis")
+        panic!("typed status classification")
     };
-    assert_eq!(analysis["partial"], Data::Bool(false));
+    assert_eq!(analysis["code"], Data::Int(200));
+    assert_eq!(analysis["class"], Data::Text("success".into()));
     let Data::Record(definition) =
         snapshot.execution.values[&snapshot.names["definition"].node].data()
     else {
@@ -109,7 +110,7 @@ async fn private_analysis_and_definitions_are_typed_live_values_but_not_restored
         .unwrap();
     let session = restored.handle.current().unwrap().session;
     let snapshot = session.snapshot().await.unwrap();
-    for name in ["sample", "trace", "analysis", "status", "definition"] {
+    for name in ["sample", "analysis", "status", "definition"] {
         assert!(
             !snapshot
                 .execution

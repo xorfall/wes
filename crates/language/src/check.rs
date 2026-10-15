@@ -92,16 +92,21 @@ pub fn check(
         .collect();
     if !traces.is_empty()
         && (traces.len() != 1
-            || traces[0].targets.len() != 1
-            || traces[0].targets[0].text.is_empty()
-            || traces[0].targets[0].text.len() > 64
+            || crate::capture::CaptureAnnotation::parse(traces[0]).is_err()
             || !matches!(resolution, Resolution::Capability { capability, .. } if !capability.streaming)
             || annotations.iter().any(|a| a.name.text == "interactive"))
     {
+        diagnostics.push(Diagnostic::error("TRC001",traces[0].name.span,
+            "Use @trace(tcp) or @trace(capture:\"name\", tail:\"5s\") on a finite non-interactive provider call; capture options must be bounded literals."));
+    }
+    for annotation in annotations
+        .iter()
+        .filter(|a| a.name.text != "trace" && !a.arguments.is_empty())
+    {
         diagnostics.push(Diagnostic::error(
-            "TRC001",
-            traces[0].name.span,
-            "Use one @trace(profile) on a finite provider call; the profile must be 1–64 bytes.",
+            "CHK014",
+            annotation.span,
+            "This annotation does not accept named arguments.",
         ));
     }
     let call = resolution.call();

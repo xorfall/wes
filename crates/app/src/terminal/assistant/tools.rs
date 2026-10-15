@@ -177,8 +177,6 @@ struct ExecutionRead {
     request_id: String,
     #[serde(default)]
     wait_ms: u64,
-    #[serde(default)]
-    trace: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -417,16 +415,10 @@ async fn execution(
         })
         .ok_or_else(|| fail("Unknown execution request_id for this session and workspace."))
 }
-fn report(
-    observation: &SessionObservation,
-    execution: &Execution,
-    trace: bool,
-    results: Results,
-) -> Value {
+fn report(observation: &SessionObservation, execution: &Execution, results: Results) -> Value {
     report_bounded(
         observation,
         execution,
-        trace,
         results,
         &mut (8 * 1024 * 1024 - 64 * 1024),
     )
@@ -434,7 +426,6 @@ fn report(
 fn report_bounded(
     observation: &SessionObservation,
     execution: &Execution,
-    trace: bool,
     results: Results,
     body_budget: &mut usize,
 ) -> Value {
@@ -480,7 +471,6 @@ fn report_bounded(
         if reply.refreshed.contains(id) { result["refreshed"] = json!(true); }
         result["names"] = json!(observation.state.names.iter().filter(|(_, output)| output.node == *id).map(|(name,_)| name).collect::<Vec<_>>());
         if let Some(error) = graph.errors.get(id) { result["error"] = bounded(&error.to_value(), 4096); }
-        if trace && let Some(value) = observation.traces.get(id, None) { result["trace"] = bounded(&value, 8 * 1024 * 1024); }
         result
     }).collect();
     let codes = super::inspection::diagnostics(
@@ -513,11 +503,10 @@ fn request_report(
     observation: &SessionObservation,
     execution: &Execution,
     progress: Option<SequentialProgress>,
-    trace: bool,
     results: Results,
 ) -> Value {
     if execution.steps.is_empty() {
-        return report(observation, execution, trace, results);
+        return report(observation, execution, results);
     }
     let state = workflow_state(observation, execution, progress);
     let mut budget = 8 * 1024 * 1024 - 256 * 1024;
@@ -535,7 +524,7 @@ fn request_report(
             let mut result = absent
                 .then(|| unstarted_step(progress, index, cell))
                 .flatten()
-                .unwrap_or_else(|| report_bounded(observation, &step, trace, results, &mut budget));
+                .unwrap_or_else(|| report_bounded(observation, &step, results, &mut budget));
             result["index"] = json!(index);
             if absent && result["status"] == "admission_pending_or_unavailable" {
                 result["status"] = json!("not_admitted_or_unavailable");
@@ -1098,7 +1087,7 @@ async fn perform(
             let observation =
                 observe_execution(terminal, application, &current, &execution, input.wait_ms)
                     .await?;
-            let mut result = json!({"request_id":input.request_id,"duplicate":!fresh,"context":context_token(&context(&observation.session,terminal,&current)),"plans":plan_summaries(&observation.session, terminal),"execution":request_report(&observation.session,&execution,observation.workflow,false,input.results)});
+            let mut result = json!({"request_id":input.request_id,"duplicate":!fresh,"context":context_token(&context(&observation.session,terminal,&current)),"plans":plan_summaries(&observation.session, terminal),"execution":request_report(&observation.session,&execution,observation.workflow,input.results)});
             if let Some(Err(error)) = admitted.submission {
                 result["execution"]["admission_error"] = json!(error.to_string());
             }
@@ -1117,7 +1106,6 @@ async fn perform(
                 &observation.session,
                 &execution,
                 observation.workflow,
-                input.trace,
                 input.results,
             ))
         }
@@ -2014,7 +2002,7 @@ mod tests {
             .reply = Some(Err(wes_engine::session::SessionError::Stopped));
         assert!(settled(&failed, &execution));
         assert_eq!(
-            report(&failed, &execution, false, Results::Full)["status"],
+            report(&failed, &execution, Results::Full)["status"],
             "admission_failed"
         );
         let missing = Execution {

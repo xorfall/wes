@@ -24,7 +24,6 @@ pub struct SessionObservation {
     pub completion_notices:
         std::collections::BTreeMap<crate::graph::NodeId, crate::tasks::CompletionNotice>,
     /// Read-only live evidence handle; each get captures independently of this metadata snapshot.
-    pub traces: crate::trace::Traces,
     pub interactive_providers: std::collections::BTreeMap<Option<String>, Vec<String>>,
     pub saved_workspaces: std::sync::Arc<[crate::workspace::WorkspaceName]>,
     pub environment_plans:
@@ -170,7 +169,6 @@ impl Actor {
                         .map(|notice| (node.id().clone(), notice))
                 })
                 .collect(),
-            traces: self.workspace.traces.clone(),
             views: self.workspace.view_catalogue().clone(),
             types: crate::tasks::type_completion_names(self.workspace.contracts()),
             interactive_providers: std::iter::once((

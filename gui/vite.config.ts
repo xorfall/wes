@@ -37,7 +37,6 @@ export default defineConfig({
       "/view-inputs": backend(),
       "/view-observation": backend(),
       "/live-view": backend(),
-      "/traces": backend(),
       "/history": backend(),
       "/terminals": backend(),
       "/events": backend(true),

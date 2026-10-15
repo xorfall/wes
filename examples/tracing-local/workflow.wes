@@ -1,0 +1,5 @@
+:trace import file:"synthetic.pcap" using:"pcap" > imported
+:trace analyze $imported.raw using:"headers" options:{packets:128,headerBytes:256} > decoded
+:trace export $imported.raw using:"pcap" file:"explicit.pcap" allow_confidential:true > exported
+:trace retain $decoded > saved
+:read bytes:$saved dependency:"input" from:"0" limit:24 > header

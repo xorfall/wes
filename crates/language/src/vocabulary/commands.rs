@@ -13,6 +13,48 @@ pub struct CommandPath {
 use MetaCommand::*;
 pub const COMMAND_PATHS: &[CommandPath] = &[
     CommandPath {
+        path: &["trace", "import"],
+        operation: TraceImport,
+        short: None,
+        summary: "Import an existing local capture file through an explicit finite provider profile.",
+    },
+    CommandPath {
+        path: &["trace", "analyze"],
+        operation: TraceAnalyze,
+        short: None,
+        summary: "Analyze an explicit owned original Bytes selection with a named local decoder profile.",
+    },
+    CommandPath {
+        path: &["trace", "export"],
+        operation: TraceExport,
+        short: None,
+        summary: "Explicit local file export with separate confidential egress approval and no overwrite.",
+    },
+    CommandPath {
+        path: &["trace", "retain"],
+        operation: Keep,
+        short: None,
+        summary: "Protect an exact acknowledged result and its declared dependencies using native Keep; no replay or policy promotion.",
+    },
+    CommandPath {
+        path: &["trace", "start"],
+        operation: TraceStart,
+        short: None,
+        summary: "Start a frozen named capture profile with optional narrowing.",
+    },
+    CommandPath {
+        path: &["trace", "stop"],
+        operation: TraceStop,
+        short: None,
+        summary: "Explicitly stop the current original capture with its typed profile action; no replay.",
+    },
+    CommandPath {
+        path: &["trace", "read"],
+        operation: TraceRead,
+        short: None,
+        summary: "Read physically joined original capture evidence without executing its producer.",
+    },
+    CommandPath {
         path: &["source", "result"],
         operation: SourceResult,
         short: None,
@@ -298,7 +340,7 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         path: &["read"],
         operation: Read,
         short: None,
-        summary: "Read selected output, retained trace content or bounded original bytes without rerunning a producer.",
+        summary: "Read selected output or bounded original bytes without rerunning a producer.",
     },
     CommandPath {
         path: &["node", "refresh"],
@@ -609,12 +651,12 @@ pub fn invocation(source: &Call) -> Result<CommandInvocation, Diagnostic> {
         let selectors: Vec<_> = call
             .arguments
             .iter()
-            .filter(|a| matches!(a.key.text.as_str(), "value" | "trace" | "bytes"))
+            .filter(|a| matches!(a.key.text.as_str(), "value" | "bytes"))
             .collect();
         if call.operands.len() + selectors.len() != 1 {
             return Err(invalid(
                 source,
-                "Read requires exactly one output, trace or byte-source reference.",
+                "Read requires exactly one output or byte-source reference.",
             ));
         }
         if let Some(selector) = selectors.first() {
@@ -624,7 +666,7 @@ pub fn invocation(source: &Call) -> Result<CommandInvocation, Diagnostic> {
             let kind = selector.key.text.clone();
             let value = selector.value.clone();
             call.arguments
-                .retain(|a| !matches!(a.key.text.as_str(), "value" | "trace" | "bytes"));
+                .retain(|a| !matches!(a.key.text.as_str(), "value" | "bytes"));
             call.operands.push(value);
             if kind != "value" {
                 tail.push(kind);
@@ -651,12 +693,14 @@ pub fn invocation(source: &Call) -> Result<CommandInvocation, Diagnostic> {
         ));
     }
     if path.operation == Read
-        && tail.is_empty()
-        && call.arguments.iter().any(|a| a.key.text == "run")
+        && call
+            .arguments
+            .iter()
+            .any(|a| matches!(a.key.text.as_str(), "trace" | "run"))
     {
         return Err(invalid(
             source,
-            "run: selects a retained trace; use :read trace:$output run:<id>.",
+            "Read accepts ordinary output or original byte selection. Use :trace read for original capture evidence.",
         ));
     }
     let mut spec = path.operation.spec(&tail);
@@ -773,6 +817,9 @@ pub fn help_summary(path: &[&str]) -> &'static str {
     match path {
         ["keep"] => Keep.spec(&[]).summary,
         ["read"] => Read.spec(&[]).summary,
+        ["trace"] => {
+            "Start, stop and read an original local capture; import capture files, analyze explicit original Bytes, export with separate permission, or retain exact results and their dependencies. Remote capture and transfer are not implemented."
+        }
         ["source"] => {
             "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority."
         }

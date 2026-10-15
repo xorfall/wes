@@ -411,8 +411,8 @@ export function joined(fields: readonly VerdictField[]): Segment[] {
  * The facts a cell carries, and only the ones that could have differed for it.
  *
  * An environment or a target is marked when it is not the session's own; a revision only when the
- * node saw a different one; traced when the command was traced; effects when a repeat was confirmed
- * although it performs an external action again — that one is always shown, per attempt.
+ * node saw a different one; effects when a repeat was confirmed although it performs an external
+ * action again — that one is always shown, per attempt.
  */
 export function marksOf(cell: ClientCell, nodes: readonly WorkspaceNode[], context: SessionContext): Mark[] {
   const marks: Mark[] = [];
@@ -423,7 +423,6 @@ export function marksOf(cell: ClientCell, nodes: readonly WorkspaceNode[], conte
   if (environment && environment.target && environment.target !== context.target) {
     marks.push({ kind: "target", text: environment.target });
   }
-  if (nodes.some((node) => node.traced)) marks.push({ kind: "traced", text: "traced" });
   if (cell.acknowledgeEffects) marks.push({ kind: "effects", text: "effects acknowledged" });
   return marks;
 }

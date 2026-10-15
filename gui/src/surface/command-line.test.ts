@@ -12,7 +12,7 @@ describe("calc command colors", () => {
     ":calc{return [1,2,3];}",
     ":calc {return [-1,-2.5,3.25];}",
     ":calc { return [[1,2],[3.5,-4]]; }",
-    "  @trace :calc {\treturn [1, 2]; } > numbers  ",
+    "  @env{dev} :calc {\treturn [1, 2]; } > numbers  ",
   ])("uses the source tokenizer in prompt and cell preview: %s", source => {
     const expected = highlightCalc(source, language).spans.map(span => ({ text: source.slice(span.from, span.to), ...(span.role ? { role: span.role } : {}) }));
     expect(commandSegments(source, language)).toEqual(expected);
@@ -47,7 +47,8 @@ describe("calc command colors", () => {
 describe("unabridged multiline source", () => {
   const sources = [
     ':calc {\n  const first = 1;\n\n  return [first, 2];\n} > numbers\n\n',
-    '@trace :calc {\r\n\treturn "iki  boşluk";\r\n} > text\r\n',
+    '@env{dev} :calc {\r\n\treturn "iki  boşluk";\r\n} > text\r\n',
+    '@trace(capture:"synthetic-http",tail:"5s") fixture read\n\tcount:3\n> result\n',
     'fixture read\n\tcount:3\n  text:"two  spaces"\n> result\n',
     'sh run cmd:"first\n\n  second\n\tthird"\n',
     'fixture first\n| fixture second\n| :calc {\n  return input;\n} > answer',

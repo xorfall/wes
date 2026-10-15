@@ -73,15 +73,22 @@ fn unknown_and_reserved_names_have_distinct_errors_and_suggestions() {
     ] {
         assert_eq!(resolve(&command(input), &catalogue).unwrap_err().code, code);
     }
-    assert!(resolve(&command(":read trace:$node"), &catalogue).is_ok());
-    assert!(!MetaCommand::Trace.spec(&[]).reserved);
+    assert!(resolve(&command(":read trace:$node"), &catalogue).is_err());
+    assert!(!MetaCommand::TraceRead.spec(&[]).reserved);
     let typo = resolve(&command(":inspct"), &catalogue).unwrap_err();
     assert!(typo.hints.iter().any(|hint| hint.contains("inspect")));
     let typo = resolve(&command("catalog item get"), &catalogue).unwrap_err();
     assert!(typo.hints.iter().any(|hint| hint.contains("items get")));
+    let trace = self::catalogue("trace");
+    assert_eq!(
+        resolve(&command("trace items get"), &trace)
+            .unwrap_err()
+            .code,
+        "RES001"
+    );
     assert!(matches!(
-        resolve(&command("trace items get"), &self::catalogue("trace")).unwrap(),
-        Resolution::Capability { .. }
+        resolve(&command(":trace read $node"), &trace).unwrap(),
+        Resolution::Meta { spec, .. } if spec.command == MetaCommand::TraceRead
     ));
 }
 

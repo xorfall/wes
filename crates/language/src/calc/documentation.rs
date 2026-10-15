@@ -310,12 +310,6 @@ impl Operation {
                 "Read the local statuses or errors catalogue.",
                 "httpCatalogue('statuses')",
             ),
-            HttpAnalysis => (
-                &[("trace", "Record")],
-                "HttpAnalysis",
-                "Analyse a captured HTTP trace locally; never sends a request.",
-                "httpAnalysis($trace)",
-            ),
             Check => (
                 &[("contract", "Text"), ("value", "T")],
                 "named contract",
@@ -511,9 +505,6 @@ impl Operation {
             }
         };
         let prerequisites = match self {
-            HttpAnalysis => {
-                "Requires $trace from an HTTP trace snapshot (schema:1, profile:http), not a response body."
-            }
             Check | IterChecked => "Requires a registered Sample record contract with status:Int.",
             IterUse => {
                 "Requires a registered SampleLines iterator recipe with Text input, lines mode and Text output."

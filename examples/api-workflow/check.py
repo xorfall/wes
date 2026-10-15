@@ -32,7 +32,7 @@ def check_views(output):
     assert chart['points'] == [
         {'x': '09:00', 'y': 18.25}, {'x': '09:01', 'y': 19.5}, {'x': '09:02', 'y': 18.75}
     ] and chart['dropped'] == 0, chart
-    assert 'http.response' in output and 'recorded' in output, output
+    assert '"status":200' in output and '"state":"validated"' in output, output
 
 
 def main():
@@ -87,7 +87,7 @@ def main():
             run('desktop', *selected, '--activate-env', '--file', str(root / 'call.wes'))
             assert server.requests == ['/openapi.json', '/history?sensor=LAB1'], server.requests
             check_views(run('desktop', '--file', str(root / 'analyze.wes')))
-            assert len(server.requests) == 2, 'views or traces fetched the API again'
+            assert len(server.requests) == 2, 'views or response inspection fetched the API again'
 
             scenario_env = ('--env-file', str(root / 'scenario.environments.yaml'), '--env', 'sensor_demo')
             start = len(server.requests)
@@ -113,7 +113,7 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
-    print('PASS OpenAPI import, discovery, traced readings, table/line, scenario pass/fail, environments and offline views')
+    print('PASS OpenAPI import, discovery, typed readings, table/line, scenario pass/fail, environments and offline views')
 
 
 if __name__ == '__main__':

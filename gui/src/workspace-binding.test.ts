@@ -61,7 +61,7 @@ class Events {
   close() {}
   emit(event: object) { this.onmessage?.({ data: JSON.stringify(event) }); }
 }
-it("routes commands, results, traces, history and terminals to their owner with independent context", async () => {
+it("routes commands, results, history and terminals to their owner with independent context", async () => {
   vi.stubGlobal("EventSource", Events);
   const fetch = vi.fn(async (url: string, options?: RequestInit) => {
     const name = decodeURIComponent(new Headers(options?.headers).get("X-Wes-Workspace")!);
@@ -78,13 +78,12 @@ it("routes commands, results, traces, history and terminals to their owner with 
     stream.emit({ event: "environments", managed: true, default: engine.binding, enabled: {}, credentials: {}, revisions: {}, providers: {}, clients: {} });
     await engine.submitComposed("same-cell", ":calc 1");
     await engine.fetch("same-result");
-    await engine.trace("same-node");
     await engine.history();
     await engine.terminal({ action: "forget", history: "synthetic-history" });
-    for (const [, options] of fetch.mock.calls.slice(-5)) {
+    for (const [, options] of fetch.mock.calls.slice(-4)) {
       expect(options?.headers).toMatchObject({ ...workspaceHeaders(engine.binding), "X-Wes-Session": `g-${encodeURIComponent(engine.binding!)}` });
     }
-    expect(JSON.parse(String(fetch.mock.calls.at(-5)![1]?.body)).environments.selected).toBe(engine.binding);
+    expect(JSON.parse(String(fetch.mock.calls.at(-4)![1]?.body)).environments.selected).toBe(engine.binding);
   }
   expect(engines[0]!.environmentContext()?.selected).toBe("first");
   expect(engines[1]!.environmentContext()?.selected).toBe("çalışma");

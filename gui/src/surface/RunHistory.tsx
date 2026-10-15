@@ -114,7 +114,7 @@ export function RunHistory({ engine, workspace, generation, cell, nodes, initial
             <time dateTime={run.at} aria-description={`Recorded ${run.at}`}>{recorded(run.at)}</time>
             <span className={`history-state history-state-${runState(run.state)}`}>{runState(run.state)}</span>
             <span aria-description={run.run}>{run.run.slice(0, 8)}</span>
-            <small>{current(run) ? "current · " : ""}{run.protected ? "protected" : run.handle ? "open result" : "no result recorded"}{run.trace ? " · trace" : ""}</small>
+            <small>{current(run) ? "current · " : ""}{run.protected ? "protected" : run.handle ? "open result" : "no result recorded"}</small>
           </button>)}
           {visible.length > limit && <button className="cell-action" onClick={() => setLimit(n => n + 40)}>show more · {visible.length - limit} remaining</button>}
           {family && history?.attempts.filter(attempt => !attempt.nodes.length).map(attempt => <details key={attempt.id} className="history-attempt">
@@ -198,9 +198,6 @@ function RunDetail({ engine, cell, run, current, nodeName, attempts, onBack, onP
         {definition && <p className="history-metadata">Definition {definition.id}{definition.revisionOf ? ` · revision of ${definition.revisionOf}` : ""}</p>}
         <p>{detail.contextNote}</p>
         <details><summary>Captured references and metadata</summary><pre>{stringifyExactJson(detail.definition, 2)}</pre></details>
-      </details>
-      <details className="history-disclosure"><summary>Trace · {detail.trace ? "recorded" : "not recorded"}</summary>
-        {detail.trace ? <ValueView value={detail.trace} cacheKey={`history-trace:${run.node}:${run.run}`} /> : <p>{detail.traceNote}</p>}
       </details>
       <details className="history-disclosure"><summary>Run identity</summary><pre>{run.run}</pre><p>Node {run.node}</p></details>
     </>}

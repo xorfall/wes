@@ -107,15 +107,16 @@ async fn typed_http_definitions_execute_actual_file_as_pure_local_work() {
         panic!()
     };
     assert_eq!(status["code"], Data::Int(404));
-    let Data::Record(definition) = data("analysis_definition") else {
+    let Data::Record(definition) = data("status_definition") else {
         panic!()
     };
     assert_eq!(definition["purity"], Data::Text("pure".into()));
     assert_eq!(definition["conversionEligible"], Data::Bool(true));
-    let Data::Record(analysis) = data("analysis") else {
+    let Data::Record(error) = data("error_definition") else {
         panic!()
     };
-    assert_eq!(analysis["executionState"], Data::Text("cancelled".into()));
+    assert_eq!(error["code"], Data::Text("HTTP007".into()));
+    assert_eq!(error["known"], Data::Bool(true));
 }
 
 #[test]

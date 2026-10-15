@@ -1,0 +1,22 @@
+/* A capture index is a data host: file facts, bounded packet rows and one selected row's coordinates. */
+.wes-terminal .capture-index-view { min-width:0; color:var(--mono-ink); font:inherit; }
+.wes-terminal .capture-index-view p { margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .capture-index-header { display:flex; align-items:baseline; gap:10px; min-width:0; white-space:nowrap; overflow:hidden; }
+.wes-terminal .capture-index-header strong { font-weight:500; }
+.wes-terminal .capture-index-meta { color:var(--mono-dim); }
+.wes-terminal .capture-index-note,.wes-terminal .capture-index-dim { color:var(--mono-dim); }
+.wes-terminal .capture-index-warn { color:var(--mono-warn); }
+.wes-terminal .capture-index-filter { display:block; width:min(100%,48ch); margin:4px 0 2px; padding:1px 6px; font:inherit; color:var(--mono-ink); background:var(--sunk); border:1px solid var(--line); border-radius:3px; }
+.wes-terminal .capture-index-filter:focus-visible { outline:1px solid var(--active); outline-offset:-1px; }
+.wes-terminal .capture-index-packets { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.wes-terminal .capture-index-packets th { text-align:right; color:var(--key); font-weight:400; border-bottom:1px solid var(--line); padding:0 8px 0 0; white-space:nowrap; }
+.wes-terminal .capture-index-packets td { text-align:right; padding:0 8px 0 0; white-space:nowrap; }
+.wes-terminal .capture-index-packets th:first-child,.wes-terminal .capture-index-packets td:first-child { text-align:left; }
+.wes-terminal .capture-index-selected { background:var(--sel); }
+.wes-terminal .capture-index-view .cell-action { color:var(--mono-dim); }
+.wes-terminal .capture-index-selected .cell-action { color:var(--mono-ref); }
+.wes-terminal .capture-index-status { display:flex; flex-wrap:nowrap; align-items:baseline; gap:10px; color:var(--mono-dim); white-space:nowrap; overflow:hidden; }
+.wes-terminal .capture-index-status button[disabled] { opacity:.45; }
+.wes-terminal .capture-index-detail { border-top:1px solid var(--line); }
+.wes-terminal .capture-index-detail strong { font-weight:500; }
+.wes-terminal .capture-index-narrow .capture-index-filter { width:100%; }

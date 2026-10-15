@@ -1,0 +1,36 @@
+/* An offline header analysis: decoder facts, a bounded sample table and one packet's original field coordinates. */
+.wes-terminal .capture-analysis-view { min-width:0; color:var(--mono-ink); font:inherit; }
+.wes-terminal .capture-analysis-view p { margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .capture-analysis-header { display:flex; align-items:baseline; gap:10px; min-width:0; white-space:nowrap; overflow:hidden; }
+.wes-terminal .capture-analysis-header strong,.wes-terminal .capture-analysis-panel strong { font-weight:500; }
+.wes-terminal .capture-analysis-meta,.wes-terminal .capture-analysis-note,.wes-terminal .capture-analysis-dim { color:var(--mono-dim); }
+.wes-terminal .capture-analysis-ok { color:var(--mono-ok); }
+.wes-terminal .capture-analysis-warn { color:var(--mono-warn); }
+.wes-terminal .capture-analysis-filter { display:block; width:min(100%,48ch); margin:4px 0 2px; padding:1px 6px; font:inherit; color:var(--mono-ink); background:var(--sunk); border:1px solid var(--line); border-radius:3px; }
+.wes-terminal .capture-analysis-filter:focus-visible { outline:1px solid var(--active); outline-offset:-1px; }
+.wes-terminal .capture-analysis-packets,.wes-terminal .capture-analysis-fields,.wes-terminal .capture-analysis-facts { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.wes-terminal .capture-analysis-packets th,.wes-terminal .capture-analysis-fields th { text-align:right; color:var(--key); font-weight:400; border-bottom:1px solid var(--line); padding:0 8px 0 0; white-space:nowrap; }
+.wes-terminal .capture-analysis-packets td,.wes-terminal .capture-analysis-fields td { text-align:right; padding:0 8px 0 0; white-space:nowrap; }
+.wes-terminal .capture-analysis-packets th:nth-child(-n+4),.wes-terminal .capture-analysis-packets td:nth-child(-n+4),
+.wes-terminal .capture-analysis-fields th:nth-child(-n+3),.wes-terminal .capture-analysis-fields td:nth-child(-n+3) { text-align:left; }
+.wes-terminal .capture-analysis-fields td { overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .capture-analysis-value { max-width:32ch; }
+.wes-terminal .capture-analysis-narrow .capture-analysis-value { max-width:14ch; }
+.wes-terminal .capture-analysis-note-row td:last-child { max-width:0; color:var(--mono-dim); }
+.wes-terminal .capture-analysis-layer { color:var(--key); }
+.wes-terminal .capture-analysis-continued { border-left:1px solid var(--line); }
+.wes-terminal .capture-analysis-selected { background:var(--sel); }
+.wes-terminal .capture-analysis-view .cell-action { color:var(--mono-dim); }
+.wes-terminal .capture-analysis-selected .cell-action { color:var(--mono-ref); }
+.wes-terminal .capture-analysis-status,.wes-terminal .capture-analysis-pager { display:flex; flex-wrap:nowrap; align-items:baseline; gap:10px; color:var(--mono-dim); white-space:nowrap; overflow:hidden; }
+.wes-terminal .capture-analysis-status button[disabled],.wes-terminal .capture-analysis-pager button[disabled] { opacity:.45; }
+.wes-terminal .capture-analysis-detail { border-top:1px solid var(--line); min-width:0; }
+.wes-terminal .capture-analysis-tabs { display:flex; flex-wrap:nowrap; gap:10px; border-bottom:1px solid var(--line); overflow:hidden; }
+.wes-terminal .capture-analysis-tabs [aria-selected=true] { border-bottom:2px solid var(--mono-meta); color:var(--mono-ink); }
+.wes-terminal .capture-analysis-panel { min-width:0; }
+.wes-terminal .capture-analysis-selection { color:var(--mono-ref); }
+.wes-terminal .capture-analysis-facts th { width:12ch; text-align:left; color:var(--key); font-weight:400; white-space:nowrap; padding:0 8px 0 0; vertical-align:top; }
+.wes-terminal .capture-analysis-facts td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
+.wes-terminal .capture-analysis-limits { margin:0; padding:0; list-style:none; }
+.wes-terminal .capture-analysis-limits li { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .capture-analysis-narrow .capture-analysis-filter { width:100%; }

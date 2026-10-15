@@ -232,15 +232,6 @@ impl PreparedCall {
             let protected = read_access
                 .protect(bound.output_provenance(&carried))
                 .with_policy(&publication_policy);
-            let trace = if let Some(profile) = bound.invocation.trace_profile.as_deref() {
-                bound
-                    .context
-                    .traces
-                    .as_ref()
-                    .and_then(|traces| traces.begin(&run, profile, protected.clone()))
-            } else {
-                None
-            };
             let acquisition = storage
                 .clone()
                 .filter(|s| {
@@ -258,13 +249,7 @@ impl PreparedCall {
                     )
                 });
             let mut output_hold = None;
-            let observation = trace.clone();
-            let outcome = if bound.invocation.trace_profile.is_some() && trace.is_none() {
-                Outcome::Failed(RuntimeCode::ExecutionFailed.error(
-                    "Trace capacity is unavailable; the provider was not called.",
-                    None,
-                ))
-            } else if let Err(reason) = bound.require_dispatch(&carried) {
+            let outcome = if let Err(reason) = bound.require_dispatch(&carried) {
                 environment_denied(reason)
             } else if cancellation.is_cancelled() {
                 InvocationError::Cancelled.outcome()
@@ -308,25 +293,18 @@ impl PreparedCall {
                             .await
                             .map(crate::storage::AcquiredOutput::Value);
                     }
-                    match observation {
-                        Some(trace) => provider
+                    match acquisition {
+                        Some(context) => {
+                            provider
+                                .invoker
+                                .invoke_acquired(call, cancellation, context)
+                                .await
+                        }
+                        None => provider
                             .invoker
-                            .invoke_observed(call, cancellation, trace)
+                            .invoke(call, cancellation)
                             .await
                             .map(crate::storage::AcquiredOutput::Value),
-                        None => match acquisition {
-                            Some(context) => {
-                                provider
-                                    .invoker
-                                    .invoke_acquired(call, cancellation, context)
-                                    .await
-                            }
-                            None => provider
-                                .invoker
-                                .invoke(call, cancellation)
-                                .await
-                                .map(crate::storage::AcquiredOutput::Value),
-                        },
                     }
                 })
                 .await;
@@ -389,48 +367,6 @@ impl PreparedCall {
                 // Cancellation can revoke node publication before physical exec returns. Keep
                 // remote uncertainty as an operational notice even for an obsolete run.
                 report.notices.push(error.clone());
-            }
-            if let Some(trace) = trace {
-                let (state, code, provenance) = match &report.outcome {
-                    Outcome::Produced(value) => ("completed", "", value.provenance().clone()),
-                    Outcome::Failed(error) | Outcome::Incomplete { error, .. } => (
-                        "failed",
-                        error.code(),
-                        wes_core::Provenance::default().with_policy(error.policy()),
-                    ),
-                    _ => ("cancelled", "", protected.clone()),
-                };
-                trace.emit(
-                    "execution.finished",
-                    crate::trace::record(
-                        "ExecutionCompletion",
-                        [
-                            ("state".into(), crate::trace::text(state)),
-                            ("code".into(), crate::trace::text(code)),
-                        ],
-                        provenance,
-                    ),
-                );
-                trace.finish(match &report.outcome {
-                    Outcome::Produced(_) | Outcome::Stored(_) => "completed",
-                    Outcome::Failed(_) | Outcome::Incomplete { .. } => "failed",
-                    _ => "cancelled",
-                });
-                if let Some(record) = trace.persistent_record() {
-                    if let Some(journal) = &journal {
-                        if journal.record_trace(record).await.is_ok() {
-                            trace.persistence("recorded");
-                        } else {
-                            trace.persistence("failed");
-                            report.notices.push(RuntimeCode::RecordingFailed.error(
-                                "Inspection completed, but its trace could not be recorded.",
-                                None,
-                            ));
-                        }
-                    }
-                } else {
-                    trace.persistence("private");
-                }
             }
             let mut report = lifecycle::finish(journal, calling, report).await;
             // Recovery acknowledgement is joined too; withdrawal/regrant during that

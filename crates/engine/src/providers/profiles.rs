@@ -216,7 +216,7 @@ impl SourceProfile {
             })
             .collect()
     }
-    fn controls_match(&self, controls: &ControlContracts) -> bool {
+    pub(crate) fn controls_match(&self, controls: &ControlContracts) -> bool {
         self.controls.input.digest() == controls.input.digest()
             && self.controls.output.digest() == controls.output.digest()
     }
@@ -387,7 +387,6 @@ impl Providers {
             inputs: profile.inputs(options)?,
             cautions: Default::default(),
             interactive: false,
-            trace_profile: None,
             guards: Default::default(),
         };
         let source = self
@@ -400,5 +399,31 @@ impl Providers {
             limits,
             records_bytes,
         })
+    }
+}
+
+impl BoundCall {
+    pub(crate) fn captured_source_profile(&self) -> Option<Arc<SourceProfile>> {
+        self.provider
+            .streams
+            .as_ref()?
+            .source_profile(&self.invocation.capability)
+    }
+}
+impl SourceProfile {
+    pub(crate) fn stop_action(&self) -> (Value, Duration) {
+        (
+            self.declaration.stop.clone(),
+            self.declaration.finalization.control,
+        )
+    }
+}
+impl ResolvedProfile {
+    pub(crate) fn with_recording_schema(
+        mut self,
+        contracts: &wes_core::contracts::ContractRegistry,
+    ) -> Self {
+        self.source = self.source.with_recording_schema(contracts);
+        self
     }
 }

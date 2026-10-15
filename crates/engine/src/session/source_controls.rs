@@ -50,6 +50,38 @@ impl Actor {
                 .typing(&task.subject)
                 .map_or_else(wes_core::Provenance::default, |t| t.provenance);
             task.policy = provenance.policy().clone();
+            if task.task.spec.command == MetaCommand::TraceStop {
+                let call = self.workspace.runtime().graph().node(&task.subject.node)
+                    .and_then(|n| n.payload().capture_source())
+                    .ok_or_else(|| denied("Trace stop requires the original capture declaration; copied values grant no controls"))?;
+                let profile = call.captured_source_profile().ok_or_else(|| {
+                    denied("The selected original source has no frozen capture profile")
+                })?;
+                let (port, provenance) = self.io.source_controls(self.workspace.runtime(), &task.subject.node, principal.clone())
+                    .map_err(|_| denied("Trace stop requires the original currently open capture Run/connection; nothing was started"))?;
+                task.policy = provenance.policy().clone();
+                let (_, _, input, output) = port
+                    .description()
+                    .map_err(|_| denied("Original capture connection changed before stop"))?;
+                if !profile.controls_match(&crate::streams::ControlContracts {
+                    input: input.clone(),
+                    output,
+                }) {
+                    return Err(denied(
+                        "Captured profile and original control contracts differ; nothing was dispatched",
+                    ));
+                }
+                let (action, budget) = profile.stop_action();
+                task.policy = task.policy.join(action.provenance().policy());
+                let action = wes_core::contracts::boundary::literal("action", std::slice::from_ref(&input), &input.shape(), &action)
+                    .map_err(|_| denied("Captured profile stop violates the original control contract; nothing was dispatched"))?;
+                return Ok(Captured::Action {
+                    port,
+                    action: action
+                        .with_provenance(action.provenance().clone().with_policy(&task.policy)),
+                    budget,
+                });
+            }
             if task.task.spec.command == MetaCommand::SourceBind {
                 let (port,provenance)=self.io.source_controls(self.workspace.runtime(),&task.subject.node,principal.clone()).map_err(|_|denied("Binding requires a currently open owned source with an installed typed control port; no source was acquired"))?;
                 task.policy = provenance.policy().clone();

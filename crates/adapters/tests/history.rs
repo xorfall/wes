@@ -843,79 +843,9 @@ fn io_failure_is_not_reported_as_an_empty_or_torn_journal() {
 }
 
 #[test]
-fn trace_journal_requires_current_schema_matching_identities_and_public_closed_evidence() {
-    use wes_core::{Data, Provenance, Shape, Value as TypedValue};
-    use wes_engine::trace::{TraceRecord, integer, record, text};
-    let value = record(
-        "Trace",
-        [
-            ("schema".into(), integer(1)),
-            ("node".into(), text("n")),
-            ("run".into(), text("r")),
-            ("profile".into(), text("http")),
-            ("state".into(), text("failed")),
-            ("persistence".into(), text("recorded")),
-            ("dropped".into(), integer(0)),
-            (
-                "events".into(),
-                TypedValue::new(
-                    Shape::List(Box::new(Shape::Unknown)),
-                    Data::List(vec![]),
-                    Provenance::default(),
-                )
-                .unwrap(),
-            ),
-        ],
-        Provenance::default(),
-    );
-    let record = TraceRecord {
-        node: NodeId::new("n").unwrap(),
-        run: RunId::new("r").unwrap(),
-        value,
-    };
-    for profile in ["grpc", "binary"] {
-        let mut selected = record.clone();
-        let Data::Record(mut fields) = record.value.data().clone() else {
-            panic!()
-        };
-        fields.insert("profile".into(), Data::Text(profile.into()));
-        selected.value = TypedValue::new(
-            record.value.shape().clone(),
-            Data::Record(fields),
-            record.value.provenance().clone(),
-        )
-        .unwrap();
-        let entry = JournalEntry::Trace(selected);
-        let bytes = encode_journal(&entry, Limits::default()).unwrap();
-        assert_eq!(
-            decode_journal(&bytes, Limits::default()).unwrap().entry,
-            entry
-        );
-    }
-    let entry = JournalEntry::Trace(record.clone());
-    let bytes = encode_journal(&entry, Limits::default()).unwrap();
-    assert_eq!(
-        decode_journal(&bytes, Limits::default()).unwrap().entry,
-        entry
-    );
-    let json: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(json["version"], 1);
-    for version in [0, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
-        let mut legacy = json.clone();
-        legacy["version"] = json!(version);
-        assert!(decode_journal(&serde_json::to_vec(&legacy).unwrap(), Limits::default()).is_err());
-    }
-    let mut mismatched = record.clone();
-    mismatched.run = RunId::new("other").unwrap();
-    assert!(encode_journal(&JournalEntry::Trace(mismatched), Limits::default()).is_err());
-    let mut private = record.clone();
-    private.value = private.value.clone().with_provenance(
-        Provenance::default().with_policy(&wes_core::flow::FlowPolicy::default().private()),
-    );
-    assert!(encode_journal(&JournalEntry::Trace(private), Limits::default()).is_err());
-    let mut malformed = json;
-    malformed["entry"]["value"] = json!("{}");
-    assert!(decode_journal(&serde_json::to_vec(&malformed).unwrap(), Limits::default()).is_err());
+fn retired_trace_sidecar_is_not_a_valid_journal_entry() {
+    let bytes = br#"{"version":1,"entry":{"kind":"trace","node":"n","run":"r","value":"{}"}}"#;
+    assert!(decode_journal(bytes, Limits::default()).is_err());
 }
 
 #[test]

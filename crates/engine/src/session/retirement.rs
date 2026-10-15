@@ -443,7 +443,6 @@ impl RetirementPlan {
                 JournalEntry::Snapshot(s) => self.nodes.contains(s.observation.node()),
                 JournalEntry::Result(r) => self.nodes.contains(&r.node),
                 JournalEntry::Invocation(t) => self.nodes.contains(&t.node),
-                JournalEntry::Trace(t) => self.nodes.contains(&t.node),
                 JournalEntry::Noticed(n) => {
                     n.context().node().is_some_and(|n| self.nodes.contains(n))
                         || n.context().handle().is_some_and(|h| {
@@ -553,7 +552,6 @@ impl Actor {
         if let Some(values) = &mut self.values {
             values.retain_nodes(&self.workspace);
         }
-        self.workspace.traces.retire(&plan.nodes);
         if let Some(report) = &mut self.restoration {
             let report = std::sync::Arc::make_mut(report);
             report.problems.retain(|p| !plan.nodes.contains(&p.node));

@@ -28,7 +28,7 @@ export type CellState = "default" | "focus" | "stale" | "failed" | "pinned" | "l
  * `effects` is the exception to "could have differed": a repeat that was confirmed although it
  * performs an external action again carries it per attempt, always.
  */
-export type MarkKind = "environment" | "revision" | "grant" | "target" | "traced" | "effects";
+export type MarkKind = "environment" | "revision" | "grant" | "target" | "effects";
 export interface Mark {
   readonly kind: MarkKind;
   readonly text: string;

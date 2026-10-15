@@ -46,8 +46,6 @@ impl BoundCompanion {
             || self.call.interactive()
             || !self.source.streaming()
             || self.source.interactive()
-            || self.call.invocation().trace_profile.is_some()
-            || self.source.invocation().trace_profile.is_some()
             || self.source.dependencies().next().is_some()
             || self.source.byte_input_spec().is_some()
             || self.ready_wait.is_zero()

@@ -76,6 +76,14 @@ pub struct CompletionNotice {
     pub grants_changed: bool,
 }
 impl BoundTask {
+    pub(crate) fn capture_source(&self) -> Option<&BoundCall> {
+        match self {
+            Self::Companion(task) => Some(&task.source),
+            Self::Call(call) if call.streaming() => Some(call),
+            _ => None,
+        }
+    }
+
     /// A bounded reader consumes the captured descriptor, without decoding a whole input.
     pub(crate) fn stored_source_for(&self, node: &crate::graph::NodeId) -> bool {
         match self {

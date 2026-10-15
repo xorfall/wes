@@ -180,7 +180,7 @@ impl Fixture {
                 let digest = domain
                     .digest(&IndexMap::from([(
                         "scope".into(),
-                        crate::trace::text("lab"),
+                        crate::values::text("lab"),
                     )]))
                     .unwrap();
                 authority
@@ -304,7 +304,7 @@ async fn withdrawal_and_regrant_never_revive_original_stop_authority() {
             let digest = domain
                 .digest(&IndexMap::from([(
                     "scope".into(),
-                    crate::trace::text("lab"),
+                    crate::values::text("lab"),
                 )]))
                 .unwrap();
             authority

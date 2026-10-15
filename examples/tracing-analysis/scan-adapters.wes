@@ -1,0 +1,12 @@
+:package load path:types.yaml
+
+:def packetRow(state:Int, context:Int, item:DecodedPacket) -> PacketScanStep as :calc pure {
+  return {state:state+1,outputs:[item]};
+}
+
+:def tcpHeader(state:Int, context:Int, item:DecodedPacket) -> PacketScanStep as :calc pure {
+  if(item.protocol=='TCP' && item.status=='decoded') {
+    return {state:state+1,outputs:[item]};
+  }
+  return {state:state+1,outputs:[]};
+}

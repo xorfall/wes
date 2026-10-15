@@ -132,7 +132,7 @@ def main():
                         json.dumps({'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'workspace_context','arguments':{}}}),
                         json.dumps({'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'pane_command','arguments':{'command':'/split'}}})])+'\n',capture_output=True,text=True,timeout=20)
                     assert all(json.loads(line)['result']['isError'] for line in probe.stdout.splitlines()[-2:]),probe.stdout
-                    print('PASS plain Claude/OpenCode/Codex launch, config/argv/cwd, resume/bypass, metrics forwarding, stdio MCP, scoped discovery, visible execution, no duplicate calls, chart/trace, draft CAS, pane command/error/close acknowledgements, privacy and revocation')
+                    print('PASS plain Claude/OpenCode/Codex launch, config/argv/cwd, resume/bypass, metrics forwarding, stdio MCP, scoped discovery, visible execution, no duplicate calls, chart/response, draft CAS, pane command/error/close acknowledgements, privacy and revocation')
                 finally:
                     if events:events.close()
                     app.terminate()

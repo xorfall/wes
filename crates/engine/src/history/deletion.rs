@@ -22,7 +22,7 @@ pub fn observation_source(text: &str) -> bool {
     use wes_language::vocabulary::MetaCommand::*;
     matches!(
         invocation.spec.command,
-        WorkspacePlan | WorkspaceDelete | Read | Inspect | Help | List | Info | Trace
+        WorkspacePlan | WorkspaceDelete | Read | Inspect | Help | List | Info | TraceRead
     )
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
