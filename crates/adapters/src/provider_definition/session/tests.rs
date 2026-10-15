@@ -226,38 +226,262 @@ environments:
         self.handle.wait_idle().await.unwrap();
         reply
     }
+    async fn value(&self, name: &str) -> Value {
+        let snapshot = self.handle.snapshot().await.unwrap();
+        snapshot
+            .execution
+            .values
+            .get(&snapshot.names[name].node)
+            .unwrap_or_else(|| panic!("{name}: {:?}", snapshot.execution.errors))
+            .clone()
+    }
     async fn failed(&self, name: &str) -> wes_core::ErrorValue {
         let snapshot = self.handle.snapshot().await.unwrap();
         snapshot.execution.errors[&snapshot.names[name].node].clone()
     }
 }
 
-fn one_joined_attempt(root: &std::path::Path) {
-    assert_eq!(
-        std::fs::read_to_string(root.join("attempts")).unwrap(),
-        "started\n"
+#[tokio::test]
+async fn view_prepares_typed_control_without_dispatch_and_preserves_native_ownership() {
+    let fixture = Managed::new("control", true).await;
+    fixture.supply();
+    fixture.grant();
+    fixture.submit(":env use \"lab\"", false).await;
+    fixture.submit("samples read > events", false).await;
+    fixture
+        .submit(":source bind $events > controls", false)
+        .await;
+    std::fs::write(
+        fixture.root.path().join("action-types.yaml"),
+        "version: 1\ntypes:\n  OnlySeven: {base: Int, min: 7, max: 7}\n",
+    )
+    .unwrap();
+    fixture
+        .submit(":package load path:\"action-types.yaml\"", false)
+        .await;
+    fixture
+        .submit(
+            ":def send(action:OnlySeven) as :source send $controls action:?action budget:PT5S",
+            false,
+        )
+        .await;
+    fixture
+        .submit(":calc pure { return 6; } > wrong", false)
+        .await;
+    fixture.submit("send action:$wrong > rejected", false).await;
+    assert!(
+        fixture
+            .failed("rejected")
+            .await
+            .message()
+            .contains("declared contract")
     );
-    #[cfg(unix)]
-    {
-        let pid = std::fs::read_to_string(root.join("pid"))
-            .unwrap()
-            .parse::<i32>()
-            .unwrap();
-        assert_eq!(
-            rustix::process::test_kill_process_group(rustix::process::Pid::from_raw(pid).unwrap()),
-            Err(rustix::io::Errno::SRCH)
-        );
-    }
+    fixture.submit("send action:7 > actor", true).await;
+    assert!(fixture.failed("actor").await.message().contains("native"));
+    let reply = fixture.submit(":view create Metric > card", false).await;
+    let node = reply.nodes[0].clone();
+    let frame = fixture.handle.view_frame(node.clone()).await.unwrap();
+    let entry = &frame.instances[0];
+    let request = wes_engine::views::commands::CommandRequest {
+        root: node.to_string(),
+        instance: entry.identity.to_string(),
+        member: node.to_string(),
+        revision: entry.revision,
+        input_revision: entry.input_revision,
+        environments: None,
+        template: "send".into(),
+        arguments: [("action".into(), serde_json::json!(7))].into(),
+    };
+    let mut bad = request.clone();
+    bad.arguments.insert("action".into(), serde_json::json!(6));
+    assert!(fixture.handle.prepare_view_command(bad).await.is_err());
+    let draft = fixture.handle.prepare_view_command(request).await.unwrap();
+    assert!(draft.source.contains("@view"));
+    assert!(!fixture.root.path().join("actions").exists());
+    fixture
+        .submit(&format!("{} > reviewed", draft.source), false)
+        .await;
+    assert_eq!(fixture.value("reviewed").await.data(), &Data::Bool(true));
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("actions")).unwrap(),
+        "7\n"
+    );
+    fixture.submit(":cancel $events", false).await;
+    one_joined_attempt(fixture.root.path());
+    fixture.stop().await;
 }
 
-async fn wait_for_fixture_file(root: &std::path::Path, name: &str, expected: &str) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while std::fs::read_to_string(root.join(name)).ok().as_deref() != Some(expected) {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+#[tokio::test]
+async fn declared_control_policy_protects_private_body_without_classifying_public_source_metadata()
+{
+    let fixture = Managed::new("private-control", true).await;
+    fixture.supply();
+    fixture.grant();
+    fixture.submit(":env use \"lab\"", false).await;
+    fixture.submit("samples read > events", false).await;
+    fixture
+        .submit(":source bind $events > controls", false)
+        .await;
+    assert!(
+        !fixture
+            .value("controls")
+            .await
+            .provenance()
+            .policy()
+            .is_private()
+    );
+    fixture
+        .submit(":source send $controls action:7 > inspected", false)
+        .await;
+    let body = fixture.value("inspected").await;
+    assert_eq!(
+        body.data(),
+        &Data::Text("synthetic-private-control-body".into())
+    );
+    assert!(body.provenance().policy().is_private());
+    assert_eq!(
+        body.provenance().policy().residence(),
+        wes_core::flow::Residence::Memory
+    );
+    assert!(
+        !fixture
+            .value("controls")
+            .await
+            .provenance()
+            .policy()
+            .is_private()
+    );
+    fixture.submit(":cancel $events", false).await;
+    one_joined_attempt(fixture.root.path());
+    for file in ["journal.jsonl", "recovery.jsonl"] {
+        if let Ok(bytes) = std::fs::read(fixture.root.path().join("history").join(file)) {
+            assert!(!String::from_utf8_lossy(&bytes).contains("synthetic-private-control-body"));
         }
-    })
-    .await
-    .unwrap();
+    }
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn native_control_binding_is_typed_owned_and_does_not_reacquire_its_source() {
+    let fixture = Managed::new("control", true).await;
+    fixture.supply();
+    fixture.grant();
+    fixture.submit(":env use \"lab\"", false).await;
+    fixture.submit("samples read > events", false).await;
+    fixture
+        .submit(":source bind $events > controls", false)
+        .await;
+    let projection = fixture.value("controls").await;
+    assert_eq!(
+        projection.shape(),
+        &Shape::Meta(wes_core::MetaType::SourceControls)
+    );
+    let wire = codec::encode_value(&projection, Default::default()).unwrap();
+    assert!(!String::from_utf8_lossy(&wire).contains(projection.management_authority().unwrap()));
+    let restored = codec::decode_value(&wire, Default::default())
+        .unwrap()
+        .value;
+    assert_eq!(restored.shape(), projection.shape());
+    assert_eq!(restored.data(), projection.data());
+    assert!(restored.management_authority().is_none());
+    fixture
+        .submit(
+            ":source send $controls action:7 budget:PT5S > receipt",
+            false,
+        )
+        .await;
+    assert_eq!(fixture.value("receipt").await.data(), &Data::Bool(true));
+    fixture
+        .submit(":source send $controls action:bad > invalid", false)
+        .await;
+    assert!(
+        fixture
+            .failed("invalid")
+            .await
+            .message()
+            .contains("captured contract")
+    );
+    fixture
+        .submit(":source send $controls action:7 > foreign", true)
+        .await;
+    assert!(
+        fixture
+            .failed("foreign")
+            .await
+            .message()
+            .contains("native user")
+    );
+    fixture
+        .authority
+        .revoke(&fixture.binding, "samples")
+        .unwrap();
+    fixture
+        .submit(":source send $controls action:7 > revoked", false)
+        .await;
+    assert!(
+        fixture
+            .failed("revoked")
+            .await
+            .message()
+            .contains("authority refused")
+    );
+    fixture.grant();
+    fixture
+        .submit(":source send $controls action:8 > refused", false)
+        .await;
+    assert!(
+        fixture
+            .failed("refused")
+            .await
+            .message()
+            .contains("authority refused")
+    );
+    fixture
+        .submit(":source send $controls action:9 > unknown", false)
+        .await;
+    assert_eq!(
+        fixture.failed("unknown").await.code(),
+        wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN
+    );
+    assert_ne!(
+        fixture.failed("refused").await.code(),
+        wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN
+    );
+    assert!(
+        fixture
+            .failed("unknown")
+            .await
+            .message()
+            .contains("unknown")
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("actions")).unwrap(),
+        "7\n8\n9\n"
+    );
+    fixture.submit(":cancel $events", false).await;
+    fixture.submit(":refresh $events", false).await;
+    fixture
+        .submit(":source send $controls action:7 > stale", false)
+        .await;
+    assert!(
+        fixture
+            .failed("stale")
+            .await
+            .message()
+            .contains("no live authority")
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("actions")).unwrap(),
+        "7\n8\n9\n"
+    );
+    fixture
+        .submit(":source bind $events > renewed", false)
+        .await;
+    fixture
+        .submit(":source send $renewed action:7 > again", false)
+        .await;
+    assert_eq!(fixture.value("again").await.data(), &Data::Bool(true));
+    fixture.stop().await;
 }
 
 #[tokio::test]
@@ -298,6 +522,54 @@ async fn managed_credentials_are_separate_scoped_and_checked_before_launch() {
 }
 
 #[tokio::test]
+async fn dispatched_native_control_timeout_is_unknown_owned_and_never_replayed() {
+    let fixture = Managed::new("control", true).await;
+    fixture.supply();
+    fixture.grant();
+    fixture.submit(":env use \"lab\"", false).await;
+    fixture.submit("samples read > events", false).await;
+    fixture
+        .submit(":source bind $events > controls", false)
+        .await;
+    let input = wes_engine::source::SourceInput::new(
+        "timeout".into(),
+        ":source send $controls action:10 budget:PT1S > timed".into(),
+    )
+    .unwrap()
+    .with_client("native".into())
+    .unwrap();
+    let reply = fixture.handle.submit(input).await.unwrap();
+    assert!(reply.diagnostics.diagnostics.is_empty());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while std::fs::read_to_string(fixture.root.path().join("actions"))
+            .ok()
+            .as_deref()
+            != Some("10\n")
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    fixture.handle.wait_idle().await.unwrap();
+    let error = fixture.failed("timed").await;
+    assert_eq!(error.code(), wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN);
+    assert!(error.message().contains("unknown"));
+    assert!(fixture.handle.remote_outcome_uncertain());
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("attempts")).unwrap(),
+        "started\n"
+    );
+    fixture.submit(":cancel $events", false).await;
+    one_joined_attempt(fixture.root.path());
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.path().join("actions")).unwrap(),
+        "10\n"
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn disabling_then_enabling_never_revives_an_owned_session() {
     let fixture = Managed::new("hold", true).await;
     fixture.supply();
@@ -330,6 +602,23 @@ async fn disabling_then_enabling_never_revives_an_owned_session() {
     assert_eq!(handle.snapshot().phase, Phase::Cancelled);
     one_joined_attempt(fixture.root.path());
     fixture.stop().await;
+}
+fn one_joined_attempt(root: &std::path::Path) {
+    assert_eq!(
+        std::fs::read_to_string(root.join("attempts")).unwrap(),
+        "started\n"
+    );
+    #[cfg(unix)]
+    {
+        let pid = std::fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(
+            rustix::process::test_kill_process_group(rustix::process::Pid::from_raw(pid).unwrap()),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
 }
 #[tokio::test]
 async fn executable_finite_and_nullable_results_keep_exact_contracts_and_join_before_return() {
@@ -591,6 +880,102 @@ fn session_declarations_are_strict_and_do_not_change_finite_process_semantics() 
     bad["backend"]["kind"] = serde_json::json!("process");
     assert!(super::super::schema::compile(&bad.to_string(), None).is_err());
 }
+
+async fn wait_for_fixture_file(root: &std::path::Path, name: &str, expected: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while std::fs::read_to_string(root.join(name)).ok().as_deref() != Some(expected) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn native_control_uncertainty_survives_private_policy_history_and_interruption() {
+    for private in [false, true] {
+        for interruption in ["receipt", "timeout", "eof", "cancel", "revoke"] {
+            let mode = if interruption == "eof" {
+                "control-eof"
+            } else {
+                "control"
+            };
+            let fixture = Managed::new_with_policy(mode, true, private).await;
+            fixture.supply();
+            fixture.grant();
+            fixture.submit(":env use \"lab\"", false).await;
+            fixture.submit("samples read > events", false).await;
+            fixture
+                .submit(":source bind $events > controls", false)
+                .await;
+            let command = if interruption == "receipt" {
+                ":source send $controls action:9 budget:PT5S > uncertain"
+            } else if interruption == "timeout" {
+                ":source send $controls action:10 budget:PT1S > uncertain"
+            } else {
+                ":source send $controls action:10 budget:PT5S > uncertain"
+            };
+            let input = wes_engine::source::SourceInput::new(
+                uuid::Uuid::new_v4().to_string(),
+                command.into(),
+            )
+            .unwrap()
+            .with_client("native".into())
+            .unwrap();
+            fixture.handle.submit(input).await.unwrap();
+            wait_for_fixture_file(
+                fixture.root.path(),
+                "actions",
+                if interruption == "receipt" {
+                    "9\n"
+                } else {
+                    "10\n"
+                },
+            )
+            .await;
+            let cancelled = interruption == "cancel";
+            if cancelled {
+                fixture.submit(":cancel $uncertain", false).await;
+            } else if interruption == "revoke" {
+                fixture.authority.disable("lab").unwrap();
+            }
+            fixture.handle.wait_idle().await.unwrap();
+            assert!(
+                fixture.handle.remote_outcome_uncertain(),
+                "{private}/{interruption}"
+            );
+            if !cancelled {
+                let error = fixture.failed("uncertain").await;
+                assert_eq!(
+                    error.code(),
+                    wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN,
+                    "{private}/{interruption}"
+                );
+                assert!(error.message().contains("unknown"));
+                assert_eq!(error.policy().is_private(), private);
+                if private {
+                    assert!(!error.message().contains("source retains"));
+                }
+            }
+            fixture.submit(":cancel $events", false).await;
+            one_joined_attempt(fixture.root.path());
+            assert_eq!(
+                std::fs::read_to_string(fixture.root.path().join("actions")).unwrap(),
+                if interruption == "receipt" {
+                    "9\n"
+                } else {
+                    "10\n"
+                }
+            );
+            let history =
+                std::fs::read_to_string(fixture.root.path().join("history/journal.jsonl")).unwrap();
+            assert!(history.contains(wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN));
+            assert!(!history.contains("synthetic-provider-session-secret"));
+            fixture.stop().await;
+        }
+    }
+}
+
 #[tokio::test]
 async fn finite_session_lost_response_is_unknown_but_confirmed_outcomes_stay_known() {
     for (mode, expected) in [

@@ -709,6 +709,9 @@ pub struct CallExecutor {
     storage: Option<crate::storage::StoreWorker>,
 }
 impl CallExecutor {
+    pub(crate) fn journal(&self) -> Option<CallJournal> {
+        self.journal.clone()
+    }
     pub(crate) fn with_storage(mut self, storage: Option<crate::storage::StoreWorker>) -> Self {
         self.storage = storage;
         self

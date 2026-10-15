@@ -8,16 +8,45 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 enum Publication {
-    Window { snapshot: Arc<Snapshot> },
-    Event { run: Run, event: Event },
+    Started {
+        run: Run,
+        handle: crate::streams::StreamHandle,
+    },
+    Window {
+        snapshot: Arc<Snapshot>,
+    },
+    Event {
+        run: Run,
+        event: Event,
+    },
 }
 pub(crate) struct Update {
     publication: Publication,
     reply: oneshot::Sender<bool>,
 }
 impl Update {
+    pub(crate) fn is_registration(&self) -> bool {
+        matches!(self.publication, Publication::Started { .. })
+    }
+    pub(crate) fn register<T: Clone>(
+        self,
+        runtime: &Runtime<T>,
+        handles: &mut std::collections::HashMap<Run, crate::streams::StreamHandle>,
+    ) {
+        let Publication::Started { run, handle } = self.publication else {
+            unreachable!("registration")
+        };
+        let accepted = runtime.accepts_live_io(&run)
+            && handle.snapshot().run == run
+            && !handles.contains_key(&run);
+        if accepted {
+            handles.insert(run, handle);
+        }
+        let _ = self.reply.send(accepted);
+    }
     pub fn deferrable<T: Clone>(&self, runtime: &Runtime<T>) -> bool {
         let (run, candidate) = match &self.publication {
+            Publication::Started { .. } => return false,
             Publication::Event { run, .. } => (run, true),
             Publication::Window { snapshot, .. } => (
                 &snapshot.run,
@@ -32,6 +61,7 @@ impl Update {
     }
     pub fn apply<T: Clone>(self, runtime: &mut Runtime<T>, now: Duration) -> Vec<Effect<T>> {
         let effects = match self.publication {
+            Publication::Started { .. } => None,
             Publication::Event { run, event } => runtime.ingest_event(&run, event, now),
             Publication::Window { snapshot } => {
                 let items = match snapshot.window.data() {
@@ -95,6 +125,18 @@ pub(super) async fn execute<T: Send + 'static>(
     if handle.snapshot().run != run {
         let _ = task.shutdown().await;
         return failed("The stream was opened for a different run.");
+    }
+    if !publish(
+        Publication::Started {
+            run: run.clone(),
+            handle: handle.clone(),
+        },
+        &updates,
+    )
+    .await
+    {
+        let _ = task.shutdown().await;
+        return failed("The source control owner was not admitted for this run.");
     }
     let mut events = handle.take_events();
     let direct = events.is_some();

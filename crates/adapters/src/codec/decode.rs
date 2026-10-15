@@ -115,6 +115,7 @@ fn read_shape(raw: &RawValue, context: &mut Context, depth: usize) -> Result<Sha
         match raw::string(raw::required(&object, "kind")?)?.as_str() {
             "meta" => match raw::string(raw::required(&object, "name")?)?.as_str() {
                 "ImportPlan" => Shape::Meta(wes_core::MetaType::ImportPlan),
+                "SourceControls" => Shape::Meta(wes_core::MetaType::SourceControls),
                 "DatasetDeletePlan" => Shape::Meta(wes_core::MetaType::DatasetDeletePlan),
                 "WorkspaceDeletePlan" => Shape::Meta(wes_core::MetaType::WorkspaceDeletePlan),
                 "ViewInstance" => Shape::Meta(wes_core::MetaType::ViewInstance),

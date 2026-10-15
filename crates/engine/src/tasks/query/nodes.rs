@@ -147,6 +147,7 @@ pub(super) fn capture_nodes(
             BoundTask::Query(query) => TaskLabel::Meta(query.task.spec.command),
             BoundTask::ImportPlan(_) => TaskLabel::Meta(MetaCommand::ImportPlan),
             BoundTask::View(view) => TaskLabel::Meta(view.command()),
+            BoundTask::SourceControl(control) => TaskLabel::Meta(control.task.spec.command),
         };
         let captured_bindings = workspace
             .captured_bindings(node.payload())

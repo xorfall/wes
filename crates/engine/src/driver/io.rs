@@ -145,6 +145,7 @@ pub(crate) struct ExecutionIo<T> {
     stream_updates: mpsc::Sender<Update>,
     stream_receiver: mpsc::Receiver<Update>,
     open_streams: HashSet<Run>,
+    source_handles: HashMap<Run, crate::streams::StreamHandle>,
     conversation_permits: Arc<Semaphore>,
     conversation_updates: mpsc::Sender<conversations::Update>,
     conversation_receiver: mpsc::Receiver<conversations::Update>,
@@ -187,6 +188,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
             stream_updates,
             stream_receiver,
             open_streams: HashSet::new(),
+            source_handles: HashMap::new(),
             conversation_permits: capacity.conversations,
             conversation_updates,
             conversation_receiver,
@@ -249,12 +251,42 @@ impl<T: Send + 'static> ExecutionIo<T> {
         T: Clone,
     {
         match input {
+            RuntimeInput::Stream(update) if update.is_registration() => {
+                self.register_source(update, runtime);
+                vec![]
+            }
             RuntimeInput::Conversation(update) => {
                 self.conversation_update(update, runtime);
                 vec![]
             }
             input => input.apply(runtime, self.now()),
         }
+    }
+    pub(crate) fn register_source(&mut self, update: Update, runtime: &Runtime<T>)
+    where
+        T: Clone,
+    {
+        update.register(runtime, &mut self.source_handles);
+    }
+    pub(crate) fn source_controls(
+        &self,
+        runtime: &Runtime<T>,
+        source: &crate::graph::NodeId,
+        caller: crate::environments::InvocationAuthority,
+    ) -> Result<crate::streams::LiveControls, crate::streams::ControlError>
+    where
+        T: Clone,
+    {
+        let (run, handle) = self
+            .source_handles
+            .iter()
+            .find(|(run, _)| {
+                run.node() == source
+                    && runtime.accepts_live_io(run)
+                    && runtime.run_of(source) == Some(run.id())
+            })
+            .ok_or(crate::streams::ControlError::Changed)?;
+        handle.live_controls(run, caller)
     }
     pub(crate) fn conversation_update(
         &mut self,
@@ -343,6 +375,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                     };
                     let run = self.task_runs.remove(&task).expect("each spawned worker has a run");
                     self.open_streams.remove(&run);
+                    self.source_handles.remove(&run);
                     if self.conversations.remove(&run).is_some() {
                         let _ = self.conversation_events.send(Arc::new(ConversationEvent::Ended(run.clone())));
                     }
@@ -379,6 +412,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 }
                 Effect::Cancel(run) => {
                     self.open_streams.remove(&run);
+                    self.source_handles.remove(&run);
                     self.remove_deadline(&run);
                     if let Some(token) = self.tokens.get(&run) {
                         token.cancel();

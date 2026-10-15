@@ -130,6 +130,31 @@ pub struct LiveControls {
     caller: InvocationAuthority,
 }
 impl LiveControls {
+    /// Inert identity and immutable contracts for host binding; never reconstructs authority.
+    pub(crate) fn description(
+        &self,
+    ) -> Result<(&Run, uuid::Uuid, Arc<Contract>, Arc<Contract>), ControlError> {
+        let owner = self.owner.upgrade().ok_or(ControlError::Changed)?;
+        let source = owner.source.upgrade().ok_or(ControlError::Changed)?;
+        let state = source.state();
+        if owner.run != self.run
+            || owner.epoch != self.epoch
+            || state.connection_epoch != self.epoch
+            || state.phase != Phase::Open
+            || state.finished
+            || owner.cancellation.is_cancelled()
+            || source.cancellation.is_cancelled()
+            || !owner.principal_allows(&self.caller)
+        {
+            return Err(ControlError::Changed);
+        }
+        Ok((
+            &self.run,
+            self.epoch,
+            owner.input.clone(),
+            owner.output.clone(),
+        ))
+    }
     /// One bounded action, no retries. Timeout/cancellation after dispatch reports Unknown while
     /// the owner keeps the physical future and credit until it actually joins.
     pub async fn invoke(

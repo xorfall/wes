@@ -177,3 +177,40 @@ async fn wrong_root_member_revision_and_untyped_templates_refuse() {
         assert!(workspace.prepare_view_command(request).is_err());
     }
 }
+
+#[tokio::test]
+async fn reviewed_draft_refuses_a_refreshed_reference_outside_its_view_input() {
+    let (mut workspace, calls) = workspace();
+    commit(
+        &mut workspace,
+        ":def send(value:Text) as catalog echo value:?value",
+    );
+    commit(&mut workspace, ":calc pure { return 1; } > other");
+    let card = commit(&mut workspace, ":view create Metric > card").unwrap();
+    super::queries::run_all(&mut workspace).await;
+    let before = workspace.view_frame(&card).unwrap();
+    let reviewed = workspace
+        .prepare_view_command(request(
+            &workspace,
+            &card,
+            "send",
+            serde_json::json!({"value":"reviewed"}),
+        ))
+        .unwrap();
+    let mut draft = workspace.draft().unwrap();
+    let Preparation::Change(change) = draft.prepare(&statement(&reviewed.source)).unwrap() else {
+        panic!()
+    };
+    draft.stage(change).unwrap();
+    let batch = draft.finish();
+    let Preparation::Meta(meta) = workspace.prepare(&statement(":refresh $other")).unwrap() else {
+        panic!("control")
+    };
+    let refresh = workspace.prepare_control(meta).unwrap();
+    workspace.apply_control(refresh, Duration::ZERO).unwrap();
+    let after = workspace.view_frame(&card).unwrap();
+    assert_eq!(before.revisions(), after.revisions());
+    assert!(workspace.prepare(&statement(&reviewed.source)).is_err());
+    assert!(workspace.commit_batch(batch, Duration::ZERO).is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

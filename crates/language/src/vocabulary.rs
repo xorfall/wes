@@ -55,6 +55,8 @@ pub enum MetaCommand {
     DatasetStopRecording,
     DatasetDiscardRecording,
     Stream,
+    SourceBind,
+    SourceSend,
     Fork,
     Sandbox,
     Transient,
@@ -126,6 +128,8 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::DatasetStopRecording,
     MetaCommand::DatasetDiscardRecording,
     MetaCommand::Stream,
+    MetaCommand::SourceBind,
+    MetaCommand::SourceSend,
     MetaCommand::Fork,
     MetaCommand::Sandbox,
     MetaCommand::Transient,
@@ -249,6 +253,8 @@ impl MetaCommand {
             Self::DatasetStopRecording => "dataset-stop-recording",
             Self::DatasetDiscardRecording => "dataset-discard-recording",
             Self::Stream => "stream",
+            Self::SourceBind => "source-bind",
+            Self::SourceSend => "source-send",
             Self::Fork => "fork",
             Self::Sandbox => "sandbox",
             Self::Transient => "transient",
@@ -316,6 +322,20 @@ impl MetaCommand {
         let text =
             |name, required| Parameter::new(name, Shape::Primitive(Primitive::Text), required);
         match self {
+            Self::SourceBind => {
+                spec.summary = "Capture a typed control binding from one currently open owned provider source. Binding sends nothing, preserves the exact Run/connection and cannot restore authority.";
+                spec.operands = Arity::bounded(1, 1);
+                spec.produces_value = true;
+            }
+            Self::SourceSend => {
+                spec.summary = "Send one typed action through an original live SourceControls binding after explicit native submit. Refusal before dispatch and unknown external outcome are distinct; never automatically replay.";
+                spec.operands = Arity::bounded(1, 1);
+                spec.parameters = vec![
+                    Parameter::new("action", Shape::Unknown, true),
+                    Parameter::new("budget", Shape::Primitive(Primitive::Duration), false),
+                ];
+                spec.produces_value = true;
+            }
             Self::ViewQuery => {
                 spec.summary =
                     "Bind a typed SAFE query template to a view; binding does not execute it";
@@ -791,7 +811,7 @@ impl MetaCommand {
                 }
             }
             Self::Def => {
-                spec.summary = "defines a reusable single-command template";
+                spec.summary = "defines a reusable single-command template; native control templates use :source send with one fixed binding reference and typed named arguments. They prepare normally and retain native user, contract, Run and connection checks.";
                 spec.path_tail = Arity::unbounded(1);
                 spec.open_arguments = true;
             }

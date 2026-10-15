@@ -357,6 +357,7 @@ pub struct MetaTask {
     pub tail: Vec<String>,
     pub subjects: Vec<Input>,
     pub inputs: IndexMap<String, Input>,
+    pub guards: Guards,
 }
 #[derive(Clone, Debug)]
 pub enum Task {
@@ -420,6 +421,18 @@ pub fn guarded_shapes(
             let expected = capability
                 .parameter(key)
                 .map_or(&Shape::Unknown, |p| &p.shape);
+            Ok((key.clone(), boundary::shape(checks, expected)?))
+        })
+        .collect()
+}
+pub(crate) fn guarded_meta_shapes(
+    guards: &Guards,
+    spec: &CommandSpec,
+) -> Result<IndexMap<String, Shape>, wes_core::contracts::ContractError> {
+    guards
+        .iter()
+        .map(|(key, checks)| {
+            let expected = spec.parameter(key).map_or(&Shape::Unknown, |p| &p.shape);
             Ok((key.clone(), boundary::shape(checks, expected)?))
         })
         .collect()
@@ -509,16 +522,29 @@ pub fn plan_with_expectations(
             tail,
             target,
         } => {
-            let inputs = inputs(
+            let refined = guarded_meta_shapes(guards, spec)
+                .map_err(|error| PlanError::boundary(error.into(), statement.span))?;
+            let mut inputs = inputs(
                 call,
                 |key| {
-                    expected.get(key).cloned().unwrap_or_else(|| {
-                        spec.parameter(key)
-                            .map_or(Shape::Unknown, |p| p.shape.clone())
-                    })
+                    refined
+                        .get(key)
+                        .or_else(|| expected.get(key))
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            spec.parameter(key)
+                                .map_or(Shape::Unknown, |p| p.shape.clone())
+                        })
                 },
                 names,
             )?;
+            for (key, checks) in guards {
+                let expected = spec.parameter(key).map_or(&Shape::Unknown, |p| &p.shape);
+                if let Some(Input::Literal(value)) = inputs.get_mut(key) {
+                    *value = boundary::literal(key, checks, expected, value)
+                        .map_err(|e| PlanError::boundary(e, statement.span))?;
+                }
+            }
             let subjects = call
                 .operands
                 .iter()
@@ -549,6 +575,7 @@ pub fn plan_with_expectations(
                 }
                 return Ok(Plan::Action {
                     task: MetaTask {
+                        guards: guards.clone(),
                         spec: spec.clone(),
                         target: target.clone(),
                         tail: tail.clone(),
@@ -571,6 +598,8 @@ pub fn plan_with_expectations(
             } else if matches!(
                 spec.command,
                 wes_language::vocabulary::MetaCommand::Inspect
+                    | wes_language::vocabulary::MetaCommand::SourceBind
+                    | wes_language::vocabulary::MetaCommand::SourceSend
                     | wes_language::vocabulary::MetaCommand::ScanResume
                     | wes_language::vocabulary::MetaCommand::ScanContinue
                     | wes_language::vocabulary::MetaCommand::ScanContinuation
@@ -608,6 +637,7 @@ pub fn plan_with_expectations(
             };
             Ok(new_node(
                 Task::Meta(MetaTask {
+                    guards: guards.clone(),
                     spec: spec.clone(),
                     target: target.clone(),
                     tail: tail.clone(),

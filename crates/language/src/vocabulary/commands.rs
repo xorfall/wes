@@ -13,6 +13,18 @@ pub struct CommandPath {
 use MetaCommand::*;
 pub const COMMAND_PATHS: &[CommandPath] = &[
     CommandPath {
+        path: &["source", "bind"],
+        operation: SourceBind,
+        short: None,
+        summary: "Bind the current exact owned connection without sending: :source bind $events > controls. A restored or stored projection grants no live authority.",
+    },
+    CommandPath {
+        path: &["source", "send"],
+        operation: SourceSend,
+        short: None,
+        summary: "Explicitly send one typed action: :source send $controls action:$action budget:PT5S > receipt. Native View templates only prepare reviewable drafts. Unknown outcomes never replay automatically.",
+    },
+    CommandPath {
         path: &["scan", "reconcile"],
         operation: ScanReconcile,
         short: None,

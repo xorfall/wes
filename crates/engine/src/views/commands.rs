@@ -49,6 +49,32 @@ impl Context {
         let mut context = Self::default();
         let mut hash = Sha256::new();
         hash.update(workspace.views.command_epoch.as_bytes());
+        // A template can refer to work beyond its View input, including native
+        // control bindings. Rebinding names or refreshing that work must invalidate
+        // the reviewed draft even while an old displayed snapshot is held. This
+        // conservative guard uses structural identities only, never payload reads.
+        for (name, output) in workspace.bindings().names() {
+            hash.update(
+                serde_json::to_vec(&(name, output.node.as_str(), output.port.selector()))
+                    .expect("name metadata"),
+            );
+        }
+        for node in workspace.runtime().graph().nodes() {
+            hash.update(
+                serde_json::to_vec(&(
+                    node.id().as_str(),
+                    workspace
+                        .runtime()
+                        .run_of(node.id())
+                        .map(ToString::to_string),
+                    workspace
+                        .runtime()
+                        .value_run(node.id())
+                        .map(ToString::to_string),
+                ))
+                .expect("run metadata"),
+            );
+        }
         for (id, instance) in &workspace.views.instances {
             let s = &instance.snapshot;
             let source_run = s.input.as_ref().and_then(Input::source).map(|source| {

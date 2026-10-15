@@ -216,6 +216,9 @@ fn template_calls_reject_missing_unknown_duplicate_and_positional_arguments() {
 fn invalid_body_parameter_and_type_declarations_fail_before_installation() {
     for input in [
         ":def name as :refresh $node",
+        ":def name as :source bind $events",
+        ":def name as :source send ?receiver action:?action",
+        ":def name as :source send $first $second action:?action",
         ":def name as refresh $node",
         ":def name(x: Text) as catalog echo value:fixed",
         ":def name as ?provider read value:?x",
@@ -232,6 +235,41 @@ fn invalid_body_parameter_and_type_declarations_fail_before_installation() {
         );
         assert!(templates.snapshot().is_empty());
     }
+}
+
+#[test]
+fn native_source_templates_keep_the_fixed_binding_and_typed_named_action() {
+    let mut templates = Templates::new();
+    templates
+        .define(
+            definition(":def send(action:Int) as :source send $owned action:?action budget:PT5S"),
+            &types(),
+        )
+        .unwrap();
+    let expanded = templates
+        .expand(&call("send action:$chosen"), |_| false)
+        .unwrap();
+    assert!(expanded.call.marker.is_some());
+    assert_eq!(
+        expanded.call.to_string(),
+        ":source send $owned action:$chosen budget:PT5S"
+    );
+    assert_eq!(expanded.contracts["action"][0].name(), "Int");
+    let old = templates.snapshot()["send"].revision();
+    let mut other = Templates::new();
+    other
+        .define(
+            definition(":def send(action:Int) as :source send $foreign action:?action budget:PT5S"),
+            &types(),
+        )
+        .unwrap();
+    assert_ne!(old, other.snapshot()["send"].revision());
+    // Runtime names and management authority never enter the typed argument substitution.
+    assert!(
+        templates
+            .expand(&call("send action:1 owned:$foreign"), |_| false)
+            .is_err()
+    );
 }
 
 #[test]

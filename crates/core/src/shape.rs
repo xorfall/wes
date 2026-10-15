@@ -75,6 +75,7 @@ pub enum MetaType {
     DatasetDeletePlan,
     WorkspaceDeletePlan,
     ImportPlan,
+    SourceControls,
     ViewInstance,
 }
 impl fmt::Display for MetaType {
@@ -83,6 +84,7 @@ impl fmt::Display for MetaType {
             Self::DatasetDeletePlan => "DatasetDeletePlan",
             Self::WorkspaceDeletePlan => "WorkspaceDeletePlan",
             Self::ImportPlan => "ImportPlan",
+            Self::SourceControls => "SourceControls",
             Self::ViewInstance => "ViewInstance",
         })
     }
