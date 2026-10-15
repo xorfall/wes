@@ -157,6 +157,12 @@ impl PreparedCall {
     pub fn run(&self) -> &Run {
         &self.run
     }
+    pub(crate) fn admission_policy(&self) -> wes_core::flow::FlowPolicy {
+        self.read_access
+            .protect(self.bound.output_provenance(&self.carried))
+            .policy()
+            .join(&self.policy)
+    }
     pub fn execute(self) -> ExecutionFuture {
         self.execute_guarded(None)
     }

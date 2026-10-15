@@ -22,7 +22,7 @@ impl BoundCall {
                 .as_ref()
                 .is_some_and(|source| &source.node == node)
     }
-    pub(super) fn byte_input_spec(&self) -> Option<ByteInputSpec> {
+    pub(crate) fn byte_input_spec(&self) -> Option<ByteInputSpec> {
         self.provider
             .invoker
             .byte_input(&self.invocation.capability)

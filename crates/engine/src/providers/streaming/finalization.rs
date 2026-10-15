@@ -23,7 +23,7 @@ impl Default for FinalizationLimits {
     }
 }
 impl FinalizationLimits {
-    fn valid(self) -> bool {
+    pub(crate) fn valid(self) -> bool {
         self.tail <= streams::MAX_READY_WAIT
             && !self.control.is_zero()
             && self.control <= streams::MAX_READY_WAIT
@@ -231,7 +231,9 @@ impl OwnedSource {
                 },
             }
         };
-        let phase = match &handle.snapshot().phase {
+        let snapshot = handle.snapshot();
+        policy = policy.join(snapshot.window.provenance().policy());
+        let phase = match &snapshot.phase {
             Phase::Failed(error) => Phase::Failed(error.clone().with_policy(&policy)),
             phase => phase.clone(),
         };

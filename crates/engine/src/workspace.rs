@@ -1143,6 +1143,12 @@ impl Workspace {
         if let BoundTask::SourceLaunch(launch) = &mut ticket.payload {
             launch.capture(self);
         }
+        if let BoundTask::Companion(task) = &mut ticket.payload {
+            task.call.capture_byte_input(self)?;
+            if let Some(node) = self.runtime.graph().node(ticket.run.node()) {
+                task.source.set_source_definition(node.definition());
+            }
+        }
         let call = match &mut ticket.payload {
             BoundTask::Call(call) => Some(call),
             BoundTask::SourceLaunch(launch) => Some(&mut launch.source),

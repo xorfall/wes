@@ -113,6 +113,10 @@ pub(super) fn capture_nodes(
                 call.invocation().provider.clone(),
                 call.invocation().capability.clone(),
             ),
+            BoundTask::Companion(task) => TaskLabel::Call(
+                task.call.invocation().provider.clone(),
+                task.call.invocation().capability.clone(),
+            ),
             BoundTask::Calculation(calc) => {
                 let mut metadata = crate::calc::describe_purity(&calc.compiled);
                 if let Some(definition) = calc.definition() {

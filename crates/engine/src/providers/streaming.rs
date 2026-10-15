@@ -132,6 +132,12 @@ impl PreparedSource {
     /// Start a source whose physical task is owned independently from finite work.
     /// Required byte recording is prepared by the ordinary source boundary.
     pub fn start_owned(self) -> Result<OwnedSource, ExecutionReport> {
+        self.start_owned_with_archives(Vec::new())
+    }
+    pub(crate) fn start_owned_with_archives(
+        self,
+        archives: Vec<Arc<streams::archive::Branch>>,
+    ) -> Result<OwnedSource, ExecutionReport> {
         let fence = SourceFence {
             identity: self.identity.clone(),
             bound: self.bound.clone(),
@@ -141,7 +147,7 @@ impl PreparedSource {
             cancellation: self.cancellation.clone(),
             policy: self.attribution.policy().clone(),
         };
-        let (handle, task) = self.start(Vec::new())?;
+        let (handle, task) = self.start(archives)?;
         Ok(OwnedSource {
             handle,
             task,
@@ -152,6 +158,9 @@ impl PreparedSource {
         Outcome::Failed(RuntimeCode::ExecutionFailed.error(message, None))
             .with_policy(self.attribution.policy())
             .into()
+    }
+    pub(crate) fn policy(&self) -> &wes_core::flow::FlowPolicy {
+        self.attribution.policy()
     }
     pub(crate) fn records_bytes(&self) -> bool {
         self.bound
@@ -281,6 +290,13 @@ pub struct OwnedSource {
     fence: Arc<SourceFence>,
 }
 impl OwnedSource {
+    pub(crate) fn after_join(mut self, cleanup: impl FnOnce() + Send + 'static) -> Self {
+        self.task = self.task.after_join(cleanup);
+        self
+    }
+    pub(crate) fn into_stream(self) -> (streams::StreamHandle, streams::StreamTask) {
+        (self.handle, self.task)
+    }
     pub fn handle(&self) -> &streams::StreamHandle {
         &self.handle
     }
