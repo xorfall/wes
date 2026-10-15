@@ -246,6 +246,35 @@ pub(super) fn credit(session: &str) -> Vec<u8> {
     )
     .expect("bounded credit frame")
 }
+/// A replenishment credit is flow control, not an external-effect receipt. A peer
+/// may close stdin after its final event while its valid End is still in flight.
+/// Preserve that terminal frame within the original write deadline; no later
+/// event, malformed/foreign frame, EOF or pending control can stand in for End.
+pub(super) async fn credit_or_end(
+    output: &mut (impl AsyncWrite + Unpin),
+    session: &str,
+    token: &CancellationToken,
+    frames: &mut mpsc::Receiver<Result<Frame, InvocationError>>,
+    allow_end: bool,
+) -> Result<bool, InvocationError> {
+    let until = tokio::time::Instant::now() + wes_engine::streams::MAX_READY_WAIT;
+    match write_until(output, &credit(session), token, until, None).await {
+        Ok(()) => Ok(false),
+        Err(InvocationError::Cancelled) => Err(InvocationError::Cancelled),
+        Err(reason) if allow_end => {
+            tokio::select! {biased;
+                ()=token.cancelled()=>Err(InvocationError::Cancelled),
+                frame=frames.recv()=>match frame {
+                    Some(Ok(frame)) if frame.version == 1 && frame.session == session
+                        && matches!(frame.message, Message::End) => Ok(true),
+                    _ => Err(reason),
+                },
+                _=tokio::time::sleep_until(until)=>Err(reason),
+            }
+        }
+        Err(reason) => Err(reason),
+    }
+}
 pub(super) async fn read(input: &mut (impl AsyncRead + Unpin)) -> Result<Frame, InvocationError> {
     let length = input
         .read_u32()
@@ -298,4 +327,133 @@ pub(super) fn diagnostics(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod credit_tests {
+    use super::*;
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    struct ClosedInput(Option<oneshot::Sender<()>>);
+    impl AsyncWrite for ClosedInput {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if let Some(attempted) = self.0.take() {
+                let _ = attempted.send(());
+            }
+            Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+    fn frame(version: u32, session: &str, message: Message) -> Frame {
+        Frame {
+            version,
+            session: session.into(),
+            message,
+        }
+    }
+    #[tokio::test]
+    async fn closed_credit_write_accepts_only_the_exact_terminal_frame_after_the_failure() {
+        for (frame, allow_end, accepted) in [
+            (Some(frame(1, "attempt", Message::End)), true, true),
+            (Some(frame(2, "attempt", Message::End)), true, false),
+            (Some(frame(1, "foreign", Message::End)), true, false),
+            (Some(frame(1, "attempt", Message::Ready)), true, false),
+            (Some(frame(1, "attempt", Message::Failed)), true, false),
+            (
+                Some(frame(
+                    1,
+                    "attempt",
+                    Message::Event {
+                        sequence: 2,
+                        data: RawValue::from_string("8".into()).unwrap(),
+                    },
+                )),
+                true,
+                false,
+            ),
+            (None, true, false),
+            (Some(frame(1, "attempt", Message::End)), false, false),
+        ] {
+            let (attempted, failed) = oneshot::channel();
+            let mut output = ClosedInput(Some(attempted));
+            let (send, mut receive) = mpsc::channel(1);
+            // End cannot be consumed before the credit write actually fails.
+            let peer = tokio::spawn(async move {
+                failed.await.unwrap();
+                if let Some(frame) = frame {
+                    let _ = send.send(Ok(frame)).await;
+                }
+            });
+            let result = credit_or_end(
+                &mut output,
+                "attempt",
+                &CancellationToken::new(),
+                &mut receive,
+                allow_end,
+            )
+            .await;
+            assert_eq!(result.is_ok_and(|ended| ended), accepted);
+            assert!(output.0.is_none(), "one physical credit attempt was made");
+            peer.await.unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn successful_credit_does_not_consume_a_terminal_frame() {
+        let (send, mut receive) = mpsc::channel(1);
+        send.send(Ok(frame(1, "attempt", Message::End)))
+            .await
+            .unwrap();
+        assert!(
+            !credit_or_end(
+                &mut tokio::io::sink(),
+                "attempt",
+                &CancellationToken::new(),
+                &mut receive,
+                true
+            )
+            .await
+            .unwrap()
+        );
+        assert!(matches!(
+            receive.try_recv().unwrap().unwrap().message,
+            Message::End
+        ));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn failed_credit_drain_keeps_its_deadline_and_remains_cancelable() {
+        for cancel in [false, true] {
+            let (attempted, failed) = oneshot::channel();
+            let mut output = ClosedInput(Some(attempted));
+            let (_send, mut receive) = mpsc::channel(1);
+            let token = CancellationToken::new();
+            let stop = token.clone();
+            let work = tokio::spawn(async move {
+                credit_or_end(&mut output, "attempt", &token, &mut receive, true).await
+            });
+            failed.await.unwrap();
+            assert!(!work.is_finished());
+            if cancel {
+                stop.cancel();
+            } else {
+                tokio::time::advance(wes_engine::streams::MAX_READY_WAIT).await;
+            }
+            let result = work.await.unwrap();
+            if cancel {
+                assert!(matches!(result, Err(InvocationError::Cancelled)));
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
 }
