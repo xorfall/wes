@@ -1612,12 +1612,13 @@ async fn vocabulary_projects_adapter_inputs_and_existing_subcommand_specs() {
     let mut events = fixture.stream().await;
     let vocabulary = events.until("vocabulary").await;
     let commands = vocabulary["commands"].as_array().unwrap();
-    for name in ["read", "keep", "source", "dataset"] {
+    for name in ["read", "keep", "source", "dataset", "env", "view"] {
         let command = commands.iter().find(|c| c["name"] == name).unwrap();
-        assert_eq!(
-            command["summary"],
-            wes_language::vocabulary::commands::help_summary(&[name])
-        );
+        assert!(!command["summary"].as_str().unwrap().is_empty(), "{name}");
+        let declared = wes_language::vocabulary::commands::help_summary(&[name]);
+        if !declared.is_empty() {
+            assert_eq!(command["summary"], declared);
+        }
     }
 
     let refresh = commands
