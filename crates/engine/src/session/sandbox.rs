@@ -3,8 +3,29 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use wes_core::Data;
-use wes_language::{Expression, Statement, Value};
+use wes_language::{Call, Expression, Statement, Value};
 mod keep;
+
+/// View input is consumed by the parent workspace, not an operation on the
+/// referenced object. Saved inputs already have inert typed parent bindings.
+/// Live child members still cannot cross scopes without an explicit Keep.
+fn object_references(call: &Call) -> impl Iterator<Item = &wes_language::Name> {
+    let view_input = wes_language::vocabulary::commands::invocation(call).is_ok_and(|i| {
+        matches!(
+            i.spec.command,
+            MetaCommand::ViewCreate | MetaCommand::ViewBind
+        )
+    });
+    call.operands
+        .iter()
+        .chain(
+            call.arguments
+                .iter()
+                .filter(move |a| !(view_input && a.key.text == "input"))
+                .map(|a| &a.value),
+        )
+        .flat_map(Value::references)
+}
 #[derive(Default)]
 struct Names {
     definitions: Vec<String>,
@@ -306,16 +327,13 @@ impl Sandboxes {
             .iter()
             .any(|s| match &s.expression {
                 Expression::Sandbox(_) | Expression::Transient(_) => true,
-                Expression::Call(call) if call.marker.is_some() => call
-                    .operands
-                    .iter()
-                    .chain(call.arguments.iter().map(|a| &a.value))
-                    .flat_map(Value::references)
-                    .any(|n| {
+                Expression::Call(call) if call.marker.is_some() => {
+                    object_references(call).any(|n| {
                         self.names()
                             .iter()
                             .any(|name| n.text == *name || n.text.starts_with(&format!("{name}.")))
-                    }),
+                    })
+                }
                 _ => false,
             }))
     }
@@ -393,11 +411,7 @@ impl Sandboxes {
                 Expression::Call(call) if call.marker.is_some() => {
                     let invocation = wes_language::vocabulary::commands::invocation(call)
                         .map_err(|d| preparation_error(&d, input.text()))?;
-                    let Some(reference) = call
-                        .operands
-                        .iter()
-                        .chain(call.arguments.iter().map(|a| &a.value))
-                        .flat_map(Value::references)
+                    let Some(reference) = object_references(call)
                         .find(|name| {
                             let root = name.text.split('.').next().unwrap_or(&name.text);
                             state.definitions.contains_key(root)

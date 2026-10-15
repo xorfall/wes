@@ -365,8 +365,8 @@
   {
     "type": "Bytes",
     "json": "\"YQ==\"",
-    "accepted": false,
-    "data": null
+    "accepted": true,
+    "data": {"kind": "Bytes", "value": "YQ=="}
   },
   {
     "type": "Bytes",

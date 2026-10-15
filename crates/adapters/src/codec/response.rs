@@ -11,7 +11,9 @@ pub fn decode_json_preserving(bytes: &[u8], limits: Limits) -> Result<Data, Code
     raw::present(root, &mut context, 0)
 }
 
-/// Read response tokens with numeric contract context. Full contract validation and nullable
+/// Read response tokens with numeric, temporal and binary contract context. Declared Bytes
+/// accept only canonical padded standard base64, matching request/display encoding.
+/// Full contract validation and nullable
 /// lifting remain the caller's responsibility. Native values and calculation parsing use the
 /// separate preserving reader above.
 pub fn decode_json_for_contract(
