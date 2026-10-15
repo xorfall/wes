@@ -16,6 +16,7 @@ pub(crate) struct Owner(Arc<Mutex<State>>);
 struct State {
     sources: BTreeMap<NodeId, (String, StreamHandle)>,
     openings: BTreeSet<NodeId>,
+    sealed_sources: BTreeMap<NodeId, (String, Arc<crate::streams::RecordedOutput>)>,
     recordings: BTreeMap<(NodeId, String), Arc<Recording>>,
 }
 /// Capacity for one admitted producer is reserved before any asynchronous writer preparation.
@@ -185,19 +186,28 @@ impl Recording {
 }
 impl Owner {
     pub fn retire_obsolete(&self, runtime: &crate::runtime::Runtime<crate::tasks::BoundTask>) {
-        self.0
+        let mut state = self
+            .0
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .recordings
-            .retain(|(node, run), receipt| {
-                receipt.done.borrow().is_none()
-                    || runtime
-                        .run_of(node)
-                        .is_some_and(|current| current.as_str() == run)
-            });
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.sealed_sources.retain(|node, (run, _)| {
+            runtime
+                .run_of(node)
+                .is_some_and(|current| current.as_str() == run)
+        });
+        state.recordings.retain(|(node, run), receipt| {
+            receipt.done.borrow().is_none()
+                || runtime
+                    .run_of(node)
+                    .is_some_and(|current| current.as_str() == run)
+        });
     }
 
-    pub fn reserve_source(&self, run: &Run) -> Result<SourceReservation, String> {
+    pub fn reserve_source_with_recording(
+        &self,
+        run: &Run,
+        recording: bool,
+    ) -> Result<SourceReservation, String> {
         let mut state = self
             .0
             .lock()
@@ -210,6 +220,14 @@ impl Owner {
                 "Source lifetime capacity is exhausted or an earlier run has not joined".into(),
             );
         }
+        if recording
+            && state.sealed_sources.len() + state.sources.len() + state.openings.len()
+                >= wes_budgets::get("dataset.writer.receipts") as usize
+            && !state.sealed_sources.contains_key(run.node())
+        {
+            return Err("Completed source recording capacity is exhausted; retire completed work before adding another source".into());
+        }
+        state.sealed_sources.remove(run.node());
         state.openings.insert(run.node().clone());
         Ok(SourceReservation {
             owner: self.clone(),
@@ -226,8 +244,23 @@ impl Owner {
             .get(run.node())
             .is_some_and(|(id, _)| id == run.id().as_str())
         {
-            state.sources.remove(run.node());
+            if let Some((_, handle)) = state.sources.remove(run.node()) {
+                if let Some(recorded) = handle.recorded() {
+                    state
+                        .sealed_sources
+                        .insert(run.node().clone(), (run.id().to_string(), recorded));
+                }
+            }
         }
+    }
+    pub fn recorded_source(
+        &self,
+        node: &NodeId,
+        run: &str,
+    ) -> Result<Arc<crate::streams::RecordedOutput>, &'static str> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sealed_sources.get(node).filter(|(id, _)| id == run).map(|(_, recorded)| recorded.clone())
+            .ok_or("Source result requires an original physically joined recording of the selected run; no producer was started")
     }
     pub fn source(&self, node: &NodeId, run: &str) -> Result<StreamHandle, String> {
         self.0

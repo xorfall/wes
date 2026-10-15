@@ -13,6 +13,20 @@ impl Actor {
         let Some(request) = query.session_request() else {
             return;
         };
+        if let SessionQuery::SourceResult(subject) = request {
+            let captured = self
+                .workspace
+                .runtime()
+                .run_of(&subject.node)
+                .ok_or("Selected source has no original owned run; no producer was started")
+                .and_then(|run| {
+                    self.workspace
+                        .recordings
+                        .recorded_source(&subject.node, run.as_str())
+                });
+            query.capture_recorded(captured, &self.workspace.dataset_access.providers);
+            return;
+        }
         let cells = self.cells.observed();
         let row = |cell: &super::ObservedCell| {
             let (status, nodes) = match &cell.reply {
@@ -51,6 +65,7 @@ impl Actor {
             )
         };
         let data = match request {
+            SessionQuery::SourceResult(_) => unreachable!("handled native recording"),
             SessionQuery::Sandboxes => Ok(Data::List(
                 self.sandboxes
                     .definition_names()

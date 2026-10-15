@@ -174,29 +174,22 @@ impl Acquisition {
             .with_metadata(shell.metadata().cloned());
         let shell = shell.with_provenance(shell.provenance().inheriting(&self.provenance));
         let handle = self.handle.clone();
-        let limit = self.worker.limits.bytes.get();
         let result = self
             .worker
-            .request(limit, move |store| {
-                let snapshot = store.seal_acquisition(&handle, &shell, &leaves)?;
-                let hold = store.hold(&handle)?.ok_or(StoreError::MissingValue)?;
-                Ok(AcquiredOutput::Stored {
-                    output: StoredOutput {
-                        bytes: store.size(&handle)?.ok_or(StoreError::MissingValue)?,
-                        handle: handle.clone(),
-                        kept: false,
-                        retention: Retention::Temporary,
-                        retained_persistence: crate::history::Persistence::Volatile,
-                        requires_ownership_record: true,
-                        snapshot: Some(snapshot),
-                    },
-                    hold,
-                })
+            .seal_owned_acquisition(handle.clone(), shell, leaves)
+            .await
+            .map(|(snapshot, hold, bytes)| AcquiredOutput::Stored {
+                output: StoredOutput {
+                    bytes,
+                    handle,
+                    kept: false,
+                    retention: Retention::Temporary,
+                    retained_persistence: crate::history::Persistence::Volatile,
+                    requires_ownership_record: true,
+                    snapshot: Some(snapshot),
+                },
+                hold,
             })
-            .await
-            .map_err(acquisition_error)?
-            .wait()
-            .await
             .map_err(acquisition_error);
         // Keep the draft witness until the seal operation physically finishes, including refusal.
         drop(self.owner);

@@ -41,6 +41,75 @@ def send(message, session=nonce):
     sys.stdout.buffer.flush()
 
 
+if mode.startswith("raw-"):
+    import base64
+    if mode == "raw-before-shell":
+        send({"kind": "ready"})
+        sys.exit(0)
+    send({"kind": "recording", "data": {"label": "initial", "raw": ""}})
+    sequence = 0
+
+    def chunk(payload, next_sequence=None):
+        global sequence
+        sequence += 1
+        send({"kind": "bytes", "sequence": sequence if next_sequence is None else next_sequence,
+              "data": base64.b64encode(payload).decode("ascii")})
+        frame = read()
+        assert frame["session"] == nonce
+        assert frame["message"] == {"kind": "bytes-credit", "count": 1}
+
+    if mode == "raw-duplicate-shell":
+        send({"kind": "recording", "data": {"label": "duplicate", "raw": ""}})
+    elif mode == "raw-bad-base64":
+        send({"kind": "bytes", "sequence": 1, "data": "Zh=="})
+    else:
+        chunk(b"synthetic-owned-raw-sentinel")
+        send({"kind": "ready"})
+        if mode.startswith("raw-final-credit-"):
+            os.close(0)
+            send({"kind": "event", "sequence": 1, "data": 7})
+            if mode != "raw-final-credit-no-shell":
+                send({"kind": "recording", "data": {"label": "final", "raw": ""}})
+            if mode == "raw-final-credit-extra-event":
+                send({"kind": "event", "sequence": 2, "data": 8})
+            if mode != "raw-final-credit-eof":
+                send({"kind": "end"}, "foreign-attempt" if mode == "raw-final-credit-foreign" else nonce)
+        elif mode == "raw-large":
+            for _ in range(520):
+                chunk(bytes([147]) * 65536)
+        elif mode == "raw-gap":
+            send({"kind": "bytes", "sequence": 3, "data": "YQ=="})
+        elif mode == "raw-foreign":
+            send({"kind": "bytes", "sequence": 2, "data": "YQ=="}, "00000000-0000-0000-0000-000000000000")
+        elif mode == "raw-premature-end":
+            send({"kind": "end"})
+        elif mode == "raw-quota":
+            chunk(bytes([147]) * 65536)
+        elif mode in ("raw-hold", "raw-unknown", "raw-watchdog"):
+            send({"kind": "event", "sequence": 1, "data": 7})
+            assert read()["message"] == {"kind": "credit", "count": 1}
+            (root / "ready").write_text("active")
+            while True:
+                frame = read()
+                message = frame["message"]
+                if message["kind"] != "control":
+                    continue
+                with (root / "actions").open("a") as file:
+                    file.write(str(message["data"]) + "\n")
+                if mode == "raw-unknown":
+                    break
+                send({"kind": "control", "id": message["id"],
+                      "outcome": {"kind": "confirmed", "data": True}})
+                send({"kind": "recording", "data": {"label": "final", "raw": ""}})
+                send({"kind": "end"})
+                break
+        elif mode == "raw-fail":
+            send({"kind": "failed"})
+        if mode == "raw-large":
+            send({"kind": "recording", "data": {"label": "final", "raw": ""}})
+            send({"kind": "end"})
+    sys.exit(0)
+
 if mode == "before-ready":
     send({"kind": "event", "sequence": 1, "data": 7})
 elif mode == "foreign":

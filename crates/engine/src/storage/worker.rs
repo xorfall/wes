@@ -147,6 +147,12 @@ trait Job: Send {
     fn perform(self: Box<Self>, store: &mut dyn OwnedStorage) -> bool;
 }
 trait OwnedStorage {
+    fn seal_owned_acquisition(
+        &mut self,
+        handle: &ValueHandle,
+        shell: &Value,
+        leaves: &[super::LeafSelection],
+    ) -> Result<(super::StoredSnapshot, ValueLease, u64), StoreError>;
     fn check_policy(&self, policy: &wes_core::flow::FlowPolicy) -> Result<(), StoreError>;
     fn admit_retention(&self, handle: &ValueHandle, reason: Retention) -> Result<(), StoreError>;
     fn dataset_info(&self, reference: &wes_core::DatasetRef) -> Result<DatasetInfo, StoreError> {
@@ -228,6 +234,7 @@ struct Owner<V> {
     dataset_access: tokio::sync::watch::Sender<super::datasets::DatasetAccess>,
     scope: Option<TransientScope>,
     value_scopes: std::collections::HashMap<ValueHandle, (String, TransientScopeWitness)>,
+    unscoped_acquisitions: std::collections::HashMap<ValueHandle, std::sync::Weak<()>>,
     retaining: std::collections::HashSet<ValueHandle>,
     holding: std::collections::HashSet<ValueHandle>,
     deferred_evictions:
@@ -235,6 +242,25 @@ struct Owner<V> {
     eviction_updates: tokio::sync::watch::Sender<u64>,
 }
 impl<V: ValueStore> OwnedStorage for Owner<V> {
+    fn seal_owned_acquisition(
+        &mut self,
+        handle: &ValueHandle,
+        shell: &Value,
+        leaves: &[super::LeafSelection],
+    ) -> Result<(super::StoredSnapshot, ValueLease, u64), StoreError> {
+        let snapshot = self.seal_acquisition(handle, shell, leaves)?;
+        // Publication ownership is distinct from read authority. This only pins the sealed
+        // raw backing object; native read/Keep paths still recheck its original root policy.
+        let hold = if self.scope.is_none() {
+            self.values.hold(handle)?
+        } else {
+            self.hold(handle)?
+        }
+        .ok_or(StoreError::MissingValue)?;
+        let bytes = self.values.size(handle)?.ok_or(StoreError::MissingValue)?;
+        self.unscoped_acquisitions.remove(handle);
+        Ok((snapshot, hold, bytes))
+    }
     fn admit_retention(&self, handle: &ValueHandle, reason: Retention) -> Result<(), StoreError> {
         self.check_scope(handle)?;
         if self.scope.is_some() && reason != Retention::Protected {
@@ -599,6 +625,7 @@ fn spawn_owner(
                     dataset_access: dataset_access_tx,
                     scope: None,
                     value_scopes: Default::default(),
+                    unscoped_acquisitions: Default::default(),
                     retaining: Default::default(),
                     holding: Default::default(),
                     deferred_evictions: Default::default(),
@@ -674,6 +701,20 @@ impl StoreWorker {
             .await?
             .wait()
             .await
+    }
+    /// Seal and lease original bytes without granting a read or retention authority.
+    pub(super) async fn seal_owned_acquisition(
+        &self,
+        handle: ValueHandle,
+        shell: Value,
+        leaves: Vec<super::LeafSelection>,
+    ) -> Result<(super::StoredSnapshot, ValueLease, u64), StoreError> {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            owner.seal_owned_acquisition(&handle, &shell, &leaves)
+        })
+        .await?
+        .wait()
+        .await
     }
     /// A host-captured publication placement; retention and authority remain independent.
     pub fn with_placement(mut self, placement: ValuePlacement) -> Self {

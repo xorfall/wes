@@ -20,6 +20,7 @@
 //! EOF, invalid state, deadline or cancellation closes and joins the process
 //! group/Job Object and both readers; no restart, replay or reconnection occurs.
 mod protocol;
+mod recording;
 #[cfg(test)]
 mod tests;
 use super::*;
@@ -92,6 +93,29 @@ fn unknown() -> InvocationError {
         "Session completion could not be confirmed; the external outcome is unknown. No automatic retry was performed.",
         None,
     ))
+}
+async fn return_credit(
+    stdin: &mut tokio::process::ChildStdin,
+    bytes: &[u8],
+    source: &StreamSink,
+    token: &CancellationToken,
+    terminal_budget: Duration,
+) -> Result<Option<tokio::time::Instant>, InvocationError> {
+    let until =
+        tokio::time::Instant::now() + terminal_budget.min(wes_engine::streams::MAX_READY_WAIT);
+    match protocol::write_until(stdin, bytes, token, until, None).await {
+        Ok(()) => Ok(None),
+        Err(reason) if token.is_cancelled() => Err(reason),
+        Err(_) => {
+            // Credit acknowledges local observation/storage, never a new external effect.
+            // A closing peer may already have sent its final shell and End. Stop admitting
+            // live work and require that exact receipt within a bounded terminal-only drain.
+            source
+                .closing()
+                .map_err(|_| error("Session live admission closed during credit failure"))?;
+            Ok(Some(until))
+        }
+    }
 }
 fn product(session: Session) -> Result<ImportProduct, ImportError> {
     let description = session.definition.description.clone();
@@ -267,6 +291,16 @@ impl Session {
                     .map(|control| [control.input.digest(), control.output.digest()]),
             },
             event_credit: u8::from(operation.streaming),
+            recording: operation
+                .recording
+                .as_ref()
+                .map(|recording| protocol::RecordingStart {
+                    contract: recording.contract.digest(),
+                    byte_field: &recording.fields,
+                    max_bytes: recording.maximum,
+                    max_duration_ms: recording.duration.as_millis() as u64,
+                    credit: 1,
+                }),
         };
         let encoded = Zeroizing::new(
             serde_json::to_vec(&start).map_err(|_| error("Session start encoding failed"))?,
@@ -325,8 +359,19 @@ impl Session {
         let carried = Provenance::agreed_by(call.arguments.values().map(Value::provenance));
         let launch_token = token.clone();
         let launch_availability = availability.clone();
-        let mut child = tokio::select! {biased;
-            ()=token.cancelled()=>return Err(InvocationError::Cancelled),
+        let mut raw = match operation.recording.as_ref() {
+            Some(definition) => Some(
+                recording::Raw::reserve(
+                    definition,
+                    sink.as_ref()
+                        .ok_or_else(|| error("Byte recording requires an owned stream"))?,
+                )
+                .await?,
+            ),
+            None => None,
+        };
+        let launched = tokio::select! {biased;
+            ()=token.cancelled()=>Err(InvocationError::Cancelled),
             child=crate::process::serialized_spawn_async(move || {
                 if launch_token.is_cancelled() || launch_availability.is_cancelled() || !launch_authority.dispatch_current(carried.policy(),&launch_credentials) {
                     return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
@@ -335,7 +380,16 @@ impl Session {
                 command.args(argv).env_clear().envs(variables).current_dir(cwd)
                     .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
                 crate::process::ownership::LocalChild::spawn(command, false)
-            })=>child.map_err(|_| error("Session executable could not be launched"))?,
+            })=>child.map_err(|_| error("Session executable could not be launched")),
+        };
+        let mut child = match launched {
+            Ok(child) => child,
+            Err(reason) => {
+                if let Some(raw) = raw {
+                    raw.finish().await?;
+                }
+                return Err(reason);
+            }
         };
         let mut stdin = child.inner().stdin.take().expect("piped stdin");
         let stdout = child.inner().stdout.take().expect("piped stdout");
@@ -360,10 +414,19 @@ impl Session {
                     wes_budgets::get("provider.session.ready.ms") as u64,
                 ));
         let finite_until = tokio::time::Instant::now() + self.config.timeout;
+        let mut raw_delivery: Option<wes_engine::streams::RecordingAppend> = None;
+        let mut raw_limit = false;
         let mut opened = false;
         let mut sequence = 0u64;
         let mut output = None;
         let mut ended = false;
+        let terminal_budget = self
+            .config
+            .timeout
+            .min(Duration::from_millis(wes_budgets::get(
+                "provider.session.ready.ms",
+            )));
+        let mut terminal_until = None;
         // Before a complete frame is handed off, failures are known locally. Once
         // a finite peer may have received it, only a validated result or explicit
         // failure settles its outcome. Readiness and cleanup are not receipts.
@@ -393,7 +456,7 @@ impl Session {
                 .await?;
                 drop(start);
                 loop {
-                    let until = pending.as_ref().map(|(_, _, until)| *until).unwrap_or(
+                    let ordinary_until = pending.as_ref().map(|(_, _, until)| *until).unwrap_or(
                         if opened && sink.is_some() {
                             tokio::time::Instant::now() + Duration::from_secs(86_400)
                         } else if opened {
@@ -402,9 +465,25 @@ impl Session {
                             ready_until
                         },
                     );
+                    let until = terminal_until
+                        .map_or(ordinary_until, |terminal: tokio::time::Instant| {
+                            terminal.min(ordinary_until)
+                        });
                     tokio::select! {biased;
                         ()=token.cancelled()=>return Err(InvocationError::Cancelled),
-                        _=tokio::time::sleep_until(until), if !(opened && sink.is_some() && pending.is_none())=>return Err(error("Session response deadline elapsed; no retry was performed")),
+                        _=async {tokio::time::sleep_until(raw.as_ref().expect("guarded recording").until).await}, if raw.is_some()=>{
+                            raw_limit=true;
+                            return Err(error("Session recording lifetime ceiling elapsed; no retry was performed"));
+                        },
+                        result=async {raw_delivery.as_mut().expect("guarded raw delivery").await}, if raw_delivery.is_some()=>{
+                            raw_delivery=None;
+                            result?;
+                            if ended && delivery.is_none() {return Ok(());}
+                            if !ended && terminal_until.is_none() {
+                                terminal_until=return_credit(&mut stdin,&protocol::raw_credit(&session),sink.as_ref().expect("recording source"),&token,terminal_budget).await?;
+                            }
+                        },
+                        _=tokio::time::sleep_until(until), if terminal_until.is_some() || !(opened && sink.is_some() && pending.is_none())=>return Err(error("Session response deadline elapsed; no retry was performed")),
                         result=&mut diagnostics, if !diagnostics_done=>{
                             diagnostics_done=true;
                             if !matches!(result,Ok(Ok(()))) {diagnostics_failed=true; return Err(error("Session diagnostics exceeded their byte budget or failed"));}
@@ -412,12 +491,16 @@ impl Session {
                         result=async {delivery.as_mut().expect("guarded delivery").await}, if delivery.is_some()=>{
                             result.map_err(|_|error("Session event admission closed or exceeded its budget"))?;
                             delivery=None;
-                            if ended {return Ok(());}
-                            if protocol::credit_or_end(&mut stdin,&session,&token,&mut read,pending.is_none()).await? {
-                                return Ok(());
+                            if ended && raw_delivery.is_none() {return Ok(());}
+                            if !ended && terminal_until.is_none() {
+                                if raw.is_none() {
+                                    if protocol::credit_or_end(&mut stdin,&session,&token,&mut read,pending.is_none()).await? {return Ok(());}
+                                } else {
+                                    terminal_until=return_credit(&mut stdin,&protocol::credit(&session),sink.as_ref().expect("event source"),&token,terminal_budget).await?;
+                                }
                             }
                         },
-                        request=requests.recv(), if pending.is_none() && operation.control.is_some() && opened && !ended=>{
+                        request=requests.recv(), if terminal_until.is_none() && pending.is_none() && operation.control.is_some() && opened && !ended=>{
                             let Some(Request{action, reply, cancellation})=request else {return Err(error("Session control owner ended"));};
                             if cancellation.is_cancelled() || !self.dispatch_current(action.provenance().policy(),&credentials) {let _=reply.send(ControlOutcome::Refused); continue;}
                             let id=uuid::Uuid::new_v4().to_string();
@@ -429,8 +512,12 @@ impl Session {
                         frame=read.recv(), if !ended=>{
                             let frame=frame.ok_or_else(||error("Session protocol ended without a terminal frame; no retry was performed"))??;
                             if frame.version!=1 || frame.session!=session {return Err(error("Session protocol version or attempt identity is invalid"));}
+                            if terminal_until.is_some() && !matches!(&frame.message,protocol::Message::Recording{..} | protocol::Message::Control{..} | protocol::Message::End | protocol::Message::Failed) {
+                                return Err(error("Session sent live data after its credit channel closed; no retry was performed"));
+                            }
                             match frame.message {
-                                protocol::Message::Ready if !opened => {
+                                protocol::Message::Ready if !opened && raw_delivery.is_none() => {
+                                    if let Some(raw)=&raw {raw.ready()?;}
                                     if let Some(sink)=&sink {
                                         sink.opened().map_err(|_| error("Session source closed before readiness"))?;
                                         if let Some(control)=&operation.control {
@@ -438,6 +525,12 @@ impl Session {
                                         }
                                     }
                                     opened=true;
+                                },
+                                protocol::Message::Recording{data} if raw.is_some()=>{
+                                    raw.as_mut().expect("declared recording").header(data.get().as_bytes(),opened,&token)?;
+                                },
+                                protocol::Message::Bytes{sequence,data} if raw.is_some() && raw_delivery.is_none()=>{
+                                    raw_delivery=Some(raw.as_mut().expect("declared recording").append(sequence,data.get().as_bytes(),&token)?);
                                 },
                                 protocol::Message::Event{sequence:next,data} if opened && sink.is_some() && delivery.is_none()=>{
                                     sequence=sequence.checked_add(1).ok_or_else(|| error("Session event sequence exhausted"))?;
@@ -470,8 +563,9 @@ impl Session {
                                     let _=reply.send(outcome);
                                 },
                                 protocol::Message::End if opened && pending.is_none() && (sink.is_some() || output.is_some())=>{
+                                    if let Some(raw)=&mut raw {raw.confirm()?;}
                                     ended=true;
-                                    if delivery.is_none() {return Ok(());}
+                                    if delivery.is_none() && raw_delivery.is_none() {return Ok(());}
                                 },
                                 protocol::Message::Failed=>{
                                     finite_confirmed=true;
@@ -492,6 +586,12 @@ impl Session {
         // accepted writes and both bounded readers have ended. Failure never restarts.
         drop(stdin);
         drop(delivery);
+        // An admitted raw write is retained and physically joined even when cancellation,
+        // a malformed frame or a control deadline interrupts the protocol loop.
+        let raw_joined = match raw_delivery.take() {
+            Some(write) => write.await.is_ok(),
+            None => true,
+        };
         let cleanup = child.cancel().await;
         io_stop.cancel();
         let reader_joined = reader.await.is_ok();
@@ -505,12 +605,31 @@ impl Session {
         while let Ok(request) = requests.try_recv() {
             let _ = request.reply.send(ControlOutcome::Refused);
         }
-        cleanup.map_err(|_| unknown())?;
-        let work = if !reader_joined || diagnostics_failed {
+        if cleanup.is_err() {
+            if let Some(raw) = raw {
+                raw.abort().await?;
+            }
+            return Err(unknown());
+        }
+        let work = if !reader_joined || diagnostics_failed || !raw_joined {
             Err(error("Session reader cleanup or diagnostic budget failed"))
         } else {
             work
         };
+        if let Some(mut raw) = raw {
+            if work.is_err() {
+                raw.end = if control_unconfirmed {
+                    wes_engine::streams::RecordingEnd::Unconfirmed
+                } else if raw_limit || raw.end == wes_engine::streams::RecordingEnd::Limit {
+                    wes_engine::streams::RecordingEnd::Limit
+                } else if token.is_cancelled() || availability.is_cancelled() {
+                    wes_engine::streams::RecordingEnd::Cancelled
+                } else {
+                    wes_engine::streams::RecordingEnd::Failed
+                };
+            }
+            raw.finish().await?;
+        }
         work.map_err(|reason| {
             if (sink.is_none() && start_handed_off && !finite_confirmed) || control_unconfirmed {
                 unknown()
@@ -532,6 +651,12 @@ impl Invoker for Session {
     }
 }
 impl StreamingInvoker for Session {
+    fn records_bytes(&self, capability: &wes_core::capability::Capability) -> bool {
+        self.definition
+            .operations
+            .iter()
+            .any(|op| op.path == capability.path && op.recording.is_some())
+    }
     fn subscribe(&self, call: Call, sink: StreamSink, token: CancellationToken) -> StreamFuture {
         let this = self.clone();
         Box::pin(async move { this.execute(call, Some(sink), token).await.map(|_| ()) })

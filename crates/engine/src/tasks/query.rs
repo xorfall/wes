@@ -17,6 +17,7 @@ use wes_language::targets::ObjectKind;
 use wes_language::vocabulary::{ListRegistry, MetaCommand};
 mod bytes;
 mod nodes;
+mod recording;
 pub(crate) mod types;
 
 fn max_rows() -> usize {
@@ -105,6 +106,7 @@ fn output_unavailable(workspace: &Workspace, output: &OutputRef) -> Failure {
 #[derive(Clone, Debug)]
 enum Capture {
     Bytes(bytes::CapturedBytes),
+    Recorded(recording::CapturedRecording),
     Trace(Value),
     Information(Value),
     Help(super::BoundHelp),
@@ -121,6 +123,7 @@ pub(crate) enum SessionQuery {
     Sandboxes,
     Cells,
     Cell(String),
+    SourceResult(OutputRef),
 }
 #[derive(Clone, Debug)]
 pub struct BoundQuery {
@@ -132,6 +135,11 @@ pub struct BoundQuery {
 }
 impl BoundQuery {
     pub(crate) fn session_request(&self) -> Option<SessionQuery> {
+        if self.task.spec.command == MetaCommand::SourceResult {
+            if let [Input::FromNode(subject)] = self.task.subjects.as_slice() {
+                return Some(SessionQuery::SourceResult(subject.clone()));
+            }
+        }
         if self.task.spec.command == MetaCommand::List
             && self.task.tail.first().is_some_and(|s| s == "sandboxes")
         {
@@ -162,9 +170,11 @@ impl BoundQuery {
                 .first()
                 .and_then(|name| ListRegistry::lookup(name))
                 .is_some(),
-            MetaCommand::Info | MetaCommand::Inspect | MetaCommand::Read | MetaCommand::Trace => {
-                true
-            }
+            MetaCommand::Info
+            | MetaCommand::Inspect
+            | MetaCommand::Read
+            | MetaCommand::Trace
+            | MetaCommand::SourceResult => true,
             _ => false,
         }
     }
@@ -185,14 +195,23 @@ impl BoundQuery {
             && self.task.tail.first().is_some_and(|kind| kind == "bytes")
     }
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if self.byte_read() {
+        if self.task.spec.command == MetaCommand::SourceResult {
+            if !self.task.inputs.is_empty()
+                || !matches!(self.task.subjects.as_slice(), [Input::FromNode(subject)] if subject.port == OutputPort::Data)
+            {
+                return Err(
+                    "Source result requires one whole original source reference without arguments",
+                );
+            }
+            Ok(())
+        } else if self.byte_read() {
             bytes::validate(&self.task)
         } else {
             Ok(())
         }
     }
     pub(crate) fn read_sources(&self) -> Vec<OutputRef> {
-        if !self.byte_read() {
+        if !self.byte_read() && self.task.spec.command != MetaCommand::SourceResult {
             return vec![];
         }
         self.task
@@ -203,7 +222,7 @@ impl BoundQuery {
             .collect()
     }
     pub(crate) fn stored_source_for(&self, node: &NodeId) -> bool {
-        self.byte_read()
+        (self.byte_read() || self.task.spec.command == MetaCommand::SourceResult)
             && self
                 .read_sources()
                 .iter()
@@ -212,6 +231,7 @@ impl BoundQuery {
     pub(crate) fn captured_policy(&self) -> wes_core::flow::FlowPolicy {
         let policy = match &self.captured {
             Some(Ok(Capture::Bytes(bytes))) => bytes.policy(),
+            Some(Ok(Capture::Recorded(recorded))) => recorded.policy(),
             Some(Ok(Capture::Trace(value) | Capture::Information(value))) => {
                 value.provenance().policy().clone()
             }
@@ -225,7 +245,12 @@ impl BoundQuery {
         storage: Option<crate::storage::StoreWorker>,
         token: CancellationToken,
     ) -> crate::driver::ExecutionFuture {
-        if matches!(self.captured, Some(Ok(Capture::Bytes(_)))) {
+        if matches!(self.captured, Some(Ok(Capture::Recorded(_)))) {
+            let Some(Ok(Capture::Recorded(recorded))) = self.captured.take() else {
+                unreachable!()
+            };
+            recorded.execute(storage, token)
+        } else if matches!(self.captured, Some(Ok(Capture::Bytes(_)))) {
             let Some(Ok(Capture::Bytes(bytes))) = self.captured.take() else {
                 unreachable!()
             };
@@ -242,7 +267,10 @@ impl BoundQuery {
             .filter(move |_| {
                 !matches!(
                     self.task.spec.command,
-                    MetaCommand::Trace | MetaCommand::Inspect | MetaCommand::Read
+                    MetaCommand::Trace
+                        | MetaCommand::Inspect
+                        | MetaCommand::Read
+                        | MetaCommand::SourceResult
                 )
             })
             .flat_map(Input::dependencies)
@@ -251,7 +279,10 @@ impl BoundQuery {
     pub(crate) fn predicted_typing(&self) -> Typing {
         let shape = match self.task.spec.command {
             MetaCommand::Read if self.byte_read() => bytes::shape(),
-            MetaCommand::Trace | MetaCommand::Read | MetaCommand::Inspect => Shape::Unknown,
+            MetaCommand::Trace
+            | MetaCommand::Read
+            | MetaCommand::Inspect
+            | MetaCommand::SourceResult => Shape::Unknown,
             MetaCommand::List => {
                 let element = match self
                     .task
@@ -951,7 +982,7 @@ impl BoundQuery {
                         Data::List(descriptions.collect::<Result<_, _>>()?)
                     }
                 }
-                Capture::Bytes(_) => return Err(Failure::Uncaptured),
+                Capture::Bytes(_) | Capture::Recorded(_) => return Err(Failure::Uncaptured),
                 Capture::Trace(_) | Capture::Information(_) | Capture::Help(_) => unreachable!(),
                 Capture::Data(data) => data.clone(),
                 Capture::Nodes(nodes) => {

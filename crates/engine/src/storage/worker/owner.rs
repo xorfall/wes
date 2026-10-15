@@ -79,6 +79,14 @@ impl<V: ValueStore> Owner<V> {
                     .is_some_and(|(id, witness)| id == scope.id() && witness.is_open())
         })
     }
+    fn owns_acquisition(&self, handle: &ValueHandle) -> bool {
+        self.owns_transient(handle)
+            || (self.scope.is_none()
+                && self
+                    .unscoped_acquisitions
+                    .get(handle)
+                    .is_some_and(|owner| owner.strong_count() > 0))
+    }
     pub(super) fn check_scope(&self, handle: &ValueHandle) -> Result<(), StoreError> {
         if self.value_scopes.contains_key(handle)
             && !self.owns_transient(handle)
@@ -269,17 +277,23 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         maximum: u64,
         owner: std::sync::Weak<()>,
     ) -> Result<ValueHandle, StoreError> {
-        let scope = self
-            .scope
-            .as_ref()
-            .filter(|s| s.is_open())
-            .ok_or(StoreError::ScopeUnavailable)?;
-        if self.value_scopes.len() >= wes_budgets::get("values.outputs") as usize {
-            return Err(StoreError::Limit("transient values"));
+        if self.scope.as_ref().is_some_and(|scope| !scope.is_open()) || owner.strong_count() == 0 {
+            return Err(StoreError::ScopeUnavailable);
         }
-        let handle = self.values.begin_acquisition(maximum, owner)?;
-        self.value_scopes
-            .insert(handle.clone(), (scope.id().into(), scope.witness()));
+        self.unscoped_acquisitions
+            .retain(|_, owner| owner.strong_count() > 0);
+        if self.value_scopes.len() + self.unscoped_acquisitions.len()
+            >= wes_budgets::get("values.outputs") as usize
+        {
+            return Err(StoreError::Limit("acquisition values"));
+        }
+        let handle = self.values.begin_acquisition(maximum, owner.clone())?;
+        if let Some(scope) = &self.scope {
+            self.value_scopes
+                .insert(handle.clone(), (scope.id().into(), scope.witness()));
+        } else {
+            self.unscoped_acquisitions.insert(handle.clone(), owner);
+        }
         Ok(handle)
     }
     fn append_acquisition(
@@ -288,7 +302,7 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         port: &str,
         bytes: &[u8],
     ) -> Result<(), StoreError> {
-        if !self.owns_transient(handle) {
+        if !self.owns_acquisition(handle) {
             return Err(StoreError::ScopeUnavailable);
         }
         self.values.append_acquisition(handle, port, bytes)
@@ -299,10 +313,14 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         shell: &Value,
         leaves: &[super::super::LeafSelection],
     ) -> Result<crate::storage::StoredSnapshot, StoreError> {
-        if !self.owns_transient(handle) {
+        if !self.owns_acquisition(handle) {
             return Err(StoreError::ScopeUnavailable);
         }
-        self.validate_prefixes(shell)?;
+        if self.scope.is_some() {
+            self.validate_prefixes(shell)?;
+        } else if has_datasets(shell)? {
+            return Err(StoreError::Restricted);
+        }
         if !shell.data().is_inline()
             || !shell.shape().is_inline()
             || shell.shape().contains_meta()
@@ -314,11 +332,12 @@ impl<V: ValueStore> ValueStore for Owner<V> {
         self.values.seal_acquisition(handle, shell, leaves)
     }
     fn abort_acquisition(&mut self, handle: &ValueHandle) -> Result<(), StoreError> {
-        if !self.owns_transient(handle) {
+        if !self.owns_acquisition(handle) {
             return Err(StoreError::ScopeUnavailable);
         }
         self.values.abort_acquisition(handle)?;
         self.value_scopes.remove(handle);
+        self.unscoped_acquisitions.remove(handle);
         Ok(())
     }
     fn describe(

@@ -42,6 +42,16 @@ pub(super) struct Start<'a> {
     pub credentials: Secrets<'a>,
     pub contracts: Contracts<'a>,
     pub event_credit: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording: Option<RecordingStart<'a>>,
+}
+#[derive(Serialize)]
+pub(super) struct RecordingStart<'a> {
+    pub contract: &'a str,
+    pub byte_field: &'a [String],
+    pub max_bytes: u64,
+    pub max_duration_ms: u64,
+    pub credit: u8,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,6 +65,8 @@ pub(super) enum Message {
     Ready,
     Event { sequence: u64, data: Box<RawValue> },
     Result { data: Box<RawValue> },
+    Recording { data: Box<RawValue> },
+    Bytes { sequence: u64, data: Box<RawValue> },
     Control { id: String, outcome: Receipt },
     End,
     Failed,
@@ -107,19 +119,25 @@ fn decode_message(raw: &str) -> Result<Message, serde_json::Error> {
                 _ => Message::Failed,
             }
         }
-        "event" => {
+        "event" | "bytes" => {
             let Event {
                 kind,
                 sequence,
                 data,
             } = serde_json::from_str(raw)?;
-            debug_assert_eq!(kind, "event");
-            Message::Event { sequence, data }
+            if kind == "event" {
+                Message::Event { sequence, data }
+            } else {
+                Message::Bytes { sequence, data }
+            }
         }
-        "result" => {
+        "result" | "recording" => {
             let Payload { kind, data } = serde_json::from_str(raw)?;
-            debug_assert_eq!(kind, "result");
-            Message::Result { data }
+            if kind == "result" {
+                Message::Result { data }
+            } else {
+                Message::Recording { data }
+            }
         }
         "control" => {
             let Control { kind, id, outcome } = serde_json::from_str(raw)?;
@@ -274,6 +292,10 @@ pub(super) async fn credit_or_end(
         }
         Err(reason) => Err(reason),
     }
+}
+pub(super) fn raw_credit(session: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"version":1,"session":session,"message":{"kind":"bytes-credit","count":1}}))
+        .expect("bounded raw credit frame")
 }
 pub(super) async fn read(input: &mut (impl AsyncRead + Unpin)) -> Result<Frame, InvocationError> {
     let length = input

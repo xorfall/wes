@@ -33,6 +33,7 @@ struct Operation {
     success_codes: Vec<i64>,
     streaming: bool,
     control: Option<Control>,
+    recording: Option<Recording>,
 }
 #[derive(Clone)]
 struct Control {
@@ -57,4 +58,12 @@ impl From<DefinitionError> for wes_engine::imports::ImportError {
     fn from(error: DefinitionError) -> Self {
         Self::Declaration(error.message.into_owned())
     }
+}
+
+#[derive(Clone)]
+struct Recording {
+    contract: Arc<Contract>,
+    fields: Vec<String>,
+    maximum: u64,
+    duration: std::time::Duration,
 }

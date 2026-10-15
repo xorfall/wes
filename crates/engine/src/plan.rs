@@ -598,6 +598,7 @@ pub fn plan_with_expectations(
             } else if matches!(
                 spec.command,
                 wes_language::vocabulary::MetaCommand::Inspect
+                    | wes_language::vocabulary::MetaCommand::SourceResult
                     | wes_language::vocabulary::MetaCommand::SourceBind
                     | wes_language::vocabulary::MetaCommand::SourceSend
                     | wes_language::vocabulary::MetaCommand::ScanResume

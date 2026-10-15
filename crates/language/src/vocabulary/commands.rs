@@ -13,6 +13,12 @@ pub struct CommandPath {
 use MetaCommand::*;
 pub const COMMAND_PATHS: &[CommandPath] = &[
     CommandPath {
+        path: &["source", "result"],
+        operation: SourceResult,
+        short: None,
+        summary: "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority.",
+    },
+    CommandPath {
         path: &["source", "bind"],
         operation: SourceBind,
         short: None,
