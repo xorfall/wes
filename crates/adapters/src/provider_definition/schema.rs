@@ -47,6 +47,19 @@ struct OperationDoc {
     control: Option<ControlDoc>,
     recording: Option<RecordingDoc>,
     byte_input: Option<ByteInputDoc>,
+    #[serde(default, deserialize_with = "exclusive_declaration")]
+    exclusive: Option<Vec<ExclusiveDoc>>,
+}
+fn exclusive_declaration<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<ExclusiveDoc>>, D::Error> {
+    Vec::<ExclusiveDoc>::deserialize(deserializer).map(Some)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExclusiveDoc {
+    namespace: String,
+    fields: Vec<Vec<String>>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -427,6 +440,94 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             }
             Ok(wes_engine::byte_input::ByteInputSpec {parameter:input.parameter, maximum:input.max_bytes})
         }).transpose()?;
+        let exclusive = op
+            .exclusive
+            .map(|resources| {
+                use wes_core::contracts::ContractKind;
+                use wes_engine::streams::{
+                    ExclusiveResource, MAX_EXCLUSIVE_RESOURCES, MAX_RESOURCE_PARTS,
+                };
+                if session.is_none()
+                    || !op.streaming
+                    || resources.is_empty()
+                    || resources.len() > MAX_EXCLUSIVE_RESOURCES
+                {
+                    return Err(DefinitionError::new(
+                        "exclusive resources require a streaming local session and 1–4 keys",
+                    ));
+                }
+                let mut namespaces = std::collections::BTreeSet::new();
+                let mut compiled = Vec::new();
+                for resource in resources {
+                    if !ExclusiveResource::valid_namespace(&resource.namespace)
+                        || !namespaces.insert(resource.namespace.clone())
+                        || resource.fields.is_empty()
+                        || resource.fields.len() > MAX_RESOURCE_PARTS
+                        || resource
+                            .fields
+                            .iter()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            != resource.fields.len()
+                    {
+                        return Err(DefinitionError::new(
+                            "invalid or duplicate exclusive resource declaration",
+                        ));
+                    }
+                    for path in &resource.fields {
+                        if path.is_empty()
+                            || path.len() > 16
+                            || path.iter().any(|s| {
+                                s.is_empty() || s.len() > 1024 || s.chars().any(char::is_control)
+                            })
+                            || path.iter().map(String::len).sum::<usize>() > 4096
+                        {
+                            return Err(DefinitionError::new(
+                                "exclusive resource field path exceeds its limits",
+                            ));
+                        }
+                        let (_, root, required) = params
+                            .iter()
+                            .find(|(name, _, _)| name == &path[0])
+                            .ok_or(DefinitionError::new(
+                                "exclusive resource names an undeclared argument",
+                            ))?;
+                        if !*required {
+                            return Err(DefinitionError::new(
+                                "exclusive resource arguments must be required",
+                            ));
+                        }
+                        let mut leaf = root.as_ref();
+                        for name in &path[1..] {
+                            let ContractKind::Record(fields) = leaf.kind() else {
+                                return Err(DefinitionError::new(
+                                    "exclusive resource paths must traverse required records",
+                                ));
+                            };
+                            leaf = fields
+                                .get(name)
+                                .filter(|field| !field.optional)
+                                .ok_or(DefinitionError::new(
+                                    "exclusive resource fields must exist and be required",
+                                ))?
+                                .contract
+                                .as_ref();
+                        }
+                        if !matches!(leaf.kind(), ContractKind::Scalar(Primitive::Text)) {
+                            return Err(DefinitionError::new(
+                                "exclusive resource keys require Text leaves",
+                            ));
+                        }
+                    }
+                    compiled.push(Exclusive {
+                        namespace: resource.namespace,
+                        fields: resource.fields,
+                    });
+                }
+                Ok(compiled)
+            })
+            .transpose()?
+            .unwrap_or_default();
         for arg in &op.argv {
             match arg {
                 Argument::Literal(s) if s.contains('\0') => {
@@ -496,6 +597,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             control,
             recording,
             byte_input,
+            exclusive,
         });
     }
     let description = ProviderDescription::new(

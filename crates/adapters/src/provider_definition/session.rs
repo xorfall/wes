@@ -651,6 +651,49 @@ impl Invoker for Session {
     }
 }
 impl StreamingInvoker for Session {
+    fn exclusive_resources(
+        &self,
+        call: &Call,
+    ) -> Result<Vec<wes_engine::streams::ExclusiveResource>, wes_engine::streams::StreamError> {
+        use wes_engine::streams::{ExclusiveResource, StreamError};
+        let operation = self
+            .definition
+            .operations
+            .iter()
+            .find(|op| op.path == call.capability.path)
+            .ok_or(StreamError::InvalidResource)?;
+        operation
+            .exclusive
+            .iter()
+            .map(|resource| {
+                let parts = resource
+                    .fields
+                    .iter()
+                    .map(|path| {
+                        let mut data = call
+                            .arguments
+                            .get(&path[0])
+                            .ok_or(StreamError::InvalidResource)?
+                            .data();
+                        for name in &path[1..] {
+                            let Data::Record(fields) = data else {
+                                return Err(StreamError::InvalidResource);
+                            };
+                            data = fields.get(name).ok_or(StreamError::InvalidResource)?;
+                        }
+                        let Data::Text(text) = data else {
+                            return Err(StreamError::InvalidResource);
+                        };
+                        if text.len() > wes_engine::streams::MAX_RESOURCE_PART_BYTES {
+                            return Err(StreamError::InvalidResource);
+                        }
+                        Ok(text.to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                ExclusiveResource::new(&resource.namespace, parts)
+            })
+            .collect()
+    }
     fn records_bytes(&self, capability: &wes_core::capability::Capability) -> bool {
         self.definition
             .operations

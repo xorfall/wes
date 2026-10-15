@@ -68,6 +68,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
                 ("success_codes", "provider.success-codes", false),
                 ("streaming", "bool", false),
                 ("control", "provider.control", false),
+                ("exclusive", "provider.exclusive-list", false),
                 ("byte_input", "provider.byte-input", false),
                 ("recording", "provider.recording", false),
             ]),
@@ -165,6 +166,11 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
         ("max_duration_ms", "int", true),
     ]), "Streaming session only. Captured materialized record type and a required unconstrained Bytes leaf. max_bytes is positive and at most the native acquisition budget; duration is 1–86400000 ms. Native storage supplies placement/policy. Ordered byte credits, an initial shell before readiness and a final shell plus exact End distinguish complete data from an acknowledged incomplete prefix. Physical join is required; no peer-selected paths or replay."));
     d.insert("provider.byte-input", hint(object(&[("parameter", "text", true),("max_bytes", "int", true)]), "Finite local process only; parameter names one required Bytes input without an argv mapping. max_bytes is positive and at most the native acquisition ceiling. Native entry captures the acknowledged exact source and scope; bounded stdin reads retain ownership and join cleanup. No implicit producer dependency or replay."));
+    d.insert("provider.exclusive-list", list("provider.exclusive"));
+
+    d.insert("provider.field-paths", list("provider.text-list"));
+
+    d.insert("provider.exclusive", hint(object(&[("namespace", "text", true),("fields", "provider.field-paths", true)]), "Streaming session only; at most four distinct resources. namespace is a bounded literal physical-resource namespace shared by aliases. fields has 1–8 bounded static paths through required records ending at required Text parameters. Captured argument values form exact lexical resource keys; reservation is atomic and held until physical producer/controller join. This grants no invocation or read authority."));
 }
 
 pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)> {

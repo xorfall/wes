@@ -56,6 +56,106 @@ fn executable(mode: &str, streaming: bool, result: &str) -> (tempfile::TempDir, 
     let product = unbound(definition, ProcessConfig::default()).unwrap();
     (root, product)
 }
+
+#[tokio::test]
+async fn declared_resource_keys_refuse_alias_conflicts_and_malformed_arguments_before_child_launch()
+{
+    use wes_core::{Primitive, RecordShape};
+    use wes_engine::streams::StreamError;
+    let root = tempfile::tempdir().unwrap();
+    let mut doc = document(root.path(), "hold", true, "Int");
+    doc["types"] = serde_json::json!({"Scope":{"base":"Record","fields":{"name":"Text"}}});
+    doc["operations"][0]["parameters"] = serde_json::json!([{"name":"scope","type":"Scope"}]);
+    doc["operations"][0]["exclusive"] = serde_json::json!([{"namespace":format!("synthetic.{}",uuid::Uuid::new_v4()),"fields":[["scope","name"]]}]);
+    let a = unbound(
+        super::super::schema::compile(&doc.to_string(), Some("first")).unwrap(),
+        ProcessConfig::default(),
+    )
+    .unwrap();
+    let b = unbound(
+        super::super::schema::compile(&doc.to_string(), Some("alias")).unwrap(),
+        ProcessConfig::default(),
+    )
+    .unwrap();
+    let make_call = |product: &ImportProduct, name: &str| {
+        let mut call = call(product);
+        call.arguments.insert(
+            "scope".into(),
+            Value::new(
+                Shape::Record(
+                    RecordShape::new(
+                        "Scope",
+                        [("name".into(), Shape::Primitive(Primitive::Text))],
+                    )
+                    .unwrap(),
+                ),
+                Data::Record(indexmap::IndexMap::from([(
+                    "name".into(),
+                    Data::Text(name.into()),
+                )])),
+                Provenance::default(),
+            )
+            .unwrap(),
+        );
+        call
+    };
+    let spawn = |call: Call, product: &ImportProduct| {
+        streams::spawn(
+            call,
+            product.streams().unwrap().clone(),
+            Default::default(),
+            Default::default(),
+            CancellationToken::new(),
+        )
+    };
+    for name in [
+        "",
+        " ",
+        "x\n",
+        &"x".repeat(wes_engine::streams::MAX_RESOURCE_PART_BYTES + 1),
+    ] {
+        assert!(matches!(
+            spawn(make_call(&a, name), &a),
+            Err(StreamError::InvalidResource)
+        ));
+    }
+    assert!(matches!(
+        spawn(call(&a), &a),
+        Err(StreamError::InvalidResource)
+    ));
+    assert!(!root.path().join("attempts").exists());
+    let call = make_call(&a, "synthetic-resource");
+    let run = call.run.clone();
+    let (handle, task) = spawn(call, &a).unwrap();
+    handle
+        .wait_ready(&run, Duration::from_secs(5), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        spawn(make_call(&b, "synthetic-resource"), &b),
+        Err(StreamError::ResourceBusy)
+    ));
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("attempts")).unwrap(),
+        "started\n"
+    );
+    task.shutdown().await.unwrap();
+    let call = make_call(&b, "synthetic-resource");
+    let run = call.run.clone();
+    let (handle, next) = spawn(call, &b).unwrap();
+    handle
+        .wait_ready(&run, Duration::from_secs(5), CancellationToken::new())
+        .await
+        .unwrap();
+    next.shutdown().await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("attempts"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+}
 struct Managed {
     root: tempfile::TempDir,
     product: ImportProduct,

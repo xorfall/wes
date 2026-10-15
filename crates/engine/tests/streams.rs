@@ -447,3 +447,5 @@ async fn rejected_item_counts_are_run_bound_and_preserve_valid_window_and_attrib
 
 #[path = "streams/readiness.rs"]
 mod readiness;
+#[path = "streams/resources.rs"]
+mod resources;
