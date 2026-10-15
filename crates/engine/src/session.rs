@@ -2366,14 +2366,18 @@ impl Actor {
             values.withdraw_nodes(&nodes);
         }
         self.io.effects(effects);
+        self.withdraw_source_reads();
     }
     fn provider_reads_changed(&mut self) {
         self.displays
             .withdraw_datasets(&self.workspace.dataset_access);
         self.workspace.provider_reads_changed();
+        self.withdraw_source_reads();
+    }
+    fn withdraw_source_reads(&mut self) {
         for node in self
             .io
-            .blocked_source_reads(&self.workspace.dataset_access.providers)
+            .withdraw_source_reads(&self.workspace.dataset_access)
         {
             let effects = self.workspace.cancel(&node, self.io.now());
             self.effects(effects);

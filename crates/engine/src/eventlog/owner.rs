@@ -185,7 +185,7 @@ impl Recording {
     }
 }
 impl Owner {
-    pub fn retire_obsolete(&self, runtime: &crate::runtime::Runtime<crate::tasks::BoundTask>) {
+    pub fn retire_obsolete<T: Clone>(&self, runtime: &crate::runtime::Runtime<T>) {
         let mut state = self
             .0
             .lock()

@@ -93,6 +93,7 @@ impl Update {
 #[derive(Clone, Default)]
 pub struct Reporter {
     target: Option<(Run, mpsc::Sender<Update>, Arc<Semaphore>, CallSlot)>,
+    sources: Option<mpsc::Sender<super::streaming::Update>>,
 }
 impl Reporter {
     pub(crate) fn new(
@@ -103,10 +104,25 @@ impl Reporter {
     ) -> Self {
         Self {
             target: Some((run, sender, credit, call_slot)),
+            sources: None,
         }
+    }
+    pub(crate) fn with_sources(mut self, sources: mpsc::Sender<super::streaming::Update>) -> Self {
+        self.sources = Some(sources);
+        self
     }
     pub fn silent() -> Self {
         Self::default()
+    }
+    /// Attach one separate source to this original joined run before publishing its
+    /// ordinary result. This sends no source windows or events to the data port.
+    /// The worker retains and physically joins the source even if admission is refused
+    /// or its single acknowledgement is lost; do not reacquire or replay it.
+    pub async fn attach_source(&self, handle: &crate::streams::StreamHandle) -> bool {
+        let (Some((run, ..)), Some(sources)) = (&self.target, &self.sources) else {
+            return false;
+        };
+        super::streaming::attach(run.clone(), handle.clone(), sources).await
     }
     /// One attempt, never retry a lost acknowledgement. The original report and
     /// its shared holds stay with the physical owner until it joins on every path.

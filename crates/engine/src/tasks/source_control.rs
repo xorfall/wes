@@ -20,7 +20,10 @@ pub struct BoundSourceControl {
 }
 #[derive(Clone)]
 pub(crate) enum Captured {
-    Binding(Value),
+    Binding {
+        value: Value,
+        port: LiveControls,
+    },
     Action {
         port: LiveControls,
         action: Value,
@@ -109,7 +112,16 @@ impl BoundSourceControl {
                 .into();
             }
             let outcome = match self.captured {
-                Some(Ok(Captured::Binding(value))) => return Outcome::Produced(value).into(),
+                Some(Ok(Captured::Binding { value, port })) => {
+                    if cancellation.is_cancelled() || port.description().is_err() {
+                        return Outcome::Failed(failure("Source control authority changed before binding publication; no source was acquired")).into();
+                    }
+                    let policy = match port.provenance() {
+                        Ok(provenance) => provenance,
+                        Err(_) => return Outcome::Failed(failure("Source control authority changed before binding publication; no source was acquired")).into(),
+                    };
+                    return Outcome::Produced(value.with_provenance(value.provenance().clone().inheriting(&policy))).into();
+                }
                 Some(Ok(Captured::Action { port, action, budget })) => port.invoke(action,budget,cancellation).await,
                 Some(Err(error)) => return Outcome::Failed(error).into(),
                 None => return Outcome::Failed(failure("Source control requires a live authorized owner; reconstruction grants no authority")).into(),

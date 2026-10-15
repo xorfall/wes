@@ -51,7 +51,8 @@ impl Actor {
                 .map_or_else(wes_core::Provenance::default, |t| t.provenance);
             task.policy = provenance.policy().clone();
             if task.task.spec.command == MetaCommand::SourceBind {
-                let port=self.io.source_controls(self.workspace.runtime(),&task.subject.node,principal.clone()).map_err(|_|denied("Binding requires a currently open owned source with an installed typed control port; no source was acquired"))?;
+                let (port,provenance)=self.io.source_controls(self.workspace.runtime(),&task.subject.node,principal.clone()).map_err(|_|denied("Binding requires a currently open owned source with an installed typed control port; no source was acquired"))?;
+                task.policy = provenance.policy().clone();
                 let (source, epoch, input, output) = port
                     .description()
                     .map_err(|_| denied("Source connection changed before control binding"))?;
@@ -83,13 +84,13 @@ impl Actor {
                 self.source_controls.entries.insert(
                     token,
                     Binding {
-                        port,
+                        port: port.clone(),
                         node: run.node().clone(),
                         run: run.id().clone(),
                         principal,
                     },
                 );
-                return Ok(Captured::Binding(value));
+                return Ok(Captured::Binding { value, port });
             }
             let OutputState::Available(receiver) = self.workspace.runtime().output(&task.subject)
             else {
@@ -199,7 +200,8 @@ impl Actor {
             })?;
             Ok(Captured::Action {
                 port: binding.port.clone(),
-                action,
+                action: action
+                    .with_provenance(action.provenance().clone().with_policy(&task.policy)),
                 budget,
             })
         })();

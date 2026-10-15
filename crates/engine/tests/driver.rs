@@ -13,6 +13,8 @@ use wes_engine::{
     graph::{NodeId, NodeState, OutputPort, OutputRef},
     runtime::*,
 };
+#[path = "driver/auxiliary.rs"]
+mod auxiliary;
 #[path = "driver/publication.rs"]
 mod publication;
 #[path = "driver/waits.rs"]

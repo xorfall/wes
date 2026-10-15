@@ -11,6 +11,7 @@ enum Publication {
     Started {
         run: Run,
         handle: crate::streams::StreamHandle,
+        auxiliary: bool,
     },
     Window {
         snapshot: Arc<Snapshot>,
@@ -19,6 +20,16 @@ enum Publication {
         run: Run,
         event: Event,
     },
+}
+pub(crate) struct Registration {
+    pub handle: crate::streams::StreamHandle,
+    pub auxiliary: bool,
+    pub gate: crate::streams::ControlGate,
+}
+impl Drop for Registration {
+    fn drop(&mut self) {
+        self.gate.retire();
+    }
 }
 pub(crate) struct Update {
     publication: Publication,
@@ -31,17 +42,38 @@ impl Update {
     pub(crate) fn register<T: Clone>(
         self,
         runtime: &Runtime<T>,
-        handles: &mut std::collections::HashMap<Run, crate::streams::StreamHandle>,
+        handles: &mut std::collections::HashMap<Run, Registration>,
     ) {
-        let Publication::Started { run, handle } = self.publication else {
+        let Publication::Started {
+            run,
+            handle,
+            auxiliary,
+        } = self.publication
+        else {
             unreachable!("registration")
         };
-        let accepted = runtime.accepts_live_io(&run)
-            && !runtime.blocks_provider_reads(handle.snapshot().window.provenance().policy())
+        let accepted = !self.reply.is_closed()
+            && if auxiliary {
+                runtime.admits_auxiliary_source(&run)
+            } else {
+                runtime.accepts_live_io(&run)
+            }
+            && handle.read_access_current()
+            && !runtime.blocks_source_reads(handle.snapshot().window.provenance().policy())
             && handle.snapshot().run == run
+            && (!auxiliary
+                || (matches!(handle.snapshot().phase, Phase::Opening | Phase::Open)
+                    && !handle.cancellation_token().is_cancelled()))
             && !handles.contains_key(&run);
         if accepted {
-            handles.insert(run, handle);
+            handles.insert(
+                run,
+                Registration {
+                    handle,
+                    auxiliary,
+                    gate: Default::default(),
+                },
+            );
         }
         let _ = self.reply.send(accepted);
     }
@@ -118,6 +150,21 @@ async fn publish(publication: Publication, updates: &mpsc::Sender<Update>) -> bo
     let (reply, receive) = oneshot::channel();
     updates.send(Update { publication, reply }).await.is_ok() && receive.await.unwrap_or(false)
 }
+pub(super) async fn attach(
+    run: Run,
+    handle: crate::streams::StreamHandle,
+    updates: &mpsc::Sender<Update>,
+) -> bool {
+    publish(
+        Publication::Started {
+            run,
+            handle,
+            auxiliary: true,
+        },
+        updates,
+    )
+    .await
+}
 fn failed(message: &str) -> ExecutionReport {
     Outcome::Failed(RuntimeCode::ExecutionFailed.error(message, None)).into()
 }
@@ -141,6 +188,7 @@ pub(super) async fn execute<T: Send + 'static>(
         Publication::Started {
             run: run.clone(),
             handle: handle.clone(),
+            auxiliary: false,
         },
         &updates,
     )

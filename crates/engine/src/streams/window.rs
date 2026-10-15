@@ -40,6 +40,9 @@ pub(super) struct Window {
     omitted: u64,
 }
 impl Window {
+    pub(super) fn attribution(&self) -> &Provenance {
+        self.empty.provenance()
+    }
     pub fn new(item: &Shape, attribution: Provenance, limits: Limits) -> Result<Self, StreamError> {
         if limits.items.get() > 10_000 || limits.bytes.get() > 64 * 1024 * 1024 {
             return Err(StreamError::Invalid);

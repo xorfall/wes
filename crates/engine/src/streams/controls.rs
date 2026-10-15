@@ -74,8 +74,42 @@ struct Request {
     until: tokio::time::Instant,
     status: Arc<AtomicU8>,
     cancellation: CancellationToken,
+    gate: Option<ControlGate>,
     reply: oneshot::Sender<Result<Value, ControlError>>,
     _credit: OwnedSemaphorePermit,
+}
+/// Native registration admission, separate from the source owner's cleanup port.
+/// Retirement is serialized with the worker's dispatch decision; it grants no permission.
+#[derive(Clone, Default)]
+pub(crate) struct ControlGate(Arc<GateState>);
+#[derive(Default)]
+struct GateState {
+    retired: Mutex<bool>,
+    cancellation: CancellationToken,
+}
+impl ControlGate {
+    pub(crate) fn retire(&self) {
+        *self
+            .0
+            .retired
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.0.cancellation.cancel();
+    }
+    fn admit<R>(
+        &self,
+        action: impl FnOnce() -> Result<R, ControlError>,
+    ) -> Result<R, ControlError> {
+        let retired = self
+            .0
+            .retired
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *retired {
+            return Err(ControlError::Changed);
+        }
+        action()
+    }
 }
 /// Dropping a caller cannot allow its queued action to escape later. A dispatched action remains
 /// owned by the worker and is joined even when this guard cancels its request token.
@@ -134,12 +168,34 @@ pub struct LiveControls {
     run: Run,
     epoch: uuid::Uuid,
     caller: InvocationAuthority,
+    gate: Option<ControlGate>,
 }
 impl LiveControls {
+    pub(crate) fn restricted(mut self, gate: ControlGate) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+    pub(crate) fn provenance(&self) -> Result<Provenance, ControlError> {
+        self.description()?;
+        let owner = self.owner.upgrade().ok_or(ControlError::Changed)?;
+        let source = owner.source.upgrade().ok_or(ControlError::Changed)?;
+        let state = source.state();
+        if state.connection_epoch != self.epoch
+            || state.phase != Phase::Open
+            || state.finished
+            || source.cancellation.is_cancelled()
+        {
+            return Err(ControlError::Changed);
+        }
+        Ok(state.window.attribution().clone())
+    }
     /// Inert identity and immutable contracts for host binding; never reconstructs authority.
     pub(crate) fn description(
         &self,
     ) -> Result<(&Run, uuid::Uuid, Arc<Contract>, Arc<Contract>), ControlError> {
+        if let Some(gate) = &self.gate {
+            gate.admit(|| Ok(()))?;
+        }
         let owner = self.owner.upgrade().ok_or(ControlError::Changed)?;
         let source = owner.source.upgrade().ok_or(ControlError::Changed)?;
         let state = source.state();
@@ -172,6 +228,9 @@ impl LiveControls {
         if budget.is_zero() || budget > MAX_READY_WAIT {
             return Err(ControlError::Invalid);
         }
+        if let Some(gate) = &self.gate {
+            gate.admit(|| Ok(()))?;
+        }
         let owner = self.owner.upgrade().ok_or(ControlError::Changed)?;
         if owner.run != self.run || owner.epoch != self.epoch {
             return Err(ControlError::Changed);
@@ -186,8 +245,8 @@ impl LiveControls {
         let action = action
             .with_shape(owner.input.shape())
             .map_err(|_| ControlError::Invalid)?;
-        let action =
-            action.with_provenance(action.provenance().clone().inheriting(&source.attribution));
+        let provenance = source.state().window.attribution().clone();
+        let action = action.with_provenance(action.provenance().clone().inheriting(&provenance));
         drop(source);
         if !owner.validate(&action, &owner.input) {
             return Err(ControlError::Invalid);
@@ -216,6 +275,7 @@ impl LiveControls {
                 until,
                 status: status.clone(),
                 cancellation,
+                gate: self.gate.clone(),
                 reply,
                 _credit: credit,
             })
@@ -235,6 +295,7 @@ impl LiveControls {
             result=receive => result.unwrap_or_else(|_|Err(uncertain(ControlError::Refused))),
             ()=caller.cancelled()=>Err(uncertain(ControlError::Cancelled)),
             ()=owner.cancellation.cancelled()=>Err(uncertain(ControlError::Changed)),
+            ()=async { match &self.gate { Some(gate)=>gate.0.cancellation.cancelled().await, None=>std::future::pending().await } }=>Err(uncertain(ControlError::Changed)),
             _=tokio::time::sleep_until(until)=>Err(uncertain(ControlError::Expired)),
         }
     }
@@ -263,8 +324,8 @@ impl Drop for Owner {
 }
 async fn worker(owner: Arc<ControlShared>, mut receive: mpsc::Receiver<Request>) {
     loop {
-        let request = tokio::select! {biased; ()=owner.cancellation.cancelled()=>break, request=receive.recv()=>match request {Some(r)=>r,None=>break}};
-        let refused = (|| {
+        let mut request = tokio::select! {biased; ()=owner.cancellation.cancelled()=>break, request=receive.recv()=>match request {Some(r)=>r,None=>break}};
+        let mut dispatch = || {
             if request.cancellation.is_cancelled() || request.reply.is_closed() {
                 return Err(ControlError::Cancelled);
             }
@@ -280,13 +341,30 @@ async fn worker(owner: Arc<ControlShared>, mut receive: mpsc::Receiver<Request>)
             {
                 return Err(ControlError::Changed);
             }
+            request.action = request.action.with_provenance(
+                request
+                    .action
+                    .provenance()
+                    .clone()
+                    .inheriting(state.window.attribution()),
+            );
+            if !owner.validate(&request.action, &owner.input) {
+                return Err(ControlError::Invalid);
+            }
+            if !owner.adapter.authorize(&request.caller, &request.action) {
+                return Err(ControlError::Refused);
+            }
             // Serialize the dispatch decision with connection closure. No protocol I/O under lock.
             request
                 .status
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
                 .map_err(|_| ControlError::Cancelled)?;
             Ok(())
-        })();
+        };
+        let refused = match &request.gate {
+            Some(gate) => gate.admit(dispatch),
+            None => dispatch(),
+        };
         if let Err(error) = refused {
             let _ = request.reply.send(Err(error));
             continue;
@@ -298,6 +376,13 @@ async fn worker(owner: Arc<ControlShared>, mut receive: mpsc::Receiver<Request>)
             .adapter
             .invoke(action, request.cancellation.clone())
             .await;
+        let provenance = match owner.source.upgrade() {
+            Some(source) => provenance.inheriting(source.state().window.attribution()),
+            None => {
+                let _ = request.reply.send(Err(ControlError::Unknown));
+                continue;
+            }
+        };
         let result = match outcome {
             ControlOutcome::Confirmed(value) => {
                 let value =
@@ -401,6 +486,7 @@ impl StreamHandle {
             run: expected.clone(),
             epoch: state.connection_epoch,
             caller,
+            gate: None,
         })
     }
 }
@@ -585,6 +671,174 @@ mod tests {
             tokio::task::yield_now().await;
         }
         panic!("request was not enqueued");
+    }
+    #[tokio::test]
+    async fn retired_external_registration_does_not_revoke_the_original_cleanup_port() {
+        let mut f = fixture(2).await;
+        let gate = ControlGate::default();
+        let external = f.controls.clone().restricted(gate.clone());
+        assert!(external.description().is_ok());
+        gate.retire();
+        assert!(matches!(external.description(), Err(ControlError::Changed)));
+        assert_eq!(
+            external
+                .invoke(value(1), Duration::from_secs(5), CancellationToken::new())
+                .await,
+            Err(ControlError::Changed)
+        );
+        assert_eq!(f.calls.load(Ordering::Acquire), 0);
+        let original = f.controls.clone();
+        let stop = tokio::spawn(async move {
+            original
+                .invoke(value(2), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        let pending = f.entered.recv().await.unwrap();
+        assert_eq!(pending.action.data(), &Data::Int(2));
+        assert!(
+            pending
+                .finish
+                .send(ControlOutcome::Confirmed(value(3)))
+                .is_ok()
+        );
+        assert_eq!(stop.await.unwrap().unwrap().data(), &Data::Int(3));
+        f.finish.send(()).unwrap();
+        f.task.join().await.unwrap();
+        assert_eq!(f.calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn retirement_rejects_an_external_action_queued_behind_physical_work_without_replay() {
+        let mut f = fixture(3).await;
+        let original = f.controls.clone();
+        let first = tokio::spawn(async move {
+            original
+                .invoke(value(1), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        let physical = f.entered.recv().await.unwrap();
+        let gate = ControlGate::default();
+        let external = f.controls.clone().restricted(gate.clone());
+        let second = tokio::spawn(async move {
+            external
+                .invoke(value(2), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        queued(&f.controls, 1).await;
+        gate.retire();
+        assert_eq!(second.await.unwrap(), Err(ControlError::Changed));
+        assert_eq!(f.calls.load(Ordering::Acquire), 1);
+        assert!(
+            !physical.token.is_cancelled(),
+            "retirement does not cancel the unrestricted owner request"
+        );
+        assert!(
+            physical
+                .finish
+                .send(ControlOutcome::Confirmed(value(3)))
+                .is_ok()
+        );
+        first.await.unwrap().unwrap();
+        let original = f.controls.clone();
+        let stop = tokio::spawn(async move {
+            original
+                .invoke(value(4), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        let pending = f.entered.recv().await.unwrap();
+        assert_eq!(pending.action.data(), &Data::Int(4));
+        assert!(
+            pending
+                .finish
+                .send(ControlOutcome::Confirmed(value(5)))
+                .is_ok()
+        );
+        stop.await.unwrap().unwrap();
+        f.finish.send(()).unwrap();
+        f.task.join().await.unwrap();
+        assert_eq!(f.calls.load(Ordering::Acquire), 2);
+        assert!(f.entered.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn retirement_after_dispatch_is_unknown_and_keeps_the_physical_control_joined() {
+        let mut f = fixture(2).await;
+        let gate = ControlGate::default();
+        let external = f.controls.clone().restricted(gate.clone());
+        let action = tokio::spawn(async move {
+            external
+                .invoke(value(1), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        let physical = f.entered.recv().await.unwrap();
+        gate.retire();
+        assert_eq!(action.await.unwrap(), Err(ControlError::Unknown));
+        assert!(physical.token.is_cancelled());
+        f.finish.send(()).unwrap();
+        let joined = tokio::spawn(f.task.join());
+        tokio::task::yield_now().await;
+        assert!(!joined.is_finished());
+        assert_eq!(
+            f.controls
+                .owner
+                .upgrade()
+                .unwrap()
+                .credits
+                .available_permits(),
+            1
+        );
+        assert!(
+            physical
+                .finish
+                .send(ControlOutcome::Confirmed(value(2)))
+                .is_ok()
+        );
+        joined.await.unwrap().unwrap();
+        assert_eq!(f.calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn queued_control_inherits_new_source_policy_before_dispatch_and_confirmation() {
+        let mut f = fixture(2).await;
+        let original = f.controls.clone();
+        let first = tokio::spawn(async move {
+            original
+                .invoke(value(1), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        let held = f.entered.recv().await.unwrap();
+        let original = f.controls.clone();
+        let queued_action = tokio::spawn(async move {
+            original
+                .invoke(value(2), Duration::from_secs(5), CancellationToken::new())
+                .await
+        });
+        queued(&f.controls, 0).await;
+        let policy = wes_core::flow::FlowPolicy::default().private();
+        f.sink
+            .push(value(3).with_provenance(Provenance::default().with_policy(&policy)))
+            .unwrap();
+        assert_eq!(f.controls.provenance().unwrap().policy(), &policy);
+        assert!(
+            held.finish
+                .send(ControlOutcome::Confirmed(value(4)))
+                .is_ok()
+        );
+        assert_eq!(first.await.unwrap().unwrap().provenance().policy(), &policy);
+        let pending = f.entered.recv().await.unwrap();
+        assert_eq!(pending.action.provenance().policy(), &policy);
+        assert!(
+            pending
+                .finish
+                .send(ControlOutcome::Confirmed(value(5)))
+                .is_ok()
+        );
+        assert_eq!(
+            queued_action.await.unwrap().unwrap().provenance().policy(),
+            &policy
+        );
+        f.finish.send(()).unwrap();
+        f.task.join().await.unwrap();
     }
     #[tokio::test]
     async fn contracts_capacity_principal_and_current_permission_are_checked_without_dispatch() {

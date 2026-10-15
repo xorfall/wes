@@ -258,6 +258,152 @@ async fn cancelled_source_joins_admitted_physical_write_before_sealing_its_exact
     writer.join().await.unwrap();
 }
 
+#[tokio::test]
+async fn auxiliary_recording_seals_under_the_original_business_run_only_after_physical_join() {
+    let (entered, wait) = tokio::sync::oneshot::channel();
+    let gate = Arc::new(Gate {
+        entered: Mutex::new(Some(entered)),
+        ..Default::default()
+    });
+    let (worker, writer) = spawn_store(
+        Store {
+            gate: gate.clone(),
+            raw: vec![],
+            value: None,
+        },
+        Default::default(),
+    )
+    .unwrap();
+    let context = crate::storage::AcquisitionContext::new(
+        worker
+            .clone()
+            .with_placement(crate::storage::ValuePlacement::MemoryAndDisk),
+        Default::default(),
+    );
+    let mut registry = ContractRegistry::new();
+    registry
+        .load(r#"{"version":1,"types":{"Blob":{"base":"Record","fields":{"raw":"Bytes"}}}}"#)
+        .unwrap();
+    let mut runtime = Runtime::new();
+    runtime
+        .add(
+            (),
+            [],
+            ExecutionTraits {
+                pure: false,
+                repeatable: false,
+                bounded: true,
+            },
+        )
+        .unwrap();
+    let run = runtime
+        .start(Duration::ZERO)
+        .into_iter()
+        .find_map(|e| match e {
+            Effect::Spawn(ticket) => Some(ticket.run),
+            _ => None,
+        })
+        .unwrap();
+    assert!(runtime.enter_joined(&run));
+    let original = crate::eventlog::owner::Owner::default();
+    let reservation = original.reserve_source_with_recording(&run, true).unwrap();
+    let mut capability = Capability::new(
+        ["watch"],
+        Shape::Primitive(wes_core::Primitive::Int),
+        Safety::Unsafe,
+    );
+    capability.streaming = true;
+    let source_cancel = CancellationToken::new();
+    let (handle, task) = super::super::spawn_with_recording(
+        Call {
+            authority: Default::default(),
+            run: run.clone(),
+            capability: Arc::new(capability),
+            arguments: Default::default(),
+        },
+        Arc::new(Provider(registry.resolve("Blob").unwrap())),
+        Default::default(),
+        Default::default(),
+        source_cancel.clone(),
+        None,
+        None,
+        vec![],
+        None,
+        Some(context),
+    )
+    .unwrap();
+    reservation.install(handle.clone());
+    let task = task.after_join({
+        let original = original.clone();
+        let run = run.clone();
+        move || original.remove_source(&run)
+    });
+    wait.await.unwrap();
+    let business_value = Value::new(
+        Shape::Primitive(wes_core::Primitive::Int),
+        Data::Int(7),
+        Default::default(),
+    )
+    .unwrap();
+    runtime
+        .publish_result(
+            &run,
+            crate::runtime::Outcome::Produced(business_value.clone()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(runtime.value_of(run.node()), Some(&business_value));
+    assert_eq!(runtime.run_of(run.node()), Some(run.id()));
+    assert!(!runtime.is_streaming(run.node()));
+    source_cancel.cancel();
+    let joined = tokio::spawn(task.join());
+    tokio::task::yield_now().await;
+    assert!(!joined.is_finished());
+    assert!(
+        original
+            .recorded_source(run.node(), run.id().as_str())
+            .is_err()
+    );
+    assert!(original.source(run.node(), run.id().as_str()).is_ok());
+    assert!(original.reserve_source_with_recording(&run, true).is_err());
+    *gate.released.lock().unwrap() = true;
+    gate.changed.notify_one();
+    joined.await.unwrap().unwrap();
+    let recorded = original
+        .recorded_source(run.node(), run.id().as_str())
+        .unwrap();
+    assert!(original.recorded_source(run.node(), "foreign-run").is_err());
+    runtime.complete(&run, crate::runtime::Outcome::Skipped, Duration::ZERO);
+    original.retire_obsolete(&runtime);
+    assert!(
+        original
+            .recorded_source(run.node(), run.id().as_str())
+            .is_ok()
+    );
+    assert_eq!(runtime.value_of(run.node()), Some(&business_value));
+    let (loaded, lease) = worker
+        .materialize(recorded.output.snapshot.clone().unwrap())
+        .await
+        .unwrap();
+    let Data::Record(fields) = loaded.value.data() else {
+        panic!("recorded source")
+    };
+    assert_eq!(fields["source"], Data::Text(run.node().to_string().into()));
+    assert_eq!(fields["run"], Data::Text(run.id().to_string().into()));
+    assert_eq!(fields["acceptedBytes"], Data::Text("7".into()));
+    assert_eq!(fields["complete"], Data::Bool(false));
+    let Data::Record(raw) = &fields["value"] else {
+        panic!("recording shell")
+    };
+    assert_eq!(raw["raw"], Data::Bytes(b"payload".to_vec().into()));
+    drop(lease);
+    drop(recorded);
+    drop(original);
+    drop(handle);
+    assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+    writer.join().await.unwrap();
+}
+
 struct Reader {
     origin: wes_core::flow::ProviderReadOrigin,
     open: AtomicBool,
