@@ -25,11 +25,15 @@ mod controls;
 pub(crate) mod delivery;
 mod readiness;
 mod recording;
+mod resources;
 pub use controls::{
     ControlError, ControlFuture, ControlLimits, ControlOutcome, LiveController, LiveControls,
 };
 pub(crate) use recording::RecordedOutput;
 pub use recording::{RecordingAppend, RecordingEnd, StreamRecording};
+pub use resources::{
+    ExclusiveResource, MAX_EXCLUSIVE_RESOURCES, MAX_RESOURCE_PART_BYTES, MAX_RESOURCE_PARTS,
+};
 mod window;
 pub use readiness::{MAX_READY_WAIT, ReadyError, ReadyReceipt};
 pub use window::Limits;
@@ -42,6 +46,11 @@ pub type StreamFuture = Pin<Box<dyn Future<Output = Result<(), InvocationError>>
 /// constructing that future must not block the async scheduler. No detached delivery tasks.
 /// Synchronous delivery before `opened` is accepted into the already installed window.
 pub trait StreamingInvoker: Send + Sync + 'static {
+    /// Side-effect-free resource keys from the captured declaration and validated arguments.
+    /// The native owner reserves them atomically before provider entry; no waiting or replay.
+    fn exclusive_resources(&self, _call: &Call) -> Result<Vec<ExclusiveResource>, StreamError> {
+        Ok(Vec::new())
+    }
     /// Static admission metadata, with no external work or result-derived authority.
     fn records_bytes(&self, _capability: &wes_core::capability::Capability) -> bool {
         false
@@ -79,6 +88,10 @@ pub struct Snapshot {
 pub enum StreamError {
     #[error("stream limits or metadata are invalid")]
     Invalid,
+    #[error("exclusive source resource metadata or argument keys are invalid")]
+    InvalidResource,
+    #[error("an exclusive source resource is still owned by another live source")]
+    ResourceBusy,
     #[error("stream item exceeds the window's logical value budget")]
     Capacity,
     #[error("the stream has already opened")]
@@ -568,6 +581,7 @@ pub(crate) fn spawn_with_recording(
     if archives.len() > MAX_ARCHIVES {
         return Err(StreamError::Invalid);
     }
+    let reservation = resources::Reservation::acquire(invoker.exclusive_resources(&call)?)?;
     for branch in &archives {
         branch.attach(1)?;
     }
@@ -699,6 +713,9 @@ pub(crate) fn spawn_with_recording(
                 },
             }
         }
+        // Cancellation and a terminal phase are not join receipts. Release only after the
+        // producer, controller and final publication have physically finished above.
+        drop(reservation);
     });
     Ok((
         StreamHandle {

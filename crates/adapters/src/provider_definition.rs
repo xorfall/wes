@@ -35,6 +35,12 @@ struct Operation {
     control: Option<Control>,
     recording: Option<Recording>,
     byte_input: Option<wes_engine::byte_input::ByteInputSpec>,
+    exclusive: Vec<Exclusive>,
+}
+#[derive(Clone)]
+struct Exclusive {
+    namespace: String,
+    fields: Vec<Vec<String>>,
 }
 #[derive(Clone)]
 struct Control {

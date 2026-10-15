@@ -180,11 +180,10 @@ impl PreparedSource {
             self.read_access.stream_guard(),
             context,
         )
-        .map_err(|_| {
-            refused(Outcome::Failed(RuntimeCode::ExecutionFailed.error(
-                "The stream metadata or window limits are invalid.",
-                None,
-            )))
+        .map_err(|error| {
+            refused(Outcome::Failed(
+                RuntimeCode::ExecutionFailed.error(error.to_string(), None),
+            ))
         })
     }
 }

@@ -56,6 +56,44 @@ fn byte_input_is_strict_required_unconstrained_and_distinct_from_argv() {
 }
 
 #[test]
+fn exclusive_resources_require_strict_bounded_required_text_paths_on_streaming_sessions() {
+    let valid = serde_json::json!({"version":1,"provider":"samples","backend":{"kind":"session","bin":"/synthetic/adapter"},
+        "types":{"Scope":{"base":"Record","fields":{"name":"Text","other":"Text","number":"Int","optional":"Option<Text>"}}},
+        "operations":[{"path":["watch"],"parameters":[{"name":"scope","type":"Scope"}],"argv":[],"streaming":true,
+            "exclusive":[{"namespace":"synthetic.scope","fields":[["scope","name"],["scope","other"]]}],"result":{"format":"json","type":"Int"}}]});
+    let definition = schema::compile(&valid.to_string(), Some("alias")).unwrap();
+    assert_eq!(definition.operations[0].exclusive.len(), 1);
+    for mutation in 0..18 {
+        let mut invalid = valid.clone();
+        match mutation {
+            0 => invalid["operations"][0]["streaming"] = false.into(),
+            1 => invalid["backend"]["kind"] = "process".into(),
+            2 => invalid["operations"][0]["exclusive"] = serde_json::json!([]),
+            3 => invalid["operations"][0]["exclusive"] = serde_json::Value::Null,
+            4 => invalid["operations"][0]["exclusive"][0]["namespace"] = "".into(),
+            5 => invalid["operations"][0]["exclusive"][0]["namespace"] = "synthetic/scope".into(),
+            6 => invalid["operations"][0]["exclusive"][0]["namespace"] = "x".repeat(129).into(),
+            7 => invalid["operations"][0]["exclusive"][0]["fields"] = serde_json::json!([]),
+            8 => invalid["operations"][0]["exclusive"][0]["fields"] = serde_json::json!([["scope","name"],["scope","name"]]),
+            9 => invalid["operations"][0]["exclusive"][0]["fields"] = serde_json::json!([["absent"]]),
+            10 => invalid["operations"][0]["exclusive"][0]["fields"] = serde_json::json!([["scope","absent"]]),
+            11 => invalid["operations"][0]["exclusive"][0]["fields"] = serde_json::json!([["scope","number"]]),
+            12 => invalid["operations"][0]["exclusive"][0]["fields"] = serde_json::json!([["scope","optional"]]),
+            13 => invalid["operations"][0]["parameters"][0]["required"] = false.into(),
+            14 => invalid["operations"][0]["parameters"][0]["type"] = "Option<Scope>".into(),
+            15 => invalid["operations"][0]["exclusive"][0]["target"] = "elsewhere".into(),
+            16 => invalid["operations"][0]["exclusive"] = serde_json::json!([{"namespace":"synthetic.scope","fields":[["scope","name"]]},{"namespace":"synthetic.scope","fields":[["scope","other"]]}]),
+            17 => invalid["operations"][0]["exclusive"] = serde_json::json!((0..5).map(|n| serde_json::json!({"namespace":format!("key{n}"),"fields":[["scope","name"]]})).collect::<Vec<_>>()),
+            _ => unreachable!(),
+        }
+        assert!(
+            schema::compile(&invalid.to_string(), None).is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+
+#[test]
 fn checked_in_definitions_compile_without_probing_their_executables() {
     for source in [include_str!(
         "../../../../examples/declarative-providers/demo.yaml"
