@@ -1423,6 +1423,7 @@ mod registry_laws {
         for registry in ListRegistry::ALL {
             let tail = vec![registry.name().into()];
             let task = MetaTask {
+                guards: Default::default(),
                 target: None,
                 spec: MetaCommand::List.spec(&tail),
                 tail,

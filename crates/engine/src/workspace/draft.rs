@@ -681,6 +681,7 @@ impl DeclarationDraft {
             stamp: self.stamp(),
             plan: crate::plan::Plan::Action {
                 task: crate::plan::MetaTask {
+                    guards: Default::default(),
                     spec: invocation.spec,
                     target: None,
                     tail: invocation.tail,

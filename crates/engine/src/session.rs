@@ -30,6 +30,7 @@ mod environments;
 mod import_plans;
 mod observation;
 mod observation_query;
+mod source_controls;
 mod view_observation;
 mod view_queries;
 pub use display::DisplaySample;
@@ -1124,6 +1125,7 @@ fn spawn_owned(
         dataset_access: values.as_ref().map(|v| v.worker().dataset_access()),
         eviction_updates: values.as_ref().map(|v| v.worker().eviction_updates()),
         import_plans: Default::default(),
+        source_controls: Default::default(),
         active_import: None,
         view_queries: view_queries::Queries::default(),
         query_capacity: capacity,
@@ -1183,6 +1185,7 @@ struct Actor {
     dataset_access: Option<tokio::sync::watch::Receiver<crate::storage::datasets::DatasetAccess>>,
     eviction_updates: Option<tokio::sync::watch::Receiver<u64>>,
     import_plans: import_plans::Plans,
+    source_controls: source_controls::Bindings,
     active_import: Option<import_plans::FrozenImport>,
     view_queries: view_queries::Queries,
     query_capacity: crate::driver::ExecutionCapacity,
@@ -2353,6 +2356,7 @@ impl Actor {
         let pending = self.selection_pending.keys().cloned().collect::<Vec<_>>();
         self.cancel_activations(&pending);
         self.import_plans.clear();
+        self.source_controls.clear();
         self.workspace.views.stop_queries();
         self.view_queries.stop();
         self.sandboxes.close();
@@ -2675,6 +2679,15 @@ impl Actor {
             }));
         }
         self.io.announce_notices(&input);
+        if let crate::driver::RuntimeInput::Stream(update) = &input {
+            if update.is_registration() {
+                let crate::driver::RuntimeInput::Stream(update) = input else {
+                    unreachable!()
+                };
+                self.io.register_source(update, self.workspace.runtime());
+                return;
+            }
+        }
         if let crate::driver::RuntimeInput::Conversation(update) = input {
             self.io
                 .conversation_update(update, self.workspace.runtime());
@@ -2760,6 +2773,9 @@ impl Actor {
                         .map(|(authority, _)| authority.clone())
                         .unwrap_or_default(),
                 );
+                if let BoundTask::SourceControl(control) = &mut ticket.payload {
+                    self.capture_source_control(control, &ticket.run, &ticket.inputs);
+                }
                 if let BoundTask::Management(task) = &mut ticket.payload {
                     let user = self
                         .execution_principals

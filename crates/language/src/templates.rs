@@ -62,6 +62,18 @@ pub struct Templates {
     definitions: IndexMap<String, Definition>,
 }
 
+/// A native template fixes its receiver in authored syntax. Named argument
+/// substitution cannot replace the original management binding or its authority.
+pub fn native_control_body(body: &Call) -> bool {
+    body.marker.is_some()
+        && body
+            .path
+            .iter()
+            .map(|p| p.text.as_str())
+            .eq(["source", "send"])
+        && matches!(body.operands.as_slice(), [Value::Reference(_)])
+}
+
 impl Templates {
     pub fn new() -> Self {
         Self::default()
@@ -89,11 +101,15 @@ impl Templates {
                 "calc definitions require captured analysis",
             ));
         };
-        if body.marker.is_some() || !body.operands.is_empty() || body.path.is_empty() {
+        let native_control = native_control_body(body);
+        if body.path.is_empty()
+            || (body.marker.is_some() && !native_control)
+            || (body.marker.is_none() && !body.operands.is_empty())
+        {
             return Err(problem(
                 "TMP001",
                 body.span,
-                "a template body must be one object command with named arguments",
+                "a template body must be one object command with named arguments, or :source send with one fixed control-binding reference",
             ));
         }
         if body.path.iter().any(|part| part.text.starts_with('?')) {
@@ -444,7 +460,7 @@ impl Templates {
                 });
             }
             call = Call {
-                marker: None,
+                marker: body.marker.map(|_| invocation.span),
                 path: body
                     .path
                     .iter()
@@ -453,7 +469,11 @@ impl Templates {
                         span: invocation.span,
                     })
                     .collect(),
-                operands: Vec::new(),
+                operands: body
+                    .operands
+                    .iter()
+                    .map(|value| relocate(value, invocation.span))
+                    .collect(),
                 arguments,
                 span: invocation.span,
             };

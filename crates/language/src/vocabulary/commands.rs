@@ -13,6 +13,18 @@ pub struct CommandPath {
 use MetaCommand::*;
 pub const COMMAND_PATHS: &[CommandPath] = &[
     CommandPath {
+        path: &["source", "bind"],
+        operation: SourceBind,
+        short: None,
+        summary: "Bind the current exact owned connection without sending: :source bind $events > controls. A restored or stored projection grants no live authority.",
+    },
+    CommandPath {
+        path: &["source", "send"],
+        operation: SourceSend,
+        short: None,
+        summary: "Explicitly send one typed action: :source send $controls action:$action budget:PT5S > receipt. Native View templates only prepare reviewable drafts. Unknown outcomes never replay automatically.",
+    },
+    CommandPath {
         path: &["scan", "reconcile"],
         operation: ScanReconcile,
         short: None,
@@ -744,6 +756,9 @@ pub fn signature(path: &[String]) -> Option<CommandSpec> {
 /// Family prose is shared by root discovery and family help, never inferred from its first child.
 pub fn help_summary(path: &[&str]) -> &'static str {
     match path {
+        ["source"] => {
+            "Bind and explicitly control a current owned source connection; stored projections do not restore live authority."
+        }
         ["node"] => "Refresh, change, cancel or configure existing work.",
         ["workspace"] => "Save, open, configure or plan deletion of a workspace.",
         ["name"] => "Manage result-name bindings.",

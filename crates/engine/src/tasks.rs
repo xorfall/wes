@@ -24,6 +24,7 @@ pub(crate) mod reconcile;
 pub(crate) mod recording;
 pub use reconcile::ReconciliationControl;
 pub use recording::RecordingControl;
+pub(crate) mod source_control;
 pub(crate) mod view;
 pub use help::{BoundHelp, help_query, help_tree};
 pub(crate) mod query;
@@ -57,6 +58,7 @@ pub enum BoundTask {
     ImportPlan(import_plan::BoundImportPlan),
     Query(BoundQuery),
     View(view::BoundView),
+    SourceControl(source_control::BoundSourceControl),
 }
 /// Producer-defined successful-completion semantics, separate from result contents
 /// and authority. Exposing this notice requires permission to read the source.
@@ -184,6 +186,7 @@ impl BoundTask {
                 | Self::Query(_)
                 | Self::Help(_)
                 | Self::View(_)
+                | Self::SourceControl(_)
         )
     }
 
@@ -234,11 +237,12 @@ impl BoundTask {
             | Self::Management(_)
             | Self::ImportPlan(_)
             | Self::View(_) => None,
+            Self::SourceControl(_) => None,
         }
     }
     pub fn traits(&self) -> ExecutionTraits {
         match self {
-            Self::View(_) => ExecutionTraits {
+            Self::View(_) | Self::SourceControl(_) => ExecutionTraits {
                 pure: false,
                 repeatable: false,
                 bounded: true,
@@ -302,6 +306,7 @@ impl BoundTask {
     pub(crate) fn entry_read_sources(&self) -> Vec<OutputRef> {
         match self {
             Self::View(view) => view.read_sources(),
+            Self::SourceControl(control) => control.read_sources(),
             _ => vec![],
         }
     }
@@ -372,6 +377,10 @@ impl BoundTask {
     }
     pub(crate) fn with_admission(self, admission: AdmittedCommand) -> Self {
         match self {
+            Self::SourceControl(mut control) => {
+                control.admission = Some(admission);
+                Self::SourceControl(control)
+            }
             Self::Call(call) => Self::Call(call.with_admission(admission)),
             Self::SourceLaunch(mut launch) => {
                 launch.source = launch.source.with_admission(admission);
@@ -715,6 +724,7 @@ impl TaskExecutor {
             BoundTask::Call(call) => policy = policy.join(&call.captured_policy()),
             BoundTask::Calculation(calc) => policy = policy.join(&calc.literal_policy()),
             BoundTask::View(view) => policy = policy.join(&view.prepared_policy()),
+            BoundTask::SourceControl(control) => policy = policy.join(&control.policy),
             BoundTask::Scan(scan) => policy = policy.join(&scan.literal_policy()),
             BoundTask::Dataset(read) => policy = policy.join(&read.policy()),
             BoundTask::Recording(recording) => policy = policy.join(&recording.policy()),
@@ -793,6 +803,9 @@ impl TaskExecutor {
                 })
             }
             BoundTask::View(task) => Box::pin(async move { task.outcome().into() }),
+            BoundTask::SourceControl(task) => {
+                task.execute(ticket.run, self.calls.journal(), cancellation)
+            }
             BoundTask::SourceLaunch(_) => Box::pin(async {
                 Outcome::Failed(RuntimeCode::ExecutionFailed.error(
                     "Recording launch requires its joined source admission port",

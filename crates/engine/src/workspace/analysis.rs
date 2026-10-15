@@ -258,6 +258,7 @@ impl Analysis<'_> {
                     ));
                 }
                 if let wes_language::TemplateBody::Call(body) = &definition.body
+                    && !wes_language::templates::native_control_body(body)
                     && body.path.first().is_some_and(|head| {
                         wes_language::vocabulary::commands::is_command_root(&head.text)
                     })
@@ -335,11 +336,13 @@ impl Analysis<'_> {
                 }
                 let resolution = resolve::resolve(&expanded.call, self.catalogue())
                     .map_err(WorkspaceError::from)?;
-                if was_template && matches!(resolution, Resolution::Meta { .. }) {
+                if was_template
+                    && matches!(&resolution, Resolution::Meta { spec, .. } if spec.command != MetaCommand::SourceSend)
+                {
                     return Err(rejected(
                         "TMP001",
                         statement.span,
-                        "template expansion cannot execute a meta command",
+                        "native templates support only explicit Source Send with a fixed original control binding",
                     ));
                 }
                 let validated = match &resolution {
@@ -347,7 +350,10 @@ impl Analysis<'_> {
                         plan::guarded_shapes(&expanded.contracts, capability)
                             .map_err(|e| rejected(e.code, statement.span, e.message))?
                     }
-                    Resolution::Meta { .. } => IndexMap::new(),
+                    Resolution::Meta { spec, .. } => {
+                        plan::guarded_meta_shapes(&expanded.contracts, spec)
+                            .map_err(|e| rejected(e.code, statement.span, e.message))?
+                    }
                 };
                 let environment = self.environment(resolution.call());
                 // Replay installs held declarations before values are hydrated. Unknown runtime
@@ -586,6 +592,26 @@ impl Analysis<'_> {
                             Shape::Meta(wes_core::MetaType::ViewInstance)
                         };
                         (BoundTask::View(view), Arc::new(Typing::new(shape)))
+                    }
+                    Task::Meta(task)
+                        if matches!(
+                            task.spec.command,
+                            MetaCommand::SourceBind | MetaCommand::SourceSend
+                        ) =>
+                    {
+                        if self.pipe_input.is_some() || !statement.annotations.is_empty() {
+                            return Err(rejected(
+                                "SRC001",
+                                statement.span,
+                                "Source controls require explicit standalone references without execution annotations",
+                            ));
+                        }
+                        let control = crate::tasks::source_control::BoundSourceControl::bind(
+                            task,
+                            statement.span,
+                        )?;
+                        let typing = control.predicted_typing();
+                        (BoundTask::SourceControl(control), Arc::new(typing))
                     }
                     Task::Meta(task) if task.spec.command == MetaCommand::WorkspacePlan => {
                         let command = wes_language::vocabulary::workspace_management(statement)

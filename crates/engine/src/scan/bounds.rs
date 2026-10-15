@@ -170,6 +170,7 @@ mod tests {
                 Data::Bool(true),
             ] {
                 let task = MetaTask {
+                    guards: Default::default(),
                     spec: wes_language::vocabulary::MetaCommand::Scan.spec(&[]),
                     target: None,
                     tail: vec![],

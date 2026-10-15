@@ -83,6 +83,9 @@
 :help http request
 :help accumulate
 :help stream
+:help source
+:help source bind
+:help source send
 :help fork
 :help describe
 :help sandbox
