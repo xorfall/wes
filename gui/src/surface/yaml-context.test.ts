@@ -21,6 +21,14 @@ describe("context-specific YAML package completion", () => {
     expect(complete("read_access:\n  r", "provider")).toEqual(["revalidate"]);
     expect(complete("operations:\n  - result:\n      b", "provider")).toEqual(["byte_field"]);
   });
+  it("completes nested byte, resource and profile declarations from the published schema", () => {
+    expect(complete("operations:\n  - byte_input:\n      file_egress:\n        d", "provider")).toEqual(["destination"]);
+    expect(complete("operations:\n  - recording:\n      max_", "provider")).toEqual(["max_bytes", "max_duration_ms"]);
+    expect(complete("operations:\n  - exclusive:\n      - n", "provider")).toEqual(["namespace"]);
+    expect(complete("operations:\n  - source_profile:\n      narrowing:\n        limit:\n          kind: ", "provider")).toEqual(["maximum", "backend-condition"]);
+    expect(complete("operations:\n  - finite_profile:\n      arg", "provider")).toEqual(["arguments"]);
+    expect(complete("operations:\n  - file_e", "provider")).toEqual([]);
+  });
   it("recognizes package after version in the environment buffer", () => {
     expect(complete("version: 1\npa")).toEqual(["package"]);
     expect(complete("version: 1\n")).toEqual(["package", "targets", "environments"]);
