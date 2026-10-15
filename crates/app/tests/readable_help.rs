@@ -137,6 +137,37 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
             assert!(help.contains("never retries a producer"));
             assert!(help.contains("unknown"));
         }
+        if path == "read" {
+            let help = serde_json::to_string(data).unwrap();
+            for required in [
+                ":read bytes",
+                "from:",
+                "65536",
+                "without running its producer",
+            ] {
+                assert!(help.contains(required), "{help}");
+            }
+        }
+        if path == "source result" {
+            let help = serde_json::to_string(data).unwrap();
+            for required in [
+                "physically joined",
+                "Incomplete prefixes",
+                "No source is started",
+            ] {
+                assert!(help.contains(required), "{help}");
+            }
+        }
+        if path == "keep" {
+            let help = serde_json::to_string(data).unwrap();
+            for required in [
+                "acknowledged ordinary result",
+                "No producer is run",
+                "Private/temporary",
+            ] {
+                assert!(help.contains(required), "{help}");
+            }
+        }
         if path == "calc" {
             assert!(data["invocation"].get("example").is_none());
             assert_eq!(data["invocation"]["examples"].as_array().unwrap().len(), 5);
@@ -163,6 +194,10 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
             "fork",
             "inspect",
             "http request",
+            "keep",
+            "source",
+            "source result",
+            "read",
         ]
         .contains(&path)
         {
