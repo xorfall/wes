@@ -20,6 +20,7 @@ use wes_core::{
 };
 mod byte_input;
 mod finite;
+pub mod finite_profiles;
 mod interactive;
 mod lifecycle;
 pub mod profiles;
@@ -45,6 +46,12 @@ pub enum InvocationError {
 /// Cancellation is cooperative; implementations obey the Executor lease contract.
 pub trait Invoker: Send + Sync + 'static {
     fn invoke(&self, call: Call, cancellation: CancellationToken) -> InvocationFuture;
+    fn finite_profile(
+        &self,
+        _capability: &Capability,
+    ) -> Option<Arc<finite_profiles::FiniteProfile>> {
+        None
+    }
     fn byte_input(&self, _capability: &Capability) -> Option<crate::byte_input::ByteInputSpec> {
         None
     }
