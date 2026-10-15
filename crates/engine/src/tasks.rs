@@ -70,6 +70,14 @@ pub struct CompletionNotice {
     pub grants_changed: bool,
 }
 impl BoundTask {
+    /// A bounded reader consumes the captured descriptor, without decoding a whole input.
+    pub(crate) fn stored_source_for(&self, node: &crate::graph::NodeId) -> bool {
+        match self {
+            Self::Scan(scan) => scan.stored_source_for(node),
+            Self::Query(query) => query.stored_source_for(node),
+            _ => false,
+        }
+    }
     pub(crate) fn stored_field_paths(
         &self,
         node: &crate::graph::NodeId,
@@ -307,6 +315,7 @@ impl BoundTask {
         match self {
             Self::View(view) => view.read_sources(),
             Self::SourceControl(control) => control.read_sources(),
+            Self::Query(query) => query.read_sources(),
             _ => vec![],
         }
     }
@@ -725,6 +734,7 @@ impl TaskExecutor {
             BoundTask::Calculation(calc) => policy = policy.join(&calc.literal_policy()),
             BoundTask::View(view) => policy = policy.join(&view.prepared_policy()),
             BoundTask::SourceControl(control) => policy = policy.join(&control.policy),
+            BoundTask::Query(query) => policy = policy.join(&query.captured_policy()),
             BoundTask::Scan(scan) => policy = policy.join(&scan.literal_policy()),
             BoundTask::Dataset(read) => policy = policy.join(&read.policy()),
             BoundTask::Recording(recording) => policy = policy.join(&recording.policy()),
@@ -936,9 +946,9 @@ impl TaskExecutor {
                 accumulation.evaluate(&ticket.inputs, token)
             }),
             BoundTask::Help(help) => local_work(cancellation, move |token| help.evaluate(token)),
-            BoundTask::Query(query) => local_work(cancellation, move |token| {
-                query.evaluate(&ticket.inputs, token)
-            }),
+            BoundTask::Query(query) => {
+                query.execute(ticket.inputs, self.storage.clone(), cancellation)
+            }
         };
         Box::pin(async move {
             let mut report = work.await;

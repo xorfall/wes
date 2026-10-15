@@ -8,6 +8,41 @@ use wes_core::{Data, Primitive, Provenance, Shape, Value};
 use wes_engine::storage::{StoreError, ValueHandle, ValuePlacement, ValueStore};
 
 #[tokio::test]
+async fn retention_policy_refusal_is_known_and_does_not_poison_storage_shutdown() {
+    use wes_adapters::protected_storage::ObjectProtection;
+    use wes_core::flow::{FlowPolicy, Residence};
+    use wes_engine::storage::{StoreWorkerLimits, spawn_store};
+    let root = private_temp();
+    let protection = ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [51; 32]).unwrap();
+    let mut backend = TieredValues::open_protected(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        Limits::default(),
+        Durability::File,
+        None,
+        Some(protection),
+    )
+    .unwrap();
+    let value = value(29).with_provenance(
+        Provenance::default()
+            .with_policy(&FlowPolicy::default().confidential(Residence::Temporary)),
+    );
+    let handle = backend.store(&value).unwrap();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    assert!(matches!(
+        worker.retain(handle.clone()).await,
+        Err(StoreError::Restricted)
+    ));
+    assert_eq!(
+        worker.read(handle.clone()).await.unwrap().unwrap().value,
+        value
+    );
+    assert!(!worker.is_kept(handle).await.unwrap());
+    assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
 async fn retiring_a_scope_does_not_route_its_pending_losses_to_the_parent() {
     use wes_engine::storage::{PublicationPolicy, StoreWorkerLimits, spawn_store};
     let root = private_temp();

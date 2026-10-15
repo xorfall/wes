@@ -2758,8 +2758,11 @@ impl Actor {
                         scan.defer_source(source, &captured.snapshot);
                     }
                 }
-                let charge = enter.ticket.deferred_inputs.iter().filter(|(source, _)|
-                    !matches!(&enter.ticket.payload, BoundTask::Scan(scan) if scan.stored_source_for(source)))
+                let charge = enter
+                    .ticket
+                    .deferred_inputs
+                    .iter()
+                    .filter(|(source, _)| !enter.ticket.payload.stored_source_for(source))
                     .fold(0u64, |n, (_, r)| n.saturating_add(r.snapshot.charge));
                 self.maintain_residency(charge);
                 self.preparing_inputs.spawn(async move {

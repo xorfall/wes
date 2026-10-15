@@ -1086,7 +1086,7 @@ impl Workspace {
         }
         for (source, captured) in &ticket.deferred_inputs {
             if ticket.prepared_fields.contains_key(source)
-                || matches!(&ticket.payload,BoundTask::Scan(scan) if scan.stored_source_for(source))
+                || ticket.payload.stored_source_for(source)
             {
                 if self
                     .dataset_access

@@ -812,6 +812,9 @@ impl Analysis<'_> {
                     }
                     Task::Meta(task) if BoundQuery::supports(&task) => {
                         let query = BoundQuery::new(task, self.environment_context.cloned());
+                        query
+                            .validate()
+                            .map_err(|message| rejected("CAL009", statement.span, message))?;
                         let typing = Arc::new(query.predicted_typing());
                         (BoundTask::Query(query), typing)
                     }

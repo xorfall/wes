@@ -99,10 +99,23 @@ impl FileValues {
         let Some(mut file) = self.file(handle)? else {
             return Ok(None);
         };
-        let size = file
+        let info = file
             .metadata()
-            .map_err(|e| StoreError::backend("sizing snapshot metadata", e))?
-            .len();
+            .map_err(|e| StoreError::backend("sizing snapshot metadata", e))?;
+        let size = info.len();
+        let modified = info
+            .modified()
+            .map_err(|e| StoreError::backend("checking snapshot header identity", e))?;
+        // Other format probes share the same immutable, authenticated manifest cache.
+        // A protected header must not be decrypted again merely to rule out a composite.
+        if let Some(probe) = self
+            .manifests
+            .lock()
+            .expect("manifest cache")
+            .probe(handle, size, modified, prefix, maximum)
+        {
+            return probe;
+        }
         if self.protection.is_none() {
             let mut probe = vec![0; prefix.len()];
             let n = file

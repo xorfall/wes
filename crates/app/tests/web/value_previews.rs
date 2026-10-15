@@ -1,9 +1,87 @@
 //! Bounded display reads retain the ordinary authority/generation fences and never execute work.
 use super::*;
+use wes_engine::source::SourceInput;
 use wes_engine::storage::{LoadedValue, StoreError, ValueHandle, ValueLease, ValueStore};
 
 async fn body(response: reqwest::Response) -> Value {
     serde_json::from_str(&response.text().await.unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn native_byte_query_uses_existing_typed_result_transport_and_never_replays_source() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let f = Fixture::new().await;
+    let current = f.app.current().unwrap();
+    let generation = &current.generation;
+    current
+        .session
+        .submit(
+            SourceInput::new(
+                "bytes-source".into(),
+                "catalog echo value:\"Aé😀Z\" > original".into(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    current.session.wait_idle().await.unwrap();
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+    let read = current
+        .session
+        .submit(
+            SourceInput::new(
+                "bytes-read".into(),
+                ":read bytes:$original from:\"2\" limit:3 > slice".into(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read.nodes.len(), 1, "{:?}", read.diagnostics);
+    current.session.wait_idle().await.unwrap();
+    let observed = current.session.observe().await.unwrap();
+    assert!(
+        observed
+            .state
+            .execution
+            .errors
+            .get(&read.nodes[0])
+            .is_none(),
+        "{:?}",
+        observed.state.execution.errors
+    );
+    let handle = observed.values.as_ref().unwrap().outputs[&read.nodes[0]]
+        .handle()
+        .unwrap();
+    let response = f
+        .client
+        .get(f.url(&format!("/values/{handle}")))
+        .header("X-Wes-Session", generation)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let actual = body(response).await;
+    assert_eq!(actual["data"]["from"], "2");
+    assert_eq!(actual["data"]["next"], "5");
+    assert_eq!(actual["data"]["extent"], "8");
+    assert_eq!(
+        actual["data"]["data"],
+        STANDARD.encode(&"Aé😀Z".as_bytes()[2..5])
+    );
+    assert_eq!(actual["type"]["kind"], "record");
+    let slice = &observed.state.execution.values[&read.nodes[0]];
+    let expected: Value = serde_json::from_slice(
+        &wes_adapters::codec::encode_display_value(slice, wes_adapters::codec::Limits::default())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        actual, expected,
+        "ByteRange keeps its captured contract and canonical Bytes on the native transport"
+    );
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
+    f.close().await;
 }
 
 struct CountReads {

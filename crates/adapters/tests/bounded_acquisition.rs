@@ -14,6 +14,103 @@ fn shell() -> Value {
     .unwrap()
 }
 
+#[tokio::test]
+async fn segmented_selection_reserves_logical_and_physical_charge_before_materialization() {
+    use wes_adapters::protected_storage::ObjectProtection;
+    use wes_core::{
+        Provenance, RecordShape,
+        flow::{FlowPolicy, Residence},
+    };
+    use wes_engine::storage::{StoreWorkerLimits, StoredSnapshot, spawn_store};
+    for protected in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let protection = protected
+            .then(|| ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [69; 32]).unwrap());
+        let mut backend = TieredValues::open_protected(
+            &root.path().join("live"),
+            &root.path().join("archive"),
+            Limits {
+                bytes: 512 * 1024,
+                ..Default::default()
+            },
+            Durability::FileAndDirectory,
+            None,
+            protection,
+        )
+        .unwrap();
+        let text = "λ".repeat(16384);
+        let shell = Value::new(
+            Shape::Record(
+                RecordShape::new(
+                    "SyntheticEnvelope",
+                    [
+                        ("summary".into(), Shape::Primitive(Primitive::Text)),
+                        ("raw".into(), Shape::Primitive(Primitive::Bytes)),
+                    ],
+                )
+                .unwrap(),
+            ),
+            Data::Record(
+                [
+                    ("summary".into(), Data::Text(text.clone().into())),
+                    ("raw".into(), Data::Bytes(vec![].into())),
+                ]
+                .into(),
+            ),
+            Provenance::default().with_policy(&if protected {
+                FlowPolicy::default().confidential(Residence::Retainable)
+            } else {
+                FlowPolicy::default()
+            }),
+        )
+        .unwrap();
+        let owner = Arc::new(());
+        let handle = backend
+            .begin_acquisition(2 * 1024 * 1024, Arc::downgrade(&owner))
+            .unwrap();
+        for _ in 0..32 {
+            backend
+                .append_acquisition(&handle, "raw", &[83; CHUNK_BYTES])
+                .unwrap();
+        }
+        backend
+            .seal_acquisition(
+                &handle,
+                &shell,
+                &[LeafSelection {
+                    port: "raw".into(),
+                    fields: vec!["raw".into()],
+                    text: false,
+                }],
+            )
+            .unwrap();
+        assert!(matches!(backend.read(&handle), Err(StoreError::Limit(_))));
+        let selected = backend
+            .describe(&handle, &["summary".into()])
+            .unwrap()
+            .unwrap();
+        let loaded = backend
+            .read_selected(&handle, &selected.selection, selected.charge)
+            .unwrap()
+            .unwrap();
+        let required =
+            StoredSnapshot::capture(handle.clone(), selected.digest.clone(), &loaded.value)
+                .unwrap();
+        assert!(
+            selected.charge >= required.charge,
+            "reserved {} but logical/physical charge requires {}",
+            selected.charge,
+            required.charge
+        );
+        let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+        let (loaded, hold) = worker.materialize(selected).await.unwrap();
+        assert_eq!(loaded.value.data(), &Data::Text(text.into()));
+        drop(hold);
+        assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+        task.join().await.unwrap();
+    }
+}
+
 #[test]
 fn encrypted_segmented_sources_keep_exact_identity_and_refuse_temporary_promotion() {
     use wes_adapters::protected_storage::ObjectProtection;

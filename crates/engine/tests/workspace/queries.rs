@@ -6,6 +6,8 @@ use wes_engine::{
     runtime::{OutputState, RuntimeCode},
     tasks::BoundTask,
 };
+#[path = "queries_bytes.rs"]
+mod bytes;
 #[path = "queries_nodes.rs"]
 mod nodes;
 #[path = "queries_types.rs"]

@@ -1,0 +1,20 @@
+/* A byte range is a data host: exact original coordinates, then hex and printable ASCII of supplied bytes. */
+.wes-terminal .byte-range-view { min-width:0; color:var(--mono-ink); font:inherit; }
+.wes-terminal .byte-range-view p { margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wes-terminal .byte-range-header { display:flex; align-items:baseline; gap:10px; min-width:0; white-space:nowrap; overflow:hidden; }
+.wes-terminal .byte-range-header strong { font-weight:500; }
+.wes-terminal .byte-range-dim,.wes-terminal .byte-range-note { color:var(--mono-dim); }
+.wes-terminal .byte-range-warn { color:var(--mono-warn); }
+.wes-terminal .byte-range-peek { font-variant-numeric:tabular-nums; }
+.wes-terminal .byte-range-grid { min-width:0; overflow-x:auto; overscroll-behavior:contain; }
+.wes-terminal .byte-range-grid:focus-visible { outline:1px solid var(--active); outline-offset:-1px; }
+.wes-terminal .byte-range-row { display:flex; gap:2ch; white-space:pre; font-variant-numeric:tabular-nums; }
+.wes-terminal .byte-range-offset { color:var(--key); }
+.wes-terminal .byte-range-hex { display:flex; gap:1ch; }
+.wes-terminal .byte-range-byte { padding:0; border:0; background:none; font:inherit; color:inherit; cursor:default; }
+.wes-terminal .byte-range-columns { color:var(--mono-faint); }
+.wes-terminal .byte-range-chosen { background:var(--sel); color:var(--mono-ref); }
+.wes-terminal .byte-range-selection { color:var(--mono-dim); }
+.wes-terminal .byte-range-pager { display:flex; align-items:baseline; gap:10px; color:var(--mono-dim); white-space:nowrap; overflow:hidden; }
+.wes-terminal .byte-range-view .cell-action { color:var(--mono-dim); }
+.wes-terminal .byte-range-pager button[disabled] { opacity:.45; }
