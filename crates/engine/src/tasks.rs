@@ -24,7 +24,10 @@ pub(crate) mod reconcile;
 pub(crate) mod recording;
 pub use reconcile::ReconciliationControl;
 pub use recording::RecordingControl;
+mod companion;
+mod source;
 pub(crate) mod source_control;
+pub use companion::BoundCompanion;
 pub(crate) mod view;
 pub use help::{BoundHelp, help_query, help_tree};
 pub(crate) mod query;
@@ -40,6 +43,7 @@ pub enum BoundTask {
     /// Explicit immutable storage read; a saved record grants no provider execution authority.
     SavedInput(crate::history::SavedSelection),
     Call(BoundCall),
+    Companion(Box<BoundCompanion>),
     SourceLaunch(recording::BoundSourceLaunch),
     Describe(crate::describe::BoundDescribe),
     Calculation(crate::calc::BoundCalculation),
@@ -74,6 +78,7 @@ impl BoundTask {
     pub(crate) fn stored_source_for(&self, node: &crate::graph::NodeId) -> bool {
         match self {
             Self::Call(call) => call.stored_byte_source_for(node),
+            Self::Companion(task) => task.call.stored_byte_source_for(node),
             Self::Scan(scan) => scan.stored_source_for(node),
             Self::Query(query) => query.stored_source_for(node),
             Self::ScanAttempt(scan) => scan.read_sources().iter().any(|s| &s.node == node),
@@ -88,6 +93,7 @@ impl BoundTask {
     ) -> Option<Vec<Vec<String>>> {
         match self {
             Self::Call(call) => call.stored_field_paths(node),
+            Self::Companion(task) => task.call.stored_field_paths(node),
             Self::Calculation(calc) => calc.stored_field_paths(node),
             Self::View(view) => view.stored_field_paths(node),
             _ => None,
@@ -100,6 +106,7 @@ impl BoundTask {
     ) {
         match self {
             Self::Call(call) => call.prepare_fields(node, values),
+            Self::Companion(task) => task.call.prepare_fields(node, values),
             Self::Calculation(calc) => calc.prepare_fields(node, values),
             Self::View(view) => view.prepare_fields(node, values),
             _ => {}
@@ -142,6 +149,11 @@ impl ResultFlow {
 impl BoundTask {
     pub(crate) fn with_replaced_call(&self, source: BoundCall) -> Self {
         match self {
+            Self::Companion(task) => {
+                let mut task = task.clone();
+                task.call = source;
+                Self::Companion(task)
+            }
             Self::SourceLaunch(launch) => Self::SourceLaunch(recording::BoundSourceLaunch {
                 source,
                 setup: launch.setup.clone(),
@@ -205,6 +217,10 @@ impl BoundTask {
     pub(crate) fn set_authority(&mut self, authority: crate::environments::InvocationAuthority) {
         match self {
             Self::Call(call) => call.set_authority(authority),
+            Self::Companion(task) => {
+                task.call.set_authority(authority.clone());
+                task.source.set_authority(authority);
+            }
             Self::SourceLaunch(launch) => launch.source.set_authority(authority),
             Self::Calculation(calc) => calc.set_authority(authority),
             Self::Dataset(task) => task.set_authority(authority),
@@ -216,6 +232,10 @@ impl BoundTask {
         self.call()
             .and_then(BoundCall::environment)
             .into_iter()
+            .chain(match self {
+                Self::Companion(task) => task.source.environment(),
+                _ => None,
+            })
             .chain(
                 match self {
                     Self::Calculation(calc) => Some(calc),
@@ -228,6 +248,7 @@ impl BoundTask {
     pub fn call(&self) -> Option<&BoundCall> {
         match self {
             Self::Call(call) => Some(call),
+            Self::Companion(task) => Some(&task.call),
             Self::SourceLaunch(launch) => Some(&launch.source),
             Self::Input(_)
             | Self::StoredInput(_)
@@ -254,7 +275,7 @@ impl BoundTask {
     }
     pub fn traits(&self) -> ExecutionTraits {
         match self {
-            Self::View(_) | Self::SourceControl(_) => ExecutionTraits {
+            Self::View(_) | Self::SourceControl(_) | Self::Companion(_) => ExecutionTraits {
                 pure: false,
                 repeatable: false,
                 bounded: true,
@@ -319,6 +340,7 @@ impl BoundTask {
     pub(crate) fn entry_read_sources(&self) -> Vec<OutputRef> {
         match self {
             Self::Call(call) => call.byte_read_sources(),
+            Self::Companion(task) => task.call.byte_read_sources(),
             Self::View(view) => view.read_sources(),
             Self::SourceControl(control) => control.read_sources(),
             Self::Query(query) => query.read_sources(),
@@ -401,6 +423,11 @@ impl BoundTask {
                 Self::SourceControl(control)
             }
             Self::Call(call) => Self::Call(call.with_admission(admission)),
+            Self::Companion(mut task) => {
+                task.call = task.call.with_admission(admission.clone());
+                task.source = task.source.with_admission(admission);
+                Self::Companion(task)
+            }
             Self::SourceLaunch(mut launch) => {
                 launch.source = launch.source.with_admission(admission);
                 Self::SourceLaunch(launch)
@@ -520,6 +547,28 @@ impl TaskExecutor {
     }
 }
 impl Executor<BoundTask> for TaskExecutor {
+    fn joined(&self, payload: &BoundTask) -> bool {
+        matches!(payload, BoundTask::Companion(_))
+    }
+    fn execute_joined(
+        &self,
+        ticket: RunTicket<BoundTask>,
+        cancellation: CancellationToken,
+        progress: crate::driver::progress::Reporter,
+        result: crate::driver::publication::Reporter,
+    ) -> ExecutionFuture {
+        if matches!(ticket.payload, BoundTask::Companion(_)) {
+            companion::execute(
+                self.calls.clone(),
+                self.recordings.clone(),
+                ticket,
+                cancellation,
+                result,
+            )
+        } else {
+            self.execute_reporting(ticket, cancellation, progress)
+        }
+    }
     fn interactive(&self, payload: &BoundTask) -> bool {
         payload.call().is_some_and(BoundCall::interactive)
     }
@@ -607,86 +656,9 @@ impl Executor<BoundTask> for TaskExecutor {
         };
         Box::pin(async move {
             let admission = opening.await?;
-            let source_reservation = owner
-                .reserve_source_with_recording(&run, admission.records_bytes())
-                .map_err(|message| admission.refusal(message))?;
-            let claims = match admission.recording_admission() {
-                Some((definition, _)) => {
-                    owner.claim_start(run.node(), &definition, required_setup.as_ref())
-                }
-                None if required_setup.is_some() => {
-                    Err("Recording launch has no workspace-captured source definition".into())
-                }
-                None => Ok(Vec::new()),
-            }
-            .map_err(|message| admission.refusal(message))?;
-            let policy = admission
-                .recording_admission()
-                .map(|(_, policy)| policy)
-                .unwrap_or_default();
-            let mut prepared = Vec::new();
-            let mut preparation_failure = None;
-            let mut claims = claims.into_iter();
-            while let Some(claim) = claims.next() {
-                match claim.prepare_writer(run.id().to_string(), &policy).await {
-                    Ok(writer) => prepared.push((claim, writer)),
-                    Err(message) => {
-                        let required = claim.required;
-                        claim.complete(Err(message.clone()));
-                        if required {
-                            for unentered in claims.by_ref() {
-                                unentered.complete(Err(message.clone()));
-                            }
-                            preparation_failure = Some(message);
-                            break;
-                        }
-                    }
-                }
-            }
-            let mut admitted = Vec::new();
-            for (claim, writer) in prepared {
-                if claim.cancelled() {
-                    if claim.required {
-                        preparation_failure =
-                            Some("Recording setup was cancelled before producer admission".into());
-                    }
-                    claim.reject(
-                        writer,
-                        "Recording was cancelled during preparation; this does not cancel its source".into(),
-                    );
-                } else {
-                    admitted.push((claim, writer));
-                }
-            }
-            let prepared = admitted;
-            if let Some(message) = preparation_failure {
-                for (claim, writer) in prepared {
-                    claim.reject(writer, message.clone());
-                }
-                return Err(admission.refusal(message));
-            }
-            let archives = prepared
-                .iter()
-                .map(|(_, (writer, _))| writer.receiver.branch.clone())
-                .collect();
-            let (handle, task) = match admission.start(archives) {
-                Ok(started) => started,
-                Err(report) => {
-                    for (claim, writer) in prepared {
-                        claim.reject(
-                            writer,
-                            "Producer admission was refused before capture".into(),
-                        );
-                    }
-                    return Err(report);
-                }
-            };
-            for (claim, writer) in prepared {
-                claim.complete(Ok(writer));
-            }
-            source_reservation.install(handle.clone());
-            let task = task.after_join(move || owner.remove_source(&run));
-            Ok((handle, task))
+            source::start(owner, run, admission, required_setup)
+                .await
+                .map(crate::providers::OwnedSource::into_stream)
         })
     }
 
@@ -832,6 +804,12 @@ impl TaskExecutor {
                     None,
                 ))
                 .into()
+            }),
+            BoundTask::Companion(_) => Box::pin(async {
+                Outcome::Failed(RuntimeCode::ExecutionFailed.error(
+                    "A finite companion requires its original acknowledged joined execution port; nothing was started.",
+                    None,
+                )).into()
             }),
             BoundTask::Management(task) => task.execute(cancellation),
             BoundTask::ImportPlan(task) => Box::pin(async move { task.outcome().into() }),
