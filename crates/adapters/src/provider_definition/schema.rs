@@ -50,6 +50,17 @@ struct OperationDoc {
 struct ControlDoc {
     input: String,
     output: String,
+    #[serde(default)]
+    output_policy: ControlPolicy,
+}
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ControlPolicy {
+    #[default]
+    Public,
+    Private,
+    ConfidentialTemporary,
+    Confidential,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -241,7 +252,19 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                 if !materialized(&input) || !materialized(&output) {
                     return Err(DefinitionError("control contracts must be materialized"));
                 }
-                Ok((input, output))
+                let policy = match control.output_policy {
+                    ControlPolicy::Public => wes_core::flow::OutputPolicy::Public,
+                    ControlPolicy::Private => wes_core::flow::OutputPolicy::Private,
+                    ControlPolicy::ConfidentialTemporary => {
+                        wes_core::flow::OutputPolicy::ConfidentialTemporary
+                    }
+                    ControlPolicy::Confidential => wes_core::flow::OutputPolicy::Confidential,
+                };
+                Ok(Control {
+                    input,
+                    output,
+                    policy,
+                })
             })
             .transpose()?;
         if op.path.is_empty()

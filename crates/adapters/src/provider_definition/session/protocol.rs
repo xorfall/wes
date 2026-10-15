@@ -200,9 +200,10 @@ pub(super) fn action(
     }
     Ok(encoded)
 }
-pub(super) async fn write(
+async fn write(
     output: &mut (impl AsyncWrite + Unpin),
     bytes: &[u8],
+    handed_off: Option<&mut bool>,
 ) -> Result<(), InvocationError> {
     let length = u32::try_from(bytes.len())
         .ok()
@@ -211,26 +212,32 @@ pub(super) async fn write(
     output
         .write_all(&length.to_be_bytes())
         .await
-        .map_err(|_| error("Session request write failed; outcome may be unknown"))?;
+        .map_err(|_| error("Session request write failed"))?;
     output
         .write_all(bytes)
         .await
-        .map_err(|_| error("Session request write failed; outcome may be unknown"))?;
+        .map_err(|_| error("Session request write failed"))?;
+    // A strict peer cannot start an incomplete frame. After all bytes are
+    // written it may already act, even if flush, cancellation or EOF follows.
+    if let Some(handed_off) = handed_off {
+        *handed_off = true;
+    }
     output
         .flush()
         .await
-        .map_err(|_| error("Session request flush failed; outcome may be unknown"))
+        .map_err(|_| error("Session request flush failed"))
 }
 pub(super) async fn write_until(
     output: &mut (impl AsyncWrite + Unpin),
     bytes: &[u8],
     token: &CancellationToken,
     until: tokio::time::Instant,
+    handed_off: Option<&mut bool>,
 ) -> Result<(), InvocationError> {
     tokio::select! {biased;
         ()=token.cancelled()=>Err(InvocationError::Cancelled),
-        result=write(output,bytes)=>result,
-        _=tokio::time::sleep_until(until)=>Err(error("Session write deadline elapsed; external outcome may be unknown; no retry was performed")),
+        result=write(output,bytes,handed_off)=>result,
+        _=tokio::time::sleep_until(until)=>Err(error("Session write deadline elapsed; no retry was performed")),
     }
 }
 pub(super) fn credit(session: &str) -> Vec<u8> {

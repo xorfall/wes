@@ -1200,6 +1200,19 @@ mod tests {
         }
     }
     #[test]
+    fn external_uncertainty_survives_private_browser_diagnostic_projection() {
+        let diagnostic = wes_engine::runtime::RuntimeCode::ExternalOutcomeUnknown
+            .error("synthetic-secret-detail", None)
+            .with_policy(&wes_core::flow::FlowPolicy::default().private());
+        let projected = error(&diagnostic);
+        assert_eq!(projected["code"], ErrorValue::REMOTE_OUTCOME_UNKNOWN);
+        assert!(projected["message"].as_str().unwrap().contains("unknown"));
+        assert!(!projected.to_string().contains("synthetic-secret-detail"));
+        assert_eq!(projected["causeId"], "");
+        assert_eq!(projected["locations"], json!([]));
+        assert_eq!(projected["issues"], json!([]));
+    }
+    #[test]
     fn publication_preserves_authority_uncertainty_and_original_problem_separately() {
         use wes_engine::{
             history::Persistence,

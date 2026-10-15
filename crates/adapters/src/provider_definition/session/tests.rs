@@ -63,13 +63,25 @@ struct Managed {
     binding: wes_core::environments::Binding,
     handle: wes_engine::session::SessionHandle,
     task: wes_engine::session::SessionTask,
+    recorder: wes_engine::recording::Recorder,
+    writer: wes_engine::recording::RecorderTask,
 }
 impl Managed {
     async fn new(mode: &str, streaming: bool) -> Self {
+        Self::new_with_policy(mode, streaming, false).await
+    }
+    async fn new_with_policy(mode: &str, streaming: bool, private: bool) -> Self {
         use wes_engine::{environments::EnvironmentLoader, session, workspace::Workspace};
         let root = tempfile::tempdir().unwrap();
         let mut doc = document(root.path(), mode, streaming, "Option<Text>");
         doc["backend"]["credentials"] = serde_json::json!(["Token"]);
+        if matches!(mode, "control" | "control-eof") {
+            doc["operations"][0]["control"] = serde_json::json!({"input":"Int","output":"Bool"});
+        }
+        if mode == "private-control" {
+            doc["operations"][0]["control"] =
+                serde_json::json!({"input":"Int","output":"Text","output_policy":"private"});
+        }
         std::fs::write(root.path().join("provider.json"), doc.to_string()).unwrap();
         let yaml = r#"version: 1
 targets: {local: {kind: local}}
@@ -82,10 +94,15 @@ environments:
         source: {kind: provider, file: provider.json}
         bind:
           target: local
-          endpoint: 'amqp://127.0.0.1:5672'
+          endpoint: 'https://127.0.0.1:58443'
           output: public
           credentials: {Token: {secret: token}}
 "#;
+        let yaml = if private {
+            yaml.replace("output: public", "output: private")
+        } else {
+            yaml.into()
+        };
         std::fs::write(root.path().join("env.yaml"), yaml).unwrap();
         let authority = Authority::default();
         let loader = Arc::new(
@@ -93,10 +110,21 @@ environments:
                 .unwrap()
                 .with_authority(authority.clone()),
         );
+        let history = crate::journal::FileHistory::open(
+            &root.path().join("history"),
+            Default::default(),
+            crate::journal::Durability::File,
+        )
+        .unwrap();
+        let (recorder, writer) =
+            wes_engine::recording::spawn_recorder(history, Default::default()).unwrap();
         let (handle, task) = session::spawn(
             Workspace::local(wes_engine::providers::LocalScope::new("session-fixture").unwrap())
                 .with_environment_loader(loader.clone()),
-            session::RecordingMode::Ephemeral,
+            session::RecordingMode::Required(wes_engine::calls::CallJournal::new(
+                recorder.clone(),
+                wes_engine::calls::RequiredPersistence::FileSynced,
+            )),
             Arc::new(crate::type_sources::FileTypeSources::new(root.path()).unwrap()),
             2.try_into().unwrap(),
         )
@@ -128,6 +156,8 @@ environments:
             binding,
             handle,
             task,
+            recorder,
+            writer,
         }
     }
     fn supply(&self) {
@@ -148,7 +178,86 @@ environments:
     async fn stop(self) {
         self.handle.shutdown().await.unwrap();
         self.task.join().await.unwrap();
+        let drain = self.recorder.shutdown().await.unwrap();
+        assert_eq!(drain.failed, 0);
+        self.writer.join().await.unwrap();
+        for file in ["journal.jsonl", "recovery.jsonl"] {
+            if let Ok(bytes) = std::fs::read(self.root.path().join("history").join(file)) {
+                assert!(
+                    !String::from_utf8_lossy(&bytes).contains("synthetic-provider-session-secret")
+                );
+            }
+        }
+        #[cfg(unix)]
+        if let Ok(pid) = std::fs::read_to_string(self.root.path().join("pid")) {
+            assert_eq!(
+                rustix::process::test_kill_process_group(
+                    rustix::process::Pid::from_raw(pid.parse().unwrap()).unwrap()
+                ),
+                Err(rustix::io::Errno::SRCH)
+            );
+        }
     }
+    async fn submit(
+        &self,
+        text: &str,
+        cooperative: bool,
+    ) -> Arc<wes_engine::session::SubmissionResult> {
+        let input =
+            wes_engine::source::SourceInput::new(uuid::Uuid::new_v4().to_string(), text.into())
+                .unwrap()
+                .with_client("native".into())
+                .unwrap();
+        let input = if cooperative {
+            input.cooperative()
+        } else {
+            input
+        };
+        let reply = self.handle.submit(input).await.unwrap();
+        assert!(
+            !reply
+                .diagnostics
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == wes_language::Severity::Error),
+            "{text}: {:?}",
+            reply.diagnostics
+        );
+        self.handle.wait_idle().await.unwrap();
+        reply
+    }
+    async fn failed(&self, name: &str) -> wes_core::ErrorValue {
+        let snapshot = self.handle.snapshot().await.unwrap();
+        snapshot.execution.errors[&snapshot.names[name].node].clone()
+    }
+}
+
+fn one_joined_attempt(root: &std::path::Path) {
+    assert_eq!(
+        std::fs::read_to_string(root.join("attempts")).unwrap(),
+        "started\n"
+    );
+    #[cfg(unix)]
+    {
+        let pid = std::fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(
+            rustix::process::test_kill_process_group(rustix::process::Pid::from_raw(pid).unwrap()),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
+}
+
+async fn wait_for_fixture_file(root: &std::path::Path, name: &str, expected: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while std::fs::read_to_string(root.join(name)).ok().as_deref() != Some(expected) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -158,14 +267,15 @@ async fn managed_credentials_are_separate_scoped_and_checked_before_launch() {
         if supplied {
             fixture.supply();
         }
-        assert!(
-            fixture
-                .product
-                .invoker()
-                .invoke(call(&fixture.product), CancellationToken::new())
-                .await
-                .is_err()
-        );
+        let Err(InvocationError::Failed(error)) = fixture
+            .product
+            .invoker()
+            .invoke(call(&fixture.product), CancellationToken::new())
+            .await
+        else {
+            panic!("missing credentials must be a known refusal");
+        };
+        assert_ne!(error.code(), wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN);
         assert!(!fixture.root.path().join("attempts").exists());
     }
     fixture.grant();
@@ -220,23 +330,6 @@ async fn disabling_then_enabling_never_revives_an_owned_session() {
     assert_eq!(handle.snapshot().phase, Phase::Cancelled);
     one_joined_attempt(fixture.root.path());
     fixture.stop().await;
-}
-fn one_joined_attempt(root: &std::path::Path) {
-    assert_eq!(
-        std::fs::read_to_string(root.join("attempts")).unwrap(),
-        "started\n"
-    );
-    #[cfg(unix)]
-    {
-        let pid = std::fs::read_to_string(root.join("pid"))
-            .unwrap()
-            .parse::<i32>()
-            .unwrap();
-        assert_eq!(
-            rustix::process::test_kill_process_group(rustix::process::Pid::from_raw(pid).unwrap()),
-            Err(rustix::io::Errno::SRCH)
-        );
-    }
 }
 #[tokio::test]
 async fn executable_finite_and_nullable_results_keep_exact_contracts_and_join_before_return() {
@@ -497,4 +590,120 @@ fn session_declarations_are_strict_and_do_not_change_finite_process_semantics() 
     let mut bad = doc;
     bad["backend"]["kind"] = serde_json::json!("process");
     assert!(super::super::schema::compile(&bad.to_string(), None).is_err());
+}
+#[tokio::test]
+async fn finite_session_lost_response_is_unknown_but_confirmed_outcomes_stay_known() {
+    for (mode, expected) in [
+        ("finite-eof", wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN),
+        ("finite-failed", "RUN001"),
+        ("finite-result-no-end", "RUN001"),
+    ] {
+        let (root, product) = executable(mode, false, "Option<Text>");
+        let Err(InvocationError::Failed(error)) = product
+            .invoker()
+            .invoke(call(&product), CancellationToken::new())
+            .await
+        else {
+            panic!("expected failure for {mode}");
+        };
+        assert_eq!(error.code(), expected, "{mode}");
+        let private = error.with_policy(&wes_core::flow::FlowPolicy::default().private());
+        assert_eq!(
+            private.code(),
+            if expected == wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN {
+                expected
+            } else {
+                "ENV021"
+            }
+        );
+        one_joined_attempt(root.path());
+    }
+}
+
+#[tokio::test]
+async fn finite_session_cancel_and_authority_withdrawal_after_handoff_are_unknown() {
+    for revoke in [false, true] {
+        let fixture = Managed::new("hold", false).await;
+        fixture.supply();
+        fixture.grant();
+        let token = CancellationToken::new();
+        let job = tokio::spawn(
+            fixture
+                .product
+                .invoker()
+                .invoke(call(&fixture.product), token.clone()),
+        );
+        wait_for_fixture_file(fixture.root.path(), "handoff", "received\n").await;
+        if revoke {
+            fixture.authority.disable("lab").unwrap();
+        } else {
+            token.cancel();
+        }
+        let Err(InvocationError::Failed(error)) = job.await.unwrap() else {
+            panic!("lost finite receipt must be unknown");
+        };
+        assert_eq!(error.code(), wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN);
+        one_joined_attempt(fixture.root.path());
+        fixture.stop().await;
+    }
+    let (root, product) = executable("finite", false, "Int");
+    let token = CancellationToken::new();
+    token.cancel();
+    assert!(matches!(
+        product.invoker().invoke(call(&product), token).await,
+        Err(InvocationError::Cancelled)
+    ));
+    assert!(!root.path().join("attempts").exists());
+}
+
+#[tokio::test]
+async fn finite_session_deadline_after_handoff_is_unknown_without_replay() {
+    let root = tempfile::tempdir().unwrap();
+    let doc = document(root.path(), "hold", false, "Option<Text>");
+    let definition = super::super::schema::compile(&doc.to_string(), None).unwrap();
+    let product = unbound(
+        definition,
+        ProcessConfig {
+            timeout: Duration::from_secs(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let Err(InvocationError::Failed(error)) = product
+        .invoker()
+        .invoke(call(&product), CancellationToken::new())
+        .await
+    else {
+        panic!("deadline must be unknown");
+    };
+    assert_eq!(error.code(), wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN);
+    assert!(root.path().join("handoff").exists());
+    one_joined_attempt(root.path());
+}
+
+#[tokio::test]
+async fn private_finite_session_unknown_reaches_recorded_diagnostics() {
+    for (mode, expected) in [
+        ("finite-eof", wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN),
+        ("finite-failed", "ENV021"),
+    ] {
+        let fixture = Managed::new_with_policy(mode, false, true).await;
+        fixture.supply();
+        fixture.grant();
+        fixture.submit(":env use \"lab\"", false).await;
+        fixture.submit("samples read > result", false).await;
+        let error = fixture.failed("result").await;
+        assert_eq!(error.code(), expected);
+        assert!(error.policy().is_private());
+        assert_eq!(
+            fixture.handle.remote_outcome_uncertain(),
+            expected == wes_core::ErrorValue::REMOTE_OUTCOME_UNKNOWN
+        );
+        let history =
+            std::fs::read_to_string(fixture.root.path().join("history/journal.jsonl")).unwrap();
+        assert!(history.contains(expected));
+        assert!(!history.contains("synthetic-provider-session-secret"));
+        one_joined_attempt(fixture.root.path());
+        fixture.stop().await;
+    }
 }

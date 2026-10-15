@@ -29,7 +29,13 @@ struct Operation {
     format: schema::OutputFormat,
     success_codes: Vec<i64>,
     streaming: bool,
-    control: Option<(Arc<Contract>, Arc<Contract>)>,
+    control: Option<Control>,
+}
+#[derive(Clone)]
+struct Control {
+    input: Arc<Contract>,
+    output: Arc<Contract>,
+    policy: wes_core::flow::OutputPolicy,
 }
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]

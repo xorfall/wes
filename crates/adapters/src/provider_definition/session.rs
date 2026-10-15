@@ -3,7 +3,10 @@
 //!
 //! A declaration uses backend `{kind: session, bin: ..., credentials: [Slot]}`;
 //! each operation has literal argv, JSON result/type, optional streaming and
-//! control `{input: Contract, output: Contract}` (streaming only). It launches
+//! control `{input: Contract, output: Contract, output_policy: private}`
+//! (streaming only). The optional static output policy defaults to public and
+//! only tightens control results; inherited source/action policies still join.
+//! A peer cannot choose or downgrade this classification. It launches
 //! only on a local target, with declared cwd/env and no inherited environment.
 //! The first stdin frame carries captured run, fresh attempt nonce, typed
 //! arguments, endpoint, contract digests and separately granted credentials.
@@ -12,6 +15,8 @@
 //! Result and End. Controls correlate exact action IDs with confirmed typed
 //! data, refused or unknown outcomes. The host never equates a write with success.
 //! Every frame has a bounded big-endian u32 byte length and strict UTF-8 JSON.
+//! Declared Bytes fields use canonical padded standard base64 in either direction;
+//! this conversion requires their captured contract and never applies to Text/Unknown.
 //! EOF, invalid state, deadline or cancellation closes and joins the process
 //! group/Job Object and both readers; no restart, replay or reconnection occurs.
 mod protocol;
@@ -81,6 +86,12 @@ impl Session {
 }
 fn error(message: &'static str) -> InvocationError {
     InvocationError::Failed(wes_engine::runtime::RuntimeCode::ExecutionFailed.error(message, None))
+}
+fn unknown() -> InvocationError {
+    InvocationError::Failed(wes_engine::runtime::RuntimeCode::ExternalOutcomeUnknown.error(
+        "Session completion could not be confirmed; the external outcome is unknown. No automatic retry was performed.",
+        None,
+    ))
 }
 fn product(session: Session) -> Result<ImportProduct, ImportError> {
     let description = session.definition.description.clone();
@@ -248,7 +259,7 @@ impl Session {
                 control: operation
                     .control
                     .as_ref()
-                    .map(|(i, o)| [i.digest(), o.digest()]),
+                    .map(|control| [control.input.digest(), control.output.digest()]),
             },
             event_credit: u8::from(operation.streaming),
         };
@@ -348,6 +359,12 @@ impl Session {
         let mut sequence = 0u64;
         let mut output = None;
         let mut ended = false;
+        // Before a complete frame is handed off, failures are known locally. Once
+        // a finite peer may have received it, only a validated result or explicit
+        // failure settles its outcome. Readiness and cleanup are not receipts.
+        let mut start_handed_off = false;
+        let mut finite_confirmed = false;
+        let mut control_unconfirmed = false;
         let mut delivery: Option<
             std::pin::Pin<
                 Box<
@@ -358,7 +375,17 @@ impl Session {
         > = None;
         let work = {
             let work = async {
-                protocol::write_until(&mut stdin, &start, &token, ready_until).await?;
+                if token.is_cancelled() {
+                    return Err(InvocationError::Cancelled);
+                }
+                protocol::write_until(
+                    &mut stdin,
+                    &start,
+                    &token,
+                    ready_until,
+                    Some(&mut start_handed_off),
+                )
+                .await?;
                 drop(start);
                 loop {
                     let until = pending.as_ref().map(|(_, _, until)| *until).unwrap_or(
@@ -372,7 +399,7 @@ impl Session {
                     );
                     tokio::select! {biased;
                         ()=token.cancelled()=>return Err(InvocationError::Cancelled),
-                        _=tokio::time::sleep_until(until), if !(opened && sink.is_some() && pending.is_none())=>return Err(error("Session response deadline elapsed; external outcome may be unknown; no retry was performed")),
+                        _=tokio::time::sleep_until(until), if !(opened && sink.is_some() && pending.is_none())=>return Err(error("Session response deadline elapsed; no retry was performed")),
                         result=&mut diagnostics, if !diagnostics_done=>{
                             diagnostics_done=true;
                             if !matches!(result,Ok(Ok(()))) {diagnostics_failed=true; return Err(error("Session diagnostics exceeded their byte budget or failed"));}
@@ -381,7 +408,7 @@ impl Session {
                             result.map_err(|_|error("Session event admission closed or exceeded its budget"))?;
                             delivery=None;
                             if ended {return Ok(());}
-                            protocol::write_until(&mut stdin,&protocol::credit(&session),&token,tokio::time::Instant::now()+wes_engine::streams::MAX_READY_WAIT).await?;
+                            protocol::write_until(&mut stdin,&protocol::credit(&session),&token,tokio::time::Instant::now()+wes_engine::streams::MAX_READY_WAIT,None).await?;
                         },
                         request=requests.recv(), if pending.is_none() && operation.control.is_some() && opened && !ended=>{
                             let Some(Request{action, reply, cancellation})=request else {return Err(error("Session control owner ended"));};
@@ -390,7 +417,7 @@ impl Session {
                             let encoded=match protocol::action(&session,&id,&action) {Ok(encoded)=>encoded, Err(error)=>{let _=reply.send(ControlOutcome::Refused);return Err(error);}};
                             let until=tokio::time::Instant::now()+wes_engine::streams::MAX_READY_WAIT;
                             pending=Some((id,reply,until));
-                            protocol::write_until(&mut stdin,&encoded,&token,until).await?;
+                            protocol::write_until(&mut stdin,&encoded,&token,until,None).await?;
                         },
                         frame=read.recv(), if !ended=>{
                             let frame=frame.ok_or_else(||error("Session protocol ended without a terminal frame; no retry was performed"))??;
@@ -399,8 +426,8 @@ impl Session {
                                 protocol::Message::Ready if !opened => {
                                     if let Some(sink)=&sink {
                                         sink.opened().map_err(|_| error("Session source closed before readiness"))?;
-                                        if let Some((input,output))=&operation.control {
-                                            sink.install_controls(input.clone(),output.clone(),ControlLimits::default(),Arc::new(Controller{session:self.clone(), send:controls.clone(),credentials:credentials.clone()})).map_err(|_| error("Session control installation was refused"))?;
+                                        if let Some(control)=&operation.control {
+                                            sink.install_controls(control.input.clone(),control.output.clone(),ControlLimits::default(),Arc::new(Controller{session:self.clone(), send:controls.clone(),credentials:credentials.clone()})).map_err(|_| error("Session control installation was refused"))?;
                                         }
                                     }
                                     opened=true;
@@ -414,12 +441,22 @@ impl Session {
                                 },
                                 protocol::Message::Result{data} if opened && sink.is_none() && output.is_none()=>{
                                     output=Some(protocol::value(data.get().as_bytes(),operation.result.as_ref().expect("result"),&token)?);
+                                    finite_confirmed=true;
                                 },
                                 protocol::Message::Control{id,outcome} if opened=>{
                                     let (expected,reply,_)=pending.take().ok_or_else(||error("Unsolicited session control receipt"))?;
                                     if id!=expected {pending=Some((expected,reply,until)); return Err(error("Session control receipt belongs to another action"));}
                                     let outcome=match outcome {
-                                        protocol::Receipt::Confirmed{data}=>match protocol::value(data.get().as_bytes(),&operation.control.as_ref().expect("declared control").1,&token) {Ok(v)=>ControlOutcome::Confirmed(v),Err(_)=>{ let _=reply.send(ControlOutcome::Unknown); return Err(error("Session control receipt violates its captured contract; outcome is unknown"));}},
+                                        protocol::Receipt::Confirmed{data}=>{
+                                            let control=operation.control.as_ref().expect("declared control");
+                                            match protocol::value(data.get().as_bytes(),&control.output,&token) {
+                                                Ok(v)=>{
+                                                    let provenance=v.provenance().clone().with_policy(&control.policy.policy());
+                                                    ControlOutcome::Confirmed(v.with_provenance(provenance))
+                                                },
+                                                Err(_)=>{ control_unconfirmed=true; let _=reply.send(ControlOutcome::Unknown); return Err(error("Session control receipt violates its captured contract; outcome is unknown"));}
+                                            }
+                                        },
                                         protocol::Receipt::Refused=>ControlOutcome::Refused,
                                         protocol::Receipt::Unknown=>ControlOutcome::Unknown,
                                     };
@@ -429,7 +466,10 @@ impl Session {
                                     ended=true;
                                     if delivery.is_none() {return Ok(());}
                                 },
-                                protocol::Message::Failed=>return Err(error("External provider reported a session failure; no retry was performed")),
+                                protocol::Message::Failed=>{
+                                    finite_confirmed=true;
+                                    return Err(error("External provider reported a session failure; no retry was performed"));
+                                },
                                 _=>return Err(error("Session frame violates the captured operation state")),
                             }
                         }
@@ -451,19 +491,26 @@ impl Session {
         if !diagnostics_done {
             diagnostics_failed = !matches!(diagnostics.await, Ok(Ok(())));
         }
+        control_unconfirmed |= pending.is_some();
         if let Some((_, reply, _)) = pending {
             let _ = reply.send(ControlOutcome::Unknown);
         }
         while let Ok(request) = requests.try_recv() {
             let _ = request.reply.send(ControlOutcome::Refused);
         }
-        cleanup.map_err(|_| {
-            error("Session physical cleanup was not confirmed; external outcome is unknown")
+        cleanup.map_err(|_| unknown())?;
+        let work = if !reader_joined || diagnostics_failed {
+            Err(error("Session reader cleanup or diagnostic budget failed"))
+        } else {
+            work
+        };
+        work.map_err(|reason| {
+            if (sink.is_none() && start_handed_off && !finite_confirmed) || control_unconfirmed {
+                unknown()
+            } else {
+                reason
+            }
         })?;
-        if !reader_joined || diagnostics_failed {
-            return Err(error("Session reader cleanup or diagnostic budget failed"));
-        }
-        work?;
         Ok(output)
     }
 }

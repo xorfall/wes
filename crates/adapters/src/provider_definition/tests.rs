@@ -569,3 +569,40 @@ fn target_definitions_capture_host_yaml_and_build_remote_contracts_without_probe
         assert!(loader.capture("env.yaml").is_err());
     }
 }
+
+#[test]
+fn control_output_policies_are_static_strict_and_default_to_public() {
+    let doc = serde_json::json!({"version":1,"provider":"samples","backend":{"kind":"session","bin":"/synthetic/adapter"},"operations":[{"path":["watch"],"argv":[],"streaming":true,"result":{"format":"json","type":"Option<Text>"},"control":{"input":"Int","output":"Bool"}}]});
+    let default = schema::compile(&doc.to_string(), None).unwrap();
+    assert_eq!(
+        default.operations[0].control.as_ref().unwrap().policy,
+        wes_core::flow::OutputPolicy::Public
+    );
+    for (text, expected) in [
+        ("public", wes_core::flow::OutputPolicy::Public),
+        ("private", wes_core::flow::OutputPolicy::Private),
+        (
+            "confidential-temporary",
+            wes_core::flow::OutputPolicy::ConfidentialTemporary,
+        ),
+        ("confidential", wes_core::flow::OutputPolicy::Confidential),
+    ] {
+        let mut declared = doc.clone();
+        declared["operations"][0]["control"]["output_policy"] = text.into();
+        let compiled = schema::compile(&declared.to_string(), None).unwrap();
+        assert_eq!(
+            compiled.operations[0].control.as_ref().unwrap().policy,
+            expected
+        );
+    }
+    for invalid in [
+        serde_json::json!("secret"),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+        serde_json::json!({"policy":"private"}),
+    ] {
+        let mut invalid_doc = doc.clone();
+        invalid_doc["operations"][0]["control"]["output_policy"] = invalid;
+        assert!(schema::compile(&invalid_doc.to_string(), None).is_err());
+    }
+}
