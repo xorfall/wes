@@ -224,7 +224,11 @@ async fn command_publication_skips_unchanged_metadata_and_follows_client_selecti
             std::fs::remove_dir(&environment).unwrap();
         }
         tokio::time::timeout(Duration::from_secs(5), async {
-            while !std::fs::read_to_string(&environment).is_ok_and(|text| text == expected) {
+            // Environment publication precedes alias creation in the same metadata job.
+            // Its label alone is not a receipt that the final command set is ready.
+            while !std::fs::read_to_string(&environment).is_ok_and(|text| text == expected)
+                || (cell == "select" && command.symlink_metadata().is_err())
+            {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
