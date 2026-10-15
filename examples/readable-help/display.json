@@ -30,6 +30,10 @@
       "summary": "Choose a command family or provider. :list providers discovers the selected catalogue. :help arguments explains literals and nested references; :help errors explains diagnostic codes and typical fixes.",
       "children": [
         {
+          "name": "source",
+          "summary": "Bind and explicitly control a current owned source connection; stored projections do not restore live authority."
+        },
+        {
           "name": "scan",
           "summary": "Analyze captured finite records with declared pure transitions, coverage and cumulative limits."
         },
