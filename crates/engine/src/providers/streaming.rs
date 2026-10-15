@@ -7,6 +7,14 @@ pub(super) fn prepare_source(
     ticket: RunTicket<BoundCall>,
     cancellation: CancellationToken,
 ) -> PreparationFuture {
+    prepare_source_with_storage(journal, ticket, cancellation, None)
+}
+pub(super) fn prepare_source_with_storage(
+    journal: Option<CallJournal>,
+    ticket: RunTicket<BoundCall>,
+    cancellation: CancellationToken,
+    storage: Option<crate::storage::StoreWorker>,
+) -> PreparationFuture {
     let policy = ticket.payload.failure_policy(&ticket.inputs);
     let work = async move {
         let validation_cancel = cancellation.clone();
@@ -75,6 +83,7 @@ pub(super) fn prepare_source(
             attribution,
             cancellation,
             read_access,
+            storage,
         })
     };
     Box::pin(async move {
@@ -103,12 +112,20 @@ pub(crate) struct PreparedSource {
     attribution: Provenance,
     cancellation: CancellationToken,
     read_access: super::read_access::Attempt,
+    storage: Option<crate::storage::StoreWorker>,
 }
 impl PreparedSource {
     pub(crate) fn refusal(&self, message: String) -> ExecutionReport {
         Outcome::Failed(RuntimeCode::ExecutionFailed.error(message, None))
             .with_policy(self.attribution.policy())
             .into()
+    }
+    pub(crate) fn records_bytes(&self) -> bool {
+        self.bound
+            .provider
+            .streams
+            .as_ref()
+            .is_some_and(|streams| streams.records_bytes(&self.bound.invocation.capability))
     }
     pub(crate) fn recording_admission(&self) -> Option<(Arc<()>, wes_core::flow::FlowPolicy)> {
         self.bound
@@ -135,7 +152,13 @@ impl PreparedSource {
         if !self.read_access.current() {
             return Err(refused(super::read_access::refusal().outcome()));
         }
-        streams::spawn_with_archives(
+        let context = self.storage.map(|worker| {
+            crate::storage::AcquisitionContext::new(
+                worker.with_placement(crate::storage::ValuePlacement::MemoryAndDisk),
+                self.attribution.clone(),
+            )
+        });
+        streams::spawn_with_recording(
             Call {
                 authority: self.bound.context.authority.clone(),
                 run: self.run,
@@ -155,6 +178,7 @@ impl PreparedSource {
             None,
             archives,
             self.read_access.stream_guard(),
+            context,
         )
         .map_err(|_| {
             refused(Outcome::Failed(RuntimeCode::ExecutionFailed.error(

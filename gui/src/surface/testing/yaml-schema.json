@@ -1298,6 +1298,10 @@
         "control": {
           "schema": "provider.control",
           "required": false
+        },
+        "recording": {
+          "schema": "provider.recording",
+          "required": false
         }
       },
       "constraints": [
@@ -1448,6 +1452,28 @@
       "constraints": [
         "provider-read-access"
       ]
+    },
+    "provider.recording": {
+      "kind": "object",
+      "fields": {
+        "type": {
+          "schema": "type",
+          "required": true
+        },
+        "byte_field": {
+          "schema": "provider.text-list",
+          "required": true
+        },
+        "max_bytes": {
+          "schema": "int",
+          "required": true
+        },
+        "max_duration_ms": {
+          "schema": "int",
+          "required": true
+        }
+      },
+      "hint": "Streaming session only. Captured materialized record type and a required unconstrained Bytes leaf. max_bytes is positive and at most the native acquisition budget; duration is 1–86400000 ms. Native storage supplies placement/policy. Ordered byte credits, an initial shell before readiness and a final shell plus exact End distinguish complete data from an acknowledged incomplete prefix. Physical join is required; no peer-selected paths or replay."
     }
   },
   "typeConstructors": [

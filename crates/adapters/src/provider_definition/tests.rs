@@ -819,3 +819,38 @@ fn provider_structure_diagnostics_publish_choices_without_submitted_values() {
         "structural validity must not bypass resolved contract checks"
     );
 }
+
+#[test]
+fn streaming_recording_declarations_refuse_before_dispatch() {
+    let valid = serde_json::json!({"version":1,"provider":"samples","backend":{"kind":"session","bin":"synthetic-peer"},
+        "types":{"Blob":{"base":"Record","fields":{"label":"Text","raw":"Bytes"}}},
+        "operations":[{"path":["watch"],"streaming":true,"argv":[],"result":{"format":"json","type":"Int"},
+            "recording":{"type":"Blob","byte_field":["raw"],"max_bytes":65536,"max_duration_ms":1000}}]});
+    assert!(schema::compile(&valid.to_string(), None).is_ok());
+    for (key, value) in [
+        ("max_bytes", serde_json::json!(0)),
+        (
+            "max_bytes",
+            serde_json::json!(wes_budgets::get("storage.acquisition.bytes") + 1),
+        ),
+        ("max_duration_ms", serde_json::json!(0)),
+        ("max_duration_ms", serde_json::json!(86_400_001)),
+        ("byte_field", serde_json::json!([])),
+        ("byte_field", serde_json::json!(["label"])),
+        ("type", serde_json::json!("Missing")),
+        ("unexpected", serde_json::json!(true)),
+    ] {
+        let mut document = valid.clone();
+        document["operations"][0]["recording"][key] = value;
+        assert!(
+            schema::compile(&document.to_string(), None).is_err(),
+            "{key}"
+        );
+    }
+    let mut finite = valid.clone();
+    finite["operations"][0]["streaming"] = serde_json::json!(false);
+    assert!(schema::compile(&finite.to_string(), None).is_err());
+    let mut process = valid.clone();
+    process["backend"]["kind"] = serde_json::json!("process");
+    assert!(schema::compile(&process.to_string(), None).is_err());
+}

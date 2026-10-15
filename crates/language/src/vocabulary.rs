@@ -57,6 +57,7 @@ pub enum MetaCommand {
     Stream,
     SourceBind,
     SourceSend,
+    SourceResult,
     Fork,
     Sandbox,
     Transient,
@@ -130,6 +131,7 @@ pub const COMMANDS: &[MetaCommand] = &[
     MetaCommand::Stream,
     MetaCommand::SourceBind,
     MetaCommand::SourceSend,
+    MetaCommand::SourceResult,
     MetaCommand::Fork,
     MetaCommand::Sandbox,
     MetaCommand::Transient,
@@ -255,6 +257,7 @@ impl MetaCommand {
             Self::Stream => "stream",
             Self::SourceBind => "source-bind",
             Self::SourceSend => "source-send",
+            Self::SourceResult => "source-result",
             Self::Fork => "fork",
             Self::Sandbox => "sandbox",
             Self::Transient => "transient",
@@ -322,6 +325,11 @@ impl MetaCommand {
         let text =
             |name, required| Parameter::new(name, Shape::Primitive(Primitive::Text), required);
         match self {
+            Self::SourceResult => {
+                spec.summary = "Read the exact original raw recording of a physically joined provider source. This does not start, stop, wait for, reconnect or replay the source. Running, copied/restored and changed runs refuse. SourceRecording reports the acknowledged raw extent and protocol completion, never complete network traffic; native byte reads and Keep retain the captured root policy and residence ceiling.";
+                spec.operands = Arity::bounded(1, 1);
+                spec.produces_value = true;
+            }
             Self::SourceBind => {
                 spec.summary = "Capture a typed control binding from one currently open owned provider source. Binding sends nothing, preserves the exact Run/connection and cannot restore authority.";
                 spec.operands = Arity::bounded(1, 1);

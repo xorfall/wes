@@ -24,9 +24,12 @@ pub(crate) const MAX_ARCHIVES: usize = 4;
 mod controls;
 pub(crate) mod delivery;
 mod readiness;
+mod recording;
 pub use controls::{
     ControlError, ControlFuture, ControlLimits, ControlOutcome, LiveController, LiveControls,
 };
+pub(crate) use recording::RecordedOutput;
+pub use recording::{RecordingAppend, RecordingEnd, StreamRecording};
 mod window;
 pub use readiness::{MAX_READY_WAIT, ReadyError, ReadyReceipt};
 pub use window::Limits;
@@ -39,6 +42,11 @@ pub type StreamFuture = Pin<Box<dyn Future<Output = Result<(), InvocationError>>
 /// constructing that future must not block the async scheduler. No detached delivery tasks.
 /// Synchronous delivery before `opened` is accepted into the already installed window.
 pub trait StreamingInvoker: Send + Sync + 'static {
+    /// Static admission metadata, with no external work or result-derived authority.
+    fn records_bytes(&self, _capability: &wes_core::capability::Capability) -> bool {
+        false
+    }
+
     fn subscribe(
         &self,
         call: Call,
@@ -94,6 +102,10 @@ struct State {
     rejected: u64,
     sequence: u64,
     archives: Vec<Arc<archive::Branch>>,
+    recording_required: bool,
+    recording_started: bool,
+    recording_reserved: bool,
+    recording_preparing: bool,
 }
 struct Shared {
     run: Run,
@@ -105,6 +117,8 @@ struct Shared {
     archive_ingress: Arc<delivery::Sender>,
     attribution: Provenance,
     read_guard: Option<crate::provider_reads::ReadGuard>,
+    recording_context: Option<crate::storage::AcquisitionContext>,
+    recorded: watch::Sender<Option<Arc<RecordedOutput>>>,
 }
 impl Shared {
     fn read_access_current(&self) -> bool {
@@ -127,6 +141,27 @@ impl Shared {
 #[derive(Clone)]
 pub struct StreamSink(Weak<Shared>, uuid::Uuid, CancellationToken);
 impl StreamSink {
+    /// Close live admission without claiming physical completion or cancelling the owned join.
+    /// Terminal protocol work and already admitted recording writes may still finish.
+    pub fn closing(&self) -> Result<(), StreamError> {
+        let shared = self.0.upgrade().ok_or(StreamError::Closed)?;
+        let mut state = shared.state();
+        if state.connection_epoch != self.1
+            || state.finished
+            || shared.cancellation.is_cancelled()
+            || !matches!(state.phase, Phase::Open | Phase::Closing)
+        {
+            return Err(StreamError::Closed);
+        }
+        state.phase = Phase::Closing;
+        state.dirty = true;
+        if let Some(controls) = &state.controls {
+            controls.revoke();
+        }
+        drop(state);
+        shared.changed.notify_one();
+        Ok(())
+    }
     /// Explicit observation reconnect. Retire old callbacks and readiness, end recording coverage
     /// at the gap, and join old controls before returning a fresh sink. Never replay control actions.
     /// Ordered computational streams require a new source run instead of silently crossing a gap.
@@ -141,7 +176,7 @@ impl StreamSink {
             {
                 return Err(StreamError::Closed);
             }
-            if shared.delivery.is_some() {
+            if shared.delivery.is_some() || state.recording_started {
                 return Err(StreamError::Invalid);
             }
             let reconnects = state
@@ -209,6 +244,11 @@ impl StreamSink {
         }
         if state.opened {
             return Err(StreamError::AlreadyOpen);
+        }
+        if state.recording_preparing
+            || ((state.recording_required || state.recording_started) && !state.recording_reserved)
+        {
+            return Err(StreamError::Invalid);
         }
         state.opened = true;
         state.phase = Phase::Open;
@@ -362,6 +402,7 @@ pub struct StreamHandle {
     snapshots: watch::Receiver<Arc<Snapshot>>,
     events: Arc<Mutex<Option<tokio::sync::mpsc::Receiver<delivery::Event>>>>,
     owner: Weak<Shared>,
+    recorded: watch::Receiver<Option<Arc<RecordedOutput>>>,
 }
 impl StreamHandle {
     pub(crate) fn read_access_current(&self) -> bool {
@@ -495,6 +536,32 @@ pub(crate) fn spawn_with_archives(
     archives: Vec<Arc<archive::Branch>>,
     read_guard: Option<crate::provider_reads::ReadGuard>,
 ) -> Result<(StreamHandle, StreamTask), StreamError> {
+    spawn_with_recording(
+        call,
+        invoker,
+        attribution,
+        limits,
+        parent,
+        budget,
+        archive_budget,
+        archives,
+        read_guard,
+        None,
+    )
+}
+
+pub(crate) fn spawn_with_recording(
+    call: Call,
+    invoker: Arc<dyn StreamingInvoker>,
+    attribution: Provenance,
+    limits: Limits,
+    parent: CancellationToken,
+    budget: Option<delivery::Budget>,
+    archive_budget: Option<delivery::Budget>,
+    archives: Vec<Arc<archive::Branch>>,
+    read_guard: Option<crate::provider_reads::ReadGuard>,
+    recording_context: Option<crate::storage::AcquisitionContext>,
+) -> Result<(StreamHandle, StreamTask), StreamError> {
     if !call.capability.streaming {
         return Err(StreamError::Invalid);
     }
@@ -528,6 +595,8 @@ pub(crate) fn spawn_with_archives(
     let cancellation = parent.child_token();
     let epoch = uuid::Uuid::new_v4();
     let connection_cancel = cancellation.child_token();
+    let recording_required = invoker.records_bytes(&call.capability);
+    let (recorded, recorded_read) = watch::channel(None);
     let shared = Arc::new(Shared {
         run: run.clone(),
         principal: call.authority.clone(),
@@ -545,6 +614,10 @@ pub(crate) fn spawn_with_archives(
             rejected: 0,
             sequence: 0,
             archives,
+            recording_required,
+            recording_started: false,
+            recording_reserved: false,
+            recording_preparing: false,
         }),
         cancellation: cancellation.clone(),
         changed: Notify::new(),
@@ -552,6 +625,8 @@ pub(crate) fn spawn_with_archives(
         archive_ingress,
         attribution,
         read_guard,
+        recording_context,
+        recorded,
     });
     let sink = StreamSink(Arc::downgrade(&shared), epoch, connection_cancel);
     let owner = Arc::downgrade(&shared);
@@ -631,6 +706,7 @@ pub(crate) fn spawn_with_archives(
             snapshots,
             events: Arc::new(Mutex::new(events)),
             owner,
+            recorded: recorded_read,
         },
         StreamTask {
             cancel_on_drop: true,

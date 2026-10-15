@@ -86,6 +86,7 @@
 :help source
 :help source bind
 :help source send
+:help source result
 :help fork
 :help describe
 :help sandbox

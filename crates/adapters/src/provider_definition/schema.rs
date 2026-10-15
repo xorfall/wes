@@ -45,6 +45,16 @@ struct OperationDoc {
     #[serde(default)]
     streaming: bool,
     control: Option<ControlDoc>,
+    recording: Option<RecordingDoc>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordingDoc {
+    #[serde(rename = "type")]
+    contract: String,
+    byte_field: Vec<String>,
+    max_bytes: u64,
+    max_duration_ms: u64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -243,6 +253,20 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
                 "session operations require JSON results, literal argv and success code 0",
             ));
         }
+        let recording = op.recording.map(|recording| {
+            if session.is_none() || !op.streaming {
+                return Err(DefinitionError::new("byte recording requires a streaming session operation"));
+            }
+            if recording.max_bytes == 0 || recording.max_bytes > wes_budgets::get("storage.acquisition.bytes")
+                || recording.max_duration_ms == 0 || recording.max_duration_ms > 86_400_000
+            { return Err(DefinitionError::new("recording requires a bounded byte ceiling and a lifetime of 1–86400000 milliseconds")); }
+            let contract = registry.resolve(&recording.contract)
+                .map_err(|_| DefinitionError::new("unknown recording contract"))?;
+            if !materialized(&contract) { return Err(DefinitionError::new("recording shell must be materialized")); }
+            super::record_bytes::validate_leaf(&contract, &recording.byte_field)?;
+            Ok(Recording { contract, fields: recording.byte_field, maximum:recording.max_bytes,
+                duration:std::time::Duration::from_millis(recording.max_duration_ms) })
+        }).transpose()?;
         let control = op
             .control
             .map(|control| {
@@ -440,6 +464,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             success_codes: op.success_codes,
             streaming: op.streaming,
             control,
+            recording,
         });
     }
     let description = ProviderDescription::new(

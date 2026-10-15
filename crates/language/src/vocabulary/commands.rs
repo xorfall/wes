@@ -13,6 +13,12 @@ pub struct CommandPath {
 use MetaCommand::*;
 pub const COMMAND_PATHS: &[CommandPath] = &[
     CommandPath {
+        path: &["source", "result"],
+        operation: SourceResult,
+        short: None,
+        summary: "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority.",
+    },
+    CommandPath {
         path: &["source", "bind"],
         operation: SourceBind,
         short: None,
@@ -767,7 +773,7 @@ pub fn help_summary(path: &[&str]) -> &'static str {
     match path {
         ["read"] => Read.spec(&[]).summary,
         ["source"] => {
-            "Bind and explicitly control a current owned source connection; stored projections do not restore live authority."
+            "Bind and explicitly control a current owned source connection, or read its physically joined original recording. Stored projections do not restore live authority."
         }
         ["node"] => "Refresh, change, cancel or configure existing work.",
         ["workspace"] => "Save, open, configure or plan deletion of a workspace.",

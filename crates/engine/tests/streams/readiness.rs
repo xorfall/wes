@@ -45,6 +45,38 @@ async fn acknowledgement_without_first_event_is_ready_and_receipt_expires_on_clo
         .unwrap();
     task.join().await.unwrap();
 }
+
+#[tokio::test]
+async fn closing_admission_retires_ready_proof_without_an_early_physical_close() {
+    let (call, _) = calls();
+    let run = call.run.clone();
+    let (provider, mut entered) = provider(None, true);
+    let (handle, task) = streams::spawn(
+        call,
+        provider,
+        Provenance::default(),
+        Limits::default(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    let started = entered.recv().await.unwrap();
+    let ready = handle
+        .wait_ready(&run, Duration::from_secs(1), CancellationToken::new())
+        .await
+        .unwrap();
+    started.sink.closing().unwrap();
+    assert!(matches!(
+        ready.admit(&run, || panic!("closed admission")),
+        Err(ReadyError::Closed)
+    ));
+    assert!(!started.token.is_cancelled());
+    assert_eq!(started.sink.push(value(1)), Err(StreamError::Closed));
+    let observed = phase(&handle, |phase| *phase == Phase::Closing).await;
+    assert_eq!(observed.phase, Phase::Closing);
+    started.finish.send(Ok(())).unwrap();
+    task.join().await.unwrap();
+    assert_eq!(handle.snapshot().phase, Phase::Ended);
+}
 #[tokio::test(start_paused = true)]
 async fn cancelled_and_expired_waits_do_not_cancel_or_restart_the_source() {
     let (call, other) = calls();

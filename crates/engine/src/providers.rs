@@ -751,7 +751,12 @@ impl CallExecutor {
         ticket: RunTicket<BoundCall>,
         cancellation: CancellationToken,
     ) -> streaming::PreparationFuture {
-        streaming::prepare_source(self.journal.clone(), ticket, cancellation)
+        streaming::prepare_source_with_storage(
+            self.journal.clone(),
+            ticket,
+            cancellation,
+            self.storage.clone(),
+        )
     }
     pub fn ephemeral() -> Self {
         Self {

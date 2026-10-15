@@ -156,3 +156,9 @@ it("publishes original byte coordinates and limits in actual native read help", 
   expect(markup).toContain("from:");
   expect(markup).toContain("65536");
 });
+
+it("describes physically joined recording reads without presenting a live capability", () => {
+  const markup = printed(captures["source result"]!);
+  expect(markup).toContain("physically joined");
+  expect(markup).toContain("Incomplete prefixes");
+});

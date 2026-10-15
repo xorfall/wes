@@ -68,6 +68,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
                 ("success_codes", "provider.success-codes", false),
                 ("streaming", "bool", false),
                 ("control", "provider.control", false),
+                ("recording", "provider.recording", false),
             ]),
             "provider-operation",
         ),
@@ -156,6 +157,12 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
             "provider-read-access",
         ),
     );
+    d.insert("provider.recording", hint(object(&[
+        ("type", "type", true),
+        ("byte_field", "provider.text-list", true),
+        ("max_bytes", "int", true),
+        ("max_duration_ms", "int", true),
+    ]), "Streaming session only. Captured materialized record type and a required unconstrained Bytes leaf. max_bytes is positive and at most the native acquisition budget; duration is 1–86400000 ms. Native storage supplies placement/policy. Ordered byte credits, an initial shell before readiness and a final shell plus exact End distinguish complete data from an acknowledged incomplete prefix. Physical join is required; no peer-selected paths or replay."));
 }
 
 pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)> {

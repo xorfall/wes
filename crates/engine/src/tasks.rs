@@ -598,7 +598,7 @@ impl Executor<BoundTask> for TaskExecutor {
         Box::pin(async move {
             let admission = opening.await?;
             let source_reservation = owner
-                .reserve_source(&run)
+                .reserve_source_with_recording(&run, admission.records_bytes())
                 .map_err(|message| admission.refusal(message))?;
             let claims = match admission.recording_admission() {
                 Some((definition, _)) => {
