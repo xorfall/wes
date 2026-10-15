@@ -168,3 +168,9 @@ it("explains ordinary Keep and residence ceilings in actual native help", () => 
   expect(markup).toContain("acknowledged ordinary result");
   expect(markup).toContain("Private/temporary");
 });
+
+it("shows declared static-field operands and whole-result operands in native help", () => {
+  expect(printed(captures["dataset page"]!)).toContain("$selection");
+  expect(printed(captures["source result"]!)).toContain("$result");
+  expect(printed(captures.keep!)).toContain("$result");
+});

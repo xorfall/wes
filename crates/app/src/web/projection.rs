@@ -807,7 +807,8 @@ fn vocabulary(
             }).collect::<Vec<_>>();
             Some(json!({"word":word,"parameters":selected.parameters.iter().map(&project).collect::<Vec<_>>(),"takes":child_takes,"variants":children}))
         }).collect();
-        json!({"name":name,"implemented":true,"summary":entry.summary,"takes":takes,
+        let summary=if short {entry.summary} else {commands::help_summary(&[name])};
+        json!({"name":name,"implemented":true,"summary":summary,"takes":takes,
             "open":spec.as_ref().is_some_and(|s|s.open_arguments),"variants":variants,
             "parameters":spec.as_ref().map(|s|s.parameters.iter().map(project).collect::<Vec<_>>()).unwrap_or_default()})
     }).collect();

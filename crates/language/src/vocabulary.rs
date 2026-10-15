@@ -207,6 +207,8 @@ pub struct CommandSpec {
     pub reserved: bool,
     pub path_tail: Arity,
     pub operands: Arity,
+    /// Positional references may select a static field of an acknowledged result.
+    pub field_operands: bool,
     pub parameters: Vec<Parameter>,
     pub open_arguments: bool,
     pub requires_subject: bool,
@@ -311,6 +313,14 @@ impl MetaCommand {
             reserved: false,
             path_tail: Arity::NONE,
             operands: Arity::NONE,
+            field_operands: matches!(
+                self,
+                Self::DatasetPage
+                    | Self::DatasetRetention
+                    | Self::DatasetSnapshot
+                    | Self::DatasetInspect
+                    | Self::DatasetPlanDelete
+            ),
             parameters: Vec::new(),
             open_arguments: false,
             requires_subject: false,

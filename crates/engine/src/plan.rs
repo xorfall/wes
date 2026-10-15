@@ -550,7 +550,7 @@ pub fn plan_with_expectations(
                 .iter()
                 .map(|value| {
                     let input = input(value, &Shape::Unknown, names)?;
-                    if matches!(input, Input::FieldPath { .. }) && !matches!(spec.command,wes_language::vocabulary::MetaCommand::DatasetPage|wes_language::vocabulary::MetaCommand::DatasetRetention|wes_language::vocabulary::MetaCommand::DatasetSnapshot|wes_language::vocabulary::MetaCommand::DatasetInspect|wes_language::vocabulary::MetaCommand::DatasetPlanDelete) {
+                    if matches!(input, Input::FieldPath { .. }) && !spec.field_operands {
                         return Err(PlanError::diagnostic(Diagnostic::error("PLN004", value.name().span,
                             "field paths are supported in named arguments; this operand requires a whole result")));
                     }

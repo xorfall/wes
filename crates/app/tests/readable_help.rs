@@ -168,6 +168,25 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
                 assert!(help.contains(required), "{help}");
             }
         }
+        if path == "dataset page" {
+            assert!(
+                data["invocation"]["usage"]
+                    .as_str()
+                    .unwrap()
+                    .contains("$selection")
+            );
+        }
+        if matches!(
+            path,
+            "source bind" | "source send" | "source result" | "keep"
+        ) {
+            assert!(
+                data["invocation"]["usage"]
+                    .as_str()
+                    .unwrap()
+                    .contains("$result")
+            );
+        }
         if path == "calc" {
             assert!(data["invocation"].get("example").is_none());
             assert_eq!(data["invocation"]["examples"].as_array().unwrap().len(), 5);
@@ -194,6 +213,7 @@ async fn example_help_is_complete_specific_and_matches_the_surface_fixture() {
             "fork",
             "inspect",
             "http request",
+            "dataset page",
             "keep",
             "source",
             "source result",
