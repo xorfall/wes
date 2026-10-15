@@ -717,6 +717,79 @@
       "children": []
     }
   },
+  "dataset page": {
+    "type": {
+      "kind": "record",
+      "name": "wes.Help",
+      "fields": [
+        {
+          "name": "path",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "summary",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "invocation",
+          "type": {
+            "kind": "unknown"
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "unknown"
+          }
+        }
+      ]
+    },
+    "provenance": {},
+    "data": {
+      "path": "dataset page",
+      "summary": "Read a bounded typed page: :dataset page $analysis.outputs from:0 limit:100 > page. from is an exact decimal ordinal; the selected extent stays fixed.",
+      "invocation": {
+        "command": ":dataset page",
+        "usage": ":dataset page $selection [stream:<Text>] [from:<Text>] [limit:<Int>]",
+        "summary": "Read a bounded typed page: :dataset page $analysis.outputs from:0 limit:100 > page. from is an exact decimal ordinal; the selected extent stays fixed.",
+        "implemented": true,
+        "takes": [],
+        "parameters": [
+          {
+            "name": "stream",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "from",
+            "type": "Text",
+            "required": false
+          },
+          {
+            "name": "limit",
+            "type": "Int",
+            "required": false
+          }
+        ],
+        "otherArguments": false,
+        "producesValue": true,
+        "operands": {
+          "min": 1,
+          "max": 1
+        },
+        "selection": "Select an owned Dataset result, including a record field: :dataset page $analysis.outputs from:0 limit:100 > page. This explicit read can inspect incomplete evidence without treating the original failed run as success.",
+        "stream": "stream:outputs is the default. A forensic analysis also exposes stream:coverage for acknowledged rejected frames, including bounded original-byte excerpts. Use :dataset page $analysis.outputs stream:coverage from:0 limit:10. Coverage page ordinals are dense skipped-row positions; recordOrdinal inside each ScanRejection is the original input ordinal. The parent Dataset reference still counts ordinary outputs. Selected page records and schemaDigest describe only the selected stream. Coverage is absent for ordinary Datasets, not an invented empty stream; selecting it refuses. Neither stream starts or resumes analysis, and complete-with-skips is not full interpretation.",
+        "range": "from: is a literal canonical unsigned decimal ordinal; limit: is 1–100. Reads use fixed committed extent identity, bounded encoded bytes and physical segments. Read page.next for continuation; extentExhausted means only this selected prefix is exhausted, never that an external producer completed.",
+        "result": "Page rows form an ordinary bounded List with the pinned full row contract and captured metadata. Inspect reports lifecycle, exact string counts, schema digest and established persistence. Dataset is not implicitly collected or converted to List.",
+        "authority": "Workspace ownership is checked at worker entry; same-home committed identity and current withdrawal are checked by the shared storage owner before and after paging. Reads never resume a scan, start a producer or issue provider calls."
+      },
+      "children": []
+    }
+  },
   "list templates": {
     "type": {
       "kind": "record",
@@ -1210,7 +1283,7 @@
       "summary": "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority.",
       "invocation": {
         "command": ":source result",
-        "usage": ":source result",
+        "usage": ":source result $result",
         "summary": "Read a physically joined original raw recording: :source result $events > evidence. No source is started or stopped. Incomplete prefixes remain explicitly incomplete; retained descriptors grant no live authority.",
         "implemented": true,
         "takes": [],
@@ -1314,7 +1387,7 @@
       "summary": "Explicitly protect one acknowledged ordinary result, an exact transient member and its dependencies, or jointly captured named analysis members. No producer is run. Private/temporary policy is never promoted. Example: :keep $evidence > savedEvidence or :keep $study.value > savedValue",
       "invocation": {
         "command": ":keep",
-        "usage": ":keep",
+        "usage": ":keep $result",
         "summary": "Explicitly protect one acknowledged ordinary result, an exact transient member and its dependencies, or jointly captured named analysis members. No producer is run. Private/temporary policy is never promoted. Example: :keep $evidence > savedEvidence or :keep $study.value > savedValue",
         "implemented": true,
         "takes": [],

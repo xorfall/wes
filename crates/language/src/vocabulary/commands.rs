@@ -813,6 +813,8 @@ pub fn help_usage(spec: &CommandSpec) -> String {
         ["def"] => "<name>(<parameter>: <Type>) [-> <Type>] as <command-or-calc>",
         ["import"] | ["import", "plan"] => "<importer>",
         ["wait"] => "$result [$other ...]",
+        _ if spec.operands.min > 0 && spec.field_operands => "$selection",
+        _ if spec.operands.min > 0 => "$result",
         _ => "",
     };
     let mut usage = format!(":{}", spec.canonical);
