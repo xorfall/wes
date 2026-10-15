@@ -1,5 +1,5 @@
 import { calculationAt, calculationCompletion } from "./calculation-completion";
-import { lastPipeEnd } from "./command-syntax";
+import { commandTokens, lastPipeEnd } from "./command-syntax";
 import { collision, emptyAliases, type Aliases } from "./aliases";
 import { clientCommandNames } from "./commands";
 import {
@@ -134,6 +134,11 @@ export function complete(
   }
   const calculation = calculationCompletion(before, catalogue, names, piped);
   if (calculation) return calculation;
+  const statement = scopeStatementStart(before);
+  if (statement > 0) {
+    const result = complete(line.slice(statement), caret - statement, catalogue, names, false, aliases);
+    return { ...result, from: result.from + statement };
+  }
   const from = wordStart(before);
   const word = before.slice(from);
   const words = wordsBefore(before, from);
@@ -501,6 +506,29 @@ function commandLevel(meta: MetaCommand, tail: readonly string[]): { readonly ta
   return { takes, parameters, choosing: at === bare.length };
 }
 const ARGUMENT = /^[^\s:"$]+:/;
+
+/** Named scopes whose block holds ordinary newline-separated statements, as the parser reads them. */
+const SCOPES: readonly string[] = [":sandbox", ":transient"];
+
+/**
+ * Where the statement the caret is in starts, when it sits inside an open `:transient { … }` or
+ * `:sandbox { … }` block; 0 otherwise. Inner statements start after the brace or a newline, so the
+ * command being written there is its own, not the scope's. Other braces (calculation bodies, record
+ * literals such as `options:{…}`) never start a statement.
+ */
+function scopeStatementStart(before: string): number {
+  const open: number[] = [];
+  let offset = 0, scope = false;
+  for (const { text } of commandTokens(before)) {
+    if (text === "{") open.push(scope ? offset + 1 : -1);
+    else if (text === "}") open.pop();
+    else if (text.includes("\n") && !text.trim() && (open.at(-1) ?? -1) >= 0) open[open.length - 1] = offset + text.lastIndexOf("\n") + 1;
+    if (text.trim()) scope = SCOPES.includes(text);
+    offset += text.length;
+  }
+  // Reduce rather than spread: malformed input can leave more open braces than a call may take arguments.
+  return open.reduce((start, at) => Math.max(start, at), 0);
+}
 
 function withoutAnnotations(words: readonly string[]): readonly string[] {
   return words.filter((word) => !word.startsWith("@"));
