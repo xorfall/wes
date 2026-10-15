@@ -2,6 +2,8 @@ use super::*;
 use tokio::io::AsyncReadExt;
 use wes::runtime::{LaunchedRuntime, RuntimeOptions, launch};
 use wes_engine::source::SourceInput;
+#[path = "../support/fixtures.rs"]
+mod fixtures;
 
 struct AuthFixture {
     runtime: LaunchedRuntime,
@@ -120,6 +122,168 @@ fn spec() -> String {
     json!({"version":1,"provider":"demo","types":{},"operations":[{"path":["latest"],"method":"GET","route":"/latest","parameters":[],"responses":{"200":"Text"},"auth":[],"authOptions":[
         {"schemes":["key","secret"],"auth":[{"header":"X-Test-Key","scheme":"","secret":"key"},{"header":"X-Test-Secret","scheme":"","secret":"secret"}]},
         {"schemes":["basic"],"auth":[{"userSecret":"basic.username","secret":"basic.password"}]}]}]}).to_string()
+}
+
+#[tokio::test]
+async fn declarative_credentials_share_presence_but_keep_grants_scoped_without_execution() {
+    let root = tempfile::tempdir().unwrap();
+    let executable = fixtures::echo(root.path());
+    // The executable is removed after capture; reporting and controls must never launch it.
+    let definition = json!({"version":1,"provider":"fixture","types":{},
+        "backend":{"kind":"session","bin":"example-echo.bin","credentials":["Username","Password"]},
+        "operations":[{"path":["probe"],"argv":[],"result":{"format":"json","type":"Bool"}}]});
+    std::fs::write(root.path().join("tool.yaml"), definition.to_string()).unwrap();
+    std::fs::write(
+        root.path().join("env.yaml"),
+        r#"version: 1
+targets: {local: {kind: local}}
+environments:
+  fixture:
+    secretSlots: {user: {required: true}, password: {required: true}}
+    secretRefs: {user: fixture/user, password: fixture/password}
+    imports:
+      reader:
+        source: {kind: provider, file: tool.yaml}
+        bind: {target: local, credentials: {Username: {secret: user}, Password: {secret: password}}}
+      writer:
+        source: {kind: provider, file: tool.yaml}
+        bind: {target: local, credentials: {Username: {secret: user}, Password: {secret: password}}}
+"#,
+    )
+    .unwrap();
+    let f = AuthFixture::open(root.path()).await;
+    f.submit(":env plan file:env.yaml > proposed".into()).await;
+    f.submit(":env apply $proposed".into()).await;
+    f.submit(":env use \"fixture\"".into()).await;
+    f.submit(":env enable \"fixture\"".into()).await;
+    std::fs::remove_file(root.path().join("tool.yaml")).unwrap();
+    std::fs::remove_file(root.path().join("env.yaml")).unwrap();
+    std::fs::remove_file(executable).unwrap();
+
+    let report = f.report().await;
+    let providers = report["providers"].as_array().unwrap();
+    assert_eq!(providers.len(), 2, "{report}");
+    for provider in providers {
+        assert_eq!(provider["environment"], "fixture");
+        assert_eq!(provider["operations"], json!([]));
+        assert_eq!(provider["enabled"], true);
+        assert_eq!(provider["grantSeconds"], 0);
+        let credentials = provider["credentials"].as_array().unwrap();
+        assert_eq!(credentials.len(), 2);
+        assert!(credentials.iter().all(|slot| slot["present"] == false));
+    }
+    let reader = providers
+        .iter()
+        .find(|p| p["provider"] == "reader")
+        .unwrap();
+    let configured = f
+        .change(reader, json!({"action":"configure","auth":{}}))
+        .await;
+    assert_eq!(configured.status(), 409);
+    assert_eq!(f.report().await, report);
+
+    let mut stale = reader.clone();
+    stale["revision"] = json!(format!("sha256:{}", "0".repeat(64)));
+    assert_eq!(
+        f.change(
+            &stale,
+            json!({"action":"supply","slot":"Username","value":"synthetic-user"})
+        )
+        .await
+        .status(),
+        409
+    );
+    assert_eq!(
+        f.change(
+            reader,
+            json!({"action":"supply","slot":"Unknown","value":"synthetic-unused"})
+        )
+        .await
+        .status(),
+        409
+    );
+    for (slot, value) in [
+        ("Username", "synthetic-user"),
+        ("Password", "synthetic-password"),
+    ] {
+        assert_eq!(
+            f.change(reader, json!({"action":"supply","slot":slot,"value":value}))
+                .await
+                .status(),
+            200
+        );
+    }
+    let supplied = f.report().await;
+    assert!(!supplied.to_string().contains("synthetic-"));
+    for provider in supplied["providers"].as_array().unwrap() {
+        assert!(
+            provider["credentials"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|slot| slot["present"] == true)
+        );
+        assert_eq!(provider["grantSeconds"], 0);
+    }
+    assert_eq!(
+        f.change(reader, json!({"action":"grant"})).await.status(),
+        200
+    );
+    let granted = f.report().await;
+    let providers = granted["providers"].as_array().unwrap();
+    assert!(
+        providers
+            .iter()
+            .find(|p| p["provider"] == "reader")
+            .unwrap()["grantSeconds"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(
+        providers
+            .iter()
+            .find(|p| p["provider"] == "writer")
+            .unwrap()["grantSeconds"],
+        0
+    );
+    assert_eq!(
+        f.change(reader, json!({"action":"revoke"})).await.status(),
+        200
+    );
+    assert_eq!(
+        f.change(reader, json!({"action":"forget","slot":"Password"}))
+            .await
+            .status(),
+        200
+    );
+    assert!(
+        f.report().await["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["credentials"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|slot| slot["slot"] == "Password" && slot["present"] == false))
+    );
+    f.close().await;
+
+    let reopened = AuthFixture::open(root.path()).await;
+    let restored = reopened.report().await;
+    assert_eq!(restored["providers"].as_array().unwrap().len(), 2);
+    for provider in restored["providers"].as_array().unwrap() {
+        assert_eq!(provider["grantSeconds"], 0);
+        assert!(
+            provider["credentials"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|slot| slot["present"] == false)
+        );
+    }
+    reopened.close().await;
 }
 #[tokio::test]
 async fn authentication_controls_select_bind_supply_grant_and_restore_without_material() {

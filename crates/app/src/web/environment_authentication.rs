@@ -1,4 +1,5 @@
-//! User controls for imported HTTP authentication. Secrets never enter source or library artifacts.
+//! Native credential controls for captured imports and HTTP authentication choices.
+//! Secrets never enter source or library artifacts.
 use super::*;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -182,16 +183,32 @@ async fn report(current: &crate::CurrentSession) -> Result<Value, String> {
     let workspace = current.name.as_str().to_owned();
     let generation = current.generation.clone();
     tokio::task::spawn_blocking(move || {
-        let mut providers=Vec::new();
-        for spec in specs {
-            let Some(env)=state.iter().find(|s|s.environment.name()==spec.environment) else {continue;};
-            let Some(import)=env.environment.imports().get(&spec.alias) else {continue;};
-            let metadata=wes_adapters::api_library::authentication_metadata(spec.source.as_bytes(),&import.declaration().auth).map_err(|e|e.to_string())?;
-            if metadata.as_array().is_none_or(|ops|ops.is_empty()) {continue;}
-            let status=&env.providers[&spec.alias];
-            providers.push(json!({"environment":spec.environment,"revision":env.environment.revision().to_string(),"provider":spec.alias,"operations":metadata,
-                "credentials":import.credential_refs().iter().map(|(slot,reference)|json!({"slot":slot,"reference":reference,"present":status.present.contains(slot),"saved":status.saved.contains(slot)})).collect::<Vec<_>>(),
-                "persistenceSupported":status.persistence_supported,"enabled":status.enabled,"grantSeconds":status.grant_seconds}));
+        let mut providers = Vec::new();
+        for env in state {
+            for (alias, import) in env.environment.imports() {
+                let metadata = if let Some(spec) = specs.iter().find(|spec| {
+                        spec.environment == env.environment.name() && spec.alias == *alias
+                    }) {
+                    wes_adapters::api_library::authentication_metadata(
+                        spec.source.as_bytes(), &import.declaration().auth,
+                    ).map_err(|e| e.to_string())?
+                } else if import.declaration().source.kind() == "provider" {
+                    // Declarative imports already have fixed, validated credential bindings.
+                    // They need material/access controls, never invented HTTP method choices.
+                    json!([])
+                } else {
+                    continue;
+                };
+                if metadata.as_array().is_none_or(|ops| ops.is_empty())
+                    && import.credential_refs().is_empty()
+                {
+                    continue;
+                }
+                let status = &env.providers[alias];
+                providers.push(json!({"environment":env.environment.name(),"revision":env.environment.revision().to_string(),"provider":alias,"operations":metadata,
+                    "credentials":import.credential_refs().iter().map(|(slot,reference)|json!({"slot":slot,"reference":reference,"present":status.present.contains(slot),"saved":status.saved.contains(slot)})).collect::<Vec<_>>(),
+                    "persistenceSupported":status.persistence_supported,"enabled":status.enabled,"grantSeconds":status.grant_seconds}));
+            }
         }
         Ok(json!({"workspace":workspace,"generation":generation,"providers":providers}))
     }).await.map_err(|_|"Authentication inspection failed.".to_string())?

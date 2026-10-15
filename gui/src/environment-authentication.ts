@@ -3,6 +3,7 @@ import { applicationLog } from "./application-log";
 export interface AuthWorkspace { workspace: string; generation: string }
 export interface AuthOption { schemes: string[]; credentialSlots: string[]; methods: string[] }
 export interface AuthOperation { operation: string[]; state: "fixed" | "selected" | "selection-required"; selected: string[] | null; options: AuthOption[] }
+// An empty operations list means fixed credential bindings without HTTP method choices.
 export interface ProviderAuthentication { environment: string; revision: string; provider: string; operations: AuthOperation[]; credentials: { slot: string; reference: string; present: boolean; saved?: boolean }[]; persistenceSupported?: boolean; enabled: boolean; grantSeconds: number }
 export interface AuthenticationReport extends AuthWorkspace { providers: ProviderAuthentication[] }
 type Selection = Pick<ProviderAuthentication, "environment" | "revision" | "provider">;
