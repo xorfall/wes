@@ -603,12 +603,12 @@ pub fn invocation(source: &Call) -> Result<CommandInvocation, Diagnostic> {
         let selectors: Vec<_> = call
             .arguments
             .iter()
-            .filter(|a| matches!(a.key.text.as_str(), "value" | "trace"))
+            .filter(|a| matches!(a.key.text.as_str(), "value" | "trace" | "bytes"))
             .collect();
         if call.operands.len() + selectors.len() != 1 {
             return Err(invalid(
                 source,
-                "Read requires exactly one output or trace reference.",
+                "Read requires exactly one output, trace or byte-source reference.",
             ));
         }
         if let Some(selector) = selectors.first() {
@@ -618,10 +618,10 @@ pub fn invocation(source: &Call) -> Result<CommandInvocation, Diagnostic> {
             let kind = selector.key.text.clone();
             let value = selector.value.clone();
             call.arguments
-                .retain(|a| !matches!(a.key.text.as_str(), "value" | "trace"));
+                .retain(|a| !matches!(a.key.text.as_str(), "value" | "trace" | "bytes"));
             call.operands.push(value);
-            if kind == "trace" {
-                tail.push("trace".into());
+            if kind != "value" {
+                tail.push(kind);
             }
         }
         if !matches!(call.operands.as_slice(), [Value::Reference(_)]) {
@@ -634,6 +634,15 @@ pub fn invocation(source: &Call) -> Result<CommandInvocation, Diagnostic> {
         {
             return Err(invalid(source, "Read selection options must be literals."));
         }
+    }
+    if path.operation == Read
+        && tail.first().is_none_or(|kind| kind != "bytes")
+        && call.arguments.iter().any(|a| a.key.text == "from")
+    {
+        return Err(invalid(
+            source,
+            "from: selects original byte coordinates; use :read bytes:$output from:\"0\" limit:4096.",
+        ));
     }
     if path.operation == Read
         && tail.is_empty()

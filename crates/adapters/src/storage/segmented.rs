@@ -39,6 +39,29 @@ pub(super) struct ManifestCache {
     entries: HashMap<ValueHandle, (u64, cap_std::time::SystemTime, u64, Arc<CapturedManifest>)>,
     charge: u64,
 }
+impl ManifestCache {
+    pub(super) fn probe(
+        &self,
+        handle: &ValueHandle,
+        size: u64,
+        modified: cap_std::time::SystemTime,
+        prefix: &[u8],
+        maximum: usize,
+    ) -> Option<Result<Option<Vec<u8>>, StoreError>> {
+        let (cached_size, cached_at, _, captured) = self.entries.get(handle)?;
+        if *cached_size != size || *cached_at != modified {
+            return None;
+        }
+        let bytes = &captured.2;
+        Some(if !bytes.starts_with(prefix) {
+            Ok(None)
+        } else if bytes.len() > maximum {
+            Err(StoreError::Limit("snapshot metadata"))
+        } else {
+            Ok(Some(bytes.clone()))
+        })
+    }
+}
 pub(super) struct Draft {
     owner: Weak<()>,
     file: cap_std::fs::File,
@@ -271,6 +294,13 @@ impl FileValues {
             .fold(4096u64, |n, a| {
                 n.saturating_add(a.bytes().saturating_add(96))
             });
+        // Materialization admits both allocator ownership and the shared logical value charge.
+        // Text and structured metadata can cost more logically than their physical allocations.
+        // Use the same snapshot capture rule as ordinary values before accounting opaque leaves.
+        let shell_charge = StoredSnapshot::capture(handle.clone(), digest.clone(), &value)
+            .ok_or(StoreError::Limit("snapshot metadata"))?
+            .charge;
+        charge = charge.max(shell_charge);
         for leaf in &m.leaves {
             if leaf.fields.starts_with(fields) {
                 charge =
@@ -925,4 +955,80 @@ fn replace(data: &mut Data, fields: &[String], value: Data) -> Result<(), StoreE
         &fields[1..],
         value,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn shell() -> Value {
+        Value::new(
+            Shape::Primitive(Primitive::Bytes),
+            Data::Bytes(vec![].into()),
+            Default::default(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn warm_protected_header_probes_still_refuse_changed_identity_and_corrupt_chunks() {
+        use crate::{protected_storage::ObjectProtection, storage::FileValues};
+        use wes_core::flow::{FlowPolicy, Residence};
+        for header in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let values = root.path().join("values");
+            let key = ObjectProtection::new(&uuid::Uuid::new_v4().to_string(), [62; 32]).unwrap();
+            let mut store = FileValues::open_protected(
+                &values,
+                Limits::default(),
+                Durability::FileAndDirectory,
+                None,
+                Some(key),
+            )
+            .unwrap();
+            let owner = Arc::new(());
+            let handle = store
+                .begin_segmented(CHUNK_BYTES as u64, Arc::downgrade(&owner))
+                .unwrap();
+            store
+                .append_segmented(&handle, "raw", &[84; CHUNK_BYTES])
+                .unwrap();
+            let shell = shell().with_provenance(
+                wes_core::Provenance::default()
+                    .with_policy(&FlowPolicy::default().confidential(Residence::Retainable)),
+            );
+            let snapshot = store
+                .seal_segmented(
+                    &handle,
+                    &shell,
+                    &[LeafSelection {
+                        port: "raw".into(),
+                        fields: vec![],
+                        text: false,
+                    }],
+                )
+                .unwrap();
+            assert!(
+                store
+                    .read_policy(&handle)
+                    .unwrap()
+                    .unwrap()
+                    .is_confidential()
+            );
+            assert_eq!(store.source_range(&snapshot, 0, 1).unwrap().bytes, [84]);
+            let path = values.join(format!("{handle}.{}", if header { "json" } else { "bin" }));
+            let mut bytes = std::fs::read(&path).unwrap();
+            let last = bytes.len() - 1;
+            bytes[last] ^= 1;
+            std::fs::write(&path, bytes).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+                .unwrap();
+            if header {
+                assert!(store.read_policy(&handle).is_err());
+            }
+            assert!(store.source_range(&snapshot, 0, 1).is_err());
+        }
+    }
 }

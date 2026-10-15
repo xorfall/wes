@@ -74,6 +74,36 @@ impl ReadAuthority for Gate {
             .map_err(|_| "fixture observer capacity exceeded")
     }
 }
+
+#[tokio::test]
+async fn retention_admission_preserves_read_withdrawal_without_requiring_a_read_grant() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = wes_adapters::storage::TieredValues::open(
+        &root.path().join("live"),
+        &root.path().join("archive"),
+        codec::Limits::default(),
+        Durability::File,
+        None,
+    )
+    .unwrap();
+    let gate = Gate::new();
+    let handle = backend.store(&gate.value()).unwrap();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    worker.provider_readers().register(gate.clone()).unwrap();
+    gate.set(false);
+    assert!(matches!(
+        worker.read(handle.clone()).await,
+        Err(StoreError::ProviderReadUnavailable)
+    ));
+    let kept = worker.retain(handle.clone()).await.unwrap();
+    assert!(kept.kept);
+    assert!(matches!(
+        worker.read(handle).await,
+        Err(StoreError::ProviderReadUnavailable)
+    ));
+    assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+    task.join().await.unwrap();
+}
 #[tokio::test]
 async fn revoked_root_policy_precedes_body_decode_and_selection_and_keeps_the_bytes() {
     let home = tempfile::tempdir().unwrap();
@@ -109,6 +139,10 @@ async fn revoked_root_policy_precedes_body_decode_and_selection_and_keeps_the_by
             .map(|_| ()),
         worker.encoded(handle.clone()).await.map(|_| ()),
         worker.materialize(snapshot.clone()).await.map(|_| ()),
+        worker
+            .source_range_selected(snapshot.clone(), vec!["missing".into()], 0, 1)
+            .await
+            .map(|_| ()),
     ] {
         assert!(
             matches!(result, Err(StoreError::ProviderReadUnavailable)),
@@ -130,6 +164,152 @@ async fn revoked_root_policy_precedes_body_decode_and_selection_and_keeps_the_by
         Err(StoreError::ProviderReadUnavailable)
     ));
     assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+    task.join().await.unwrap();
+}
+
+struct DelayedRange {
+    value: Value,
+    fail_after_entry: bool,
+    entered: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl ValueStore for DelayedRange {
+    fn read_policy(
+        &self,
+        _: &wes_engine::storage::ValueHandle,
+    ) -> Result<Option<FlowPolicy>, StoreError> {
+        Ok(Some(self.value.provenance().policy().clone()))
+    }
+    fn store(&mut self, _: &Value) -> Result<wes_engine::storage::ValueHandle, StoreError> {
+        panic!("read-only fixture")
+    }
+    fn read(
+        &self,
+        _: &wes_engine::storage::ValueHandle,
+    ) -> Result<Option<wes_engine::storage::LoadedValue>, StoreError> {
+        Ok(Some(wes_engine::storage::LoadedValue {
+            value: self.value.clone(),
+        }))
+    }
+    fn encoded(&self, _: &wes_engine::storage::ValueHandle) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(Some(b"synthetic immutable value".to_vec()))
+    }
+    fn size(&self, _: &wes_engine::storage::ValueHandle) -> Result<Option<u64>, StoreError> {
+        Ok(Some(128))
+    }
+    fn release(&mut self, _: &wes_engine::storage::ValueHandle) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+    fn hold(
+        &mut self,
+        _: &wes_engine::storage::ValueHandle,
+    ) -> Result<Option<wes_engine::storage::ValueLease>, StoreError> {
+        Ok(Some(wes_engine::storage::ValueLease::retain(())))
+    }
+    fn source_range(
+        &self,
+        _: &wes_engine::storage::StoredSnapshot,
+        from: u64,
+        maximum: usize,
+    ) -> Result<wes_engine::storage::SourceRange, StoreError> {
+        self.entered
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .send(())
+            .unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        if self.fail_after_entry {
+            return Err(StoreError::Closed);
+        }
+        let Data::Text(text) = self.value.data() else {
+            panic!("Text fixture")
+        };
+        let from = from as usize;
+        Ok(wes_engine::storage::SourceRange {
+            bytes: text.as_bytes()[from..text.len().min(from + maximum)].to_vec(),
+            extent: text.len() as u64,
+            text: true,
+        })
+    }
+}
+
+#[tokio::test]
+async fn byte_ranges_discard_late_regranted_or_expired_read_proofs_without_poisoning_shutdown() {
+    for regrant in [true, false] {
+        let gate = Gate::new();
+        let (entered, entry) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let backend = DelayedRange {
+            value: gate.value(),
+            fail_after_entry: false,
+            entered: std::sync::Mutex::new(Some(entered)),
+            release: std::sync::Mutex::new(wait),
+        };
+        let snapshot = backend
+            .describe(&wes_engine::storage::ValueHandle::fresh(), &[])
+            .unwrap()
+            .unwrap();
+        let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+        worker.provider_readers().register(gate.clone()).unwrap();
+        let reader = worker.clone();
+        let result = tokio::spawn(async move { reader.source_range(snapshot, 0, 8).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entry)
+            .await
+            .unwrap()
+            .unwrap();
+        if regrant {
+            gate.set(false);
+            gate.set(true);
+        } else {
+            // A trusted probe's current grant may expire even without an epoch notification.
+            gate.open.store(false, Ordering::SeqCst);
+        }
+        release.send(()).unwrap();
+        let error = result.await.unwrap().unwrap_err();
+        if regrant {
+            assert!(
+                matches!(error, StoreError::ProviderReadChanged),
+                "{error:?}"
+            );
+        } else {
+            assert!(
+                matches!(error, StoreError::ProviderReadUnavailable),
+                "{error:?}"
+            );
+        }
+        assert_eq!(worker.shutdown().await.unwrap().failed, 0);
+        task.join().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_backend_failure_after_successful_scope_admission_still_counts_as_storage_failure() {
+    let gate = Gate::new();
+    let (entered, entry) = tokio::sync::oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let backend = DelayedRange {
+        value: gate.value(),
+        fail_after_entry: true,
+        entered: std::sync::Mutex::new(Some(entered)),
+        release: std::sync::Mutex::new(wait),
+    };
+    let snapshot = backend
+        .describe(&wes_engine::storage::ValueHandle::fresh(), &[])
+        .unwrap()
+        .unwrap();
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    worker.provider_readers().register(gate).unwrap();
+    let reader = worker.clone();
+    let result = tokio::spawn(async move { reader.source_range(snapshot, 0, 8).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entry)
+        .await
+        .unwrap()
+        .unwrap();
+    release.send(()).unwrap();
+    assert!(matches!(result.await.unwrap(), Err(StoreError::Closed)));
+    assert_eq!(worker.shutdown().await.unwrap().failed, 1);
     task.join().await.unwrap();
 }
 

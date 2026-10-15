@@ -816,17 +816,25 @@ impl MetaCommand {
                 spec.open_arguments = true;
             }
             Self::Read => {
-                spec.summary = "reads selected output or retained trace content";
+                spec.summary = "reads selected output or retained trace content. :read bytes:$output from:\"0\" limit:4096 [select:\"raw\"] reads at most 65536 original bytes without running its producer; from: is canonical unsigned decimal Text and limit: is 1..65536. Text sources return raw Bytes, including partial UTF-8. The ByteRange reply captures source/run/revision and exact from/next/extent coordinates, preserves root read policy and grants no export or retention permission.";
                 spec.operands = Arity::bounded(0, 1);
                 spec.produces_value = true;
                 spec.parameters = vec![
                     Parameter::new("value", Shape::Unknown, false),
                     Parameter::new("trace", Shape::Unknown, false),
+                    Parameter::new("bytes", Shape::Unknown, false),
                     text("run", false),
                     text("select", false),
                     Parameter::new("offset", Shape::Primitive(Primitive::Int), false),
                     Parameter::new("limit", Shape::Primitive(Primitive::Int), false),
                 ];
+                if tail.first().is_some_and(|kind| kind == "bytes") {
+                    spec.parameters = vec![
+                        text("from", true),
+                        Parameter::new("limit", Shape::Primitive(Primitive::Int), true),
+                        text("select", false),
+                    ];
+                }
             }
             Self::Trace => {
                 spec.summary = "reads retained observations without repeating a call";

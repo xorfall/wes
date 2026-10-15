@@ -295,10 +295,28 @@ impl StoreWorker {
         from: u64,
         maximum: usize,
     ) -> Result<SourceRange, StoreError> {
+        self.source_range_selected(snapshot, vec![], from, maximum)
+            .await
+    }
+    /// Select a Text/Bytes leaf only after validating the exact captured root under its
+    /// scoped owner. The selection cannot weaken root read authority or change identity.
+    pub async fn source_range_selected(
+        &self,
+        snapshot: StoredSnapshot,
+        fields: Vec<String>,
+        from: u64,
+        maximum: usize,
+    ) -> Result<SourceRange, StoreError> {
         let epoch = self.read_epoch();
         let policy = snapshot.provenance.policy().clone();
         if maximum == 0 || maximum > CHUNK_BYTES {
             return Err(StoreError::Limit("source range"));
+        }
+        if fields.len() > 64
+            || fields.iter().any(|s| s.is_empty())
+            || fields.iter().fold(0usize, |n, s| n.saturating_add(s.len())) > 4096
+        {
+            return Err(StoreError::SourceRange("invalid static field selection"));
         }
         let limit = self.limits.bytes.get();
         let result = self
@@ -306,12 +324,54 @@ impl StoreWorker {
                 let _hold = store
                     .hold(&snapshot.handle)?
                     .ok_or(StoreError::MissingValue)?;
-                store.source_range(&snapshot, from, maximum)
+                if fields.is_empty() {
+                    return store.source_range(&snapshot, from, maximum);
+                }
+                let current = store
+                    .describe(&snapshot.handle, &snapshot.selection)?
+                    .ok_or(StoreError::MissingValue)?;
+                if current.handle != snapshot.handle
+                    || current.digest != snapshot.digest
+                    || current.selection != snapshot.selection
+                    || current.shape != snapshot.shape
+                    || current.provenance != snapshot.provenance
+                    || current.metadata != snapshot.metadata
+                {
+                    return Err(StoreError::Conflict);
+                }
+                if crate::plan::field_shape(&snapshot.shape, &fields).is_none() {
+                    return Err(StoreError::SourceRange("selected field is unavailable"));
+                }
+                let mut selection = snapshot.selection.clone();
+                selection.extend(fields);
+                let selected = store
+                    .describe(&snapshot.handle, &selection)?
+                    .ok_or(StoreError::MissingValue)?;
+                if selected.handle != snapshot.handle
+                    || selected.digest != snapshot.digest
+                    || selected.selection != selection
+                {
+                    return Err(StoreError::Conflict);
+                }
+                store.source_range(&selected, from, maximum)
             })
             .await?
             .wait()
             .await?;
         self.check_read_epoch(&epoch, &policy)?;
+        if self
+            .dataset_access()
+            .borrow()
+            .blocks_dataset_policy(&policy)
+        {
+            return Err(StoreError::DatasetWithdrawn);
+        }
+        if self.provider_readers().blocks_policy(&policy) {
+            return Err(StoreError::ProviderReadUnavailable);
+        }
+        if self.scope.as_ref().is_some_and(|scope| !scope.is_open()) {
+            return Err(StoreError::ScopeUnavailable);
+        }
         Ok(result)
     }
 }

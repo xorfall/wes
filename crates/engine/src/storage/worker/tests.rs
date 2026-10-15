@@ -376,7 +376,7 @@ async fn retaining_an_existing_handle_never_republishes_and_preserves_partial_fa
     );
     assert_eq!(state.lock().unwrap().calls, 0);
     assert!(state.lock().unwrap().kept.contains(&handle));
-    store.shutdown().await.unwrap();
+    assert_eq!(store.shutdown().await.unwrap().failed, 1);
     task.join().await.unwrap();
 }
 impl ValueStore for Memory {

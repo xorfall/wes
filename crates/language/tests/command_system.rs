@@ -131,6 +131,36 @@ fn lexical_names_and_selected_reference_ports_remain_explicit() {
     }
     assert!(resolve(&call(":inspect env:$x"), &catalogue).is_err());
 }
+
+#[test]
+fn byte_reads_are_explicit_literal_coordinate_queries() {
+    let read =
+        commands::invocation(&call(":read bytes:$x from:\"0\" limit:65536 select:raw")).unwrap();
+    assert_eq!(
+        read.call
+            .path
+            .iter()
+            .map(|n| n.text.as_str())
+            .collect::<Vec<_>>(),
+        ["read", "bytes"]
+    );
+    assert!(matches!(&read.call.operands[0], Value::Reference(r) if r.text == "x"));
+    assert!(
+        read.spec
+            .parameters
+            .iter()
+            .any(|p| p.name == "from" && p.required)
+    );
+    for source in [
+        ":read bytes:$x value:$y from:\"0\" limit:1",
+        ":read bytes:$x $y from:\"0\" limit:1",
+        ":read bytes:text from:\"0\" limit:1",
+        ":read value:$x from:\"0\" limit:1",
+        ":read bytes:$x from:$offset limit:1",
+    ] {
+        assert!(commands::invocation(&call(source)).is_err(), "{source}");
+    }
+}
 #[test]
 fn public_command_registry_has_unique_paths_and_direct_short_forms() {
     let mut paths = std::collections::BTreeSet::new();

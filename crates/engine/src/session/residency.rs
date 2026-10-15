@@ -36,7 +36,7 @@ pub(super) async fn prepare_inputs(
         }
     }
     for (source, captured) in &ticket.deferred_inputs {
-        if matches!(&ticket.payload, BoundTask::Scan(scan) if scan.stored_source_for(source)) {
+        if ticket.payload.stored_source_for(source) {
             let hold = storage
                 .hold(captured.snapshot.handle.clone())
                 .await

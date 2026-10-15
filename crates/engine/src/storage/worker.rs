@@ -148,6 +148,7 @@ trait Job: Send {
 }
 trait OwnedStorage {
     fn check_policy(&self, policy: &wes_core::flow::FlowPolicy) -> Result<(), StoreError>;
+    fn admit_retention(&self, handle: &ValueHandle, reason: Retention) -> Result<(), StoreError>;
     fn dataset_info(&self, reference: &wes_core::DatasetRef) -> Result<DatasetInfo, StoreError> {
         let info = self.datasets()?.inspect(reference)?;
         self.check_policy(&info.policy)?;
@@ -234,6 +235,22 @@ struct Owner<V> {
     eviction_updates: tokio::sync::watch::Sender<u64>,
 }
 impl<V: ValueStore> OwnedStorage for Owner<V> {
+    fn admit_retention(&self, handle: &ValueHandle, reason: Retention) -> Result<(), StoreError> {
+        self.check_scope(handle)?;
+        if self.scope.is_some() && reason != Retention::Protected {
+            return Err(StoreError::Restricted);
+        }
+        // Keep admission reads owned policy, not payload or a current read grant. A refused
+        // residence ceiling is known before publication; later failures remain uncertain.
+        if self
+            .values
+            .read_policy(handle)?
+            .is_some_and(|p| !p.allows_retention())
+        {
+            return Err(StoreError::Restricted);
+        }
+        Ok(())
+    }
     fn check_policy(&self, policy: &wes_core::flow::FlowPolicy) -> Result<(), StoreError> {
         if self.dataset_access.borrow().providers.blocks_policy(policy) {
             Err(StoreError::ProviderReadUnavailable)
@@ -477,22 +494,34 @@ impl<T: Send, F: FnOnce(&mut dyn OwnedStorage) -> Result<T, StoreError> + Send> 
             credit,
             scope,
         } = *self;
-        let result = store.enter_scope(scope.as_ref()).and_then(|()| work(store));
+        let entry = store.enter_scope(scope.as_ref());
+        let admission_refused = matches!(
+            &entry,
+            Err(StoreError::Closed | StoreError::ScopeUnavailable)
+        );
+        let result = entry.and_then(|()| work(store));
         let reset = store.enter_scope(None);
+        let reset_failed = reset.is_err();
         let result = match reset {
             Ok(()) => result,
             Err(error) => Err(error),
         };
         store.refresh_access();
-        // Scope revalidation is an expected reader refusal, including during
-        // inert restore. It must not turn a later successful session shutdown
-        // into a storage-failure report. Physical/validation failures still do.
-        let failed = result.as_ref().is_err_and(|error| {
-            !matches!(
-                error,
-                StoreError::ProviderReadUnavailable | StoreError::ProviderReadChanged
-            )
-        });
+        // Known scope, policy and range refusals establish no backend failure. They must not
+        // turn a successful shutdown into a storage-failure report. Published errors remain
+        // uncertain and still count, including a refusal after publication may have begun.
+        let failed = reset_failed
+            || (!admission_refused
+                && result.as_ref().is_err_and(|error| {
+                    !matches!(
+                        error,
+                        StoreError::ScopeUnavailable
+                            | StoreError::Restricted
+                            | StoreError::SourceRange(_)
+                            | StoreError::ProviderReadUnavailable
+                            | StoreError::ProviderReadChanged
+                    )
+                }));
         let _ = reply.send(Credited { result, credit });
         failed
     }
@@ -746,7 +775,9 @@ impl StoreWorker {
         handle: ValueHandle,
         reason: Retention,
     ) -> Result<StoredOutput, StoreError> {
-        self.request(self.limits.bytes.get(), move |store| {
+        self.request_owner(self.limits.bytes.get(), move |owner| {
+            owner.admit_retention(&handle, reason)?;
+            let store = owner.values();
             let mut finish = || {
                 if !store.keep_with_reason(&handle, reason)? {
                     return Err(StoreError::RetentionUnavailable);
