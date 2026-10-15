@@ -149,3 +149,10 @@ it("keeps inline authoring steps and examples visible before bounded declaration
   expect(model.truncated).toBe(true);
   expect(model.rows.length).toBeLessThanOrEqual(MAX_HELP_ROWS);
 });
+
+it("publishes original byte coordinates and limits in actual native read help", () => {
+  const markup = printed(captures.read!);
+  expect(markup).toContain(":read bytes");
+  expect(markup).toContain("from:");
+  expect(markup).toContain("65536");
+});

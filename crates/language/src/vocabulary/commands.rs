@@ -298,7 +298,7 @@ pub const COMMAND_PATHS: &[CommandPath] = &[
         path: &["read"],
         operation: Read,
         short: None,
-        summary: "Read selected output or retained trace content.",
+        summary: "Read selected output, retained trace content or bounded original bytes without rerunning a producer.",
     },
     CommandPath {
         path: &["node", "refresh"],
@@ -771,6 +771,7 @@ pub fn signature(path: &[String]) -> Option<CommandSpec> {
 /// Family prose is shared by root discovery and family help, never inferred from its first child.
 pub fn help_summary(path: &[&str]) -> &'static str {
     match path {
+        ["read"] => Read.spec(&[]).summary,
         ["source"] => {
             "Bind and explicitly control a current owned source connection; stored projections do not restore live authority."
         }
