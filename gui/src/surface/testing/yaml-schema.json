@@ -1299,6 +1299,10 @@
           "schema": "provider.control",
           "required": false
         },
+        "finite_profile": {
+          "schema": "provider.finite-profile",
+          "required": false
+        },
         "source_profile": {
           "schema": "provider.source-profile",
           "required": false
@@ -1631,6 +1635,28 @@
         }
       },
       "hint": "Streaming session with typed controls and fixed required arguments only. name is bounded trimmed Text without control characters; kind is a bounded ASCII identifier. default is false. stop is a captured typed literal, never a live capability. ready_wait_ms defaults to 10000, control_ms/grace_ms to 5000, tail_ms to zero; positive waits and bounded tail cannot exceed native MAX_READY_WAIT. At most 16 distinct typed optional narrowing mappings. Lookup is bounded and target-aware; ambiguous/missing profiles refuse before dispatch."
+    },
+    "provider.profile-arguments": {
+      "kind": "map",
+      "values": "text"
+    },
+    "provider.finite-profile": {
+      "kind": "object",
+      "fields": {
+        "name": {
+          "schema": "text",
+          "required": true
+        },
+        "kind": {
+          "schema": "text",
+          "required": true
+        },
+        "arguments": {
+          "schema": "provider.profile-arguments",
+          "required": true
+        }
+      },
+      "hint": "Finite operation only. Bounded name/kind identifiers and at most 32 canonical-to-declared parameter mappings; the map covers exactly all nonfixed caller parameters without duplicate targets. Frozen types, required flags, input limits, target admission and native byte/egress checks remain authoritative. No executable or credential lookup during resolution."
     }
   },
   "typeConstructors": [

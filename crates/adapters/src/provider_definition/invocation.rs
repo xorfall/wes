@@ -338,6 +338,17 @@ impl MappedInvoker {
     }
 }
 impl Invoker for MappedInvoker {
+    fn finite_profile(
+        &self,
+        capability: &wes_core::capability::Capability,
+    ) -> Option<Arc<wes_engine::providers::finite_profiles::FiniteProfile>> {
+        self.definition
+            .operations
+            .iter()
+            .find(|op| op.path == capability.path)?
+            .finite_profile
+            .clone()
+    }
     fn byte_input(
         &self,
         capability: &wes_core::capability::Capability,

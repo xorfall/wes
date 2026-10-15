@@ -52,6 +52,7 @@ struct OperationDoc {
     #[serde(default = "empty_object")]
     fixed_arguments: Json,
     source_profile: Option<super::source_profile::Declaration>,
+    finite_profile: Option<super::finite_profile::Declaration>,
 }
 fn exclusive_declaration<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -433,6 +434,23 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             params.push((parameter.name, contract, parameter.required));
         }
         let fixed_arguments = super::fixed_arguments::compile(&op.fixed_arguments, &params)?;
+        let finite_profile = op
+            .finite_profile
+            .map(|profile| {
+                super::finite_profile::compile(profile, &params, &fixed_arguments, op.streaming)
+            })
+            .transpose()?;
+        if let Some(profile) = &finite_profile
+            && operations.iter().any(|operation: &Operation| {
+                operation.finite_profile.as_ref().is_some_and(|existing| {
+                    existing.name() == profile.name() && existing.kind() == profile.kind()
+                })
+            })
+        {
+            return Err(DefinitionError::new(
+                "duplicate finite profile name and kind in one provider definition",
+            ));
+        }
         let source_profile = op
             .source_profile
             .map(|profile| {
@@ -637,6 +655,7 @@ pub(super) fn compile(source: &str, alias: Option<&str>) -> Result<Definition, D
             exclusive,
             fixed_arguments,
             source_profile,
+            finite_profile,
         });
     }
     let description = ProviderDescription::new(

@@ -639,6 +639,17 @@ impl Session {
     }
 }
 impl Invoker for Session {
+    fn finite_profile(
+        &self,
+        capability: &wes_core::capability::Capability,
+    ) -> Option<Arc<wes_engine::providers::finite_profiles::FiniteProfile>> {
+        self.definition
+            .operations
+            .iter()
+            .find(|op| op.path == capability.path)?
+            .finite_profile
+            .clone()
+    }
     fn invoke(&self, call: Call, token: CancellationToken) -> InvocationFuture {
         let this = self.clone();
         Box::pin(async move {

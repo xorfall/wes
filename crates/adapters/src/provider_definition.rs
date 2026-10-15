@@ -1,5 +1,6 @@
 //! Declarative executable providers. Compilation, target execution and output decoding are
 //! separate boundaries; definitions contain no shell programs or ambient provider references.
+mod finite_profile;
 mod fixed_arguments;
 mod importer;
 mod invocation;
@@ -40,6 +41,7 @@ struct Operation {
     exclusive: Vec<Exclusive>,
     fixed_arguments: indexmap::IndexMap<String, wes_core::Value>,
     source_profile: Option<Arc<wes_engine::providers::profiles::SourceProfile>>,
+    finite_profile: Option<Arc<wes_engine::providers::finite_profiles::FiniteProfile>>,
 }
 #[derive(Clone)]
 struct Exclusive {

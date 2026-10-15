@@ -68,6 +68,7 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
                 ("success_codes", "provider.success-codes", false),
                 ("streaming", "bool", false),
                 ("control", "provider.control", false),
+                ("finite_profile", "provider.finite-profile", false),
                 ("source_profile", "provider.source-profile", false),
                 ("fixed_arguments", "provider.fixed-arguments", false),
                 ("exclusive", "provider.exclusive-list", false),
@@ -202,6 +203,9 @@ pub(super) fn register(d: &mut IndexMap<&'static str, Schema>) {
     d.insert("provider.profile-option.condition", hint(object(&[("kind", "provider.kind.condition", true),("parameter", "text", true)]), "An optional Text caller condition is separate from fixed configuration. The external backend must validate/compose its semantics as a further restriction; the engine promises no protocol-specific intersection."));
 
     d.insert("provider.source-profile", hint(object(&[("name", "text", true),("kind", "text", true),("default", "bool", false),("stop", "datum", true),("ready_wait_ms", "int", false),("tail_ms", "int", false),("control_ms", "int", false),("grace_ms", "int", false),("narrowing", "provider.profile-options", false)]), "Streaming session with typed controls and fixed required arguments only. name is bounded trimmed Text without control characters; kind is a bounded ASCII identifier. default is false. stop is a captured typed literal, never a live capability. ready_wait_ms defaults to 10000, control_ms/grace_ms to 5000, tail_ms to zero; positive waits and bounded tail cannot exceed native MAX_READY_WAIT. At most 16 distinct typed optional narrowing mappings. Lookup is bounded and target-aware; ambiguous/missing profiles refuse before dispatch."));
+    d.insert("provider.profile-arguments", named("text"));
+
+    d.insert("provider.finite-profile", hint(object(&[("name", "text", true),("kind", "text", true),("arguments", "provider.profile-arguments", true)]), "Finite operation only. Bounded name/kind identifiers and at most 32 canonical-to-declared parameter mappings; the map covers exactly all nonfixed caller parameters without duplicate targets. Frozen types, required flags, input limits, target admission and native byte/egress checks remain authoritative. No executable or credential lookup during resolution."));
 }
 
 pub(super) fn constraints() -> impl Iterator<Item = (&'static str, &'static str)> {
