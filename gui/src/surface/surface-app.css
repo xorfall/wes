@@ -10,8 +10,14 @@
   min-height: 0;
   background-color: var(--ground);
 }
-.wes-terminal.surface-app > :first-child {
-  flex: 1 1 auto;
+/*
+ * What owns the remaining height is the content — the workspace, a summoned screen, a dashboard —
+ * named by role, not by position: toolbars, notices and status lines around it keep their own size.
+ */
+.wes-terminal.surface-app > .surface-workspace,
+.wes-terminal.surface-app > .screen,
+.wes-terminal.surface-app > .dashboard-host {
+  flex: 1 1 0;
   min-height: 0;
 }
 

@@ -111,8 +111,6 @@
   background: transparent; border: 0; border-top: 1px solid var(--line); padding: 6px 0;
 }
 
-.wes-terminal.surface-app > .screen { flex: 1 1 0; min-height: 0; }
-
 /* xterm owns scrollback. Its screen may briefly retain the old pixel size while fitting;
    that must neither add an outer scrollbar nor alter the host's intrinsic flex size. */
 .wes-terminal .split-pane[data-terminal="true"] > .workspace-tab-view > .split-pane-body { overflow: hidden; }
