@@ -31,6 +31,25 @@ impl Fixture {
         configured: bool,
         single: bool,
     ) -> Self {
+        Self::timed_configuration(
+            mode,
+            policy,
+            maximum,
+            configured,
+            single,
+            Duration::from_secs(60),
+        )
+        .await
+    }
+    async fn timed_configuration(
+        mode: &str,
+        policy: &str,
+        maximum: u64,
+        configured: bool,
+        single: bool,
+        lifetime: Duration,
+    ) -> Self {
+        let duration_ms = lifetime.as_millis();
         let root = tempfile::tempdir().unwrap();
         let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/tracing-live");
         let python = wes_adapters::process::serialized_spawn(|| {
@@ -83,7 +102,7 @@ impl Fixture {
             &format!("interface: {}\n", serde_json::to_string(mode).unwrap()),
         )
         .replace("maxBytes: 16777216", &format!("maxBytes: {maximum}"))
-        .replace("durationMs: 30000", "durationMs: 60000");
+        .replace("durationMs: 30000", &format!("durationMs: {duration_ms}"));
         std::fs::write(root.path().join("provider.yaml"), &provider).unwrap();
         std::fs::write(
             root.path().join("other.provider.yaml"),
@@ -113,7 +132,7 @@ impl Fixture {
             session,
         };
         f.submit(":env use \"lab\"").await;
-        f.submit(&format!(":calc pure {{ return {{name:\"synthetic capture\",backend:{},interface:{},filter:\"tcp port 4242\",durationMs:60000,maxBytes:{maximum},packets:1000,snapLength:65535,promiscuous:false}}; }} > profile", serde_json::to_string(backend.to_str().unwrap()).unwrap(),serde_json::to_string(mode).unwrap())).await;
+        f.submit(&format!(":calc pure {{ return {{name:\"synthetic capture\",backend:{},interface:{},filter:\"tcp port 4242\",durationMs:{duration_ms},maxBytes:{maximum},packets:1000,snapLength:65535,promiscuous:false}}; }} > profile", serde_json::to_string(backend.to_str().unwrap()).unwrap(),serde_json::to_string(mode).unwrap())).await;
         f
     }
     async fn submit(&self, text: &str) -> Arc<SubmissionResult> {
@@ -676,13 +695,23 @@ async fn unclosed_backend_child_makes_stop_unknown_and_native_owner_joins_withou
 async fn large_live_raw_exceeds_finite_process_output_while_index_and_reads_stay_bounded() {
     let size = 24 + 513 * (16 + 65535);
     assert!(size > wes_budgets::get("process.output.bytes"));
-    let f = Fixture::new("synthetic-large", "confidential", 50 * 1024 * 1024).await;
+    let lifetime = Duration::from_secs(120);
+    let f = Fixture::timed_configuration(
+        "synthetic-large",
+        "confidential",
+        50 * 1024 * 1024,
+        false,
+        false,
+        lifetime,
+    )
+    .await;
     f.submit("capture start profile:$profile > live").await;
     // 513 maximum-size packets minimally exceed both the finite output and index caps.
-    // This debug-build case writes over 32 MiB through authenticated physical appends. Bound
-    // it by the declared 60-second capture lifetime plus cleanup, not a small-case wait.
+    // This debug-build case writes over 32 MiB through authenticated physical appends.
+    // Give this workload the helper's existing 120-second profile ceiling, and bound
+    // the join by that actual declared capture lifetime plus physical cleanup.
     // Full size, packet count and protocol success below still reject a partial capture.
-    f.joined_within(Duration::from_secs(65)).await;
+    f.joined_within(lifetime + Duration::from_secs(5)).await;
     f.submit(":source result $live > evidence").await;
     assert_eq!(f.field("complete", "complete").await, Data::Bool(true));
     assert_eq!(
