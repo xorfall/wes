@@ -147,6 +147,20 @@ pub enum Outcome {
     Cancelled(ErrorValue),
 }
 impl Outcome {
+    pub(crate) fn flow_policy(&self) -> wes_core::flow::FlowPolicy {
+        match self {
+            Self::Produced(value) => value.provenance().policy().clone(),
+            Self::Stored(output) => output
+                .snapshot
+                .as_ref()
+                .map_or_else(Default::default, |snapshot| {
+                    snapshot.provenance.policy().clone()
+                }),
+            Self::Incomplete { value, error } => value.provenance().policy().join(error.policy()),
+            Self::Failed(error) | Self::Cancelled(error) => error.policy().clone(),
+            Self::Skipped => Default::default(),
+        }
+    }
     pub(crate) fn with_policy(self, policy: &wes_core::flow::FlowPolicy) -> Self {
         match self {
             Self::Skipped => Self::Skipped,
@@ -328,6 +342,11 @@ pub enum Effect<T> {
     LifetimeReady {
         run: Run,
         deadline: Option<Deadline>,
+    },
+    /// One ordinary finite result is accepted; its separate cleanup lease remains owned.
+    ResultPublished {
+        run: Run,
+        policy: wes_core::flow::FlowPolicy,
     },
 }
 
@@ -535,6 +554,18 @@ enum WorkKind {
     Closing,
     LifetimeOpening,
     LifetimeOpen,
+    JoinedFinite,
+    Finalizing,
+    FinalizingClosing,
+}
+
+impl WorkKind {
+    fn live(self) -> bool {
+        matches!(
+            self,
+            Self::Opening | Self::Open | Self::Closing | Self::LifetimeOpening | Self::LifetimeOpen
+        )
+    }
 }
 
 /// Not Clone: duplicating a live runtime would duplicate publication authority.
@@ -636,8 +667,10 @@ impl<T: Clone> Runtime<T> {
     pub fn is_idle(&self) -> bool {
         self.stream_budget.is_idle()
             && self.leases.values().all(|lease| {
-                matches!(lease.kind, WorkKind::Open | WorkKind::LifetimeOpen)
-                    && self.is_active(&lease.run)
+                (matches!(lease.kind, WorkKind::Open | WorkKind::LifetimeOpen)
+                    && self.is_active(&lease.run))
+                    || (lease.kind == WorkKind::Finalizing
+                        && self.run_of(lease.run.node()) == Some(lease.run.id()))
             })
     }
     /// No outstanding physical execution, including open or cancelled subscriptions.
@@ -1299,6 +1332,50 @@ impl<T: Clone> Runtime<T> {
         self.leases.get_mut(run.node()).expect("entered lease").kind = WorkKind::LifetimeOpening;
         true
     }
+    pub fn enter_joined(&mut self, run: &Run) -> bool {
+        if !self.enter(run) {
+            return false;
+        }
+        self.retain_joined(run)
+    }
+    pub(crate) fn retain_joined(&mut self, run: &Run) -> bool {
+        if !self.is_active(run)
+            || !self.leases.get(run.node()).is_some_and(|lease| {
+                lease.run == *run && lease.entered && lease.kind == WorkKind::Finite
+            })
+        {
+            return false;
+        }
+        self.leases.get_mut(run.node()).expect("entered lease").kind = WorkKind::JoinedFinite;
+        true
+    }
+    /// Admit exactly one ordinary outcome without releasing physical ownership.
+    pub fn publish_result(
+        &mut self,
+        run: &Run,
+        outcome: Outcome,
+        now: Duration,
+    ) -> Option<Vec<Effect<T>>> {
+        if self.closed
+            || !self.is_active(run)
+            || !self.leases.get(run.node()).is_some_and(|lease| {
+                lease.run == *run && lease.entered && lease.kind == WorkKind::JoinedFinite
+            })
+        {
+            return None;
+        }
+        self.leases
+            .get_mut(run.node())
+            .expect("validated lease")
+            .kind = WorkKind::Finalizing;
+        let policy = outcome.flow_policy();
+        let mut effects = self.settle_outcome(run, outcome, false, now);
+        effects.push(Effect::ResultPublished {
+            run: run.clone(),
+            policy,
+        });
+        Some(effects)
+    }
     /// A committed descriptor can be consumed while its separate physical owner remains active.
     /// This does not turn it into a subscription or give it ordered event delivery.
     pub fn lifetime_value(
@@ -1496,7 +1573,13 @@ impl<T: Clone> Runtime<T> {
         let stream = self
             .leases
             .get(run.node())
-            .is_some_and(|lease| lease.kind != WorkKind::Finite);
+            .is_some_and(|lease| lease.kind.live());
+        let published = self.leases.get(run.node()).is_some_and(|lease| {
+            matches!(
+                lease.kind,
+                WorkKind::Finalizing | WorkKind::FinalizingClosing
+            )
+        });
         self.leases.shift_remove(&run.node);
         self.retiring_events.retain(|(runs, _)| {
             runs.iter().any(|r| {
@@ -1507,6 +1590,10 @@ impl<T: Clone> Runtime<T> {
         });
         if self.closed {
             return vec![];
+        }
+        // Cleanup cannot replace a result already acknowledged by this owner.
+        if published {
+            return self.schedule(vec![run.node().clone()], false, now);
         }
         if !self.is_active(run) {
             let forced = self
@@ -1528,6 +1615,15 @@ impl<T: Clone> Runtime<T> {
             }
             return effects;
         }
+        self.settle_outcome(run, outcome, stream, now)
+    }
+    fn settle_outcome(
+        &mut self,
+        run: &Run,
+        outcome: Outcome,
+        stream: bool,
+        now: Duration,
+    ) -> Vec<Effect<T>> {
         let outcome = match outcome.with_policy(&wes_core::flow::FlowPolicy::default()) {
             Outcome::Produced(value) => match self.admit_value(run.node(), &value) {
                 Ok(()) => Outcome::Produced(value),
@@ -1702,6 +1798,15 @@ impl<T: Clone> Runtime<T> {
         )
     }
     fn cancel_with(&mut self, node: &NodeId, error: ErrorValue, now: Duration) -> Vec<Effect<T>> {
+        if let Some(lease) = self.leases.get_mut(node)
+            && matches!(
+                lease.kind,
+                WorkKind::Finalizing | WorkKind::FinalizingClosing
+            )
+        {
+            lease.kind = WorkKind::FinalizingClosing;
+            return vec![Effect::Cancel(lease.run.clone())];
+        }
         let cancelled_invocation = self
             .entries
             .get_mut(node)
@@ -1751,10 +1856,7 @@ impl<T: Clone> Runtime<T> {
             effects.extend(self.schedule(self.pipeline_successors(node), false, now));
             return effects;
         }
-        let stream_window = self
-            .leases
-            .get(node)
-            .is_some_and(|lease| lease.kind != WorkKind::Finite)
+        let stream_window = self.leases.get(node).is_some_and(|lease| lease.kind.live())
             && self.value_of(node).is_some();
         let error = self.entries[node]
             .active
@@ -1782,7 +1884,20 @@ impl<T: Clone> Runtime<T> {
     fn revoke(&mut self, node: &NodeId) -> Option<Run> {
         let entry = self.entries.get_mut(node)?;
         entry.input_update_pending = false;
-        let run = entry.active.take()?.run;
+        let run = match entry.active.take() {
+            Some(attempt) => attempt.run,
+            None => {
+                let lease = self.leases.get_mut(node)?;
+                if !matches!(
+                    lease.kind,
+                    WorkKind::Finalizing | WorkKind::FinalizingClosing
+                ) {
+                    return None;
+                }
+                lease.kind = WorkKind::FinalizingClosing;
+                lease.run.clone()
+            }
+        };
         if self
             .leases
             .get(node)
@@ -2095,7 +2210,7 @@ impl<T: Clone> Runtime<T> {
             let streaming = self
                 .leases
                 .get(node)
-                .is_some_and(|lease| lease.kind != WorkKind::Finite && self.is_active(&lease.run));
+                .is_some_and(|lease| lease.kind.live() && self.is_active(&lease.run));
             if !matches!(
                 state,
                 NodeState::Pending | NodeState::Stale | NodeState::Running

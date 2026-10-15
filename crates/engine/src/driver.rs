@@ -17,6 +17,7 @@ pub(crate) mod conversations;
 pub(crate) mod io;
 pub mod lifetime;
 pub mod progress;
+pub mod publication;
 pub use conversations::ConversationEvent;
 mod capacity;
 pub(crate) mod streaming;
@@ -51,13 +52,14 @@ pub type StreamExecutionFuture = Pin<
 
 /// A resource reservation follows its result until coordinator admission. The
 /// executor cannot release it while a completion still owns unadmitted output.
+#[derive(Clone)]
 pub struct ExecutionHold {
-    _owner: Box<dyn Send + 'static>,
+    _owner: Arc<std::sync::Mutex<Box<dyn Send + 'static>>>,
 }
 impl ExecutionHold {
     pub(crate) fn retain(owner: impl Send + 'static) -> Self {
         Self {
-            _owner: Box::new(owner),
+            _owner: Arc::new(std::sync::Mutex::new(Box::new(owner))),
         }
     }
 }
@@ -68,7 +70,7 @@ impl std::fmt::Debug for ExecutionHold {
 }
 
 /// Operational problems must not replace the provider's outcome after it has already run.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExecutionReport {
     pub outcome: Outcome,
     pub holds: Vec<ExecutionHold>,
@@ -77,6 +79,8 @@ pub struct ExecutionReport {
     pub stream_start: Option<u64>,
     /// Final status travels atomically with the accepted outcome; queue progress is lossy.
     pub progress: Option<progress::ExecutionProgress>,
+    /// Native read-generation proof, never serialized or reconstructed from data.
+    pub publication_guard: Option<publication::Guard>,
 }
 impl From<Outcome> for ExecutionReport {
     fn from(outcome: Outcome) -> Self {
@@ -86,6 +90,7 @@ impl From<Outcome> for ExecutionReport {
             notices: vec![],
             stream_start: None,
             progress: None,
+            publication_guard: None,
         }
     }
 }
@@ -117,6 +122,21 @@ pub trait Executor<T>: Send + Sync + 'static {
         _values: lifetime::Reporter,
     ) -> ExecutionFuture {
         self.execute_reporting(ticket, cancellation, progress)
+    }
+    /// Finite work may publish its ordinary result before separate physical cleanup.
+    /// The caller must keep and join the returned execution future after publication.
+    fn execute_joined(
+        &self,
+        ticket: RunTicket<T>,
+        cancellation: CancellationToken,
+        progress: progress::Reporter,
+        _result: publication::Reporter,
+    ) -> ExecutionFuture {
+        self.execute_reporting(ticket, cancellation, progress)
+    }
+    /// Reserve ordinary capacity until result admission, and live capacity until join.
+    fn joined(&self, _payload: &T) -> bool {
+        false
     }
     /// Resource classification must describe the captured payload, without performing I/O.
     fn streaming(&self, _payload: &T) -> bool {

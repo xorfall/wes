@@ -55,6 +55,8 @@ impl SnapshotDescriptor {
     pub fn metadata_charge(&self) -> u64 {
         crate::value_size::shape_charge(&self.shape, u64::MAX)
             .unwrap_or(u64::MAX)
+            .saturating_add((self.handle.as_str().len() as u64).saturating_mul(2))
+            .saturating_add((self.digest.len() as u64).saturating_mul(2))
             .saturating_add(self.metadata.as_ref().map_or(0, |m| m.charge()))
             .saturating_add(self.provenance.facts().iter().fold(256u64, |n, (k, v)| {
                 n.saturating_add((k.len() + v.len()) as u64 * 8)

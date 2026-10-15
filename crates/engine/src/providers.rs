@@ -889,6 +889,7 @@ fn recording_denied(cancellation: &CancellationToken) -> ExecutionReport {
             stream_start: None,
             holds: vec![],
             progress: None,
+            publication_guard: None,
         }
     } else {
         Outcome::Failed(error).into()

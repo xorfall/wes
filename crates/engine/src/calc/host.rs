@@ -369,6 +369,7 @@ impl BoundCalculation {
                             stream_start: None,
                             holds: vec![],
                             progress: None,
+                            publication_guard: None,
                         };
                     }
                 };
@@ -403,6 +404,7 @@ impl BoundCalculation {
                             stream_start: None,
                             holds: vec![],
                             progress: None,
+                            publication_guard: None,
                         };
                     }
                     Err(error) => {
@@ -412,6 +414,7 @@ impl BoundCalculation {
                             stream_start: None,
                             holds: vec![],
                             progress: None,
+                            publication_guard: None,
                         };
                     }
                     Ok(Step::Request(request)) => request,
@@ -455,6 +458,7 @@ impl BoundCalculation {
                                     stream_start: None,
                                     holds: vec![],
                                     progress: None,
+                                    publication_guard: None,
                                 };
                             }
                             Err(_) => {
@@ -464,6 +468,7 @@ impl BoundCalculation {
                                     stream_start: None,
                                     holds: vec![],
                                     progress: None,
+                                    publication_guard: None,
                                 };
                             }
                         };
@@ -527,6 +532,7 @@ impl BoundCalculation {
                                     stream_start: None,
                                     holds: vec![],
                                     progress: None,
+                                    publication_guard: None,
                                 };
                             }
                         }
@@ -560,6 +566,7 @@ impl BoundCalculation {
                                     stream_start: None,
                                     holds: vec![],
                                     progress: None,
+                                    publication_guard: None,
                                 };
                             }
                         }
@@ -580,6 +587,7 @@ impl BoundCalculation {
                             stream_start: None,
                             holds: vec![],
                             progress: None,
+                            publication_guard: None,
                         };
                     }
                 };
@@ -590,6 +598,7 @@ impl BoundCalculation {
                         stream_start: None,
                         holds: vec![],
                         progress: None,
+                        publication_guard: None,
                     };
                 }
             }

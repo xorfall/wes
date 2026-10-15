@@ -24,6 +24,7 @@ pub(crate) struct Enter<T> {
     pub(crate) reply: oneshot::Sender<Result<Option<RunTicket<T>>, wes_core::ErrorValue>>,
     streaming: bool,
     lifetime: bool,
+    pub(crate) joined: bool,
 }
 pub(crate) enum RuntimeInput<T> {
     Enter(Enter<T>),
@@ -33,6 +34,7 @@ pub(crate) enum RuntimeInput<T> {
     Conversation(conversations::Update),
     Progress(super::progress::Update),
     Lifetime(super::lifetime::Update),
+    Published(super::publication::Update),
 }
 impl<T> RuntimeInput<T> {
     pub fn changes_snapshot(&self) -> bool {
@@ -63,6 +65,11 @@ impl RuntimeInput<crate::tasks::BoundTask> {
         match self {
             Self::Enter(enter) => {
                 let ticket = workspace.enter_ticket(enter.ticket);
+                if enter.joined
+                    && let Ok(Some(ticket)) = &ticket
+                {
+                    workspace.retain_joined(&ticket.run);
+                }
                 let _ = enter.reply.send(ticket);
                 vec![]
             }
@@ -70,6 +77,7 @@ impl RuntimeInput<crate::tasks::BoundTask> {
             Self::Expired(deadline) => workspace.expire(&deadline, now),
             Self::Stream(update) => workspace.stream_update(update, now),
             Self::Lifetime(update) => update.apply_workspace(workspace, now),
+            Self::Published(update) => update.apply_workspace(workspace, now),
             Self::Progress(update) => {
                 workspace.update_execution_progress(&update.run, update.progress);
                 vec![]
@@ -100,6 +108,8 @@ impl<T: Clone> RuntimeInput<T> {
                     runtime.enter_stream(&enter.ticket.run)
                 } else if enter.lifetime {
                     runtime.enter_lifetime(&enter.ticket.run)
+                } else if enter.joined {
+                    runtime.enter_joined(&enter.ticket.run)
                 } else {
                     runtime.enter(&enter.ticket.run)
                 };
@@ -107,17 +117,19 @@ impl<T: Clone> RuntimeInput<T> {
                 vec![]
             }
             Self::Completed(run, report) => {
+                let outcome = super::publication::checked(&report);
                 if let Some(start) = report.stream_start {
                     runtime.set_stream_start(&run, start);
                 }
                 if let Some(progress) = report.progress {
                     runtime.update_progress(&run, progress);
                 }
-                runtime.complete(&run, report.outcome, now)
+                runtime.complete(&run, outcome, now)
             }
             Self::Expired(deadline) => runtime.expire(&deadline, now),
             Self::Stream(update) => update.apply(runtime, now),
             Self::Lifetime(update) => update.apply(runtime, now),
+            Self::Published(update) => update.apply(runtime, now),
             Self::Progress(update) => {
                 runtime.update_progress(&update.run, update.progress);
                 vec![]
@@ -145,6 +157,7 @@ pub(crate) struct ExecutionIo<T> {
     stream_updates: mpsc::Sender<Update>,
     stream_receiver: mpsc::Receiver<Update>,
     open_streams: HashSet<Run>,
+    published_results: HashMap<Run, wes_core::flow::FlowPolicy>,
     source_handles: HashMap<Run, crate::streams::StreamHandle>,
     conversation_permits: Arc<Semaphore>,
     conversation_updates: mpsc::Sender<conversations::Update>,
@@ -156,6 +169,8 @@ pub(crate) struct ExecutionIo<T> {
     lifetime_updates: mpsc::Sender<super::lifetime::Update>,
     lifetime_receiver: mpsc::Receiver<super::lifetime::Update>,
     lifetime_credit: Arc<Semaphore>,
+    publications: mpsc::Sender<super::publication::Update>,
+    publication_receiver: mpsc::Receiver<super::publication::Update>,
     deadlines: BTreeMap<(Duration, Run), Deadline>,
     due: HashMap<Run, Duration>,
     origin: Instant,
@@ -173,6 +188,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
         let (conversation_events, _) = broadcast::channel(32);
         let (progress_updates, progress_receiver) = mpsc::channel(32);
         let (lifetime_updates, lifetime_receiver) = mpsc::channel(32);
+        let (publications, publication_receiver) = mpsc::channel(32);
         Ok(Self {
             payload_events: true,
             executor,
@@ -188,6 +204,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
             stream_updates,
             stream_receiver,
             open_streams: HashSet::new(),
+            published_results: HashMap::new(),
             source_handles: HashMap::new(),
             conversation_permits: capacity.conversations,
             conversation_updates,
@@ -198,6 +215,8 @@ impl<T: Send + 'static> ExecutionIo<T> {
             progress_receiver,
             lifetime_updates,
             lifetime_receiver,
+            publications,
+            publication_receiver,
             lifetime_credit: Arc::new(Semaphore::new(
                 wes_budgets::get("execution.publication.bytes") as usize,
             )),
@@ -381,19 +400,24 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 Some(update) = self.conversation_receiver.recv() => return RuntimeInput::Conversation(update),
                 Some(update) = self.progress_receiver.recv() => return RuntimeInput::Progress(update),
                 Some(update) = self.lifetime_receiver.recv() => return RuntimeInput::Lifetime(update),
+                Some(update) = self.publication_receiver.recv() => return RuntimeInput::Published(update),
                 Some(completion) = self.workers.join_next_with_id(), if !self.workers.is_empty() => {
-                    let (task, outcome) = match completion {
-                        Ok((task, outcome)) => (task, outcome),
-                        Err(error) => (error.id(), Some(Outcome::Failed(RuntimeCode::ExecutionFailed.error("The executor terminated unexpectedly.", None)).into())),
+                    let (task, outcome, panicked) = match completion {
+                        Ok((task, outcome)) => (task, outcome, false),
+                        Err(error) => (error.id(), Some(Outcome::Failed(RuntimeCode::ExecutionFailed.error("The executor terminated unexpectedly.", None)).into()), true),
                     };
                     let run = self.task_runs.remove(&task).expect("each spawned worker has a run");
+                    let published_policy = self.published_results.remove(&run);
                     self.open_streams.remove(&run);
                     self.source_handles.remove(&run);
                     if self.conversations.remove(&run).is_some() {
                         let _ = self.conversation_events.send(Arc::new(ConversationEvent::Ended(run.clone())));
                     }
                     self.tokens.remove(&run); self.remove_deadline(&run);
-                    let report = outcome.unwrap_or_else(|| Outcome::Failed(RuntimeCode::ExecutionFailed.error("Execution did not enter its worker.", None)).into());
+                    let mut report = outcome.unwrap_or_else(|| Outcome::Failed(RuntimeCode::ExecutionFailed.error("Execution did not enter its worker.", None)).into());
+                    if panicked && let Some(policy) = published_policy {
+                        report.notices.push(RuntimeCode::ExecutionFailed.error("The physical owner terminated unexpectedly after its result was published; the result was preserved.", None).with_policy(&policy));
+                    }
                     return RuntimeInput::Completed(run, report);
                 },
                 () = wait_deadline(delay) => {
@@ -443,6 +467,11 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 Effect::StreamClosing(run) => {
                     self.open_streams.remove(&run);
                 }
+                Effect::ResultPublished { run, policy } => {
+                    self.published_results.insert(run.clone(), policy);
+                    self.open_streams.insert(run.clone());
+                    self.remove_deadline(&run);
+                }
             }
         }
     }
@@ -469,20 +498,23 @@ impl<T: Send + 'static> ExecutionIo<T> {
             self.lifetime_credit.clone(),
         );
         let execution = crate::diagnostics::Operation::start("execution");
+        let publications = self.publications.clone();
+        let publication_credit = self.lifetime_credit.clone();
         let queued = execution.child("queue");
         let task = self.workers.spawn(async move {
             let report = async {
             let streaming = executor.streaming(&ticket.payload);
             let interactive = executor.interactive(&ticket.payload);
             let lifetime = executor.lifetime(&ticket.payload);
-            if usize::from(streaming) + usize::from(interactive) + usize::from(lifetime) > 1 { return Some(Outcome::Failed(RuntimeCode::ExecutionFailed.error("Work must select one source, conversation or local lifetime execution class.", None)).into()); }
+            let joined = executor.joined(&ticket.payload);
+            if usize::from(streaming) + usize::from(interactive) + usize::from(lifetime) + usize::from(joined) > 1 { return Some(Outcome::Failed(RuntimeCode::ExecutionFailed.error("Work must select one finite, source, conversation or owned lifetime execution class.", None)).into()); }
             let _conversation_permit = if interactive { match conversation_permits.try_acquire_owned() {
                 Ok(permit) => Some(permit),
                 Err(_) => return Some(Outcome::Failed(RuntimeCode::ExecutionFailed.error("The conversation capacity is exhausted; the provider was not entered.", None)).into()),
             }} else { None };
             // Reserve a separate lifetime slot BEFORE provider entry, without waiting behind an
             // unlimited set of open subscriptions. It is retained through physical cleanup.
-            let _stream_permit = if streaming || lifetime { match stream_permits.try_acquire_owned() {
+            let _stream_permit = if streaming || lifetime || joined { match stream_permits.try_acquire_owned() {
                 Ok(permit) => Some(permit),
                 Err(_) => return Some(Outcome::Failed(RuntimeCode::ExecutionFailed.error("The stream capacity is exhausted; the provider was not entered.", None)).into()),
             }} else { None };
@@ -492,7 +524,7 @@ impl<T: Send + 'static> ExecutionIo<T> {
                 permit = permits.acquire_owned() => permit.expect("driver never closes permit pool"),
             };
             let (reply, receive) = oneshot::channel();
-            if enters.send(Enter { ticket, reply, streaming, lifetime, prepared: false }).await.is_err() {
+            if enters.send(Enter { ticket, reply, streaming, lifetime, joined, prepared: false }).await.is_err() {
                 return None;
             }
             let ticket = match receive.await.ok()? {
@@ -513,6 +545,12 @@ impl<T: Send + 'static> ExecutionIo<T> {
             } else if lifetime {
                 drop(permit);
                 Some(executor.execute_lifetime(ticket, token, progress, values).await)
+            } else if joined {
+                let slot = Arc::new(std::sync::Mutex::new(Some(permit)));
+                let result = super::publication::Reporter::new(ticket.run.clone(), publications, publication_credit, slot.clone());
+                let report = executor.execute_joined(ticket, token, progress, result).await;
+                drop(slot);
+                Some(report)
             } else { Some(executor.execute_reporting(ticket, token, progress).await) }
             }.instrument(execution.span()).await;
             execution.finish(match report.as_ref().map(|r: &ExecutionReport| &r.outcome) { Some(Outcome::Produced(_) | Outcome::Stored(_)) => "ok", Some(Outcome::Skipped) => "skipped", Some(Outcome::Failed(_) | Outcome::Incomplete {..}) => "error", Some(Outcome::Cancelled(_)) | None => "cancelled" });

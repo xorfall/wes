@@ -185,6 +185,14 @@ impl PreparedCall {
             input_holds,
         } = self;
         let publication_policy = policy.clone();
+        let read_check = read_access.stream_guard();
+        let source_check = input_source.clone();
+        let publication_guard = (read_check.is_some() || source_check.is_some()).then(|| {
+            crate::driver::publication::Guard::new(move || {
+                read_check.as_ref().is_none_or(|r| r.current())
+                    && source_check.as_ref().is_none_or(|s| s.check().is_ok())
+            })
+        });
         let work = async move {
             let byte_input_holds = byte_input
                 .as_ref()
@@ -425,6 +433,7 @@ impl PreparedCall {
         };
         Box::pin(async move {
             let mut report: ExecutionReport = work.await;
+            report.publication_guard = publication_guard;
             report.outcome = report.outcome.with_policy(&policy);
             for notice in &mut report.notices {
                 *notice = notice.clone().with_policy(&policy);
