@@ -10,6 +10,8 @@ soft-wrap markers or an adjustable history limit. Local additions expose those
 properties and keep collection/resize in the emulator that owns them. Cells also
 retain a fixed bounded zero-width suffix, so combining marks do not advance the
 cursor or disappear from recovery output. No terminal query responder is added.
+Pending-wrap cursor restoration reprints the complete cell, including its suffix,
+for both single-column cells and wide-character heads at the right margin.
 
 The application recovery tests compare independently authored output and native
 snapshots with the shipped xterm parser. Keep these additions small and explicit

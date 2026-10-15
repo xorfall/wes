@@ -373,6 +373,16 @@ mod tests {
                 b" next".to_vec(),
             ),
             (
+                "pending wrap with combining suffix",
+                format!("{}e\u{301}", "x".repeat(79)).into_bytes(),
+                b"!".to_vec(),
+            ),
+            (
+                "alternate pending wrap with wide combining suffix",
+                format!("\x1b[?1049h{}ハ\u{301}", "x".repeat(78)).into_bytes(),
+                b"!\x1b[?1049l".to_vec(),
+            ),
+            (
                 "output cannot allocate new terminal geometry",
                 b"\x1b[8;65535;65535thello".to_vec(),
                 b" next".to_vec(),

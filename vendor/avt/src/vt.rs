@@ -251,6 +251,27 @@ mod tests {
     }
 
     #[test]
+    fn dump_preserves_combining_suffix_at_pending_wrap() {
+        for input in [
+            "\t ⺀゛ﬀ     \u{730}",
+            "123456789e\u{301}",
+            "12345678ハ\u{301}",
+            "\x1b[?1049h123456789e\u{301}",
+            "\x1b[?1049h12345678ハ\u{301}",
+        ] {
+            let mut original = Vt::new(10, 5);
+            let mut restored = Vt::new(10, 5);
+            original.feed_str(input);
+            restored.feed_str(&original.dump());
+            assert_vts_eq(&original, &restored);
+
+            original.feed_str("!");
+            restored.feed_str("!");
+            assert_vts_eq(&original, &restored);
+        }
+    }
+
+    #[test]
     fn dump_with_file() {
         if let Ok((w, h, input, step)) = setup_dump_with_file() {
             let mut vt1 = Vt::new(w, h);

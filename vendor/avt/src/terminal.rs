@@ -1557,20 +1557,20 @@ impl Terminal {
         }
 
         if self.cursor.col >= self.cols {
-            // move cursor past the right border by re-printing the character in
-            // the last column
+            // Re-print the complete cell to restore pending wrap without
+            // erasing its bounded combining suffix.
             let last_cell = self.buffer[(self.cols - 1, self.cursor.row)];
             let occupancy = last_cell.occupancy();
 
             if occupancy == Occupancy::Single {
                 funs.push(to_sgr(last_cell.pen()));
-                funs.push(Function::Print(last_cell.char()));
+                funs.extend(last_cell.chars().map(Function::Print));
             } else if occupancy == Occupancy::WideTail {
                 let prev_cell = self.buffer[(self.cols - 2, self.cursor.row)];
 
                 funs.push(Function::Cub(1));
                 funs.push(to_sgr(prev_cell.pen()));
-                funs.push(Function::Print(prev_cell.char()));
+                funs.extend(prev_cell.chars().map(Function::Print));
             }
         }
 
