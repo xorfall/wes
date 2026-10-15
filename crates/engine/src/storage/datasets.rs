@@ -11,9 +11,13 @@ use wes_core::{DatasetRef, Value, contracts::ResolvedContractBundle, flow::FlowP
 pub struct DatasetAccess {
     pub withdrawn: std::collections::BTreeSet<String>,
     pub closed: bool,
+    pub providers: crate::provider_reads::Readers,
 }
 impl DatasetAccess {
     pub fn blocks_policy(&self, policy: &FlowPolicy) -> bool {
+        self.providers.blocks_policy(policy) || self.blocks_dataset_policy(policy)
+    }
+    pub(crate) fn blocks_dataset_policy(&self, policy: &FlowPolicy) -> bool {
         policy
             .dataset_reads()
             .iter()
@@ -21,13 +25,10 @@ impl DatasetAccess {
     }
 
     pub fn blocks(&self, value: &Value) -> bool {
-        if value
-            .provenance()
-            .policy()
-            .dataset_reads()
-            .iter()
-            .any(|origin| self.closed || self.withdrawn.contains(origin.dataset()))
-        {
+        self.providers.blocks_policy(value.provenance().policy()) || self.blocks_dataset(value)
+    }
+    pub(crate) fn blocks_dataset(&self, value: &Value) -> bool {
+        if self.blocks_dataset_policy(value.provenance().policy()) {
             return true;
         }
         let mut pending = vec![(value.data(), 0usize)];

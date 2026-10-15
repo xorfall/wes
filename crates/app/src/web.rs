@@ -1333,6 +1333,7 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
             Ok(context) => context,
             Err(failure) => return failure.value_response(&handle),
         };
+    let read_epoch = worker.read_epoch();
     // Bound inspection before a descriptor fallback can decode an ordinary stored body. The
     // shared owner keeps scope/policy checks, and the read below keeps exact snapshot validation.
     if let Some(maximum) = maximum {
@@ -1390,6 +1391,7 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
         }
     }
     let captured = value.value.clone();
+    let protected_read = !captured.provenance().policy().provider_reads().is_empty();
     let encoded = shared
         .encoders
         .spawn_blocking(move || {
@@ -1408,6 +1410,9 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
         .await;
     match encoded {
         Ok(Ok(bytes)) => {
+            if protected_read && read_epoch != worker.read_epoch() {
+                return value_errors::Failure::ReadAuthorityChanged.response(Some(&handle));
+            }
             if !shared
                 .application
                 .current()
@@ -1427,6 +1432,9 @@ async fn value(Scoped(shared): Scoped, Path(handle): Path<String>, request: Requ
                 return read_context::Failure::Session(error).value_response(&handle);
             }
             match authorization {
+                Ok(true) if protected_read && read_epoch != worker.read_epoch() => {
+                    value_errors::Failure::ReadAuthorityChanged.response(Some(&handle))
+                }
                 Ok(true) => ([(header::CONTENT_TYPE, "application/json")], bytes).into_response(),
                 Ok(false) => value_errors::Failure::Missing.response(Some(&handle)),
                 Err(error) => value_errors::Failure::Storage(error).response(Some(&handle)),

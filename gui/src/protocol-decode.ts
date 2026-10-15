@@ -200,10 +200,14 @@ export function decodeEvent(raw: unknown): Event {
     };
   }
   if (event.event === "result-access") {
-    // Exactly the three keys the engine sends; only a withdrawal exists, never a grant.
-    if (Object.keys(event).length !== 3 || !Object.hasOwn(event, "node") || !Object.hasOwn(event, "readable")) refuse("result-access keys");
-    if (event.readable !== false) refuse("result-access readable");
-    return { event: "result-access", node: named(event.node, "result-access node"), readable: false };
+    const node = named(event.node, "result-access node");
+    if (event.readable === false && Object.keys(event).length === 3
+      && Object.keys(event).every(key => ["event", "node", "readable"].includes(key))) return { event: "result-access", node, readable: false };
+    if (event.readable !== true || Object.keys(event).length !== 5 || !Object.hasOwn(event, "handle")
+      || Object.keys(event).some(key => !["event", "node", "readable", "handle", "epoch"].includes(key))
+      || typeof event.epoch !== "string" || !/^[a-f0-9]{64}$/.test(event.epoch)) refuse("result-access proof");
+    return { event: "result-access", node, readable: true,
+      handle: event.handle === null ? null : named(event.handle, "result-access handle"), epoch: event.epoch as string };
   }
   if (event.event === "evidence") return decodeEvidence(event);
   if (event.event === "ready") {

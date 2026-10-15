@@ -19,6 +19,7 @@ pub(crate) struct Definition {
     executable: String,
     operations: Vec<Operation>,
     session: Option<Vec<String>>,
+    read_domain: Option<wes_engine::provider_reads::ReadDomain>,
 }
 #[derive(Clone)]
 struct Operation {

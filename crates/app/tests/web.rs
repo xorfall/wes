@@ -12,6 +12,8 @@ mod language;
 mod multi_workspaces;
 #[path = "web/presentations.rs"]
 mod presentations;
+#[path = "web/provider_reads.rs"]
+mod provider_reads;
 #[path = "web/publication.rs"]
 mod publication;
 #[path = "web/read_admission.rs"]

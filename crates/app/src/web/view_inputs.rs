@@ -38,7 +38,10 @@ pub(super) async fn read(
     };
     let etag = format!(
         "\"{:x}\"",
-        Sha256::digest(format!("{:?}:{:?}", patches.revisions, patches.problems))
+        Sha256::digest(format!(
+            "{}:{:?}:{:?}",
+            patches.read_epoch, patches.revisions, patches.problems
+        ))
     );
     if request
         .headers()
@@ -95,7 +98,10 @@ pub(super) async fn read(
         return StatusCode::CONFLICT.into_response();
     }
     match session.view_input_patches(node, identity).await {
-        Ok(now) if now.revisions == patches.revisions && now.problems == patches.problems => {}
+        Ok(now)
+            if now.read_epoch == patches.read_epoch
+                && now.revisions == patches.revisions
+                && now.problems == patches.problems => {}
         Ok(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Err(_) => return StatusCode::FORBIDDEN.into_response(),
     }

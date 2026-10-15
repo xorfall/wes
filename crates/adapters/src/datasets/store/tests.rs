@@ -290,6 +290,7 @@ fn read_origins_survive_reopen_and_withdraw_derived_datasets_without_retention_e
     let mut derived = create(&mut store);
     append(&mut store, &mut derived, 1);
     derived.dataset_reads = policy.dataset_reads().iter().cloned().collect();
+    derived.provider_reads = policy.provider_reads().iter().cloned().collect();
     assert!(matches!(
         store.commit(&derived, &FlowPolicy::default()),
         Err(DatasetError::Restricted)
@@ -392,6 +393,7 @@ fn create_with_schema(store: &mut DatasetStore, schema: &ResolvedContractBundle)
         protection: None,
         origins: vec![],
         dataset_reads: vec![],
+        provider_reads: vec![],
     }
 }
 #[test]
@@ -930,6 +932,7 @@ fn checkpoint(store: &DatasetStore, manifest: &Manifest) -> crate::datasets::Che
         protection: manifest.protection,
         origins: vec![],
         dataset_reads: vec![],
+        provider_reads: vec![],
     }
 }
 #[test]
@@ -2439,6 +2442,7 @@ fn receipt_joins_fresh_prefix_origins_and_read_withdrawal_dependencies() {
         .read_from_dataset(&source_ref);
     changed.origins = policy.origins().iter().cloned().collect();
     changed.dataset_reads = policy.dataset_reads().iter().cloned().collect();
+    changed.provider_reads = policy.provider_reads().iter().cloned().collect();
     store
         .admit_write(
             Some(&owner),

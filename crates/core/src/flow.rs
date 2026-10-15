@@ -47,6 +47,71 @@ impl DatasetReadOrigin {
     }
 }
 
+/// An immutable dependency on a provider read domain. Digests identify the
+/// captured binding and typed scope; neither this witness nor retained bytes
+/// grant permission. The live read owner must validate every joined origin.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    try_from = "ProviderOrigin",
+    into = "ProviderOrigin"
+)]
+pub struct ProviderReadOrigin {
+    realm: String,
+    binding: String,
+    scope: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderOrigin {
+    realm: String,
+    binding: String,
+    scope: String,
+}
+impl TryFrom<ProviderOrigin> for ProviderReadOrigin {
+    type Error = &'static str;
+    fn try_from(raw: ProviderOrigin) -> Result<Self, Self::Error> {
+        Self::new(raw.realm, raw.binding, raw.scope)
+    }
+}
+impl From<ProviderReadOrigin> for ProviderOrigin {
+    fn from(o: ProviderReadOrigin) -> Self {
+        Self {
+            realm: o.realm,
+            binding: o.binding,
+            scope: o.scope,
+        }
+    }
+}
+impl ProviderReadOrigin {
+    pub fn new(realm: String, binding: String, scope: String) -> Result<Self, &'static str> {
+        if !uuid::Uuid::parse_str(&realm).is_ok_and(|u| u.to_string() == realm)
+            || [&binding, &scope].iter().any(|s| {
+                s.len() != 64
+                    || !s
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        {
+            return Err("invalid provider read origin");
+        }
+        Ok(Self {
+            realm,
+            binding,
+            scope,
+        })
+    }
+    pub fn realm(&self) -> &str {
+        &self.realm
+    }
+    pub fn binding(&self) -> &str {
+        &self.binding
+    }
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+}
+
 /// Maximum residence allowed by the data policy, independently of current retention.
 /// Ordering is intentional: a join always chooses the more restrictive ceiling.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -96,6 +161,7 @@ pub struct FlowPolicy {
     residence: Residence,
     unknown: bool,
     dataset_reads: BTreeSet<DatasetReadOrigin>,
+    provider_reads: BTreeSet<ProviderReadOrigin>,
 }
 impl FlowPolicy {
     pub fn origins(&self) -> &BTreeSet<String> {
@@ -119,6 +185,7 @@ impl FlowPolicy {
     pub fn is_empty(&self) -> bool {
         self.origins.is_empty()
             && self.dataset_reads.is_empty()
+            && self.provider_reads.is_empty()
             && !self.confidential
             && !self.unknown
     }
@@ -133,10 +200,22 @@ impl FlowPolicy {
             residence: self.residence,
             unknown: self.unknown,
             dataset_reads: BTreeSet::new(),
+            provider_reads: self.provider_reads.clone(),
         }
     }
     pub fn dataset_reads(&self) -> &BTreeSet<DatasetReadOrigin> {
         &self.dataset_reads
+    }
+    pub fn provider_reads(&self) -> &BTreeSet<ProviderReadOrigin> {
+        &self.provider_reads
+    }
+    pub fn with_provider_read(mut self, origin: ProviderReadOrigin) -> Self {
+        if self.provider_reads.len() < 128 || self.provider_reads.contains(&origin) {
+            self.provider_reads.insert(origin);
+        } else {
+            self.unknown = true;
+        }
+        self
     }
     pub fn read_from_dataset(self, reference: &crate::DatasetRef) -> Self {
         self.with_dataset_read(DatasetReadOrigin {
@@ -190,6 +269,9 @@ impl FlowPolicy {
         }
         for origin in &other.dataset_reads {
             joined = joined.with_dataset_read(origin.clone());
+        }
+        for origin in &other.provider_reads {
+            joined = joined.with_provider_read(origin.clone());
         }
         joined
     }

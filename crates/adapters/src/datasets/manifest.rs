@@ -71,6 +71,7 @@ pub struct Manifest {
     pub protection: Option<wes_core::flow::Residence>,
     pub origins: Vec<String>,
     pub dataset_reads: Vec<wes_core::flow::DatasetReadOrigin>,
+    pub provider_reads: Vec<wes_core::flow::ProviderReadOrigin>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,10 +100,15 @@ impl Manifest {
         if let Some(residence) = self.protection {
             p = p.confidential(residence);
         }
-        self.dataset_reads
+        let p = self
+            .dataset_reads
             .iter()
             .cloned()
-            .fold(p, |p, o| p.with_dataset_read(o))
+            .fold(p, |p, o| p.with_dataset_read(o));
+        self.provider_reads
+            .iter()
+            .cloned()
+            .fold(p, |p, o| p.with_provider_read(o))
     }
 
     /// Every physical-tree consumer enumerates roots here; there is no independent side dataset.
@@ -238,6 +244,8 @@ impl Manifest {
         if self.protection == Some(wes_core::flow::Residence::Memory)
             || self.dataset_reads.len() > 128
             || self.dataset_reads.windows(2).any(|s| s[0] >= s[1])
+            || self.provider_reads.len() > 128
+            || self.provider_reads.windows(2).any(|s| s[0] >= s[1])
             || self.origins.len() > 128
             || self
                 .origins

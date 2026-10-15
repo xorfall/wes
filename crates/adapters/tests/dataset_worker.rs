@@ -426,6 +426,7 @@ fn recorded(store: &mut DatasetStore) -> wes_core::DatasetRef {
         protection: None,
         origins: vec![],
         dataset_reads: vec![],
+        provider_reads: vec![],
     };
     store.commit(&manifest, &policy).unwrap();
     store.descriptor(&dataset).unwrap()

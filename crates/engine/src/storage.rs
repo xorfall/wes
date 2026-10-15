@@ -56,6 +56,14 @@ impl fmt::Display for ValueHandle {
 pub enum StoreError {
     #[error("the output policy does not permit this storage or export operation")]
     Restricted,
+    #[error(
+        "provider-origin read permission is unavailable; explicitly revalidate its captured scope"
+    )]
+    ProviderReadUnavailable,
+    #[error(
+        "provider-origin authority changed during this read; obtain a fresh observation after explicit revalidation"
+    )]
+    ProviderReadChanged,
     #[error("a value must be materialized before retention")]
     NonMaterialized,
     #[error("the newly stored value is unavailable")]
@@ -231,6 +239,13 @@ impl fmt::Debug for ValueLease {
 
 /// Synchronous I/O port, called on storage workers rather than the runtime state owner.
 pub trait ValueStore: Send {
+    /// Whole-result policy before typed payload decoding or selected reads.
+    /// Implement from bounded immutable metadata or already resident policy;
+    /// never fall back to reading/decoding the domain body. None means absent.
+    fn read_policy(
+        &self,
+        handle: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError>;
     /// Compose already retained immutable members without decoding their payloads.
     fn compose(
         &mut self,

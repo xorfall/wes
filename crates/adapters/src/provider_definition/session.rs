@@ -95,8 +95,13 @@ fn unknown() -> InvocationError {
 }
 fn product(session: Session) -> Result<ImportProduct, ImportError> {
     let description = session.definition.description.clone();
+    let read_domain = session.definition.read_domain.clone();
     let session = Arc::new(session);
-    ImportProduct::new(description, session.clone(), vec![]).map(|p| p.with_streams(session))
+    let product = ImportProduct::new(description, session.clone(), vec![])?.with_streams(session);
+    match read_domain {
+        Some(domain) => product.with_read_domain(domain),
+        None => Ok(product),
+    }
 }
 pub(super) fn unbound(
     definition: Definition,

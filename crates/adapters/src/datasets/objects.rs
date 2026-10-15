@@ -397,6 +397,8 @@ impl ObjectFiles {
             || checkpoint.origins != policy.origins().iter().cloned().collect::<Vec<_>>()
             || checkpoint.dataset_reads
                 != policy.dataset_reads().iter().cloned().collect::<Vec<_>>()
+            || checkpoint.provider_reads
+                != policy.provider_reads().iter().cloned().collect::<Vec<_>>()
         {
             return Err(FormatError::Restricted.into());
         }
@@ -455,6 +457,12 @@ impl ObjectFiles {
                     .dataset_reads()
                     .iter()
                     .any(|o| !checkpoint.dataset_reads.contains(o))
+                || value
+                    .provenance()
+                    .policy()
+                    .provider_reads()
+                    .iter()
+                    .any(|o| !checkpoint.provider_reads.contains(o))
             {
                 return Err(FormatError::Restricted.into());
             }

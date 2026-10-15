@@ -15,6 +15,7 @@ import { datasetWithdrawals, WITHDRAWN_TITLE } from "./surface/render/dataset-so
 import { OpenScreen } from "./surface/screens/Open";
 import { peekOf, PeekScreen } from "./surface/screens/Peek";
 import { memberProblem } from "./dashboard/sources";
+import { decodeDatasetReference } from "./presentation/dataset";
 
 /* Synthetic workspace events and values only: invented node names, handles and payloads. */
 
@@ -31,6 +32,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(
 const value: StoredValue = { type: { kind: "primitive", name: "TEXT" }, provenance: {}, data: "synthetic secret row" };
 const ready = (node: string, handle: string) => ({ event: "ready", node, handle, type: "Text", bytes: 20, provenance: {}, cautions: [], kept: false });
 const access = (node: string) => ({ event: "result-access", node, readable: false });
+const restored = (node: string, handle: string | null) => ({ event: "result-access", node, readable: true, handle, epoch: "e".repeat(64) });
 const stale = (node: string) => ({ event: "node", node, state: "stale", staleReason: { code: "result_withdrawn", message: "Access to the result was withdrawn. Cached data and value-derived metadata were cleared; no work was replayed." } });
 const created = (node: string) => ({ event: "created", node, name: "rows", command: ":synthetic rows", dependsOn: [], dependencyLifetime: "continuous", interactive: false });
 const textOf = (item: ReactTestInstance): string => item.children.map(child => typeof child === "string" ? child : textOf(child)).join("");
@@ -54,6 +56,11 @@ describe("result-access decoding", () => {
   it("accepts exactly a withdrawal for a named node", () => {
     expect(decodeEvent(access("n1"))).toEqual(access("n1"));
   });
+  it("accepts a bounded host proof naming only the current capture", () => {
+    expect(decodeEvent(restored("n1", "current"))).toEqual(restored("n1", "current"));
+    expect(decodeEvent(restored("n1", null))).toEqual(restored("n1", null));
+    for (const raw of [{ ...restored("n1", "current"), epoch: "old" }, { ...restored("n1", "current"), handle: [] }, { ...restored("n1", "current"), extra: true }]) expect(() => decodeEvent(raw)).toThrow();
+  });
   it.each([
     ["a grant", { event: "result-access", node: "n1", readable: true }],
     ["a missing readable", { event: "result-access", node: "n1" }],
@@ -67,6 +74,76 @@ describe("result-access decoding", () => {
 });
 
 describe("Engine handling before distribution", () => {
+  it("does not publish a value if authority changes while its renderer catalogue loads", async () => {
+    const { engine, replies } = connected("g-renderer");
+    let completeCatalogue!: (reply: unknown) => void;
+    const catalogue = vi.fn(() => new Promise(resolve => { completeCatalogue = resolve; }));
+    vi.stubGlobal("fetch", catalogue);
+    Events.current.say(ready("n1", "current"));
+    const reading = engine.fetch("current");
+    await flush();
+    replies[0]!({ ...value, data: { view: "synthetic.pending-renderer" } });
+    await flush();
+    expect(catalogue).toHaveBeenCalledTimes(1);
+    Events.current.say(restored("n1", "current"));
+    completeCatalogue({ ok: true, text: async () => "[]" });
+    await expect(reading).rejects.toBeInstanceOf(ResultWithdrawnError);
+  });
+  it("rejects an old Dataset body after a coalesced fresh proof and allows a fresh read", async () => {
+    const { engine } = connected("g-dataset");
+    const reference = decodeDatasetReference({
+      store: "00000000-0000-4000-8000-0000000000a1", dataset: "00000000-0000-4000-8000-0000000000b2",
+      generation: "1", manifest: "00000000-0000-4000-8000-0000000000c3", manifestDigest: `sha256:${"a".repeat(64)}`,
+      manifestBytes: "512", schemaDigest: `sha256:${"b".repeat(64)}`, records: "0", authorizationGeneration: "1",
+    })!;
+    const body = { reference, stream: "outputs", lifecycle: "sealed", protected: false, persistence: "Durable", segmentBytes: "0" };
+    let completeOldBody!: (text: string) => void;
+    const transport = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, text: () => new Promise(resolve => { completeOldBody = resolve; }) })
+      .mockResolvedValue({ ok: true, status: 200, text: async () => JSON.stringify(body) });
+    vi.stubGlobal("fetch", transport);
+    Events.current.say(ready("n1", "current"));
+    const reading = engine.readDataset("current", "g-dataset", reference, "", undefined, 20, new AbortController().signal);
+    await flush();
+    Events.current.say(restored("n1", "current"));
+    completeOldBody(JSON.stringify(body));
+    await expect(reading).rejects.toMatchObject({ name: "DatasetReadError", kind: "authority", code: "DATASET_READ_AUTHORITY_CHANGED", retryable: false });
+    await expect(engine.readDataset("current", "g-dataset", reference, "", undefined, 20, new AbortController().signal))
+      .resolves.toMatchObject({ reference, lifecycle: "sealed" });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it("a coalesced new proof closes older reads even when no false notice was delivered", async () => {
+    const { engine, reads, replies } = connected("g-coalesced");
+    Events.current.say(ready("n1", "current"));
+    const oldRead = engine.fetch("current");
+    await flush();
+    Events.current.say(restored("n1", "current"));
+    const freshRead = engine.fetch("current");
+    await flush();
+    expect(reads).toHaveBeenCalledTimes(2);
+    replies[0]!(value);
+    await expect(oldRead).rejects.toBeInstanceOf(ResultWithdrawnError);
+    replies[1]!(value);
+    await expect(freshRead).resolves.toMatchObject({ data: "synthetic secret row" });
+  });
+  it("fresh proof opens only its exact capture while every old request stays closed", async () => {
+    const { engine, reads, replies } = connected("g-proof");
+    Events.current.say(ready("n1", "older-scope"));
+    Events.current.say(ready("n1", "current-scope"));
+    const oldRead = engine.fetch("current-scope");
+    await flush();
+    Events.current.say(access("n1"));
+    Events.current.say(restored("n1", "current-scope"));
+    expect(datasetWithdrawals.has({ handle: "current-scope", generation: "g-proof" })).toBe(false);
+    expect(datasetWithdrawals.has({ handle: "older-scope", generation: "g-proof" })).toBe(true);
+    const freshRead = engine.fetch("current-scope");
+    await flush();
+    expect(reads).toHaveBeenCalledTimes(2);
+    replies[0]!(value);
+    await expect(oldRead).rejects.toBeInstanceOf(ResultWithdrawnError);
+    replies[1]!(value);
+    await expect(freshRead).resolves.toMatchObject({ data: "synthetic secret row" });
+    await expect(engine.fetch("older-scope")).rejects.toBeInstanceOf(ResultWithdrawnError);
+  });
   it("drops a read in flight when the notice arrives, and never reads that handle again", async () => {
     const { engine, reads, replies, heard } = connected("g-pending");
     Events.current.say(ready("n1", "h-old"));
@@ -149,6 +226,25 @@ describe("Workspace projection of the notice", () => {
 });
 
 describe("Display caches", () => {
+  it("ignores an old abort after revalidation and resumes fresh display reads only", async () => {
+    vi.useFakeTimers();
+    let rejectOld!: (error: Error) => void;
+    const fetch = vi.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }))
+      .mockResolvedValue({ value, metadata: { revision: "2", epochs: [], sources: [] } });
+    const reader = new LiveViewReader(fetch);
+    const seen: unknown[] = [];
+    const stop = reader.watch("n1", "g", sample => seen.push(sample));
+    await vi.advanceTimersByTimeAsync(150);
+    reader.withdraw("n1");
+    reader.restore("n1");
+    rejectOld(new Error("old aborted read"));
+    await flush();
+    expect(seen.at(-1)).toEqual({ revision: 0 });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(seen.at(-1)).toMatchObject({ value, metadata: { revision: "2" } });
+    expect(reader.cellSnapshot("n1", "g")).toBeUndefined();
+    stop();
+  });
   it("drops held live snapshots and tells watchers at once, without a later budget complaint", async () => {
     vi.useFakeTimers();
     let abort!: () => void;

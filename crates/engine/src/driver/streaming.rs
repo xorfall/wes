@@ -37,6 +37,7 @@ impl Update {
             unreachable!("registration")
         };
         let accepted = runtime.accepts_live_io(&run)
+            && !runtime.blocks_provider_reads(handle.snapshot().window.provenance().policy())
             && handle.snapshot().run == run
             && !handles.contains_key(&run);
         if accepted {
@@ -62,8 +63,18 @@ impl Update {
     pub fn apply<T: Clone>(self, runtime: &mut Runtime<T>, now: Duration) -> Vec<Effect<T>> {
         let effects = match self.publication {
             Publication::Started { .. } => None,
-            Publication::Event { run, event } => runtime.ingest_event(&run, event, now),
+            Publication::Event { run, event } => {
+                if runtime.blocks_provider_reads(event.value.provenance().policy()) {
+                    None
+                } else {
+                    runtime.ingest_event(&run, event, now)
+                }
+            }
             Publication::Window { snapshot } => {
+                if runtime.blocks_provider_reads(snapshot.window.provenance().policy()) {
+                    let _ = self.reply.send(false);
+                    return vec![];
+                }
                 let items = match snapshot.window.data() {
                     wes_core::Data::List(items) => items.len(),
                     _ => 0,

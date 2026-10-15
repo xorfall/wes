@@ -6,6 +6,7 @@ use crate::{
     storage::{LoadedValue, StoreError, ValueLease},
 };
 pub(super) struct ReadCompletion {
+    read_epoch: String,
     output: OutputRef,
     captured: StoredOutputRef,
     member: String,
@@ -119,6 +120,7 @@ impl Actor {
         self.maintain_residency(captured.snapshot.charge);
         let reply = reply.take().expect("read reply");
         let member = member.to_owned();
+        let read_epoch = self.workspace.dataset_access.providers.epoch();
         self.preparing_reads.spawn(async move {
             let result = async {
                 let mut selection = captured.snapshot.selection.clone();
@@ -134,6 +136,7 @@ impl Actor {
             }
             .await;
             ReadCompletion {
+                read_epoch,
                 output,
                 captured,
                 member,
@@ -148,6 +151,17 @@ impl Actor {
         let result = (|| {
             if self.workspace.runtime().is_closed() {
                 return Err(SessionError::Stopped);
+            }
+            if !read
+                .captured
+                .snapshot
+                .provenance
+                .policy()
+                .provider_reads()
+                .is_empty()
+                && read.read_epoch != self.workspace.dataset_access.providers.epoch()
+            {
+                return Err(SessionError::HistoricalReplyUnavailable);
             }
             if self
                 .workspace

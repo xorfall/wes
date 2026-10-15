@@ -1007,6 +1007,7 @@ impl crate::workspace::Workspace {
         use sha2::{Digest, Sha256};
         let mut realm = Sha256::new();
         realm.update(self.views.command_epoch.as_bytes());
+        realm.update(self.dataset_access.providers.epoch().as_bytes());
         for entry in &frame.instances {
             let input = entry.input.as_ref();
             let source = input.and_then(Input::source);
@@ -1050,6 +1051,13 @@ impl crate::workspace::Workspace {
                     return Err("A view instance was removed".into());
                 }
                 if let Some(input) = &instance.input {
+                    if input
+                        .value
+                        .as_ref()
+                        .is_some_and(|v| self.dataset_access.blocks_policy(v.provenance().policy()))
+                    {
+                        return Err("View input read authority was withdrawn".into());
+                    }
                     if let InputBinding::Retained(reference) = &input.binding {
                         if self.runtime().graph().node(reference.node()).is_none() {
                             return Err("Retained input work was removed".into());
@@ -1062,6 +1070,13 @@ impl crate::workspace::Workspace {
                         );
                     }
                     if let Some(source) = input.source() {
+                        if self
+                            .runtime()
+                            .result_provenance(&source.output.node)
+                            .is_some_and(|p| self.dataset_access.blocks_policy(p.policy()))
+                        {
+                            return Err("View source read authority was withdrawn".into());
+                        }
                         instance.input_delivery = if self.has_stream_source(&source.output.node) {
                             InputDelivery::Window
                         } else {

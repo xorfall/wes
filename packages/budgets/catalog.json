@@ -2242,5 +2242,38 @@
     "min": 1,
     "max": 1024,
     "source": "crates/engine/src/session/source_controls.rs"
+  },
+  {
+    "id": "provider.read.owners",
+    "label": "Provider read owners",
+    "description": "Live process-local read owners registered with shared storage; duplicate or absent realms fail closed.",
+    "group": "Providers",
+    "unit": "count",
+    "default": 128,
+    "min": 1,
+    "max": 1024,
+    "source": "crates/engine/src/provider_reads.rs"
+  },
+  {
+    "id": "provider.read.grants",
+    "label": "Provider scope read grants",
+    "description": "Exact captured binding and scope grants per live authority, established only by explicit successful probes.",
+    "group": "Providers",
+    "unit": "count",
+    "default": 1024,
+    "min": 1,
+    "max": 1024,
+    "source": "crates/engine/src/environments/authority/provider_reads.rs"
+  },
+  {
+    "id": "provider.read.grant.ms",
+    "label": "Provider read grant lifetime",
+    "description": "Maximum read grant lifetime after a successful joined probe, also capped by the current credential grant.",
+    "group": "Providers",
+    "unit": "milliseconds",
+    "default": 300000,
+    "min": 1,
+    "max": 3600000,
+    "source": "crates/engine/src/environments/authority/provider_reads.rs"
   }
 ]

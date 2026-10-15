@@ -491,6 +491,26 @@ pub(super) fn build(
             out.push(format!("environment:{id}"), json!({"event":"node-environment","node":id,"environment":binding.environment().name(),"revision":binding.environment().revision().to_string(),"target":binding.import().target().name(),"endpoint":binding.import().endpoint(),"origin":binding.import().origin().environment}))?;
         }
         let mut state = json!({"event":"node", "node":id, "state":state(node.state())});
+        let read_access = execution.provider_read_access.get(node.id()).copied();
+        if let Some(readable) = read_access {
+            let event = if readable {
+                let handle = observation
+                    .values
+                    .as_ref()
+                    .and_then(|values| values.outputs.get(node.id()))
+                    .and_then(|publication| match publication {
+                        ValuePublication::Complete(value) => {
+                            value.stored.as_ref().map(|stored| stored.handle.as_str())
+                        }
+                        ValuePublication::Recovered(value) => Some(value.handle.as_str()),
+                        _ => None,
+                    });
+                json!({"event":"result-access", "node":id, "readable":true, "handle":handle, "epoch":observation.state.read_epoch})
+            } else {
+                json!({"event":"result-access", "node":id, "readable":false})
+            };
+            out.push(format!("access:{id}"), event)?;
+        }
         if let Some(progress) = execution.progress.get(node.id()) {
             out.push(format!("progress:{id}"),json!({"event":"node-progress","node":id,"run":execution.runs.get(node.id()).map(|run|run.as_str()),"progress":progress}))?;
         }
@@ -508,7 +528,7 @@ pub(super) fn build(
         state["updatePending"] = json!(execution.input_updates.contains(node.id()));
         if let Some(reason) = execution.stale_reasons.get(node.id()) {
             state["staleReason"] = json!({"code":reason.code(),"message":reason.message()});
-            if reason.code() == "result_withdrawn" {
+            if reason.code() == "result_withdrawn" && read_access.is_none() {
                 // Scoped to a node this reader already knows. No global dataset
                 // inventory or withdrawn descriptor is sent to the client.
                 out.push(
@@ -523,7 +543,7 @@ pub(super) fn build(
         }
         // State and ready share a key: refresh replaces the ready announcement immediately.
         let stopped = execution.evidence_values.get(node.id());
-        if node.state() == NodeState::Ready || stopped.is_some() {
+        if read_access != Some(false) && (node.state() == NodeState::Ready || stopped.is_some()) {
             let published = observation
                 .values
                 .as_ref()

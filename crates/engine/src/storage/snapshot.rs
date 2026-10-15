@@ -73,6 +73,7 @@ impl SnapshotDescriptor {
                     .fold(0u64, |n, s| n.saturating_add(128 + (s.len() as u64) * 2)),
             )
             .saturating_add(self.provenance.policy().dataset_reads().len() as u64 * 512)
+            .saturating_add(self.provenance.policy().provider_reads().len() as u64 * 768)
             .saturating_add(
                 self.selection
                     .iter()

@@ -21,7 +21,7 @@ import { desktopClient } from "./client-identity";
 import { EngineRefusal, SUBMISSION_OUTCOME_HEADER, recordEngineFailure, recordExecutionFailure, requestOperation } from "./engine-diagnostics";
 import { StorageError, storageError } from "./storage-error";
 import { AssistantUi } from "./assistant-ui";
-import { ResultReader, ResultWithdrawnError } from "./result-reader";
+import { ResultReader } from "./result-reader";
 import { datasetWithdrawals } from "./surface/render/dataset-source";
 import { DatasetReadError, datasetFailure, datasetQuery, decodeDatasetHead, decodeDatasetRead, extendsReference, type DatasetPosition, type DatasetRead, type DatasetStream } from "./dataset-read";
 import type { DatasetReference } from "./presentation/dataset";
@@ -337,7 +337,10 @@ export class Engine {
         if (event.event === "session") datasetWithdrawals.withdrawMany(this.results.withdrawnHandles(), event.generation);
         if (event.event === "ready" || event.event === "evidence") this.rememberHandle(event.node, event.handle);
         if (event.event === "dropped") for (const node of event.nodes) this.nodeHandles.delete(node);
-        if (event.event === "result-access") this.withdrawAccess(event.node);
+        if (event.event === "result-access") {
+          if (event.readable) this.restoreAccess(event.node, event.handle);
+          else this.withdrawAccess(event.node);
+        }
         if (event.event !== "vocabulary") onEvent(event);
         if ((event.event === "environments" || event.event === "vocabulary") && this.vocabulary) {
           const context = this.environmentContext();
@@ -593,17 +596,20 @@ export class Engine {
    * adjusted" for a couple of hundred bytes; this is what it costs to actually look.
    */
   async fetch(handle: string, maximumBytes?: number): Promise<StoredValue> {
-    const generation=this.generation;
-    const value=await this.results.read(handle, maximumBytes);
-    if (generation !== this.generation) throw new Error("Workspace changed; the result read was discarded.");
-    if (this.results.isWithdrawn(handle)) throw new ResultWithdrawnError();
-    if (maximumBytes !== undefined) return value;
-    let modules=builtinValueViews;
-    try { modules=await this.valuePackages.modules(value); } catch { /* Renderer failure leaves the stored data readable. */ }
-    if(generation!==this.generation)throw new Error("Workspace changed; the result read was discarded.");
-    if(this.results.isWithdrawn(handle))throw new ResultWithdrawnError();
-    bindValueViews(value,modules);
-    return value;
+    const read = this.results.beginRead(handle);
+    try {
+      const generation = this.generation;
+      const value = await this.results.read(handle, maximumBytes);
+      if (generation !== this.generation) throw new Error("Workspace changed; the result read was discarded.");
+      read.current();
+      if (maximumBytes !== undefined) return value;
+      let modules = builtinValueViews;
+      try { modules = await this.valuePackages.modules(value); } catch { /* Renderer failure leaves the stored data readable. */ }
+      if (generation !== this.generation) throw new Error("Workspace changed; the result read was discarded.");
+      read.current();
+      bindValueViews(value, modules);
+      return value;
+    } finally { read.release(); }
   }
   /**
    * Reads one bounded page (or, without a position, only the lifecycle) of the Dataset at `select`
@@ -662,24 +668,29 @@ export class Engine {
   private scopeHeader(node:string):Record<string,string>{const scope=this.readScopes.get(node);return scope?{"X-Wes-Scope":scope}:{};}
   /** One bounded dataset GET: exact session, at most 1 MiB of reply, retry only a retryable busy. */
   private async datasetGet(path: string, extra: Record<string, string>, generation: string, query: string, decode: (raw: unknown) => DatasetRead | undefined, signal: AbortSignal): Promise<DatasetRead> {
+    const accessRevision = this.readAccessRevision;
     const changed = () => new DatasetReadError("session", 409, "DATASET_SESSION_CHANGED", "Workspace changed; the dataset read was discarded.", false);
+    const current = () => {
+      if (generation !== this.generation) throw changed();
+      if (accessRevision !== this.readAccessRevision) throw new DatasetReadError("authority", 409, "DATASET_READ_AUTHORITY_CHANGED", "Result authority changed; read a fresh observation.", false);
+    };
     const delays = [150, 400, 900];
     for (let attempt = 0; ; attempt++) {
-      if (generation !== this.generation) throw changed();
+      current();
       const response = await fetch(`${path}?${query}`, {
         headers: this.headers({ ...extra, "X-Wes-Session": generation }), cache: "no-store", signal: AbortSignal.any([signal, AbortSignal.timeout(this.timeout)]),
       });
-      if (generation !== this.generation) throw changed();
+      current();
       if (response.ok) {
         const text = await response.text();
         if (new TextEncoder().encode(text).length > DATASET_REPLY_BYTES) throw new DatasetReadError("limit", response.status, "DATASET_REPLY_LIMIT", "The dataset reply exceeds its 1 MiB budget; nothing from it is drawn.", false);
         const decoded = decode(parseExactJson(text));
-        if (generation !== this.generation) throw changed();
+        current();
         if (!decoded) throw new DatasetReadError("invalid", response.status, "DATASET_REPLY_INVALID", "The dataset reply does not match the shown snapshot; nothing from it is drawn.", false);
         return decoded;
       }
       const failure = await datasetFailure(response);
-      if (generation !== this.generation) throw changed();
+      current();
       if (failure.kind !== "busy" || !failure.retryable || attempt >= delays.length) throw failure;
       await new Promise((resolve, reject) => {
         const timer = setTimeout(resolve, delays[attempt]);
@@ -692,6 +703,7 @@ export class Engine {
    * the only association between a node-scoped access notice and the values already read for it.
    */
   private readonly nodeHandles = new Map<string, string[]>();
+  private readAccessRevision = 0;
   private rememberHandle(node: string, handle: string) {
     const known = (this.nodeHandles.get(node) ?? []).filter(it => it !== handle);
     this.nodeHandles.set(node, [...known, handle].slice(-HANDLES_PER_NODE));
@@ -703,11 +715,23 @@ export class Engine {
    * the node itself; a later run's new handle is unaffected.
    */
   private withdrawAccess(node: string) {
+    this.readAccessRevision++;
     const handles = this.nodeHandles.get(node) ?? [];
     for (const handle of handles) this.results.withdraw(handle);
     if (this.generation) datasetWithdrawals.withdrawMany(handles, this.generation);
     this.nodeHandles.delete(node);
     liveReader(this).withdraw(node);
+    this.valuePackages.invalidate();
+    this.viewFrames.purge(); this.viewInputs.purge(); this.viewStates.purge(); this.readScopes.clear(); this.scopeReaders.clear(); this.mountScopes.clear();
+  }
+  private restoreAccess(node: string, handle: string | null) {
+    this.readAccessRevision++;
+    if (handle !== null) {
+      this.results.restore(handle);
+      if (this.generation) datasetWithdrawals.restore({ handle, generation: this.generation });
+      this.rememberHandle(node, handle);
+    }
+    liveReader(this).restore(node);
     this.valuePackages.invalidate();
     this.viewFrames.purge(); this.viewInputs.purge(); this.viewStates.purge(); this.readScopes.clear(); this.scopeReaders.clear(); this.mountScopes.clear();
   }

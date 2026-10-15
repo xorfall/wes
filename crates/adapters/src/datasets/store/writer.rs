@@ -180,6 +180,7 @@ impl DatasetStore {
                 .then_some(request.policy.residence()),
             origins: request.policy.origins().iter().cloned().collect(),
             dataset_reads: request.policy.dataset_reads().iter().cloned().collect(),
+            provider_reads: request.policy.provider_reads().iter().cloned().collect(),
         };
         if let Some(checkpoint) = &request.checkpoint {
             if manifest.kind != DatasetKind::Analysis {
@@ -236,6 +237,10 @@ impl DatasetStore {
                 .dataset_reads
                 .iter()
                 .any(|o| !request.policy.dataset_reads().contains(o))
+            || manifest
+                .provider_reads
+                .iter()
+                .any(|o| !request.policy.provider_reads().contains(o))
         {
             return Err(DatasetError::Conflict);
         }
@@ -265,6 +270,13 @@ impl DatasetStore {
                     .dataset_reads()
                     .iter()
                     .any(|o| !request.policy.dataset_reads().contains(o))
+                || row
+                    .value
+                    .provenance()
+                    .policy()
+                    .provider_reads()
+                    .iter()
+                    .any(|o| !request.policy.provider_reads().contains(o))
             {
                 return Err(DatasetError::Restricted);
             }
@@ -393,6 +405,7 @@ impl DatasetStore {
             .then_some(request.policy.residence());
         manifest.origins = request.policy.origins().iter().cloned().collect();
         manifest.dataset_reads = request.policy.dataset_reads().iter().cloned().collect();
+        manifest.provider_reads = request.policy.provider_reads().iter().cloned().collect();
         if let Some(checkpoint) = &request.checkpoint {
             manifest.checkpoint =
                 Some(self.publish_analysis_checkpoint(&manifest, checkpoint, &request.policy)?);
@@ -535,6 +548,10 @@ impl DatasetStore {
                 .dataset_reads
                 .iter()
                 .any(|o| !request.policy.dataset_reads().contains(o))
+            || manifest
+                .provider_reads
+                .iter()
+                .any(|o| !request.policy.provider_reads().contains(o))
         {
             return Err(DatasetError::Conflict);
         }
@@ -574,6 +591,7 @@ impl DatasetStore {
             .then_some(request.policy.residence());
         manifest.origins = request.policy.origins().iter().cloned().collect();
         manifest.dataset_reads = request.policy.dataset_reads().iter().cloned().collect();
+        manifest.provider_reads = request.policy.provider_reads().iter().cloned().collect();
         manifest.checkpoint =
             Some(self.publish_analysis_checkpoint(&manifest, new, &request.policy)?);
         self.commit(&manifest, &request.policy)?;

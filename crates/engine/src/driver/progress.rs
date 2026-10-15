@@ -218,10 +218,13 @@ impl ExecutionProgress {
         Data::Record(fields)
     }
     pub(crate) fn blocked_by(&self, access: &crate::storage::datasets::DatasetAccess) -> bool {
-        self.policy
-            .dataset_reads()
-            .iter()
-            .any(|origin| access.closed || access.withdrawn.contains(origin.dataset()))
+        access.blocks_policy(&self.policy)
+    }
+    pub(crate) fn blocked_by_dataset(
+        &self,
+        access: &crate::storage::datasets::DatasetAccess,
+    ) -> bool {
+        access.blocks_dataset_policy(&self.policy)
     }
     pub fn restricted(mut self, policy: &wes_core::flow::FlowPolicy) -> Self {
         self.policy = self.policy.join(policy);

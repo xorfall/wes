@@ -96,6 +96,26 @@ export class ResultReader {
     for (const key of [...this.pending.keys()]) if (JSON.parse(key)[1] === handle) this.pending.delete(key);
   }
   isWithdrawn(handle: string): boolean { return this.withdrawn.has(handle); }
+  /** A new proof also closes reads from a coalesced revoke/revalidation with no false notice. */
+  restore(handle: string): void {
+    for (const fence of this.fences.get(handle) ?? []) fence.closed = true;
+    for (const key of [...this.pending.keys()]) if (JSON.parse(key)[1] === handle) this.pending.delete(key);
+    this.withdrawn.delete(handle);
+  }
+  /** Covers the entire consumer read, including asynchronous renderer loading after the body. */
+  beginRead(handle: string): { current: () => void; release: () => void } {
+    if (this.withdrawn.has(handle)) throw new ResultWithdrawnError();
+    const generation = this.generation(), fence = { closed: false };
+    const fences = this.fences.get(handle) ?? new Set();
+    fences.add(fence); this.fences.set(handle, fences);
+    return {
+      current: () => {
+        if (this.generation() !== generation) throw new Error("Workspace changed; the result read was discarded.");
+        if (fence.closed || this.withdrawn.has(handle)) throw new ResultWithdrawnError();
+      },
+      release: () => { fences.delete(fence); if (!fences.size && this.fences.get(handle) === fences) this.fences.delete(handle); },
+    };
+  }
   /** Every handle withdrawn so far, newest last. */
   withdrawnHandles(): readonly string[] { return [...this.withdrawn]; }
   /**

@@ -42,6 +42,12 @@ class Withdrawals {
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   readonly snapshot = () => this.version;
   has(source: Pick<DatasetSource, "handle" | "generation">): boolean { return this.withdrawn.has(this.key(source)); }
+  /** Only the exact current capture named by a new host proof becomes readable. */
+  restore(source: Pick<DatasetSource, "handle" | "generation">): void {
+    if (!this.withdrawn.delete(this.key(source))) return;
+    this.version++;
+    for (const listener of this.listeners) listener();
+  }
   /** Withdraws several handles of one session with one notification. */
   withdrawMany(handles: readonly string[], generation: string): void {
     if (handles.every(handle => this.withdrawn.has(this.key({ handle, generation })))) return;

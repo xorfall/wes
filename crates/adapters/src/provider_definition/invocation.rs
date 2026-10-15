@@ -26,7 +26,8 @@ pub(super) fn wrap(
         .capability(&["run".into()])
         .ok_or(ImportError::InvalidRecipe)?
         .clone();
-    ImportProduct::new(
+    let read_domain = definition.read_domain.clone();
+    let product = ImportProduct::new(
         definition.description.clone(),
         Arc::new(MappedInvoker {
             definition: Arc::new(definition),
@@ -35,7 +36,11 @@ pub(super) fn wrap(
             config,
         }),
         warnings,
-    )
+    )?;
+    match read_domain {
+        Some(domain) => product.with_read_domain(domain),
+        None => Ok(product),
+    }
 }
 pub(crate) fn build(
     alias: &str,

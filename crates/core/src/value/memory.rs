@@ -185,6 +185,13 @@ impl Value {
             provenance_bytes = provenance_bytes
                 .checked_add(128 + origin.store().len() as u64 + origin.dataset().len() as u64)?;
         }
+        for origin in self.provenance.policy().provider_reads() {
+            provenance_bytes = provenance_bytes.checked_add(
+                192 + origin.realm().len() as u64
+                    + origin.binding().len() as u64
+                    + origin.scope().len() as u64,
+            )?;
+        }
         output.push(Allocation::shared(&self.provenance, provenance_bytes));
         if let Some(metadata) = &self.metadata {
             output.push(Allocation::shared(metadata, metadata.charge()));

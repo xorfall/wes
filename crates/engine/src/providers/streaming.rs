@@ -56,9 +56,17 @@ pub(super) fn prepare_source(
         if let Err(reason) = bound.require_dispatch(&carried) {
             return Err(environment_denied(reason).into());
         }
-        let attribution = bound
-            .output_provenance(&carried)
-            .cautioned(bound.invocation.cautions.iter().cloned());
+        let read_access = bound
+            .read_access(&arguments)
+            .map_err(|e| ExecutionReport::from(e.outcome()))?;
+        if read_access.is_probe() {
+            return Err(super::read_access::refusal().outcome().into());
+        }
+        let attribution = read_access.protect(
+            bound
+                .output_provenance(&carried)
+                .cautioned(bound.invocation.cautions.iter().cloned()),
+        );
         Ok(PreparedSource {
             bound,
             run,
@@ -66,6 +74,7 @@ pub(super) fn prepare_source(
             carried,
             attribution,
             cancellation,
+            read_access,
         })
     };
     Box::pin(async move {
@@ -93,6 +102,7 @@ pub(crate) struct PreparedSource {
     carried: Provenance,
     attribution: Provenance,
     cancellation: CancellationToken,
+    read_access: super::read_access::Attempt,
 }
 impl PreparedSource {
     pub(crate) fn refusal(&self, message: String) -> ExecutionReport {
@@ -122,6 +132,9 @@ impl PreparedSource {
         if let Err(reason) = self.bound.require_dispatch(&self.carried) {
             return Err(refused(environment_denied(reason)));
         }
+        if !self.read_access.current() {
+            return Err(refused(super::read_access::refusal().outcome()));
+        }
         streams::spawn_with_archives(
             Call {
                 authority: self.bound.context.authority.clone(),
@@ -141,6 +154,7 @@ impl PreparedSource {
             self.bound.context.stream_budget,
             None,
             archives,
+            self.read_access.stream_guard(),
         )
         .map_err(|_| {
             refused(Outcome::Failed(RuntimeCode::ExecutionFailed.error(

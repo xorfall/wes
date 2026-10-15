@@ -53,6 +53,55 @@ fn value(text: &str) -> Value {
 }
 
 #[tokio::test]
+async fn provider_read_refusals_preserve_bytes_without_poisoning_storage_shutdown() {
+    let backend = memory();
+    let state = backend.state.clone();
+    let handle = ValueHandle::fresh();
+    let origin = wes_core::flow::ProviderReadOrigin::new(
+        "00000000-0000-4000-8000-000000000077".into(),
+        "a".repeat(64),
+        "b".repeat(64),
+    )
+    .unwrap();
+    let protected = value("synthetic retained capture").with_provenance(
+        Provenance::default()
+            .with_policy(&wes_core::flow::FlowPolicy::default().with_provider_read(origin)),
+    );
+    state
+        .lock()
+        .unwrap()
+        .values
+        .insert(handle.clone(), protected.clone());
+    let (worker, task) = spawn_store(backend, StoreWorkerLimits::default()).unwrap();
+    assert!(matches!(
+        worker.read(handle.clone()).await,
+        Err(StoreError::ProviderReadUnavailable)
+    ));
+    assert_eq!(state.lock().unwrap().reads, 0);
+    assert_eq!(state.lock().unwrap().values[&handle], protected);
+    assert_eq!(worker.flush().await.unwrap().failed, 0);
+
+    // A late read fence is also a refusal; neither refusal hides a real error.
+    let fenced = worker
+        .request(1, |_| Err::<(), _>(StoreError::ProviderReadChanged))
+        .await
+        .unwrap();
+    assert!(matches!(
+        fenced.wait().await,
+        Err(StoreError::ProviderReadChanged)
+    ));
+    let corrupt = worker
+        .request(1, |_| Err::<(), _>(StoreError::Corrupt))
+        .await
+        .unwrap();
+    assert!(matches!(corrupt.wait().await, Err(StoreError::Corrupt)));
+    let report = worker.shutdown().await.unwrap();
+    assert_eq!(report.attempted, 3);
+    assert_eq!(report.failed, 1);
+    task.join().await.unwrap();
+}
+
+#[tokio::test]
 async fn ordinary_handle_read_decodes_the_result_once() {
     let backend = memory();
     let state = backend.state.clone();
@@ -331,6 +380,18 @@ async fn retaining_an_existing_handle_never_republishes_and_preserves_partial_fa
     task.join().await.unwrap();
 }
 impl ValueStore for Memory {
+    fn read_policy(
+        &self,
+        h: &ValueHandle,
+    ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .values
+            .get(h)
+            .map(|v| v.provenance().policy().clone()))
+    }
     fn store(&mut self, value: &Value) -> Result<ValueHandle, StoreError> {
         self.state.lock().unwrap().calls += 1;
         if let Some((entered, release)) = self.gate.take() {

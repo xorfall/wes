@@ -16,6 +16,7 @@ pub mod history;
 pub mod imports;
 pub mod log;
 pub mod plan;
+pub mod provider_reads;
 pub mod providers;
 pub mod recording;
 pub mod runtime;

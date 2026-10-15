@@ -255,6 +255,7 @@ impl StoreWorker {
         handle: ValueHandle,
         fields: Vec<String>,
     ) -> Result<Option<StoredSnapshot>, StoreError> {
+        let epoch = self.read_epoch();
         let limit = self.limits.bytes.get();
         let snapshot = self
             .request(limit, move |store| store.describe(&handle, &fields))
@@ -262,6 +263,7 @@ impl StoreWorker {
             .wait()
             .await?;
         if let Some(snapshot) = &snapshot {
+            self.check_read_epoch(&epoch, snapshot.provenance.policy())?;
             self.residency.admit_snapshot(snapshot)?;
         }
         Ok(snapshot)
@@ -273,6 +275,7 @@ impl StoreWorker {
         handle: ValueHandle,
         maximum: u64,
     ) -> Result<Option<StoredSnapshot>, StoreError> {
+        let epoch = self.read_epoch();
         let limit = self.limits.bytes.get();
         let maximum = maximum.min(u64::from(limit));
         let snapshot = self
@@ -281,6 +284,7 @@ impl StoreWorker {
             .wait()
             .await?;
         if let Some(snapshot) = &snapshot {
+            self.check_read_epoch(&epoch, snapshot.provenance.policy())?;
             self.residency.admit_snapshot(snapshot)?;
         }
         Ok(snapshot)
@@ -291,19 +295,24 @@ impl StoreWorker {
         from: u64,
         maximum: usize,
     ) -> Result<SourceRange, StoreError> {
+        let epoch = self.read_epoch();
+        let policy = snapshot.provenance.policy().clone();
         if maximum == 0 || maximum > CHUNK_BYTES {
             return Err(StoreError::Limit("source range"));
         }
         let limit = self.limits.bytes.get();
-        self.request(limit, move |store| {
-            let _hold = store
-                .hold(&snapshot.handle)?
-                .ok_or(StoreError::MissingValue)?;
-            store.source_range(&snapshot, from, maximum)
-        })
-        .await?
-        .wait()
-        .await
+        let result = self
+            .request(limit, move |store| {
+                let _hold = store
+                    .hold(&snapshot.handle)?
+                    .ok_or(StoreError::MissingValue)?;
+                store.source_range(&snapshot, from, maximum)
+            })
+            .await?
+            .wait()
+            .await?;
+        self.check_read_epoch(&epoch, &policy)?;
+        Ok(result)
     }
 }
 
@@ -337,6 +346,12 @@ mod admission_tests {
     use super::*;
     struct NoAcquisition;
     impl ValueStore for NoAcquisition {
+        fn read_policy(
+            &self,
+            _: &ValueHandle,
+        ) -> Result<Option<wes_core::flow::FlowPolicy>, StoreError> {
+            panic!("before dispatch")
+        }
         fn store(&mut self, _: &Value) -> Result<ValueHandle, StoreError> {
             panic!("before dispatch")
         }

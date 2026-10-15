@@ -288,6 +288,19 @@ impl<T: Send + 'static> ExecutionIo<T> {
             .ok_or(crate::streams::ControlError::Changed)?;
         handle.live_controls(run, caller)
     }
+    pub(crate) fn blocked_source_reads(
+        &self,
+        readers: &crate::provider_reads::Readers,
+    ) -> Vec<crate::graph::NodeId> {
+        self.source_handles
+            .iter()
+            .filter_map(|(run, handle)| {
+                (!handle.read_access_current()
+                    || readers.blocks_policy(handle.snapshot().window.provenance().policy()))
+                .then(|| run.node().clone())
+            })
+            .collect()
+    }
     pub(crate) fn conversation_update(
         &mut self,
         update: conversations::Update,

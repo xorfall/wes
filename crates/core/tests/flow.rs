@@ -2,6 +2,55 @@ use std::sync::Arc;
 use wes_core::{Data, IterMode, IterValue, Provenance, Shape, Value, flow::FlowPolicy};
 
 #[test]
+fn provider_read_dependencies_are_monotone_bounded_and_survive_control_receipts() {
+    let origin = |scope| {
+        wes_core::flow::ProviderReadOrigin::new(
+            "00000000-0000-4000-8000-000000000074".into(),
+            "a".repeat(64),
+            format!("{scope:064x}"),
+        )
+        .unwrap()
+    };
+    let mut policy = FlowPolicy::default();
+    for i in 0..129 {
+        policy = policy.with_provider_read(origin(i));
+    }
+    assert!(policy.is_unknown());
+    assert_eq!(policy.provider_reads().len(), 128);
+    let a = FlowPolicy::default().with_provider_read(origin(1));
+    let b = FlowPolicy::default().with_provider_read(origin(2));
+    assert_eq!(a.join(&b), b.join(&a));
+    assert_eq!(a.join(&b).provider_reads().len(), 2);
+    assert_eq!(
+        a.for_control_acknowledgement().provider_reads(),
+        a.provider_reads()
+    );
+    let data = Value::new(
+        Shape::Unknown,
+        Data::Int(7),
+        Provenance::default().with_policy(&a),
+    )
+    .unwrap();
+    assert_eq!(
+        data.with_provenance(Provenance::default())
+            .provenance()
+            .policy()
+            .provider_reads(),
+        a.provider_reads()
+    );
+    for (realm, binding, scope) in [
+        ("bad".into(), "a".repeat(64), "b".repeat(64)),
+        (
+            "00000000-0000-4000-8000-000000000074".into(),
+            "A".repeat(64),
+            "b".repeat(64),
+        ),
+    ] {
+        assert!(wes_core::flow::ProviderReadOrigin::new(realm, binding, scope).is_err());
+    }
+}
+
+#[test]
 fn private_remote_uncertainty_keeps_only_its_safe_classification() {
     let error = wes_core::ErrorValue::new(
         wes_core::ErrorId::new("uncertain").unwrap(),

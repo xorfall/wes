@@ -4,7 +4,7 @@ mod encode;
 pub mod history;
 pub(crate) mod raw;
 mod response;
-pub use decode::{DecodedValue, decode_value};
+pub use decode::{DecodedValue, decode_policy, decode_value};
 pub use encode::{
     ValueSelection, encode_display_shape, encode_display_value, encode_json, encode_json_human,
     encode_json_pretty, encode_request_data, encode_selection, encode_value, select_value,

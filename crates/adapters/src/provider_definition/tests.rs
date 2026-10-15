@@ -35,6 +35,35 @@ fn checked_in_definitions_compile_without_probing_their_executables() {
         );
     }
 }
+
+#[test]
+fn read_domains_require_one_finite_bool_probe_and_exact_required_text_scope_on_every_operation() {
+    let mut valid = serde_json::json!({"version":1,"provider":"samples","backend":{"kind":"session","bin":"/synthetic/adapter"},"read_access":{"scope":["realm"],"revalidate":["probe"]},"operations":[{"path":["probe"],"parameters":[{"name":"realm","type":"Text"}],"argv":[],"result":{"format":"json","type":"Bool"}},{"path":["read"],"parameters":[{"name":"realm","type":"Text"}],"argv":[],"result":{"format":"json","type":"Text"}}]});
+    assert!(schema::compile(&valid.to_string(), None).is_ok());
+    for mutation in 0..8 {
+        let mut invalid = valid.clone();
+        match mutation {
+            0 => invalid["read_access"]["scope"] = serde_json::json!([]),
+            1 => invalid["read_access"]["scope"] = serde_json::json!(["realm", "realm"]),
+            2 => invalid["read_access"]["revalidate"] = serde_json::json!(["absent"]),
+            3 => invalid["operations"][0]["streaming"] = true.into(),
+            4 => invalid["operations"][0]["result"]["type"] = "Text".into(),
+            5 => invalid["operations"][1]["parameters"][0]["required"] = false.into(),
+            6 => invalid["operations"][1]["parameters"][0]["type"] = "Option<Text>".into(),
+            7 => invalid["operations"][0]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"name":"extra","type":"Text"})),
+            _ => unreachable!(),
+        }
+        assert!(
+            schema::compile(&invalid.to_string(), None).is_err(),
+            "mutation {mutation}"
+        );
+    }
+    valid["read_access"]["permission"] = "invented".into();
+    assert!(schema::compile(&valid.to_string(), None).is_err());
+}
 fn output(code: i64, stdout: &[u8]) -> Value {
     Value::new(
         crate::process::output_shape(),

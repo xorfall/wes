@@ -214,6 +214,9 @@ fn capture(workspace: &Workspace, output: &OutputRef) -> Result<Captured, Sessio
         .graph()
         .node(node)
         .ok_or(SessionError::UnknownNode)?;
+    if runtime.provider_read_status(node) == Some(false) {
+        return Err(SessionError::Authority);
+    }
     if runtime.error_of(node).is_some_and(|error| {
         error.code() == "ENV020" || error.policy().is_private() || error.policy().is_unknown()
     }) {

@@ -49,6 +49,7 @@ impl Context {
         let mut context = Self::default();
         let mut hash = Sha256::new();
         hash.update(workspace.views.command_epoch.as_bytes());
+        hash.update(workspace.dataset_access.providers.epoch().as_bytes());
         // A template can refer to work beyond its View input, including native
         // control bindings. Rebinding names or refreshing that work must invalidate
         // the reviewed draft even while an old displayed snapshot is held. This

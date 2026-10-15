@@ -154,7 +154,11 @@ impl DatasetStore {
                         || manifest
                             .dataset_reads
                             .iter()
-                            .any(|o| !policy.dataset_reads().contains(o)))
+                            .any(|o| !policy.dataset_reads().contains(o))
+                        || manifest
+                            .provider_reads
+                            .iter()
+                            .any(|o| !policy.provider_reads().contains(o)))
                 {
                     return Err(DatasetError::Restricted);
                 }

@@ -104,9 +104,18 @@ struct Shared {
     delivery: Option<Arc<delivery::Sender>>,
     archive_ingress: Arc<delivery::Sender>,
     attribution: Provenance,
+    read_guard: Option<crate::provider_reads::ReadGuard>,
 }
 impl Shared {
+    fn read_access_current(&self) -> bool {
+        let allowed = self.read_guard.as_ref().is_none_or(|guard| guard.current());
+        if !allowed {
+            self.cancellation.cancel();
+        }
+        allowed
+    }
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
+        self.read_access_current();
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -355,6 +364,11 @@ pub struct StreamHandle {
     owner: Weak<Shared>,
 }
 impl StreamHandle {
+    pub(crate) fn read_access_current(&self) -> bool {
+        self.owner
+            .upgrade()
+            .is_none_or(|owner| owner.read_access_current())
+    }
     pub(crate) fn cancellation_token(&self) -> CancellationToken {
         self.cancellation.clone()
     }
@@ -467,6 +481,7 @@ pub(crate) fn spawn_with_delivery(
         budget,
         None,
         vec![],
+        None,
     )
 }
 pub(crate) fn spawn_with_archives(
@@ -478,6 +493,7 @@ pub(crate) fn spawn_with_archives(
     budget: Option<delivery::Budget>,
     archive_budget: Option<delivery::Budget>,
     archives: Vec<Arc<archive::Branch>>,
+    read_guard: Option<crate::provider_reads::ReadGuard>,
 ) -> Result<(StreamHandle, StreamTask), StreamError> {
     if !call.capability.streaming {
         return Err(StreamError::Invalid);
@@ -535,6 +551,7 @@ pub(crate) fn spawn_with_archives(
         delivery,
         archive_ingress,
         attribution,
+        read_guard,
     });
     let sink = StreamSink(Arc::downgrade(&shared), epoch, connection_cancel);
     let owner = Arc::downgrade(&shared);
@@ -544,8 +561,14 @@ pub(crate) fn spawn_with_archives(
         // Joining this inner task also catches synchronous subscribe panics. Panic payloads are
         // deliberately excluded from snapshots, since arbitrary provider text may contain secrets.
         let provider_token = token.clone();
+        let provider_guard = shared.read_guard.clone();
         let mut provider = tokio::spawn(async move {
-            if provider_token.is_cancelled() {
+            if provider_token.is_cancelled()
+                || provider_guard
+                    .as_ref()
+                    .is_some_and(|guard| !guard.current())
+            {
+                provider_token.cancel();
                 return Err(InvocationError::Cancelled);
             }
             invoker.subscribe(call, sink, provider_token).await

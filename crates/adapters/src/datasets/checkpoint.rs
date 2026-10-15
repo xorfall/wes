@@ -144,6 +144,7 @@ pub struct Checkpoint {
     pub protection: Option<wes_core::flow::Residence>,
     pub origins: Vec<String>,
     pub dataset_reads: Vec<wes_core::flow::DatasetReadOrigin>,
+    pub provider_reads: Vec<wes_core::flow::ProviderReadOrigin>,
 }
 impl Checkpoint {
     pub(crate) fn policy(&self) -> wes_core::flow::FlowPolicy {
@@ -154,10 +155,15 @@ impl Checkpoint {
                 p.from_origin(o)
             });
         let p = self.protection.map_or(p.clone(), |r| p.confidential(r));
-        self.dataset_reads
+        let p = self
+            .dataset_reads
             .iter()
             .cloned()
-            .fold(p, |p, o| p.with_dataset_read(o))
+            .fold(p, |p, o| p.with_dataset_read(o));
+        self.provider_reads
+            .iter()
+            .cloned()
+            .fold(p, |p, o| p.with_provider_read(o))
     }
 
     pub(super) fn bindings_extend(&self, prior: &Self) -> bool {
@@ -328,6 +334,8 @@ impl Checkpoint {
         }
         if self.dataset_reads.len() > 128
             || self.dataset_reads.windows(2).any(|s| s[0] >= s[1])
+            || self.provider_reads.len() > 128
+            || self.provider_reads.windows(2).any(|s| s[0] >= s[1])
             || self.origins.len() > 128
             || self
                 .origins
