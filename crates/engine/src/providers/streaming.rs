@@ -1,6 +1,8 @@
 //! Streaming validation/admission shares the finite boundary without finite recovery attempts.
 use super::*;
 use crate::streams;
+mod finalization;
+pub use finalization::{BoundStop, FinalizationLimits, PreparedStop, SourceFinalization};
 
 pub(super) fn prepare_source(
     journal: Option<CallJournal>,
@@ -80,6 +82,7 @@ pub(super) fn prepare_source_with_storage(
                 .cautioned(bound.invocation.cautions.iter().cloned()),
         );
         Ok(PreparedSource {
+            identity: Arc::new(()),
             bound,
             run,
             arguments,
@@ -113,6 +116,7 @@ pub(crate) type PreparationFuture = SourcePreparationFuture;
 /// but a stored result cannot construct this capability or recreate external execution.
 #[must_use = "start or discard the prepared source"]
 pub struct PreparedSource {
+    identity: Arc<()>,
     bound: BoundCall,
     run: Run,
     arguments: IndexMap<String, Value>,
@@ -129,6 +133,7 @@ impl PreparedSource {
     /// Required byte recording is prepared by the ordinary source boundary.
     pub fn start_owned(self) -> Result<OwnedSource, ExecutionReport> {
         let fence = SourceFence {
+            identity: self.identity.clone(),
             bound: self.bound.clone(),
             carried: self.carried.clone(),
             read: self.read_access.stream_guard(),
@@ -225,6 +230,7 @@ impl PreparedSource {
 }
 
 struct SourceFence {
+    identity: Arc<()>,
     bound: BoundCall,
     carried: Provenance,
     read: Option<crate::provider_reads::ReadGuard>,

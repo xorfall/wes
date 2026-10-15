@@ -6,6 +6,12 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use wes_core::contracts::Contract;
 
 pub type ControlFuture = Pin<Box<dyn Future<Output = ControlOutcome> + Send + 'static>>;
+/// Immutable declaration metadata. This describes a port; it cannot acquire or invoke it.
+#[derive(Clone, Debug)]
+pub struct ControlContracts {
+    pub input: Arc<Contract>,
+    pub output: Arc<Contract>,
+}
 /// Protocol confirmation and settlement are adapter semantics. Never infer success from a send.
 pub enum ControlOutcome {
     Confirmed(Value),
@@ -368,6 +374,9 @@ impl StreamSink {
             done: completion,
             task: Some(task),
         });
+        state.dirty = true;
+        drop(state);
+        source.changed.notify_one();
         Ok(())
     }
 }

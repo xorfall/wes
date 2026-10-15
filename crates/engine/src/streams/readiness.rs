@@ -53,6 +53,9 @@ impl ReadyReceipt {
     pub fn run(&self) -> &Run {
         &self.run
     }
+    pub(crate) fn connection_epoch(&self) -> uuid::Uuid {
+        self.epoch
+    }
     /// Serialize local admission with source closure. The callback must only admit local work:
     /// no I/O, blocking, await or callbacks into this source. This never starts or retains a source.
     pub fn admit<R>(&self, expected: &Run, admission: impl FnOnce() -> R) -> Result<R, ReadyError> {
@@ -64,7 +67,11 @@ impl ReadyReceipt {
         if state.connection_epoch != self.epoch {
             return Err(ReadyError::Changed);
         }
-        if state.finished || state.phase != Phase::Open || owner.cancellation.is_cancelled() {
+        if state.finished
+            || state.phase != Phase::Open
+            || state.controls_required && state.controls.is_none()
+            || owner.cancellation.is_cancelled()
+        {
             return Err(ReadyError::Closed);
         }
         Ok(admission())
@@ -107,7 +114,7 @@ impl StreamHandle {
                 {
                     return Err(ReadyError::Closed);
                 }
-                state.phase == Phase::Open
+                state.phase == Phase::Open && (!state.controls_required || state.controls.is_some())
             };
             drop(owner);
             if open {
