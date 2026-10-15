@@ -56,6 +56,45 @@ fn byte_input_is_strict_required_unconstrained_and_distinct_from_argv() {
 }
 
 #[test]
+fn file_egress_requires_distinct_explicit_typed_caller_arguments() {
+    let doc = serde_json::json!({"version":1,"provider":"bytes","backend":{"kind":"process","bin":"/synthetic/writer"},"operations":[{"path":["export"],"parameters":[{"name":"source","type":"Bytes"},{"name":"file","type":"Text"},{"name":"allow_confidential","type":"Bool","required":false}],"byte_input":{"parameter":"source","max_bytes":1048576,"file_egress":{"destination":"file","approval":"allow_confidential"}},"argv":[{"parameter":"file"},{"parameter":"allow_confidential","encoding":"flag","prefix":["--allow-confidential"]}],"result":{"format":"json","type":"Text"}}]});
+    let compiled = schema::compile(&doc.to_string(), None).unwrap();
+    assert_eq!(
+        compiled.operations[0]
+            .byte_input
+            .as_ref()
+            .unwrap()
+            .file_egress
+            .as_ref()
+            .unwrap()
+            .destination,
+        "file"
+    );
+    for mutation in 0..7 {
+        let mut invalid = doc.clone();
+        match mutation {
+            0 => invalid["operations"][0]["byte_input"]["file_egress"]["approval"] = "file".into(),
+            1 => {
+                invalid["operations"][0]["byte_input"]["file_egress"]["destination"] =
+                    "source".into()
+            }
+            2 => invalid["operations"][0]["parameters"][1]["type"] = "Bool".into(),
+            3 => invalid["operations"][0]["parameters"][1]["required"] = false.into(),
+            4 => {
+                invalid["operations"][0]["fixed_arguments"] =
+                    serde_json::json!({"allow_confidential":true})
+            }
+            5 => invalid["operations"][0]["byte_input"]["file_egress"]["automatic"] = true.into(),
+            _ => invalid["operations"][0]["argv"] = serde_json::json!([{"parameter":"file"}]),
+        }
+        assert!(
+            schema::compile(&invalid.to_string(), None).is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+
+#[test]
 fn exclusive_resources_require_strict_bounded_required_text_paths_on_streaming_sessions() {
     let valid = serde_json::json!({"version":1,"provider":"samples","backend":{"kind":"session","bin":"/synthetic/adapter"},
         "types":{"Scope":{"base":"Record","fields":{"name":"Text","other":"Text","number":"Int","optional":"Option<Text>"}}},

@@ -595,6 +595,8 @@ pub(super) fn bind_control<'a>(
                 }
             }
             let call = old.clone().with_inputs(inputs);
+            call.require_literal_file_egress()
+                .map_err(|error| rejected("MET014", span, error.to_string()))?;
             let typing = Arc::new(call.invocation().predicted_typing(typing));
             Ok(Control::Change { node, call, typing })
         }

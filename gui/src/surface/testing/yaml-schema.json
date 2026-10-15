@@ -1505,6 +1505,10 @@
         "max_bytes": {
           "schema": "int",
           "required": true
+        },
+        "file_egress": {
+          "schema": "provider.file-egress",
+          "required": false
         }
       },
       "hint": "Finite local process only; parameter names one required Bytes input without an argv mapping. max_bytes is positive and at most the native acquisition ceiling. Native entry captures the acknowledged exact source and scope; bounded stdin reads retain ownership and join cleanup. No implicit producer dependency or replay."
@@ -1657,6 +1661,20 @@
         }
       },
       "hint": "Finite operation only. Bounded name/kind identifiers and at most 32 canonical-to-declared parameter mappings; the map covers exactly all nonfixed caller parameters without duplicate targets. Frozen types, required flags, input limits, target admission and native byte/egress checks remain authoritative. No executable or credential lookup during resolution."
+    },
+    "provider.file-egress": {
+      "kind": "object",
+      "fields": {
+        "destination": {
+          "schema": "text",
+          "required": true
+        },
+        "approval": {
+          "schema": "text",
+          "required": true
+        }
+      },
+      "hint": "Names distinct declared Text destination and Bool approval parameters, independent of the Bytes source. Both require native literal intent before scheduling; confidential disclosure requires explicit approval. Reading or Keep grants no export authority. Process local target only; no overwrite/retry policy is delegated implicitly."
     }
   },
   "typeConstructors": [

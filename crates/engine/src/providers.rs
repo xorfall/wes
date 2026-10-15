@@ -298,7 +298,9 @@ impl Providers {
         if invocation.interactive || invocation.capability.streaming {
             return Err(BindError::NotFinite);
         }
-        self.bind(invocation)
+        let bound = self.bind(invocation)?;
+        bound.require_literal_file_egress()?;
+        Ok(bound)
     }
     pub fn bind_stream(&self, invocation: Invocation) -> Result<BoundCall, BindError> {
         if invocation.interactive || !invocation.capability.streaming {
@@ -366,6 +368,10 @@ pub enum BindError {
     NotInteractive,
     #[error("the provider does not implement interactive execution")]
     MissingInteractivePort,
+    #[error(
+        "file export destination and approval must be explicit literals; no producer was scheduled"
+    )]
+    FileEgressRequiresLiterals,
 }
 
 /// The provider handle is captured once. Re-importing or unregistering cannot retarget old nodes.
@@ -413,7 +419,17 @@ impl BoundCall {
         node: &NodeId,
         values: &std::collections::BTreeMap<Vec<String>, Value>,
     ) {
-        for input in self.invocation.inputs.values_mut() {
+        let spec = self.byte_input_spec();
+        for (name, input) in &mut self.invocation.inputs {
+            // Materialized fields cannot manufacture original-source identity or literal egress intent.
+            if spec.as_ref().is_some_and(|spec| {
+                name == &spec.parameter
+                    || spec.file_egress.as_ref().is_some_and(|egress| {
+                        name == &egress.destination || name == &egress.approval
+                    })
+            }) {
+                continue;
+            }
             input.prepare_fields(node, values);
         }
     }

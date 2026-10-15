@@ -14,6 +14,43 @@ use wes_core::{Data, Provenance, Value};
 pub struct ByteInputSpec {
     pub parameter: String,
     pub maximum: u64,
+    pub file_egress: Option<FileEgress>,
+}
+/// Explicit file disclosure is separate from reading or retaining the native source.
+#[derive(Clone, Debug)]
+pub struct FileEgress {
+    pub destination: String,
+    pub approval: String,
+}
+impl FileEgress {
+    pub fn validate(
+        &self,
+        arguments: &indexmap::IndexMap<String, Value>,
+        policy: &wes_core::flow::FlowPolicy,
+    ) -> Result<(), &'static str> {
+        if policy.is_unknown() || policy.residence() == wes_core::flow::Residence::Memory {
+            return Err(
+                "Unknown or memory-only source policy forbids file export; no provider was invoked.",
+            );
+        }
+        let Some(Data::Text(path)) = arguments.get(&self.destination).map(Value::data) else {
+            return Err("File export requires an explicit literal destination.");
+        };
+        if path.is_empty() || path.len() > 4096 || path.chars().any(char::is_control) {
+            return Err("File export destination is empty, malformed or over budget.");
+        }
+        let approved = match arguments.get(&self.approval).map(Value::data) {
+            Some(Data::Bool(approved)) => *approved,
+            None => false,
+            _ => return Err("File export approval must be an explicit literal Bool."),
+        };
+        if policy.is_confidential() && !approved {
+            return Err(
+                "Confidential file export requires explicit allow_confidential:true; reading or Keep grants no export permission.",
+            );
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug)]
 pub(crate) enum Source {
@@ -369,6 +406,55 @@ impl OwnedByteInput {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_egress_never_promotes_unknown_memory_or_confidential_policy() {
+        use super::*;
+        use wes_core::flow::{FlowPolicy, Residence};
+        let egress = FileEgress {
+            destination: "file".into(),
+            approval: "allow_confidential".into(),
+        };
+        let mut arguments = indexmap::IndexMap::from([(
+            "file".into(),
+            Value::new(
+                wes_core::Shape::Unknown,
+                Data::Text("synthetic.bin".into()),
+                Default::default(),
+            )
+            .unwrap(),
+        )]);
+        assert!(egress.validate(&arguments, &FlowPolicy::default()).is_ok());
+        for policy in [
+            FlowPolicy::default().unknown(),
+            FlowPolicy::default().private(),
+            FlowPolicy::default().confidential(Residence::Temporary),
+            FlowPolicy::default().confidential(Residence::Retainable),
+        ] {
+            assert!(egress.validate(&arguments, &policy).is_err());
+        }
+        arguments.insert(
+            "allow_confidential".into(),
+            Value::new(
+                wes_core::Shape::Unknown,
+                Data::Bool(true),
+                Default::default(),
+            )
+            .unwrap(),
+        );
+        for residence in [Residence::Temporary, Residence::Retainable] {
+            assert!(
+                egress
+                    .validate(&arguments, &FlowPolicy::default().confidential(residence))
+                    .is_ok()
+            );
+        }
+        for policy in [
+            FlowPolicy::default().unknown(),
+            FlowPolicy::default().private(),
+        ] {
+            assert!(egress.validate(&arguments, &policy).is_err());
+        }
+    }
     use super::*;
     use crate::{
         credentials::material::ChangeObservers,
