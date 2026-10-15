@@ -792,9 +792,28 @@ mod tests {
                 .is_err()
         );
         let mut updates = f.handle.subscribe();
-        while updates.borrow_and_update().phase != Phase::Open {
-            updates.changed().await.unwrap();
-        }
+        // Open can still be the old published snapshot. Wait for the new
+        // connection's committed gap evidence rather than that stale phase.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let current = {
+                    let snapshot = updates.borrow_and_update();
+                    snapshot.phase == Phase::Open
+                        && snapshot
+                            .window
+                            .provenance()
+                            .cautions()
+                            .iter()
+                            .any(|c| c.contains("Connection gap"))
+                };
+                if current {
+                    break;
+                }
+                updates.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
         assert!(
             f.handle
                 .snapshot()
